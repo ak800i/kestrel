@@ -563,7 +563,7 @@ The effects (`ConversationEffect`) are `StartGoal`, `SteerGoal`, `InterruptGoal`
 - The engine stores the conversation's snapshot (its state, its records so far, the checklist, the goal's phase and the quiet clock's wall-clock start) at every change of these fields (section 9), so a command's record grows while its goal works.
 - At the next start, `restore()` reads the open conversation:
   - Without a goal: if the quiet time has not passed since `sinceWall`, the conversation is still open with its records, and its clock runs on for the rest. Otherwise it is closed.
-  - With a goal in any phase: the goal becomes `INTERRUPTED` and is held for 30 minutes from the stored time of its last change. Kestrel asks "Continue the goal?", never by itself (D11): by voice once a voice session is open and the owner is back, and always as a card and in the goal notification. Yes resumes the goal (section 7.6); no, Cancel or the end of the hold end it with its partial report.
+  - With a goal in any phase: the goal becomes `INTERRUPTED` and is held for 30 minutes from when it stopped working: the last time that Kestrel saved it while it worked, or the start of its hold if it was held already. Kestrel asks "Continue the goal?", never by itself (D11): by voice once a voice session is open and the owner is back, and always as a card and in the goal notification. Yes resumes the goal (section 7.6); no, Cancel or the end of the hold end it with its partial report.
 - The stored times are wall-clock times, so a change of the clock can keep a conversation open or close it wrongly after a restart. The spec accepts the same limit for the listening mode (spec 8.5).
 
 ### 6.8 One conversation, and a new one

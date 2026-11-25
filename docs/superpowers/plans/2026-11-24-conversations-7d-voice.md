@@ -1109,7 +1109,7 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 - Produces (`TaskWitness`): `said`, `watch` and `evidence` without `ended`; `TaskEvidence(said, markerInData)` without `spoken`.
 - Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply)`. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
 
-Counts: `:app` JVM A₂ − 3 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 4 + 1 = 5, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 7, `OwnerSupportTest` 3, `ConversationSignalsTest` 4, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
+Counts: `:app` JVM A₂ − 1 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 4 + 1 = 5, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 7, `OwnerSupportTest` 3, `ConversationSignalsTest` 6, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
 
 - [ ] **Step 1: Check the plans that this task consumes, and count the tests of the files that it deletes**
 
@@ -1622,6 +1622,42 @@ class ConversationSignalsTest {
     }
 
     @Test
+    fun theFirstWatchSendsTheLockStateAlsoOnAPhoneWithoutALockScreen() = runTest {
+        // A phone without a lock screen, as kestrel-api37, reads as unlocked from the start; the conversation still learns it
+        // (plan 7B: until a lock signal comes, the owner is not known to be there).
+        follow()
+        views.value = open
+        runCurrent()
+        assertEquals(listOf(PhoneSignal.UNLOCKED), signals)
+
+        // A later watch sends only a change since the conversation's last reading.
+        views.value = ConversationView()
+        runCurrent()
+        views.value = open
+        runCurrent()
+        assertEquals(listOf(PhoneSignal.UNLOCKED), signals)
+    }
+
+    @Test
+    fun wordsKeptForTheOwnerKeepTheWatchAfterTheConversationClosed() = runTest {
+        follow()
+        screens.now = false
+        views.value = open
+        runCurrent()
+
+        // A change of test mode closed the conversation while the phone was locked; its goal's final reply waits.
+        views.value = ConversationView(keptForOwner = true)
+        runCurrent()
+        assertEquals(0, screens.stops)
+        screens.change(true)
+        assertEquals(listOf(PhoneSignal.LOCKED, PhoneSignal.UNLOCKED), signals)
+
+        views.value = ConversationView()
+        runCurrent()
+        assertEquals(1, screens.stops)
+    }
+
+    @Test
     fun callsReachTheConversationOnceEachAndAGoalKeepsTheWatch() = runTest {
         follow()
         views.value = ConversationView(goal = GoalPhase.HANDED_OVER)
@@ -1633,7 +1669,7 @@ class ConversationSignalsTest {
         calls.change(CallState.ACTIVE)
         calls.change(CallState.IDLE)
 
-        assertEquals(listOf(PhoneSignal.RINGING, PhoneSignal.CALL_ACTIVE, PhoneSignal.CALL_IDLE), signals)
+        assertEquals(listOf(PhoneSignal.UNLOCKED, PhoneSignal.RINGING, PhoneSignal.CALL_ACTIVE, PhoneSignal.CALL_IDLE), signals)
     }
 
     @Test
@@ -1647,7 +1683,7 @@ class ConversationSignalsTest {
         calls.change(CallState.ACTIVE)
         runCurrent()
 
-        assertEquals(listOf(PhoneSignal.AGENT_CALL), signals)
+        assertEquals(listOf(PhoneSignal.UNLOCKED, PhoneSignal.AGENT_CALL), signals)
         assertEquals(1, callApi.ended)
     }
 
@@ -1674,7 +1710,7 @@ class ConversationSignalsTest {
 
         assertEquals(
             listOf(
-                PhoneSignal.RINGING, PhoneSignal.CALL_ACTIVE, PhoneSignal.CALL_IDLE,
+                PhoneSignal.UNLOCKED, PhoneSignal.RINGING, PhoneSignal.CALL_ACTIVE, PhoneSignal.CALL_IDLE,
                 PhoneSignal.CALL_ACTIVE, PhoneSignal.CALL_IDLE, PhoneSignal.CALL_ACTIVE,
             ),
             signals,
@@ -8055,11 +8091,14 @@ import kotlinx.coroutines.launch
 
 /**
  * The phone's lock and calls as the conversation's [PhoneSignal]s (design 6.5 of sub-project 7), with listening on or
- * off: while a conversation is open, or a goal is, it watches [phone] and sends [signal] each change. A call that becomes
- * active without ringing while the goal acts or asks, within the call backstop's window after the agent's last action, is
+ * off: while a conversation is open, a goal is, or Kestrel keeps words until the owner is there
+ * ([ConversationView.keptForOwner]), it watches [phone] and sends [signal] each change. A call that becomes active without
+ * ringing while the goal acts or asks, within the call backstop's window after the agent's last action, is
  * [PhoneSignal.AGENT_CALL] instead of [PhoneSignal.CALL_ACTIVE], and [backstop] ends that call off the caller's thread in
- * [scope] (design D13 of sub-project 5). The signals go on from the readings that the conversation last got, so a change
- * while nothing watched counts at the next watch. Without the permission for the phone state it sees no call.
+ * [scope] (design D13 of sub-project 5). The first watch in the process sends the lock state that it reads, `UNLOCKED` too
+ * (also on a phone without a lock screen), because the conversation counts the owner as there only once a lock signal
+ * said so (plan 7B). Later signals go on from the readings that the conversation last got, so a change while nothing
+ * watched counts at the next watch. Without the permission for the phone state it sees no call.
  */
 internal class ConversationSignals(
     private val phone: PhoneSignals,
@@ -8069,20 +8108,22 @@ internal class ConversationSignals(
     private val report: (String, Throwable) -> Unit,
 ) {
     private val lock = Any()
-    private var unlocked = true
+
+    // The lock state that the conversation last got; null until the first reading in the process.
+    private var unlocked: Boolean? = null
     private var call = CallState.IDLE
     private var rang = false
 
     @Volatile
     private var goal: GoalPhase? = null
 
-    /** Follows the conversation's [views] for as long as it runs: it watches the phone while one is open. */
+    /** Follows the conversation's [views] for as long as it runs: it watches the phone while one is open or words wait. */
     suspend fun follow(views: Flow<ConversationView>) {
         var watches = emptyList<PhoneWatch>()
         try {
             views.collect { view ->
                 goal = view.goal
-                val open = view.id != null || view.goal != null
+                val open = view.id != null || view.goal != null || view.keptForOwner
                 if (open && watches.isEmpty()) {
                     watches = watch()
                 } else if (!open && watches.isNotEmpty()) {
@@ -12314,7 +12355,7 @@ What plans 7E and 7F consume, as this plan leaves `:app`. Every type is `interna
 
 **The phone's signals (plan 7E)**
 - `AppGraph.phoneSignals: PhoneSignals` (package `dev.kestrel.app.phone`) with `watchScreen((Boolean) -> Unit): PhoneWatch`, `watchCalls((CallState) -> Unit): PhoneWatch`, `callMonitor(): CallMonitor` and `callStates(): Flow<CallState>`: one screen receiver and one call listener for every watcher, also with listening off.
-- `ConversationSignals(phone, backstop, scope, signal, report).follow(views)` (package `dev.kestrel.app.conversation`) gives the engine `LOCKED`, `UNLOCKED`, `RINGING`, `CALL_ACTIVE`, `CALL_IDLE` and `AGENT_CALL` while a conversation is open or a goal is held; the app graph starts it with the engine. Plan 7E's goal service needs no second watcher: the pauses with listening off come from here.
+- `ConversationSignals(phone, backstop, scope, signal, report).follow(views)` (package `dev.kestrel.app.conversation`) gives the engine `LOCKED`, `UNLOCKED`, `RINGING`, `CALL_ACTIVE`, `CALL_IDLE` and `AGENT_CALL` while a conversation is open, a goal is, or `view.keptForOwner` is set; its first watch in the process sends the lock state that it reads, `UNLOCKED` too (also on a phone without a lock screen), because plan 7B's machine counts the owner as there only once a lock signal said so; the app graph starts it with the engine. Plan 7E's goal service needs no second watcher: the pauses with listening off come from here.
 - `CallBackstop(calls, clock)` with `acted()`, `forget()`, `stops(): Boolean`, `endCall()` and `WINDOW_MILLIS`.
 
 **The voice (plans 7E and 7F)**

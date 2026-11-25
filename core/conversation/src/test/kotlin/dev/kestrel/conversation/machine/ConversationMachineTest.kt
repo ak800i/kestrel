@@ -481,6 +481,31 @@ class ConversationMachineTest : MachineTesting() {
     }
 
     @Test
+    fun aReportThatTheRestoreCausesWaitsUntilTheOwnerIsThere() {
+        // Kestrel starts on a locked phone whose state PhoneSignals has not yet given.
+        val snapshot = ConversationSnapshot(
+            id, now - 3_600_000, now - 60_000, open = true, testMode = false,
+            records = listOf(CommandRecord(1, now - 3_600_000, InputChannel.TEXT, "Archive the newsletters")),
+            goal = GoalState(1, GoalPhase.PAUSED, now - 2_400_000, GoalHold.LOCK),
+        )
+        val late = step(starting, ConversationEvent.Restored(snapshot))
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG), late.effect<ConversationEffect.EndHeldGoal>())
+
+        val report = "I stopped the task because it was paused for a long time."
+        val kept = ended(late.state, TaskReport(EndReason.PAUSED_TOO_LONG), report)
+        assertTrue(kept.outputs().isEmpty())
+        assertTrue(step(kept.state, ConversationEvent.Signal(PhoneSignal.LOCKED)).outputs().isEmpty())
+        assertEquals(listOf(ChannelOutput.Report(0, report)), step(kept.state, ConversationEvent.Signal(PhoneSignal.UNLOCKED)).outputs())
+
+        // A goal that a change of test mode ends: the conversation closes at once, and the report waits.
+        val other = step(starting, ConversationEvent.Restored(snapshot.copy(testMode = true, goal = GoalState(1, GoalPhase.ACTING, now - 60_000)))).state
+        val closed = ended(other, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertTrue(closed.outputs().isEmpty())
+        assertEquals(ConversationEffect.Close(id), closed.effect<ConversationEffect.Close>())
+        assertEquals(listOf(ChannelOutput.Report(0, "Cancelled.")), step(closed.state, ConversationEvent.Signal(PhoneSignal.UNLOCKED)).outputs())
+    }
+
+    @Test
     fun theOwnersStopOfKestrelEndsTheRestoredGoalAsStopDoesAndAsksNothing() {
         val snapshot = ConversationSnapshot(
             id, now - 600_000, now - 60_000, open = true, testMode = false,

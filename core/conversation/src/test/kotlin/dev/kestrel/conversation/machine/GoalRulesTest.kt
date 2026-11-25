@@ -177,6 +177,21 @@ class GoalRulesTest : MachineTesting() {
     }
 
     @Test
+    fun aHeldGoalsWordsWaitWhileThePhoneIsUnknownAndStopDropsThem() {
+        // Before PhoneSignals has said whether the phone is locked, the owner is not known to be there.
+        val held = ended(acting(from = starting), TaskReport(EndReason.PAUSED_AT_LIMIT), "Limit.")
+        val said = "Limit. ${ConversationTexts.GO_ON}"
+        assertTrue(held.outputs().isEmpty())
+        assertEquals(ChannelOutput.Said(said), held.state.heldWords)
+        assertEquals(listOf(ChannelOutput.Said(said)), signal(held.state, PhoneSignal.UNLOCKED).outputs())
+
+        // "Stop" ends the held goal, so how to go on with it is no longer for the owner; only its final reply waits.
+        val stopped = step(held.state, spoken(InputIntent.Stop))
+        assertNull(stopped.state.heldWords)
+        assertTrue(signal(stopped.state, PhoneSignal.UNLOCKED).outputs().isEmpty())
+    }
+
+    @Test
     fun aTouchWhileContinueTheGoalIsAskedChangesNothing() {
         // Design 6.5 and D13 change today's rule on purpose: a touch no longer answers "Continue the task?".
         val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state

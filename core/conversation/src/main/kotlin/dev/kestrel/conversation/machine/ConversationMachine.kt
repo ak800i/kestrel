@@ -181,15 +181,14 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val sentence = event.reply
         return when {
             // A command that waited for the stop runs in a new conversation, under the new test mode.
-            state.closeAfterGoal -> recorded.then { if (sentence != null) reply(it, goal.command, sentence) else MachineStep(it) }
+            state.closeAfterGoal -> recorded.then { if (sentence != null) finalReply(it, goal.command, sentence) else MachineStep(it) }
                 .then { close(it) }
                 .then { runNext(it, now) }
             // "Stop. Kestrel, …": the old goal's report is shown, and the waiting command runs (design 6.4).
             state.next != null -> recorded.then { MachineStep(it, listOfNotNull(sentence?.let { s -> ConversationEffect.Output(ChannelOutput.Shown(s)) })) }
                 .then { runNext(it, now) }
             sentence == null -> recorded
-            state.phone.away -> MachineStep(ended.copy(heldReport = ChannelOutput.Report(goal.command, sentence), replying = goal.command), recorded.effects)
-            else -> recorded.then { reply(it, goal.command, sentence) }
+            else -> recorded.then { finalReply(it, goal.command, sentence) }
         }
     }
 
@@ -304,6 +303,13 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             closeAfterGoal = false,
         )
         return MachineStep(closed, listOf(ConversationEffect.Close(id, keep)))
+    }
+
+    // Design 6.4: a goal's final reply waits until the owner is there (the phone known to be unlocked, with no call), also
+    // when the conversation closes after the goal; meanwhile it holds the quiet clock.
+    private fun finalReply(state: ConversationState, command: Int, text: String): MachineStep = when {
+        state.phone.present -> reply(state, command, text)
+        else -> MachineStep(state.copy(heldReport = ChannelOutput.Report(command, text), replying = command))
     }
 
     private fun reply(state: ConversationState, command: Int, text: String): MachineStep =

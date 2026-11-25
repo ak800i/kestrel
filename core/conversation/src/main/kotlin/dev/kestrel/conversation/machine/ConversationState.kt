@@ -14,8 +14,8 @@ import dev.kestrel.conversation.model.OwnerInput
  * page's value now (design 12.4). [commands] counts its records; [command] numbers, in this process, each input that
  * started or resumed a goal or ran a local request. [question] waits for the owner; [asksContinue] is set while
  * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
- * while the owner is away, [heldReport] is a goal's final reply and [heldWords] a held goal's round report with how to
- * go on, each waiting until he is back (design 6.4). [local] is a local request or a switch that runs; [next] a command
+ * until the owner is there ([PhoneState.present]), [heldReport] is a goal's final reply and [heldWords] a held goal's
+ * round report with how to go on, each waiting for him (design 6.4). [local] is a local request or a switch that runs; [next] a command
  * that waits for the goal that "stop" ended or for the local request; [closeAfterGoal] closes the conversation once its
  * goal has ended, after a change of test mode. [continueAnswer] is the owner's input
  * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
@@ -64,7 +64,7 @@ data class LocalRun(val command: Int, val record: Int?, val input: OwnerInput, v
  * The phone as `PhoneSignals` reports it. [known] once a lock signal (`LOCKED` or `UNLOCKED`) has said whether the phone is
  * locked: `PhoneSignals` gives the phone's state when it starts, so at process start the machine does not know it yet.
  * The owner is [away] while the phone is locked or a call rings or lasts, and [present] once the phone is known to be
- * neither.
+ * neither: Kestrel's words for him wait until then.
  */
 data class PhoneState(val locked: Boolean = false, val ringing: Boolean = false, val inCall: Boolean = false, val known: Boolean = false) {
     val away: Boolean get() = locked || ringing || inCall

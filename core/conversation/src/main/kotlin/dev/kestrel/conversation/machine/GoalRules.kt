@@ -28,8 +28,8 @@ import dev.kestrel.conversation.model.PhoneSignal
  *
  * A question that the conversation withdraws (the goal's own when "stop", a touch, the call backstop or a lock reaches
  * it, and "Continue the goal?" when it is withdrawn) leaves the state at once, so that the owner's next input is never
- * taken as its answer, and its late `Answered` or answer changes nothing. What Kestrel says about a held goal waits while
- * the owner is away, as a final reply does (design 6.4).
+ * taken as its answer, and its late `Answered` or answer changes nothing. What Kestrel says about a held goal waits until
+ * the owner is there, as a final reply does (design 6.4), and is dropped once the goal goes on or starts to end.
  */
 internal object GoalRules {
     const val HOLD_MILLIS = 30L * 60 * 1000
@@ -79,22 +79,22 @@ internal object GoalRules {
     }
 
     /**
-     * The goal's round ended and [hold] holds it: Kestrel says the round's [sentence] and how to go on, or keeps them for
-     * the owner's return while he is away; the record has them at once.
+     * The goal's round ended and [hold] holds it: Kestrel says the round's [sentence] and how to go on, or keeps them until
+     * the owner is there (the phone known to be unlocked, with no call); the record has them at once.
      */
     fun held(state: ConversationState, goal: GoalState, hold: GoalHold, sentence: String?, now: Long): MachineStep {
         val number = state.timers.hold + 1
         val words = ChannelOutput.Said(listOfNotNull(sentence, ConversationTexts.held(hold)).joinToString(" "))
-        val away = state.phone.away
+        val waits = !state.phone.present
         return MachineStep(
             state.copy(
                 goal = goal.copy(phase = hold.phase, hold = hold, changedAtWall = now, ending = null, handOver = null),
                 question = null,
-                heldWords = words.takeIf { away },
+                heldWords = words.takeIf { waits },
                 timers = state.timers.copy(hold = number),
             ),
             listOfNotNull(
-                ConversationEffect.Output(words).takeUnless { away },
+                ConversationEffect.Output(words).takeUnless { waits },
                 ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, words.text, null),
                 ConversationEffect.StartTimer(Timer.HOLD, number, HOLD_MILLIS),
             ),
@@ -335,10 +335,12 @@ internal object GoalRules {
         return MachineStep(ending(state, goal, GoalEnding.STOPPING), listOf(effect)).then(::withdrawContinue)
     }
 
-    // The goal starts to end: it acts until its round has ended, and a question of its own goes with the round.
+    // The goal starts to end: it acts until its round has ended, a question of its own goes with the round, and how to go
+    // on with it is no longer for the owner.
     private fun ending(state: ConversationState, goal: GoalState, ending: GoalEnding): ConversationState = state.copy(
         goal = goal.copy(phase = if (goal.phase == GoalPhase.ASKING) GoalPhase.ACTING else goal.phase, ending = ending),
         question = questionAfter(state, goal),
+        heldWords = null,
     )
 
     // The open question once the goal's round ends or pauses: the goal's own (while it asks) is withdrawn with the round.
