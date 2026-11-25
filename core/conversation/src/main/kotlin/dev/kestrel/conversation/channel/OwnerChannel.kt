@@ -18,8 +18,9 @@ interface OwnerChannel {
     suspend fun show(output: ChannelOutput)
 
     /**
-     * Asks [question] and returns the answer that the channel itself got, as a card's button; an answer that the owner
-     * says or types reaches the conversation as an input instead. Cancelling the call withdraws the question.
+     * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
+     * so leaves no screen of Kestrel's; an answer that the owner says or types, also after "Reply…", reaches the
+     * conversation as an input instead. Cancelling the call withdraws the question.
      */
     suspend fun ask(question: ChannelQuestion): ChannelAnswer
 

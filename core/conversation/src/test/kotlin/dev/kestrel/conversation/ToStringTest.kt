@@ -37,7 +37,7 @@ class ToStringTest {
         )
         val values = listOf(
             OwnerInput(1, InputChannel.TEXT, InputIntent.Command(marker), 0, mapOf("model" to marker)),
-            InputIntent.Answer(ChannelAnswer.Text(marker, leftScreen = true)),
+            InputIntent.Answer(ChannelAnswer.Text(marker)),
             InputIntent.ContinuePast(marker),
             InputIntent.Remember(marker, marker),
             InputIntent.Forget(marker),

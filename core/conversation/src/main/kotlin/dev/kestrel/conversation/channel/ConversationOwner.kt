@@ -35,17 +35,19 @@ import java.util.concurrent.atomic.AtomicInteger
  * typed conversation's words and questions are spoken too, and a typed final reply reaches the voice as words only, so
  * that it opens no follow-up window (design 11). A question goes to that channel, and in a spoken conversation
  * "Continue the goal?" shows its card as well. While Kestrel is off ([voiceOn] is false: its listening mode is `OFF`, so
- * the voice can neither speak nor hear), a spoken conversation's words are only shown, and every question, hand-over and
- * permission request also gets the text channel's card (a permission request's is a hand-over's card, because Android's
- * dialog is shown once), from the moment Kestrel turns off; a card stays until what it
- * shows has ended, also when Kestrel is on again, so that the owner never loses a way to answer. The first answer wins, from a channel's card or from an input that the
- * engine hands over with [answer], and the others are withdrawn. [events] tells the engine when a question or a hand-over
- * opens and closes. A pause ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes the
- * gate until [resume]; the conversation's own questions ([question]) are never withdrawn by it. [startWork] clears what
- * earlier work left: a pause that came after its round had ended, and a fresh look. After a typed answer on
- * Kestrel's own screen the gate returns `RESUMED` once, so that the run looks at the screen afresh. A hand-over and a
- * permission request wait until a pause ends, and end by the channel, or by the engine's [endHandOver]; after "Kestrel,
- * continue" a permission request asks [permissions] whether Android granted them.
+ * the voice hears nothing and speaks only a typed conversation's words with the setting on, design 11), a spoken
+ * conversation's words are only shown, and every question, hand-over and permission request also gets the text channel's
+ * card (a permission request's is a hand-over's card, because Android's dialog is shown once), from the moment Kestrel
+ * turns off; a card stays until what it shows has ended, also when Kestrel is on again, so that the owner never loses a
+ * way to answer. The first answer wins, from a channel's card or from an input that the engine hands over with [answer],
+ * and the others are withdrawn. [events] tells the engine when a question or a hand-over opens and closes. A pause
+ * ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes the gate until [resume]; the
+ * conversation's own questions ([question]) are never withdrawn by it. [startWork] clears what earlier work left: a pause
+ * that came after its round had ended, and a fresh look. After an answer that the owner gave on Kestrel's own screen,
+ * whatever its kind, the gate returns `RESUMED` once, so that the run looks at the screen afresh (design 10.3). A
+ * hand-over and a permission request that a pause meets wait for the resume before they take their turn, so that the
+ * conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the engine's [endHandOver]; after
+ * "Kestrel, continue" a permission request asks [permissions] whether Android granted them.
  */
 class ConversationOwner(
     private val channels: Map<InputChannel, OwnerChannel>,
@@ -61,6 +63,9 @@ class ConversationOwner(
         val done = CompletableDeferred<T>()
     }
 
+    /** An answer as it arrived: [leftScreen] when the owner gave it on Kestrel's own screen. */
+    private class Given(val answer: ChannelAnswer, val leftScreen: Boolean)
+
     private class Draft(
         val text: String,
         val kind: QuestionKind,
@@ -71,7 +76,7 @@ class ConversationOwner(
     private val turns = Mutex()
     private val numbers = AtomicInteger()
     private val lock = Any()
-    private var openQuestion: Waiting<ChannelAnswer>? = null
+    private var openQuestion: Waiting<Given>? = null
     private var openHandOver: Waiting<HandOverEnd>? = null
     private var pause: CompletableDeferred<Unit>? = null
     private var fresh = false
@@ -114,19 +119,13 @@ class ConversationOwner(
 
     override suspend fun ask(question: String, kind: AnswerKind): Answer = answerOf(dialogue(Draft(question, kindOf(kind)), goal = true))
 
-    override suspend fun confirm(confirmation: Confirmation): ConfirmEnd {
-        confirming = confirmation.category
-        try {
-            return when (dialogue(Draft(confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation), goal = true)) {
-                ChannelAnswer.Yes -> ConfirmEnd.YES
-                ChannelAnswer.Silence -> ConfirmEnd.TIMEOUT
-                ChannelAnswer.Interrupted -> ConfirmEnd.INTERRUPTED
-                else -> ConfirmEnd.NO
-            }
-        } finally {
-            confirming = null
+    override suspend fun confirm(confirmation: Confirmation): ConfirmEnd =
+        when (dialogue(Draft(confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation), goal = true)) {
+            ChannelAnswer.Yes -> ConfirmEnd.YES
+            ChannelAnswer.Silence -> ConfirmEnd.TIMEOUT
+            ChannelAnswer.Interrupted -> ConfirmEnd.INTERRUPTED
+            else -> ConfirmEnd.NO
         }
-    }
 
     override suspend fun handOver(handOver: HandOver): HandOverEnd =
         handedOver(handOver.kind, { it.handOver(handOver) }, { it.handOver(handOver) }) { it }
@@ -142,16 +141,22 @@ class ConversationOwner(
         val paused = synchronized(lock) { pause }
         if (paused != null) {
             paused.await()
+            // The resume's fresh look is also the one that an answer on Kestrel's own screen left.
+            synchronized(lock) { fresh = false }
             return Gate.RESUMED
         }
         return if (synchronized(lock) { fresh.also { fresh = false } }) Gate.RESUMED else Gate.GO
     }
 
-    override suspend fun leaveKestrel(): Boolean = channels[routing().channel]?.leaveKestrel() ?: true
+    // With no channel for the owner's latest input, nothing can take Kestrel's own screen away.
+    override suspend fun leaveKestrel(): Boolean = channels[routing().channel]?.leaveKestrel() ?: false
 
-    /** The owner's [answer] to question [number], from an input; an older question's answer changes nothing. */
-    fun answer(number: Int, answer: ChannelAnswer) {
-        synchronized(lock) { openQuestion?.takeIf { it.number == number } }?.done?.complete(answer)
+    /**
+     * The owner's [answer] to question [number], from an input; an older question's answer changes nothing. [leftScreen] is
+     * true when he gave it on Kestrel's own screen, which leaves before the goal looks again (design 10.3).
+     */
+    fun answer(number: Int, answer: ChannelAnswer, leftScreen: Boolean = false) {
+        synchronized(lock) { openQuestion?.takeIf { it.number == number } }?.done?.complete(Given(answer, leftScreen))
     }
 
     /** Ends hand-over [number] with [end]: "Kestrel, continue", "cancel" or its 3 minutes. */
@@ -165,7 +170,7 @@ class ConversationOwner(
             if (pause == null) pause = CompletableDeferred()
             openQuestion?.takeIf { it.goal }
         }
-        open?.done?.complete(ChannelAnswer.Interrupted)
+        open?.done?.complete(Given(ChannelAnswer.Interrupted, leftScreen = false))
     }
 
     /** The goal goes on: the gate opens and returns `RESUMED` to the waiting run. */
@@ -180,29 +185,31 @@ class ConversationOwner(
     }
 
     private suspend fun dialogue(draft: Draft, goal: Boolean): ChannelAnswer = turns.withLock {
-        val waiting = Waiting<ChannelAnswer>(numbers.incrementAndGet(), goal)
+        val waiting = Waiting<Given>(numbers.incrementAndGet(), goal)
         synchronized(lock) {
             if (goal && pause != null) return@withLock ChannelAnswer.Interrupted
             openQuestion = waiting
         }
         val asked = ChannelQuestion(waiting.number, draft.text, draft.kind, draft.spoken, confirmation = draft.confirmation)
         asking = draft.kind
+        confirming = draft.confirmation?.category
         events(DialogueEvent.Asked(waiting.number, draft.kind))
         try {
-            race(asked, waiting.done).also { answer ->
-                if (answer is ChannelAnswer.Text && answer.leftScreen) synchronized(lock) { fresh = true }
-            }
+            val given = race(asked, waiting.done)
+            if (given.leftScreen) synchronized(lock) { fresh = true }
+            given.answer
         } finally {
             synchronized(lock) { if (openQuestion === waiting) openQuestion = null }
             asking = null
+            confirming = null
             events(DialogueEvent.Answered(waiting.number))
         }
     }
 
     // The question on the latest channel; in a spoken conversation its card too, at once for "Continue the goal?" and for
     // any other question from the moment Kestrel is off; and its words spoken for a typed one with the setting on. The
-    // first answer wins and the others are withdrawn.
-    private suspend fun race(asked: ChannelQuestion, answered: Deferred<ChannelAnswer>): ChannelAnswer = coroutineScope {
+    // first answer wins and the others are withdrawn. A card shows over the app, so its answer leaves no screen of Kestrel's.
+    private suspend fun race(asked: ChannelQuestion, answered: Deferred<Given>): Given = coroutineScope {
         val route = routing()
         val text = channels[InputChannel.TEXT]
         val voice = channels[InputChannel.VOICE]
@@ -220,9 +227,9 @@ class ConversationOwner(
                 awaitCancellation()
             }
         }
-        select<ChannelAnswer> {
+        select<Given> {
             answered.onAwait { it }
-            for (asker in askers) asker.onAwait { it }
+            for (asker in askers) asker.onAwait { Given(it, leftScreen = false) }
         }.also { currentCoroutineContext().cancelChildren() }
     }
 
@@ -231,9 +238,7 @@ class ConversationOwner(
         itself: suspend (OwnerChannel) -> T,
         card: suspend (OwnerChannel) -> T,
         ended: (HandOverEnd) -> T,
-    ): T = turns.withLock {
-        // A hand-over that a pause met before it began begins after the resume, as today (design D2 of sub-project 5).
-        while (true) (synchronized(lock) { pause } ?: break).await()
+    ): T = inTurnAfterPause {
         val waiting = Waiting<HandOverEnd>(numbers.incrementAndGet(), goal = true)
         synchronized(lock) { openHandOver = waiting }
         handOverKind = kind
@@ -259,6 +264,23 @@ class ConversationOwner(
             synchronized(lock) { if (openHandOver === waiting) openHandOver = null }
             handOverKind = null
             events(DialogueEvent.HandOverDone(waiting.number))
+        }
+    }
+
+    // A hand-over that a pause met before it began begins after the resume, as today (design D2 of sub-project 5). It waits
+    // for the resume before it takes its turn, so that the conversation can ask "Continue the goal?" meanwhile, and looks
+    // again once it has the turn, because a pause may have come while it waited for the turn.
+    private suspend fun <T> inTurnAfterPause(block: suspend () -> T): T {
+        while (true) {
+            synchronized(lock) { pause }?.await()
+            turns.lock()
+            if (synchronized(lock) { pause } == null) break
+            turns.unlock()
+        }
+        try {
+            return block()
+        } finally {
+            turns.unlock()
         }
     }
 

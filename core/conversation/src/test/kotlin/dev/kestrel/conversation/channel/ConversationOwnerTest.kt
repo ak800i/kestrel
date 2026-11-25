@@ -13,6 +13,7 @@ import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.HandOver
 import dev.kestrel.safety.HandOverKind
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
@@ -23,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ConversationOwnerTest {
     private val voice = FakeChannel(InputChannel.VOICE)
     private val text = FakeChannel(InputChannel.TEXT)
@@ -64,7 +66,7 @@ class ConversationOwnerTest {
 
         val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
         runCurrent()
-        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first"))
 
         assertEquals(Answer.Text("The first"), answer.await())
         assertEquals(listOf(ChannelOutput.Said("Looking.")), text.shown)
@@ -82,7 +84,7 @@ class ConversationOwnerTest {
         val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
         runCurrent()
         assertEquals(QuestionKind.FREE, text.asked.single().kind)
-        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first"))
         assertEquals(Answer.Text("The first"), answer.await())
 
         // A typed conversation's replies are still spoken with the setting on (design 11).
@@ -98,7 +100,7 @@ class ConversationOwnerTest {
         assertTrue(text.asked.isEmpty())
         voiceOn.value = false
         runCurrent()
-        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first", leftScreen = false))
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("The first"))
         assertEquals(Answer.Text("The first"), answer.await())
 
         voiceOn.value = true
@@ -184,21 +186,65 @@ class ConversationOwnerTest {
     @Test
     fun aTypedAnswerOnKestrelsScreenGivesTheGoalOneFreshLook() = runTest {
         typed()
-        text.answers += ChannelAnswer.Text("Mila", leftScreen = true)
+        val answer = async { owner.ask("Who?", AnswerKind.FREE) }
+        runCurrent()
+        owner.answer(text.asked.single().number, ChannelAnswer.Text("Mila"), leftScreen = true)
 
-        assertEquals(Answer.Text("Mila"), owner.ask("Who?", AnswerKind.FREE))
+        assertEquals(Answer.Text("Mila"), answer.await())
         assertEquals(Gate.RESUMED, owner.gate())
         assertEquals(Gate.GO, owner.gate())
 
-        text.answers += ChannelAnswer.Text("Ana", leftScreen = true)
-        owner.ask("Who else?", AnswerKind.FREE)
+        // A pause that meets the fresh look gives it once, with its own resume.
+        val again = async { owner.ask("Who else?", AnswerKind.FREE) }
+        runCurrent()
+        owner.answer(text.asked.last().number, ChannelAnswer.Text("Ana"), leftScreen = true)
+        again.await()
+        owner.pause()
+        val gate = async { owner.gate() }
+        runCurrent()
+        owner.resume()
+        assertEquals(Gate.RESUMED, gate.await())
+        assertEquals(Gate.GO, owner.gate())
+
+        // Work that starts drops a fresh look that earlier work left.
+        val last = async { owner.ask("And?", AnswerKind.FREE) }
+        runCurrent()
+        owner.answer(text.asked.last().number, ChannelAnswer.Text("Iva"), leftScreen = true)
+        last.await()
         owner.startWork()
         assertEquals(Gate.GO, owner.gate())
     }
 
     @Test
+    fun everyKindOfAnswerTypedOnKestrelsScreenGivesTheFreshLookAndACardsButtonNone() = runTest {
+        typed()
+        val yes = async { owner.ask("Send it?", AnswerKind.YES_NO) }
+        runCurrent()
+        owner.answer(text.asked.last().number, ChannelAnswer.Yes, leftScreen = true)
+        assertEquals(Answer.Yes, yes.await())
+        assertEquals(Gate.RESUMED, owner.gate())
+
+        val pick = async { owner.ask("Which number should I use?", AnswerKind.PICK_NUMBER) }
+        runCurrent()
+        owner.answer(text.asked.last().number, ChannelAnswer.Pick(2), leftScreen = true)
+        assertEquals(Answer.Number(2), pick.await())
+        assertEquals(Gate.RESUMED, owner.gate())
+
+        // A card's button acts over the app, and a spoken answer leaves no screen of Kestrel's.
+        text.answers += ChannelAnswer.No
+        assertEquals(Answer.No, owner.ask("Send it?", AnswerKind.YES_NO))
+        assertEquals(Gate.GO, owner.gate())
+        route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
+        val spoken = async { owner.ask("Send it?", AnswerKind.YES_NO) }
+        runCurrent()
+        owner.answer(voice.asked.last().number, ChannelAnswer.Yes)
+        assertEquals(Answer.Yes, spoken.await())
+        assertEquals(Gate.GO, owner.gate())
+    }
+
+    @Test
     fun aConfirmationMapsItsAnswers() = runTest {
-        voice.answers += listOf(ChannelAnswer.Yes, ChannelAnswer.Text("maybe", leftScreen = false), ChannelAnswer.Silence, ChannelAnswer.Interrupted)
+        voice.answers += listOf(ChannelAnswer.Yes, ChannelAnswer.Text("maybe"), ChannelAnswer.Silence, ChannelAnswer.Interrupted)
 
         assertEquals(
             listOf(ConfirmEnd.YES, ConfirmEnd.NO, ConfirmEnd.TIMEOUT, ConfirmEnd.INTERRUPTED),
@@ -208,7 +254,14 @@ class ConversationOwnerTest {
         assertEquals(confirmation.spoken, voice.asked.first().spoken)
         assertEquals(confirmation, voice.asked.first().confirmation)
 
+        // The confirmation is open only once it is asked, after the question before it.
+        val before = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        runCurrent()
         val pending = async { owner.confirm(confirmation) }
+        runCurrent()
+        assertNull(owner.confirming)
+        owner.answer(voice.asked.last().number, ChannelAnswer.Yes)
+        assertEquals(ChannelAnswer.Yes, before.await())
         runCurrent()
         assertEquals(Category.SENDING, owner.confirming)
         owner.answer(voice.asked.last().number, ChannelAnswer.No)
@@ -231,6 +284,26 @@ class ConversationOwnerTest {
         assertEquals(HandOverEnd.CONTINUED, pending.await())
         assertNull(owner.handOverKind)
         assertEquals(DialogueEvent.HandOverDone(number), events.last())
+    }
+
+    @Test
+    fun aHandOverThatWaitsForTheResumeLetsContinueTheGoalBeAsked() = runTest {
+        owner.pause()
+        val handing = async { owner.handOver(HandOver.of(HandOverKind.PAYMENT)) }
+        runCurrent()
+        assertTrue(voice.handOvers.isEmpty())
+
+        val answer = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        runCurrent()
+        assertEquals(QuestionKind.CONTINUE_GOAL, voice.asked.single().kind)
+        owner.answer(voice.asked.single().number, ChannelAnswer.Yes)
+        assertEquals(ChannelAnswer.Yes, answer.await())
+
+        owner.resume()
+        runCurrent()
+        assertEquals(1, voice.handOvers.size)
+        owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.CONTINUED)
+        assertEquals(HandOverEnd.CONTINUED, handing.await())
     }
 
     @Test
@@ -273,5 +346,9 @@ class ConversationOwnerTest {
         assertTrue(owner.leaveKestrel())
         typed()
         assertFalse(owner.leaveKestrel())
+
+        // With no channel for the latest input, nothing can take Kestrel's screen away.
+        val voiceOnly = ConversationOwner(mapOf(InputChannel.VOICE to voice), { granted }, voiceOn, { route }) {}
+        assertFalse(voiceOnly.leaveKestrel())
     }
 }

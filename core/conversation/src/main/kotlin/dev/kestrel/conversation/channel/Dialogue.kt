@@ -16,6 +16,7 @@ interface Dialogue {
 sealed interface DialogueEvent {
     data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
 
+    /** Question [number] closed: answered, withdrawn or cancelled. */
     data class Answered(val number: Int) : DialogueEvent
 
     data class HandedOver(val number: Int) : DialogueEvent
