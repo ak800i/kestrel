@@ -186,7 +186,7 @@ internal class DataSteps(private val run: TaskRun) {
     private fun deleted(go: Clearance.Go, contact: FoundContact) {
         val yes = go.confirmation
         if (yes != null) {
-            run.sent(yes, share = false, items = 0, covered = false)
+            run.sends.sent(yes, share = false, items = 0, covered = false)
             return
         }
         if (go.category == Category.DELETING) run.unconfirmed++

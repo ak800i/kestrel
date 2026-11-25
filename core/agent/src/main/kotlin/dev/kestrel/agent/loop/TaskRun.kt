@@ -31,7 +31,6 @@ import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.prompt.SystemPrompt
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.agent.tools.Tools
-import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.providers.chat.AssistantPart
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
@@ -52,7 +51,6 @@ import dev.kestrel.safety.PlayServices
 import dev.kestrel.safety.Proposal
 import dev.kestrel.safety.Redactor
 import dev.kestrel.safety.SafetyCheck
-import dev.kestrel.safety.ShareFlow
 import dev.kestrel.safety.TaskAllowance
 import dev.kestrel.safety.TaskSafety
 import dev.kestrel.safety.Vault
@@ -105,10 +103,6 @@ internal class Done(
     val failed: Boolean get() = outcome is Outcome.Failed || outcome is Outcome.Refused || outcome is Outcome.CheckFailed || invalid
 }
 
-/** A send that the owner confirmed (design D14), kept in memory for the completion check; never logged. */
-internal data class ConfirmedSend(val recipients: List<String>, val content: String?, val share: Boolean) {
-    override fun toString(): String = "ConfirmedSend(recipients=${recipients.size}, content=${content?.length}, share=$share)"
-}
 /** What the safety check lets a step do (design D13 and D14). */
 internal sealed interface Clearance {
     /**
@@ -172,10 +166,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     var replies = 0
         private set
 
-    // What the report and the completion check need.
-    val sends = mutableListOf<String>()
-    val recipients = mutableListOf<String>()
-    val confirmedSends = mutableListOf<ConfirmedSend>()
+    /** What the run sent, shared and deleted after the owner's yes, for the report and the completion check (D14, D24). */
+    val sends = Sends(ledger) { safety.shareFlow }
     val okDataSteps = mutableSetOf<Int>()
     private val ownerSteps = mutableSetOf<Int>()
 
@@ -192,7 +184,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     var confirmed = 0
     var unconfirmed = 0
     var beforeTestMode = 0
-    var shareItems = 0
     private var appStopped = false
     private var declined = false
     private var inputTokens = 0L
@@ -652,12 +643,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private var confirmedSerial: Int? = null
     private var confirmedRecipients: Set<String> = emptySet()
 
-    /** The share flow, by its serial, and the recipients whose send the report already holds (D14, D24). */
-    var countedShare: Pair<Int, List<String>>? = null
-
-    // The shares whose taps the owner confirmed and which have not been sent yet, by their flows' serials (D24).
-    private val pendingShares = mutableMapOf<Int, Confirmation>()
-
     // The Cc and Bcc expanders that the task tapped, each only once (D14).
     private val expanded = mutableSetOf<String>()
 
@@ -674,7 +659,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
                 // Only a share's own taps that send to chats are covered: a press that sends and names its recipients.
                 val shareTap = flow != null && proposal.kind in PRESSING && decision.confirmation.category == Category.SENDING &&
                     decision.confirmation.recipients.isNotEmpty()
-                val chats = chats(decision.confirmation.recipients)
+                val chats = Sends.chats(decision.confirmation.recipients)
                 if (shareTap && flow.serial == confirmedSerial && chats == confirmedRecipients) {
                     return Clearance.Go(assessment.category, decision.confirmation, covered = true)
                 }
@@ -719,90 +704,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         return Done(tool, Outcome.Refused(reason), target, after = after)
     }
 
-    /**
-     * A send that the owner confirmed and Kestrel pressed (D14, D24). A tap that an earlier yes [covered] is the same send
-     * (a row and then the app's own Send), so it is counted once. A confirmation without recipients (an app's own Share
-     * button, whose chat comes next) sends nothing yet.
-     */
-    fun sent(confirmation: Confirmation, share: Boolean, items: Int, covered: Boolean) {
-        if (covered) return
-        if (confirmation.category == Category.DELETING) ledger.add("deleted ${deleted(confirmation.content)}")
-        if (confirmation.category != Category.SENDING || confirmation.recipients.isEmpty()) return
-        confirmedSends += ConfirmedSend(confirmation.recipients, confirmation.content, share)
-        recipients += confirmation.recipients
-        val to = confirmation.recipients.joinToString(" and ")
-        val app = confirmation.appLabel?.let { " on $it" }.orEmpty()
-        sends += "Sent to $to$app."
-        if (share) {
-            shareItems += items
-            ledger.add("shared $items ${if (items == 1) "item" else "items"} with $to")
-        } else {
-            ledger.add("sent the message to $to")
-        }
-    }
-
-    /**
-     * A confirmed tap of share flow [flow] that worked (D14, D24). The share is sent when the flow ended with the tap
-     * ([ended]: the app shows the chat that it went to, or it left the flow's apps), as after the app's own Send or a row
-     * that sends at once; it is counted once per flow and recipients ([countedShare]). A tap that only picked a chat leaves
-     * the share pending: the completion check asks for its evidence, and the report says that it was tried, never sent.
-     */
-    fun shareTapped(flow: ShareFlow, confirmation: Confirmation, ended: Boolean) {
-        if (confirmation.category != Category.SENDING || confirmation.recipients.isEmpty()) return
-        if (!ended) {
-            pendingShares[flow.serial] = confirmation
-            return
-        }
-        pendingShares -= flow.serial
-        val share = flow.serial to chats(confirmation.recipients).sorted()
-        if (countedShare == share) return
-        countedShare = share
-        sent(confirmation, share = true, items = flow.count?.let { it.photos + it.videos } ?: 0, covered = false)
-    }
-
-    /** Takes back the pending share of [flow]: a tap that only opened an e-mail's compose screen sent nothing yet (D14). */
-    fun forgetPendingShare(flow: ShareFlow) {
-        pendingShares -= flow.serial
-    }
-
-    /**
-     * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line
-     * and no recipient, and the ledger says that the tap may not have worked (D24). A send stays among the confirmed
-     * sends, so that the completion check still asks for its evidence (D21); a press without recipients sent nothing.
-     */
-    fun unsure(confirmation: Confirmation, share: Boolean) {
-        val to = confirmation.recipients.joinToString(" and ")
-        val what = when {
-            confirmation.category == Category.DELETING -> "delete ${deleted(confirmation.content)}"
-            confirmation.category != Category.SENDING || confirmation.recipients.isEmpty() -> return
-            share -> "share the items with $to"
-            else -> "send the message to $to"
-        }
-        if (confirmation.category == Category.SENDING) {
-            confirmedSends += ConfirmedSend(confirmation.recipients, confirmation.content, share)
-            // This line already says that the share was tried.
-            if (share) safety.shareFlow?.serial?.let { pendingShares -= it }
-        }
-        ledger.add("tried to $what, but the tap may not have worked")
-    }
-
-    // The shares that were confirmed but not seen to be sent, as the completion check needs them (D21).
-    private fun pendingSends(): List<ConfirmedSend> = pendingShares.values.map { ConfirmedSend(it.recipients, it.content, share = true) }
-
-    // A share that was confirmed but never seen to be sent is reported as tried (D24).
-    private fun pendingLines(): List<String> =
-        pendingShares.values.map { "tried to share the items with ${it.recipients.joinToString(" and ")}, but I couldn't see that they were sent" }
-
-    // The folded names of [recipients], which a share's yes compares as a set (D14).
-    private fun chats(recipients: List<String>): Set<String> = recipients.map(Normalizer::normalize).toSet()
-
-    // A delete's content is a count for a selection ("3") or the title of what it deletes.
-    private fun deleted(content: String?): String = when {
-        content == null -> "an item"
-        content.all(Char::isDigit) -> if (content == "1") "1 item" else "$content items"
-        else -> content
-    }
-
     // --- Finishing ---
 
     private suspend fun finish(call: AgentCall.Finish): Done {
@@ -822,7 +723,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
             throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
         }
-        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, confirmedSends + pendingSends(), lastChecked, lastSlider, safety::hide)) {
+        when (val verdict = CompletionCheck.check(call, observation.table, fresh, label(front), okDataSteps + ownerSteps, sends.confirmed, lastChecked, lastSlider, safety::hide)) {
             Verdict.Passed -> Unit
             Verdict.Unverifiable -> throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
             is Verdict.Missing -> return finishFailed(call, verdict.what, after = fresh)
@@ -880,9 +781,9 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         detail = detail?.let(vault::spoken),
         summary = if (declined) null else summary,
         error = error,
-        ledger = (ledger.lines + pendingLines()).map(vault::spoken),
-        sends = sends.toList(),
-        recipients = recipients.toList(),
+        ledger = (ledger.lines + sends.pendingLines).map(vault::spoken),
+        sends = sends.lines,
+        recipients = sends.recipients,
         steps = replies,
         workMillis = limits.workMillis,
         credits = limits.credits,
@@ -893,7 +794,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         confirmed = confirmed,
         unconfirmed = unconfirmed,
         beforeTestMode = beforeTestMode,
-        shareItems = shareItems,
+        shareItems = sends.shareItems,
         modelId = ports.model.model.lightweight.id,
         recording = finished.takeIf { reason == EndReason.FINISHED },
         offerRoutine = offerRoutine && reason == EndReason.FINISHED,

@@ -97,7 +97,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         // The share counts as tried from the moment the tap worked, so that a cancel while Kestrel waits for its chat still
         // reports it, never "I didn't change anything" (D24).
         val done = perform(call, entry, proposal, fresh, category, confirmed = true, shareFlow = sharing) {
-            sharing?.let { run.shareTapped(it, yes, ended = false) }
+            sharing?.let { run.sends.shareTapped(it, yes, ended = false) }
         }
         when {
             // A slider sends and deletes nothing, whatever its category; its ledger line comes from its own result (D24).
@@ -105,17 +105,17 @@ internal class ScreenSteps(private val run: TaskRun) {
             // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
             // of the share flow needs a new yes.
             done.outcome == Outcome.Uncertain -> {
-                run.unsure(yes, share = flow != null)
+                run.sends.unsure(yes, share = flow != null)
                 run.forgetConfirmedFlow()
             }
             done.outcome is Outcome.Failed -> Unit
             // A tap that opened an e-mail's compose screen (a share sheet's mail app) sent nothing yet: the e-mail's own
             // Send is asked and counted (D14, D24).
             yes.category == Category.SENDING && !SafetyCheck.showsEmailCompose(fresh) && done.after?.let(SafetyCheck::showsEmailCompose) == true ->
-                sharing?.let(run::forgetPendingShare)
+                sharing?.let(run.sends::forgetPendingShare)
             // A share is sent by the tap after which its flow ends, not by a tap that only picks a chat (D14, D24).
-            flow != null && yes.category == Category.SENDING -> run.shareTapped(flow, yes, ended = run.safety.shareFlow?.serial != flow.serial)
-            else -> run.sent(yes, share = false, items = 0, covered = covered)
+            flow != null && yes.category == Category.SENDING -> run.sends.shareTapped(flow, yes, ended = run.safety.shareFlow?.serial != flow.serial)
+            else -> run.sends.sent(yes, share = false, items = 0, covered = covered)
         }
         return done
     }

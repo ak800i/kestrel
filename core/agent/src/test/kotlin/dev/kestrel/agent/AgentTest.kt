@@ -622,8 +622,8 @@ class AgentTest {
 
         assertTrue(report.sends.isEmpty())
         // The completion check (D21) must still find evidence for the doubted send.
-        assertEquals(listOf(listOf("Ana Petrović")), run.confirmedSends.map { it.recipients })
-        assertFalse(run.confirmedSends.single().share)
+        assertEquals(listOf(listOf("Ana Petrović")), run.sends.confirmed.map { it.recipients })
+        assertFalse(run.sends.confirmed.single().share)
     }
 
     @Test
