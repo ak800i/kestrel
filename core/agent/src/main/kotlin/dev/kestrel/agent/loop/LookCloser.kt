@@ -54,7 +54,7 @@ internal class LookCloser(private val run: TaskRun) {
     // Null: no OCR files.
     private suspend fun ocr(call: AgentCall.LookCloser, target: TableEntry?): Done? {
         val snapshot = run.fresh()
-        if (!run.capturable(snapshot)) return null
+        if (!run.frontCheck.capturable(snapshot)) return null
         val lines = withCapture { capture -> read(capture, snapshot, target) } ?: return null
         val kept = run.ports.eyes.once(lines.filter { it.score >= MIN_SCORE && !overlapsText(it, snapshot) })
         return Done(
@@ -70,7 +70,7 @@ internal class LookCloser(private val run: TaskRun) {
     private suspend fun screenshot(call: AgentCall.LookCloser, target: TableEntry?): Done? {
         val asked = run.fresh()
         val front = ScreenTree.frontWindow(asked)?.packageName ?: return null
-        if (!run.currentModel.takesImages || !run.capturable(asked)) return null
+        if (!run.currentModel.takesImages || !run.frontCheck.capturable(asked)) return null
         val provider = run.ports.model.model
         if (!run.recalled(false) { run.ports.memory.screenshotApproved(front, provider.providerId) }) {
             val app = run.label(front) ?: front.substringAfterLast('.')
@@ -87,7 +87,7 @@ internal class LookCloser(private val run: TaskRun) {
         repeat(CAPTURES) {
             val now = run.fresh()
             val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))
-            if (!same || !run.capturable(now)) {
+            if (!same || !run.frontCheck.capturable(now)) {
                 return Done(call.tool, text = "Result: $CHANGED", summary = "Step ${run.replies}: look_closer took no screenshot; the screen changed.",
                     last = "look_closer took no screenshot; the screen changed", after = now, progress = false)
             }

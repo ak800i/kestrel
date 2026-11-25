@@ -14,10 +14,11 @@ internal data class ConfirmedSend(val recipients: List<String>, val content: Str
 /**
  * What a run sent, shared and deleted after the owner's yes (design D14, D21 and D24): the report's "Sent to …" [lines],
  * its [recipients] and [shareItems], the [ledger]'s lines of what went and what was only tried, and the [confirmed] sends
- * whose evidence the completion check asks for, also a share whose chat the run never saw. [shareFlow] is the run's share
- * flow now. It holds names from the screen and the contacts, so toString prints only counts.
+ * whose evidence the completion check asks for, also a share whose chat the run never saw; and which share flow and chats
+ * the owner's last yes for a share's tap named, so that it covers the following taps of that flow. It holds names from
+ * the screen and the contacts, so toString prints only counts.
  */
-internal class Sends(private val ledger: Ledger, private val shareFlow: () -> ShareFlow?) {
+internal class Sends(private val ledger: Ledger) {
     private val sentLines = mutableListOf<String>()
     private val sentTo = mutableListOf<String>()
     private val confirmedSends = mutableListOf<ConfirmedSend>()
@@ -27,6 +28,11 @@ internal class Sends(private val ledger: Ledger, private val shareFlow: () -> Sh
 
     // The shares whose taps the owner confirmed and which have not been sent yet, by their flows' serials (D24).
     private val pendingShares = mutableMapOf<Int, Confirmation>()
+
+    // The share flow at the owner's last yes for a share's tap, by its serial, and the folded names of the chats that the
+    // yes named (D14).
+    private var confirmedSerial: Int? = null
+    private var confirmedChats: Set<String> = emptySet()
 
     /** The report's sentences of what was sent: "Sent to Ana on Viber." */
     val lines: List<String> get() = sentLines.toList()
@@ -44,6 +50,30 @@ internal class Sends(private val ledger: Ledger, private val shareFlow: () -> Sh
     /** A share that was confirmed but never seen to be sent, reported as tried (D24). */
     val pendingLines: List<String>
         get() = pendingShares.values.map { "tried to share the items with ${it.recipients.joinToString(" and ")}, but I couldn't see that they were sent" }
+
+    /**
+     * Whether the owner's last yes covers [confirmation], a tap of share [flow] that sends to chats (D14): one yes covers
+     * the following taps of that flow that send to the same chats, in any order; a new flow or other chats ask again.
+     */
+    fun covers(flow: ShareFlow, confirmation: Confirmation): Boolean =
+        flow.serial == confirmedSerial && chats(confirmation.recipients) == confirmedChats
+
+    /**
+     * The owner said yes to [confirmation]: for a tap of share [flow] that sends to chats, the yes covers that flow's
+     * following taps to the same chats; any other yes covers nothing (D14).
+     */
+    fun confirmed(flow: ShareFlow?, confirmation: Confirmation) {
+        confirmedSerial = flow?.serial
+        confirmedChats = if (flow != null) chats(confirmation.recipients) else emptySet()
+    }
+
+    /**
+     * The screen changed after a yes, or a press after it may not have worked, so a later send of the share flow needs a
+     * new yes (D14, D32 item 29).
+     */
+    fun forgetConfirmedFlow() {
+        confirmedSerial = null
+    }
 
     /**
      * A send that the owner confirmed and Kestrel pressed (D14, D24). A tap that an earlier yes [covered] is the same send
@@ -92,11 +122,13 @@ internal class Sends(private val ledger: Ledger, private val shareFlow: () -> Sh
     }
 
     /**
-     * A confirmed press that may not have worked (D32 item 29): it does not count as done, so it adds no "Sent to …" line
-     * and no recipient, and the ledger says that the tap may not have worked (D24). A send stays among the confirmed
-     * sends, so that the completion check still asks for its evidence (D21); a press without recipients sent nothing.
+     * A confirmed press that may not have worked (D32 item 29), in share [flow] when the press was a share's: it does not
+     * count as done, so it adds no "Sent to …" line and no recipient, and the ledger says that the tap may not have worked
+     * (D24), which also takes the place of the flow's pending share. A send stays among the confirmed sends, so that the
+     * completion check still asks for its evidence (D21); a press without recipients sent nothing.
      */
-    fun unsure(confirmation: Confirmation, share: Boolean) {
+    fun unsure(confirmation: Confirmation, flow: ShareFlow?) {
+        val share = flow != null
         val to = confirmation.recipients.joinToString(" and ")
         val what = when {
             confirmation.category == Category.DELETING -> "delete ${deleted(confirmation.content)}"
@@ -107,7 +139,7 @@ internal class Sends(private val ledger: Ledger, private val shareFlow: () -> Sh
         if (confirmation.category == Category.SENDING) {
             confirmedSends += ConfirmedSend(confirmation.recipients, confirmation.content, share)
             // This line already says that the share was tried.
-            if (share) shareFlow()?.serial?.let { pendingShares -= it }
+            flow?.let { pendingShares -= it.serial }
         }
         ledger.add("tried to $what, but the tap may not have worked")
     }
@@ -122,8 +154,6 @@ internal class Sends(private val ledger: Ledger, private val shareFlow: () -> Sh
     override fun toString(): String =
         "Sends(sent=${sentLines.size}, confirmed=${confirmedSends.size}, pending=${pendingShares.size}, shareItems=$shareItems)"
 
-    companion object {
-        /** The folded names of [recipients], which a share's yes compares as a set (D14). */
-        fun chats(recipients: List<String>): Set<String> = recipients.map(Normalizer::normalize).toSet()
-    }
+    // The folded names of [recipients], which a share's yes compares as a set (D14).
+    private fun chats(recipients: List<String>): Set<String> = recipients.map(Normalizer::normalize).toSet()
 }

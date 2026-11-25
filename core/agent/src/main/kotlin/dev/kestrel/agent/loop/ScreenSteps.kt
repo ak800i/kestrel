@@ -86,7 +86,7 @@ internal class ScreenSteps(private val run: TaskRun) {
                 is PointCheck.Press -> fresh = point.screen
                 is PointCheck.Changed -> return changedAfter(call, entry, point.screen)
                 is PointCheck.Owner -> {
-                    run.forgetConfirmedFlow()
+                    run.sends.forgetConfirmedFlow()
                     return run.handOver(point.handOver, call.tool)
                 }
             }
@@ -105,8 +105,8 @@ internal class ScreenSteps(private val run: TaskRun) {
             // A press that may not have worked is not a send (D32 item 29): the report never claims it, and the next press
             // of the share flow needs a new yes.
             done.outcome == Outcome.Uncertain -> {
-                run.sends.unsure(yes, share = flow != null)
-                run.forgetConfirmedFlow()
+                run.sends.unsure(yes, flow)
+                run.sends.forgetConfirmedFlow()
             }
             done.outcome is Outcome.Failed -> Unit
             // A tap that opened an e-mail's compose screen (a share sheet's mail app) sent nothing yet: the e-mail's own
@@ -129,7 +129,7 @@ internal class ScreenSteps(private val run: TaskRun) {
     }
 
     private fun changedAfter(call: AgentCall, entry: TableEntry?, screen: ScreenSnapshot): Done {
-        run.forgetConfirmedFlow()
+        run.sends.forgetConfirmedFlow()
         return Done(call.tool, Outcome.CheckFailed(CHANGED_AFTER), entry, after = screen)
     }
 
@@ -153,7 +153,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         val x = entry.bounds.centerX
         val y = entry.bounds.centerY
         val window = windowAt(before, x, y) ?: return PointCheck.Changed(before)
-        if (!run.capturable(before)) {
+        if (!run.frontCheck.capturable(before)) {
             val playServices = before.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }
             return PointCheck.Owner(if (playServices) HandOver.of(HandOverKind.PLAY_SERVICES) else HandOver(HandOverKind.RECIPIENT, PRESS_YOURSELF))
         }

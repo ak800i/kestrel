@@ -22,11 +22,9 @@ import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
-import dev.kestrel.agent.port.GlobalKind
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.RoleModel
-import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.prompt.SystemPrompt
 import dev.kestrel.agent.tools.AgentCall
@@ -40,7 +38,6 @@ import dev.kestrel.providers.http.ProviderError
 import dev.kestrel.providers.http.ProviderException
 import dev.kestrel.providers.profiles.ModelRole
 import dev.kestrel.safety.ActionKind
-import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Assessment
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.Confirmation
@@ -170,7 +167,10 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         private set
 
     /** What the run sent, shared and deleted after the owner's yes, for the report and the completion check (D14, D24). */
-    val sends = Sends(ledger) { safety.shareFlow }
+    val sends = Sends(ledger)
+
+    /** What is in front when the run looks at the screen (D16, D24; design 10.2 of sub-project 7). */
+    val frontCheck = FrontCheck(this)
     val okDataSteps = mutableSetOf<Int>()
     private val ownerSteps = mutableSetOf<Int>()
 
@@ -187,7 +187,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     var confirmed = 0
     var unconfirmed = 0
     var beforeTestMode = 0
-    private var appStopped = false
     private var declined = false
     private var inputTokens = 0L
     private var outputTokens = 0L
@@ -220,7 +219,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         log(TaskLog.Kind.START, "request: ${request.text}")
         // A resumed goal's request is in its record already (design 7.6 of sub-project 7).
         if (task.resume == null) trace.requested(request)
-        val first = checkFront(fresh())
+        val first = frontCheck.checked(fresh())
         remembering { memory.load() }
         val context = recalled(null) { memory.context(task.text) }
         names = task.knownNames + memory.aliasKeys
@@ -312,10 +311,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         val data = done.data?.takeIf { next == null }
         if (next != null) done.data?.let { line += "\n" + it.text }
         done.extra?.let { line += "\n" + it.text }
-        if (appStopped) {
-            line += "\n" + APP_STOPPED
-            appStopped = false
-        }
+        if (frontCheck.takeAppStopped()) line += "\n" + APP_STOPPED
         val failed = done.failed
         conversation.add(Step(
             number = replies,
@@ -487,78 +483,12 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     /** The front app's launcher label, which the observation and the safety check name (D8, D13). */
     suspend fun label(packageName: String?): String? = packageName?.let { ports.apps.label(it) }
 
-    /**
-     * Whether Kestrel may capture [snapshot] (D16, D20): never while a Play services window is on screen or an agent-free
-     * app is in front. The eyes refuse the recent-apps and home screens themselves.
-     */
-    fun capturable(snapshot: ScreenSnapshot): Boolean {
-        if (snapshot.windows.any { it.packageName == AgentFreeApps.PLAY_SERVICES }) return false
-        val front = ScreenTree.frontWindow(snapshot)?.packageName ?: return false
-        return !settings.agentFree.isAgentFree(front)
-    }
-
     /** The model that the task uses now (D7), whose `takesImages` decides `look_closer`'s screenshot (D20). */
     val currentModel: RoleModel get() = escalation.current
 
-    /**
-     * Checks the app in front of [snapshot] before it is observed (D16, D24): Kestrel's own screen is waited for through
-     * [pastKestrel]; another agent-free app ends the task; a Play services screen is handed over; a crashed app is closed
-     * with back. Returns the snapshot to observe.
-     */
-    suspend fun checkFront(snapshot: ScreenSnapshot): ScreenSnapshot {
-        var current = snapshot
-        repeat(FRONT_CHECKS) {
-            current = pastKestrel(current) { fresh() }
-            val front = ScreenTree.frontWindow(current)?.packageName
-            when {
-                settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
-                PlayServices.handsOver(current) -> handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
-                crashed(current) -> {
-                    ports.screen.act(ScreenAction.Global(GlobalKind.BACK))
-                    appStopped = true
-                }
-                else -> return current
-            }
-            current = fresh()
-        }
-        // The screen after the last round is checked too: it is never observed while it shows one of these.
-        current = pastKestrel(current) { fresh() }
-        val front = ScreenTree.frontWindow(current)?.packageName
-        if (settings.agentFree.isAgentFree(front)) throw Ended(EndReason.AGENT_FREE, detail = label(front) ?: front)
-        if (PlayServices.handsOver(current) || crashed(current)) throw Ended(EndReason.STUCK)
-        return current
-    }
-
-    /**
-     * The screen behind Kestrel's own (design 10.2 of sub-project 7), the one rule for every look at the screen: [snapshot]
-     * when Kestrel's own screen is not in front of it; otherwise the owner port waits until that screen has left, a wait
-     * that does not count as work, and [read] reads the screen again, at most [FRONT_CHECKS] times, since the screen may
-     * come back. The task ends as interrupted when Kestrel's own screen stays through a wait or is still in front after
-     * the last one. A null screen, which [read] may give, is returned as it is.
-     */
-    private suspend fun <S : ScreenSnapshot?> pastKestrel(snapshot: S, read: suspend () -> S): S {
-        var current = snapshot
-        repeat(FRONT_CHECKS) {
-            if (current?.let(AgentFreeApps::kestrelInFront) != true) return current
-            if (!limits.waiting { ports.owner.leaveKestrel() }) throw kestrelStayed()
-            current = read()
-        }
-        if (current?.let(AgentFreeApps::kestrelInFront) == true) throw kestrelStayed()
-        return current
-    }
-
-    private fun kestrelStayed(): Ended = Ended(EndReason.INTERRUPTED, interruption = Interruption.KESTREL_SCREEN)
-
-    private fun crashed(snapshot: ScreenSnapshot): Boolean {
-        val system = snapshot.windows.filter { it.packageName == ANDROID }.map { it.id }.toSet()
-        val texts = snapshot.windows.filter { it.id in system }.mapNotNull { it.title } +
-            snapshot.elements.filter { it.windowId in system }.mapNotNull { it.label }
-        return texts.any { CRASHED.containsMatchIn(it) }
-    }
-
     /** The observation of [after], which becomes the newest (D8). */
     suspend fun observe(after: ScreenSnapshot, last: String?, targetKey: String?, ocr: List<OcrLine> = emptyList()): Observation {
-        val checked = checkFront(after)
+        val checked = frontCheck.checked(after)
         val front = ScreenTree.frontWindow(checked)?.packageName
         val previous = if (::observation.isInitialized) observation else null
         val next = builder.build(ObservationInput(replies + 1, checked, label(front), last, previous, targetKey, ocr))
@@ -576,7 +506,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
 
     /** After a resume (D2): the agent observes the screen again before it acts, because the owner may have changed it. */
     private suspend fun resumed() {
-        appStopped = false
+        // The screen after the pause is new, so an app that stopped before it is no news.
+        frontCheck.takeAppStopped()
         val next = observe(fresh(), last = null, targetKey = null)
         conversation.addObservation(replies, Redacted.kestrel(RESUMED), next)
         pendingPrompt = RESUMED + "\n" + next.text
@@ -615,7 +546,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         return Done(tool, text = OWNER_DID_IT_RESULT, summary = "Step $replies: $OWNER_DID_IT.", last = OWNER_DID_IT, after = fresh(), progress = true)
     }
 
-    private suspend fun handOverOnly(handOver: HandOver) {
+    /** A hand-over without a step of its own, such as a Play services screen in front (D15, D16). */
+    suspend fun handOverOnly(handOver: HandOver) {
         gate()
         when (limits.waiting { ports.owner.handOver(handOver) }) {
             HandOverEnd.CONTINUED -> Unit
@@ -641,12 +573,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         return assessment
     }
 
-    // The share flow at the owner's last yes for a share's tap, by its serial, and the folded names of the recipients that
-    // the yes named: one yes covers the following taps of that flow that send to the same recipients, in any order; a new
-    // flow, other recipients or a question of another kind asks again (D14).
-    private var confirmedSerial: Int? = null
-    private var confirmedRecipients: Set<String> = emptySet()
-
     // The Cc and Bcc expanders that the task tapped, each only once (D14).
     private val expanded = mutableSetOf<String>()
 
@@ -659,12 +585,11 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
             is Decision.HandOver -> Clearance.Stop(handOver(decision.handOver, tool))
             is Decision.Confirm -> {
                 if (decision.confirmation.category == Category.SENDING && expandCopies(screen)) return Clearance.Again
-                val flow = safety.shareFlow
-                // Only a share's own taps that send to chats are covered: a press that sends and names its recipients.
-                val shareTap = flow != null && proposal.kind in PRESSING && decision.confirmation.category == Category.SENDING &&
-                    decision.confirmation.recipients.isNotEmpty()
-                val chats = Sends.chats(decision.confirmation.recipients)
-                if (shareTap && flow.serial == confirmedSerial && chats == confirmedRecipients) {
+                // Only a share's own taps that send to chats can be covered: a press that sends and names its recipients.
+                val shareTap = safety.shareFlow?.takeIf {
+                    proposal.kind in PRESSING && decision.confirmation.category == Category.SENDING && decision.confirmation.recipients.isNotEmpty()
+                }
+                if (shareTap != null && sends.covers(shareTap, decision.confirmation)) {
                     return Clearance.Go(assessment.category, decision.confirmation, covered = true)
                 }
                 if (gate()) return Clearance.Again
@@ -675,8 +600,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
                 }
                 talk.countAgain()
                 confirmed++
-                confirmedSerial = flow?.serial?.takeIf { shareTap }
-                confirmedRecipients = if (shareTap) chats else emptySet()
+                sends.confirmed(shareTap, decision.confirmation)
                 Clearance.Go(assessment.category, decision.confirmation)
             }
         }
@@ -692,14 +616,6 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         val outcome = ports.screen.act(tap)
         log(TaskLog.Kind.ACTION, "tap: opened Cc and Bcc before the question (${if (outcome.done) "done" else "failed"})")
         return outcome.done
-    }
-
-    /**
-     * The screen changed after a yes, or a press after it may not have worked, so a later send of the share flow needs a
-     * new yes (D14, D32 item 29).
-     */
-    fun forgetConfirmedFlow() {
-        confirmedSerial = null
     }
 
     /** A blocked action: test mode's block ends the task (D18); any other block is the model's to read. */
@@ -722,7 +638,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         }
         // Kestrel's own screen in front is waited for as before every observation; when it stays, the task ends as
         // interrupted, which is no failure of the route notes and gives them no strike (design 10.2 of sub-project 7).
-        val fresh = pastKestrel(ports.screen.snapshot()) { ports.screen.snapshot() }
+        val fresh = frontCheck.pastKestrel(ports.screen.snapshot()) { ports.screen.snapshot() }
         val front = fresh?.let { ScreenTree.frontWindow(it)?.packageName }
         if (fresh == null || settings.agentFree.isAgentFree(front) || PlayServices.handsOver(fresh)) {
             throw Ended(EndReason.UNVERIFIED, summary = spoken(call.summary))
@@ -863,10 +779,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         const val OWNER_DID_IT = "the owner did this step by hand"
         const val OWNER_DID_IT_RESULT = "Result: The owner did this step by hand."
         const val CALL_PLACED = "You placed the call."
-        private const val ANDROID = "android"
-        private const val FRONT_CHECKS = 3
         private val PRESSING = setOf(ActionKind.TAP, ActionKind.LONG_PRESS, ActionKind.TAP_AT)
-        private val CRASHED = Regex("""(isn't responding|keeps stopping)$""")
         private const val OFFER_AT = 2
         private val WATCHED = setOf(Category.SENDING, Category.CALLS, Category.DELETING)
         private val STRIKING = setOf(EndReason.FAILED_BY_MODEL, EndReason.UNVERIFIED, EndReason.STUCK)
