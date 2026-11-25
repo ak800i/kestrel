@@ -94,7 +94,7 @@ Design 10.6 of sub-project 7: "When Android refuses a start, Kestrel says 'Andro
 
 **Interfaces:**
 - Consumes: plan 7A's `Interruption` and `TaskReport.interruption`; plan 7B's `GoalHold`, `GoalRules.touched`, `GoalRules.holdFor`, `GoalRules.held`, `ConversationTexts.held`, `ConversationEvent.Touched`, `ConversationEffect.InterruptGoal`, `ConversationEngine.touched()`, `ConversationView`; plan 7D's `AgentTexts.sentence`.
-- Produces: `Interruption.BACKGROUND_REFUSED` (package `dev.kestrel.agent`); `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED = "Android didn't let me start working in the background."` and `ConversationTexts.CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."` (plan 7F changes it), with `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED) == CONTINUE_IN_NOTIFICATION`; `ConversationEvent.BackgroundRefused(command: Int)`; `GoalRules.backgroundRefused(state: ConversationState, command: Int): MachineStep`; `fun ConversationEngine.backgroundRefused(command: Int)` (any thread; never blocks), where [command] is the view's `command` when the refused start was asked; `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?` (the last two fields, default null); `AgentTexts.sentence` gives `ConversationTexts.BACKGROUND_REFUSED` as the reason of an interruption with that cause.
+- Produces: `Interruption.BACKGROUND_REFUSED` (package `dev.kestrel.agent`); `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED = "Android didn't let me start working in the background."` and `ConversationTexts.CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."` (plan 7F changes it), with `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED) == CONTINUE_IN_NOTIFICATION` (plan 7B's `held(hold)`, which this task makes one `when` over every `GoalHold`; `GoalRules.backgroundRefused` and the tests of `:core:conversation` take the sentence from it, so plan 7F changes it in `ConversationTexts` alone); `ConversationEvent.BackgroundRefused(command: Int)`; `GoalRules.backgroundRefused(state: ConversationState, command: Int): MachineStep`; `fun ConversationEngine.backgroundRefused(command: Int)` (any thread; never blocks), where [command] is the view's `command` when the refused start was asked; `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?` (the last two fields, default null); `AgentTexts.sentence` gives `ConversationTexts.BACKGROUND_REFUSED` as the reason of an interruption with that cause.
 
 Counts: `:core:conversation` C₀ + 2 (`GoalRulesTest` + 1, `ConversationEngineTest` + 1). `:app` JVM A₀, unchanged (`AgentTextsTest` gains a check in an existing test). `:core:agent` G₀, unchanged.
 
@@ -126,11 +126,11 @@ with:
         val held = ended(refusing.state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.BACKGROUND_REFUSED), sentence)
         assertEquals(GoalHold.BACKGROUND_REFUSED, held.state.goal!!.hold)
         assertEquals(GoalPhase.INTERRUPTED, held.state.goal!!.phase)
-        assertEquals(listOf(ChannelOutput.Said("$sentence ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")), held.outputs())
+        assertEquals(listOf(ChannelOutput.Said("$sentence ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")), held.outputs())
 
         // A held goal keeps its hold and its 30 minutes; Kestrel says why its service is missing and how to go on, at once
         // while the owner is there.
-        val said = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")
+        val said = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")
         val touchedHeld = ended(step(acting(), ConversationEvent.Touched).state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH)).state
         val toldNow = step(touchedHeld, ConversationEvent.BackgroundRefused(1))
         assertEquals(touchedHeld.goal, toldNow.state.goal)
@@ -203,7 +203,7 @@ with:
         assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
         assertEquals(GoalHold.BACKGROUND_REFUSED, engine.view.value.hold)
         assertEquals(Interruption.BACKGROUND_REFUSED, engine.outcome(1)!!.report.interruption)
-        assertTrue(text.texts().last().endsWith(ConversationTexts.CONTINUE_IN_NOTIFICATION))
+        assertTrue(text.texts().last().endsWith(ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)))
 
         engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
         runCurrent()
@@ -429,7 +429,8 @@ with:
         if (goal.hold == null) {
             return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.BACKGROUND_REFUSED)))
         }
-        val words = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.CONTINUE_IN_NOTIFICATION}")
+        // How to go on is the hold's own sentence, which plan 7F changes in ConversationTexts alone.
+        val words = ChannelOutput.Said("${ConversationTexts.BACKGROUND_REFUSED} ${ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)}")
         val line = ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, words.text, null)
         if (state.phone.present) return MachineStep(state, listOf(ConversationEffect.Output(words), line))
         val kept = ChannelOutput.Said(listOfNotNull(state.heldWords?.text, words.text).joinToString(" "))
@@ -3413,7 +3414,7 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 - `GoalTexts` (`WORKING`, `FINISHED`, `PUBLIC`, `STOP`, `OPEN`, `CONTINUE`, `CANCEL`), `GoalAction` (`label`, `intent`, `resumes`, `broadcast`, `ofBroadcast`), `GoalNotice`, `GoalNotices.of(view)`, `NoticeKind`, `NoticeProgress`. A held goal's buttons are Cancel, then Continue, and Continue asks for the owner's unlock: plan 7F's question card and conversation screen follow the same order and the same rule for a button that resumes a goal.
 
 **The conversation (plan 7F)**
-- `ConversationEngine.backgroundRefused(command)`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`; `Interruption.BACKGROUND_REFUSED` (`:core:agent`) and `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, resumed as `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED` and `ConversationTexts.CONTINUE_IN_NOTIFICATION` ("Tap Continue in Kestrel's notification."), which plan 7F changes to design 10.6's "Open Kestrel and tap Continue." once its conversation screen has Continue, with the tests of Tasks 1 and 2 that name it.
+- `ConversationEngine.backgroundRefused(command)`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`; `Interruption.BACKGROUND_REFUSED` (`:core:agent`) and `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, resumed as `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED` and `ConversationTexts.CONTINUE_IN_NOTIFICATION` ("Tap Continue in Kestrel's notification."), which plan 7F changes to design 10.6's "Open Kestrel and tap Continue." once its conversation screen has Continue. `GoalRules.backgroundRefused`, `GoalNotices` and the tests of `:core:conversation` read it through `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so plan 7F's change needs no edit to `GoalRules.kt`; only `GoalNoticesTest` (Task 2) names the constant.
 - `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?`: plan 7F's conversation screen shows a held goal's way to go on from the hold, as the notification does, beside its Cancel and Continue.
 - Plan 7B's `ProcessEnd` (`OwnerStopped(atWall)`, `Other`), `ConversationEngine.restore(previous: ProcessEnd)`; this plan's `ExitReason.UNCLEAR_STOP`, `exitReasonOf(reason, timestamp, sdk, updatedAt)`, `processEndOf(record)`, `readProcessEnd` and `AppGraph.previousProcessEnd()`, over the graph's one `AndroidExitRecords`.
 
