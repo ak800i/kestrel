@@ -86,7 +86,7 @@ class OrchestratorTest {
         runCurrent()
         // The question took 5 s to say; the 15 s count from its end.
         advanceTimeBy(5_000)
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
 
         advanceTimeBy(14_999)
@@ -171,7 +171,7 @@ class OrchestratorTest {
         orchestrator.send(Event.Heard("Kestrel", named = true))
         runCurrent()
         advanceTimeBy(5_000)
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         orchestrator.send(Event.Heard("Kestrel", named = true))
         runCurrent()
 
@@ -193,7 +193,7 @@ class OrchestratorTest {
         orchestrator.send(Event.Heard("Kestrel", named = true))
         runCurrent()
         advanceTimeBy(1_000)
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
 
         // Counted from the transcript, the wait would end at 8 s; counted from the end of "Yes?", at 9 s.
@@ -310,7 +310,7 @@ class OrchestratorTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
         orchestrator.send(Event.Toggle)
         orchestrator.send(Event.ChannelAsks(4, "Which account?", QuestionKind.FREE))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
         advanceTimeBy(14_999)
         runCurrent()
@@ -321,7 +321,7 @@ class OrchestratorTest {
 
         // The question ended on its card, and the voice channel withdrew it: its wait stops.
         orchestrator.send(Event.ChannelAsks(5, "Which account?", QuestionKind.FREE))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         orchestrator.send(Event.ChannelWithdraws(5))
         runCurrent()
         advanceTimeBy(36_000)
@@ -337,7 +337,7 @@ class OrchestratorTest {
         orchestrator.send(Event.ConversationChanged(VoiceView(open = true)))
         orchestrator.send(Event.FollowUpLength(4_000))
         orchestrator.send(Event.ChannelSays(1, "Done.", final = true))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
         assertEquals(Work.FOLLOWING_UP, orchestrator.state.value.work)
         advanceTimeBy(4_001)
@@ -346,7 +346,7 @@ class OrchestratorTest {
 
         // An utterance that started inside the window gets the time to end and to be transcribed.
         orchestrator.send(Event.ChannelSays(2, "Done.", final = true))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         orchestrator.send(Event.Speaking)
         runCurrent()
         advanceTimeBy(10_000)

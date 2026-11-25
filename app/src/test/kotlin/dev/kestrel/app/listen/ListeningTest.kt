@@ -288,6 +288,83 @@ class ListeningTest {
     }
 
     @Test
+    fun aFinalReplyThatAndroidRefusedOrInterruptedOpensNoWindowAndStaysOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+
+        // As when another app takes the audio focus (section 14.6): the owner did not hear the reply.
+        for (spoke in listOf(Spoke.INTERRUPTED, Spoke.REFUSED)) {
+            val said = async { listening.voicePath.say("Done.", final = true) }
+            runCurrent()
+            session.replies.last().complete(spoke)
+            runCurrent()
+            assertTrue(said.isCompleted)
+            assertEquals(Work.IDLE, listening.state.value.work)
+            assertEquals("Done.", shown.last())
+        }
+        assertEquals(emptyList<String>(), kept)
+    }
+
+    @Test
+    fun aFinalReplyWithoutAVoiceSessionOpensNoWindowAndStaysOnTheBar() = runTest {
+        val listening = listening()
+        listening.send(Event.Toggle)
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        runCurrent()
+
+        // The service has not reported the foreground yet, so no session is open.
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals("Done.", shown.last())
+        assertEquals(emptyList<String>(), kept)
+    }
+
+    @Test
+    fun theCountdownNeverTakesTheBarFromAnotherTextAndReleasesOnlyItsOwn() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        listening.send(Event.FollowUpLength(3_000))
+
+        // "Microphone blocked" stays: the countdown stops, and the window's end releases nothing.
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(ListeningTexts.goOn(3), shown.last())
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+        assertEquals(ListeningTexts.MIC_BUSY, shown.last())
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals(ListeningTexts.MIC_BUSY, shown.last())
+        assertEquals(Work.FOLLOWING_UP, listening.state.value.work)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(0, releases)
+        listening.send(Event.MicBusy(false))
+
+        // A question that ends the window stays kept until the voice channel lets it go.
+        val again = async { listening.voicePath.say("Sent.", final = true) }
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(again.isCompleted)
+        assertEquals(ListeningTexts.goOn(3), shown.last())
+        listening.send(Event.ChannelAsks(4, "Shall I send it?", QuestionKind.CONFIRM))
+        runCurrent()
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals("Shall I send it?", shown.last())
+        assertEquals(0, releases)
+    }
+
+    @Test
     fun theWaitForACommandAfterYesReachesTheConversation() = runTest {
         val listening = listeningWithSession()
         val awaiting = mutableListOf<Boolean>()
@@ -510,7 +587,8 @@ class ListeningTest {
         listening.send(Event.Heard("Two.", named = false))
         runCurrent()
         assertEquals(Work.IDLE, listening.state.value.work)
-        assertEquals(1, releases)
+        // The answer took the question's place on the bar, so the newer command's end has no text of its own to release.
+        assertEquals(0, releases)
     }
 
     @Test
@@ -666,8 +744,9 @@ class ListeningTest {
 
         assertEquals("Number two.", answer)
         assertEquals(Work.IDLE, listening.state.value.work)
-        // The kept question fades once the command has ended.
-        assertEquals(1, releases)
+        // The answer took the kept question's place on the bar, so the command's end has no text of its own to release.
+        assertEquals("Number two.", shown.last())
+        assertEquals(0, releases)
     }
 
     @Test

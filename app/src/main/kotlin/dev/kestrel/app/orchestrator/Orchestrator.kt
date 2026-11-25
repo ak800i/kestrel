@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  * Applies [Rules] to Kestrel's events one at a time, so that two parts of Kestrel never act at once (design spec,
  * section 7.3). [perform] runs each effect in order on the Orchestrator's coroutine, so it must return quickly. An effect
  * that throws, even with a CancellationException, goes to [onError] and counts as not started: for a [Effect.Say] the
- * Orchestrator then handles [Event.SpeechEnded]. The next effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
+ * Orchestrator then handles [Event.SpeechEnded], as not spoken. The next effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
  * that TODO() throws, is not caught and ends the Orchestrator's loop. The timer that ends the wait for a task after
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
  * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
@@ -152,7 +152,7 @@ class Orchestrator(
                     currentCoroutineContext().ensureActive()
                     onError(e)
                     when (effect) {
-                        is Effect.Say -> notStarted += Event.SpeechEnded
+                        is Effect.Say -> notStarted += Event.SpeechEnded(spoken = false)
                         is Effect.RunCommand ->
                             notStarted += Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED, show = commandFailed))
                         else -> {}

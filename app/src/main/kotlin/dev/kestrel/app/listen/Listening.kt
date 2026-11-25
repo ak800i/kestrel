@@ -272,7 +272,7 @@ class Listening internal constructor(
     private val thread: CoroutineDispatcher,
     sessions: VoiceSessions,
     private val services: ServiceControl,
-    private val bar: FeedbackBar,
+    bar: FeedbackBar,
     private val report: (String, Throwable) -> Unit,
     private val openSettings: suspend () -> SettingsOpening,
     private val memory: ModeMemory,
@@ -296,6 +296,10 @@ class Listening internal constructor(
     /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
     @Volatile
     internal var microphones: () -> Microphone = microphones
+
+    // Every text of Listening reaches the bar through it, so that it knows whose text it shows (design 6.6 of
+    // sub-project 7).
+    private val bar = OwnedBar(bar)
 
     /** Opens the voice sessions. The command device tests replace it with sessions that need no speech models. */
     @Volatile
@@ -1093,7 +1097,7 @@ class Listening internal constructor(
                 }
                 if (effect.feedback == Feedback.AwaitingTask) timeline.reacted("wait")
                 (effect.feedback as? Feedback.FollowUp)?.let {
-                    countDown(it.seconds)
+                    countDown(it)
                     return
                 }
                 if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
@@ -1106,7 +1110,7 @@ class Listening internal constructor(
                     // The conversation's question and a hand-over's sentence stay until the voice channel releases them.
                     val keep = (effect.feedback as? Feedback.CommandText)?.keep == true ||
                         (effect.feedback as? Feedback.ConversationText)?.keep == true
-                    bar.show(text(effect.feedback), keep = keep)
+                    bar.show(text(effect.feedback), keep = keep, owner = owner(effect.feedback))
                 }
             }
             // The Orchestrator runs the timers itself.
@@ -1213,16 +1217,18 @@ class Listening internal constructor(
             ended?.complete(Unit)
             throw e
         }
-        // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time.
+        // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time. Only a reply
+        // that Kestrel spoke to its end counts as spoken (design 6.6 of sub-project 7).
         spoken.invokeOnCompletion { error ->
+            val spoke = if (error == null) spoken.getCompleted() else null
             if (error != null && error !is CancellationException) {
                 report("A reply", error)
                 showInstead()
-            } else if (error == null && unspoken(spoken.getCompleted())) {
+            } else if (spoke != null && unspoken(spoke)) {
                 showInstead()
             }
             ended?.complete(Unit)
-            send(Event.SpeechEnded)
+            send(Event.SpeechEnded(spoken = spoke == Spoke.FINISHED))
         }
     }
 
@@ -1248,23 +1254,33 @@ class Listening internal constructor(
         is Feedback.FollowUp -> ListeningTexts.goOn(feedback.seconds)
     }
 
-    // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends.
-    private fun countDown(seconds: Int) {
+    // Whose text the bar shows for [feedback]: a command releases its own, and a final reply's follow-up window counts down
+    // over it (design 6.6 of sub-project 7).
+    private fun owner(feedback: Feedback): BarOwner = when (feedback) {
+        is Feedback.CommandText -> BarOwner.Commands
+        is Feedback.ConversationText -> feedback.finalReply?.let { BarOwner.FinalReply(it) } ?: BarOwner.Other
+        else -> BarOwner.Other
+    }
+
+    // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends. It takes the bar only from the
+    // final reply that it follows, and stops for good once someone else has shown a text, such as "Microphone blocked".
+    private fun countDown(window: Feedback.FollowUp) {
         followUpTicker?.cancel()
+        val reply = BarOwner.FinalReply(window.reply)
         followUpTicker = scope.launch(thread) {
-            for (left in seconds downTo 1) {
-                bar.show(ListeningTexts.goOn(left), keep = true)
+            for (left in window.seconds downTo 1) {
+                if (!bar.takeOver(ListeningTexts.goOn(left), BarOwner.FollowUp, over = reply)) return@launch
                 delay(COUNT_DOWN_MILLIS)
             }
         }
     }
 
-    // The window ended: its countdown stops and fades.
+    // The window ended: its countdown stops, and its own text fades; a text that someone else showed since stays.
     private fun endCountDown() {
         val ticker = followUpTicker ?: return
         followUpTicker = null
         ticker.cancel()
-        bar.release()
+        bar.release(BarOwner.FollowUp)
     }
 
     private fun privateInput(): Boolean = try {
@@ -1326,7 +1342,7 @@ class Listening internal constructor(
             } finally {
                 // A text that the command kept on the bar fades from now on, unless a newer command has started since,
                 // as after a stuck job (section 7.3); that command releases its own text.
-                if (startedCommand == effect.command) bar.release()
+                if (startedCommand == effect.command) bar.release(BarOwner.Commands)
             }
             // A command that was cancelled while Android finished its last call ends here, without a result.
             ensureActive()
@@ -1393,7 +1409,7 @@ class Listening internal constructor(
             return reply.await()
         }
 
-        override fun keep(text: String) = bar.show(text, keep = true)
+        override fun keep(text: String) = bar.show(text, keep = true, owner = BarOwner.Commands)
 
         override suspend fun countdown(millis: Long, text: (secondsLeft: Int) -> String): Boolean {
             held = false

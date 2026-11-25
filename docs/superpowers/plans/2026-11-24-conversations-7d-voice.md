@@ -10536,19 +10536,252 @@ git commit -m "feat(app): the voice path gives the conversation its inputs; Agen
 
 ### Task 4: The follow-up window
 
-Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a local request's final reply (`ChannelOutput.Report`, which `VoiceChannel` now says as `final`), the next utterance is a command without the name, for the window's length from the Conversations page (8 s by default, never longer than the quiet time), with recognition `ALL`, also in the paused mode. Kestrel's own requests keep their meaning in it, and the instant commands' parser is not asked: the words are read as after "Yes?", except that "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6 of sub-project 7), so "turn off" alone turns Kestrel off there and never reaches the conversation (`Requests.read(…, followUp = true)`). The bar shows "Go on…" with the seconds left and fades when the window ends. It ends at its timer, at any transcript, at Kestrel's next reply, when the screen turns off, a call rings or Kestrel turns off, and when the conversation closes. Words in the middle of a goal (`Said`), a final reply that the owner stopped and a final reply that Kestrel only showed while off open no window.
+Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a local request's final reply (`ChannelOutput.Report`, which `VoiceChannel` now says as `final`), the next utterance is a command without the name, for the window's length from the Conversations page (8 s by default, never longer than the quiet time), with recognition `ALL`, also in the paused mode. Kestrel's own requests keep their meaning in it, and the instant commands' parser is not asked: the words are read as after "Yes?", except that "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6 of sub-project 7), so "turn off" alone turns Kestrel off there and never reaches the conversation (`Requests.read(…, followUp = true)`). The bar shows "Go on…" with the seconds left over the reply's text and fades when the window ends. It ends at its timer, at any transcript, at Kestrel's next reply, when the screen turns off, a call rings or Kestrel turns off, and when the conversation closes. Words in the middle of a goal (`Said`) open no window, and neither does a final reply that Kestrel did not speak to its end: one that the owner or a call stopped, that Android refused or interrupted (as when another app takes the audio focus), that no voice session could speak, or that Kestrel only showed while off. The owner did not hear such a reply, and its text stays on the bar as the owner's way to read it: `Event.SpeechEnded(spoken)` tells the Rules whether Kestrel spoke the whole reply (the controller's decision on the review's I1 of 2026-11-25). The bar knows whose text it shows (`OwnedBar`, the review's M1): the countdown takes the bar only while it is free or shows the final reply that the window follows, stops for good once someone else shows a text, and releases only its own text, so it never hides "Microphone blocked", a question or a hand-over's sentence; an instant command likewise releases only a command's text.
 
 **Files:**
+- Create: `app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt`
 - Modify: `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, `app/src/main/kotlin/dev/kestrel/app/orchestrator/Orchestrator.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`
 - Test: `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, `app/src/test/kotlin/dev/kestrel/app/orchestrator/RequestsTest.kt`, `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`
 
 **Interfaces:**
 - Consumes: Task 3's `Rules`, `VoicePath` and `VoiceChannel`; plan 7B's `ConversationSettings.followUpMillis`.
-- Produces: `Work.FOLLOWING_UP`; `State.followUpMillis`, `State.followUp`, `State.finalReply`; `Event.ChannelSays(reply, text, final = false)`, `Event.FollowUpLength(millis: Long)`, `Event.FollowUpEnded(followUp: Int)`; `Feedback.FollowUp(seconds: Int)`; `Effect.TimeFollowUp(answering = false)`; `VoicePath.say(text, final = false)`; `Requests.read(transcript, spotted, afterName = false, stopSpotted = false, followUp = false)`; `ListeningTexts.goOn(seconds)`; the app graph sends `FollowUpLength` at every change of the Conversations page.
+- Produces: `Work.FOLLOWING_UP`; `State.followUpMillis`, `State.followUp`, `State.finalReply: Int?`; `Event.SpeechEnded(spoken: Boolean)` (was a `data object`), `Event.ChannelSays(reply, text, final = false)`, `Event.FollowUpLength(millis: Long)`, `Event.FollowUpEnded(followUp: Int)`; `Feedback.FollowUp(seconds: Int, reply: Int)`, `Feedback.ConversationText(text, keep = false, finalReply: Int? = null)`; `Effect.TimeFollowUp(answering = false)`; `VoicePath.say(text, final = false)`; `Requests.read(transcript, spotted, afterName = false, stopSpotted = false, followUp = false)`; `ListeningTexts.goOn(seconds)`; `internal class OwnedBar(bar: FeedbackBar)` with `show(text, keep = false, owner = BarOwner.Other)`, `takeOver(text, owner, over): Boolean` and `release(owner)`, and `internal sealed interface BarOwner` (`Other`, `Commands`, `FinalReply(reply)`, `FollowUp`); the app graph sends `FollowUpLength` at every change of the Conversations page.
 
-Counts: `:app` JVM A₃ + 7 (`RulesTest` 99 + 4 = 103, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 1 = 147; `VoiceChannelTest` changes a case). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₃ + 10 (`RulesTest` 99 + 4 = 103, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 4 = 150; `VoiceChannelTest` changes a case, `ListeningTest` two, and `RulesTest` and `OrchestratorTest` give every `Event.SpeechEnded` its `spoken`). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
+
+`Event.SpeechEnded` becomes a class whose `spoken` says whether Kestrel spoke the whole reply, so the existing cases of `RulesTest` and `OrchestratorTest` give it `spoken = true`.
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val spoken = Rules.next(asked.state, Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        val spoken = Rules.next(asked.state, Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        assertEquals(Step(twoReplies.copy(speeches = 1)), Rules.next(twoReplies, Event.SpeechEnded))
+```
+
+with:
+
+```kotlin
+        assertEquals(Step(twoReplies.copy(speeches = 1)), Rules.next(twoReplies, Event.SpeechEnded(spoken = true)))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        assertEquals(Step(listening), Rules.next(listening, Event.SpeechEnded))
+```
+
+with:
+
+```kotlin
+        assertEquals(Step(listening), Rules.next(listening, Event.SpeechEnded(spoken = true)))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val spoken = Rules.next(asked, Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        val spoken = Rules.next(asked, Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+            Event.SpeechEnded, Event.ConversationChanged(acting.conversation), Event.ChannelSays(1, "Done."),
+```
+
+with:
+
+```kotlin
+            Event.SpeechEnded(spoken = true), Event.ConversationChanged(acting.conversation), Event.ChannelSays(1, "Done."),
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(replying, Event.SpeechEnded).effects)
+```
+
+with:
+
+```kotlin
+        assertEquals(listOf(Effect.TimeSilence), Rules.next(replying, Event.SpeechEnded(spoken = true)).effects)
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        Rules.next(Rules.next(from, Event.ChannelHandsOver(handOverText)).state, Event.SpeechEnded).state
+```
+
+with:
+
+```kotlin
+        Rules.next(Rules.next(from, Event.ChannelHandsOver(handOverText)).state, Event.SpeechEnded(spoken = true)).state
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val spoken = Rules.next(step.state, Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        val spoken = Rules.next(step.state, Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val yes = heard(Rules.next(spotted, Event.SpeechEnded).state, "Kestrel, continue.", named = true)
+```
+
+with:
+
+```kotlin
+        val yes = heard(Rules.next(spotted, Event.SpeechEnded(spoken = true)).state, "Kestrel, continue.", named = true)
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val spoken = Rules.next(says, Event.SpeechEnded).state
+```
+
+with:
+
+```kotlin
+        val spoken = Rules.next(says, Event.SpeechEnded(spoken = true)).state
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+            val spoken = Rules.next(question, Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+            val spoken = Rules.next(question, Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val speaking = ownQuestion()
+        val asked = Rules.next(speaking, Event.SpeechEnded).state
+        val withdrawn = Effect.Converse(InputIntent.Answer(ChannelAnswer.Interrupted))
+```
+
+with:
+
+```kotlin
+        val speaking = ownQuestion()
+        val asked = Rules.next(speaking, Event.SpeechEnded(spoken = true)).state
+        val withdrawn = Effect.Converse(InputIntent.Answer(ChannelAnswer.Interrupted))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+        val asked = Rules.next(speaking, Event.SpeechEnded).state
+```
+
+with:
+
+```kotlin
+        val asked = Rules.next(speaking, Event.SpeechEnded(spoken = true)).state
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
+
+```kotlin
+        advanceTimeBy(5_000)
+        orchestrator.send(Event.SpeechEnded)
+        runCurrent()
+```
+
+with:
+
+```kotlin
+        advanceTimeBy(5_000)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
+        runCurrent()
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
+
+```kotlin
+        advanceTimeBy(5_000)
+        orchestrator.send(Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        advanceTimeBy(5_000)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
+
+```kotlin
+        advanceTimeBy(1_000)
+        orchestrator.send(Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        advanceTimeBy(1_000)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
+
+```kotlin
+        orchestrator.send(Event.ChannelAsks(4, "Which account?", QuestionKind.FREE))
+        orchestrator.send(Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        orchestrator.send(Event.ChannelAsks(4, "Which account?", QuestionKind.FREE))
+        orchestrator.send(Event.SpeechEnded(spoken = true))
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
+
+```kotlin
+        orchestrator.send(Event.SpeechEnded)
+```
+
+with:
+
+```kotlin
+        orchestrator.send(Event.SpeechEnded(spoken = true))
+```
 
 In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
 
@@ -10566,14 +10799,14 @@ with:
     private val open = listening.copy(conversation = VoiceView(open = true))
 
     private fun replied(from: State = open): State =
-        Rules.next(Rules.next(from, Event.ChannelSays(5, "Done.", final = true)).state, Event.SpeechEnded).state
+        Rules.next(Rules.next(from, Event.ChannelSays(5, "Done.", final = true)).state, Event.SpeechEnded(spoken = true)).state
 
     @Test
     fun aSpokenFinalReplyOpensTheFollowUpWindowWhereAnUtteranceIsACommand() {
         val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
-        val ended = Rules.next(said, Event.SpeechEnded)
+        val ended = Rules.next(said, Event.SpeechEnded(spoken = true))
 
-        assertEquals(listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(8))), ended.effects)
+        assertEquals(listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(8, reply = 5))), ended.effects)
         assertEquals(Work.FOLLOWING_UP, ended.state.work)
         assertEquals(Recognition.ALL, ended.state.recognition)
         assertEquals(Recognition.ALL, replied(paused.copy(conversation = open.conversation)).recognition)
@@ -10602,14 +10835,21 @@ with:
     }
 
     @Test
-    fun noWindowOpensAfterWordsInTheMiddleOfAGoalAStoppedReplyOrWithoutItsLength() {
+    fun noWindowOpensAfterWordsInTheMiddleOfAGoalAnUnspokenReplyOrWithoutItsLength() {
         // Kestrel's words in the middle of a goal need the name again (D9 of sub-project 7).
-        assertEquals(Work.IDLE, Rules.next(Rules.next(open, Event.ChannelSays(5, "Opening Viber.")).state, Event.SpeechEnded).state.work)
-        // A final reply that the owner stopped, or that Kestrel only showed while off.
-        val stopped = Rules.next(Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state, Event.Spotted(Keyword.STOP)).state
-        assertEquals(Work.IDLE, Rules.next(stopped, Event.SpeechEnded).state.work)
+        assertEquals(Work.IDLE, Rules.next(Rules.next(open, Event.ChannelSays(5, "Opening Viber.")).state, Event.SpeechEnded(spoken = true)).state.work)
+        // A final reply that was not spoken to its end, because the owner or a call stopped it, Android refused or
+        // interrupted it, or no voice session could speak it: the owner did not hear it, and its text stays on the bar.
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+        val unspoken = Rules.next(said, Event.SpeechEnded(spoken = false))
+        assertEquals(Work.IDLE, unspoken.state.work)
+        assertTrue(unspoken.effects.none { it is Effect.Show })
+        // Also when another reply that was spoken to its end ends after it.
+        val other = Rules.next(said.copy(speeches = 2), Event.SpeechEnded(spoken = false)).state
+        assertEquals(Work.IDLE, Rules.next(other, Event.SpeechEnded(spoken = true)).state.work)
+        // A final reply that Kestrel only showed while off.
         assertEquals(
-            listOf(Effect.Show(Feedback.ConversationText("Done.")), Effect.EndReply(5)),
+            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 5)), Effect.EndReply(5)),
             Rules.next(open.copy(mode = Mode.OFF), Event.ChannelSays(5, "Done.", final = true)).effects,
         )
         // Without its length, or with the screen off.
@@ -10670,7 +10910,7 @@ with:
         orchestrator.send(Event.ConversationChanged(VoiceView(open = true)))
         orchestrator.send(Event.FollowUpLength(4_000))
         orchestrator.send(Event.ChannelSays(1, "Done.", final = true))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
         assertEquals(Work.FOLLOWING_UP, orchestrator.state.value.work)
         advanceTimeBy(4_001)
@@ -10679,7 +10919,7 @@ with:
 
         // An utterance that started inside the window gets the time to end and to be transcribed.
         orchestrator.send(Event.ChannelSays(2, "Done.", final = true))
-        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.SpeechEnded(spoken = true))
         orchestrator.send(Event.Speaking)
         runCurrent()
         advanceTimeBy(10_000)
@@ -10740,6 +10980,117 @@ with:
         runCurrent()
         assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(before + 1, releases)
+    }
+
+    @Test
+    fun aFinalReplyThatAndroidRefusedOrInterruptedOpensNoWindowAndStaysOnTheBar() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+
+        // As when another app takes the audio focus (section 14.6): the owner did not hear the reply.
+        for (spoke in listOf(Spoke.INTERRUPTED, Spoke.REFUSED)) {
+            val said = async { listening.voicePath.say("Done.", final = true) }
+            runCurrent()
+            session.replies.last().complete(spoke)
+            runCurrent()
+            assertTrue(said.isCompleted)
+            assertEquals(Work.IDLE, listening.state.value.work)
+            assertEquals("Done.", shown.last())
+        }
+        assertEquals(emptyList<String>(), kept)
+    }
+
+    @Test
+    fun aFinalReplyWithoutAVoiceSessionOpensNoWindowAndStaysOnTheBar() = runTest {
+        val listening = listening()
+        listening.send(Event.Toggle)
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        runCurrent()
+
+        // The service has not reported the foreground yet, so no session is open.
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals("Done.", shown.last())
+        assertEquals(emptyList<String>(), kept)
+    }
+
+    @Test
+    fun theCountdownNeverTakesTheBarFromAnotherTextAndReleasesOnlyItsOwn() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        listening.send(Event.FollowUpLength(3_000))
+
+        // "Microphone blocked" stays: the countdown stops, and the window's end releases nothing.
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(ListeningTexts.goOn(3), shown.last())
+        listening.send(Event.MicBusy(true))
+        runCurrent()
+        assertEquals(ListeningTexts.MIC_BUSY, shown.last())
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals(ListeningTexts.MIC_BUSY, shown.last())
+        assertEquals(Work.FOLLOWING_UP, listening.state.value.work)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(0, releases)
+        listening.send(Event.MicBusy(false))
+
+        // A question that ends the window stays kept until the voice channel lets it go.
+        val again = async { listening.voicePath.say("Sent.", final = true) }
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(again.isCompleted)
+        assertEquals(ListeningTexts.goOn(3), shown.last())
+        listening.send(Event.ChannelAsks(4, "Shall I send it?", QuestionKind.CONFIRM))
+        runCurrent()
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals("Shall I send it?", shown.last())
+        assertEquals(0, releases)
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, replace:
+
+```kotlin
+        listening.send(Event.Heard("Two.", named = false))
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(1, releases)
+```
+
+with:
+
+```kotlin
+        listening.send(Event.Heard("Two.", named = false))
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        // The answer took the question's place on the bar, so the newer command's end has no text of its own to release.
+        assertEquals(0, releases)
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, replace:
+
+```kotlin
+        // The kept question fades once the command has ended.
+        assertEquals(1, releases)
+```
+
+with:
+
+```kotlin
+        // The answer took the kept question's place on the bar, so the command's end has no text of its own to release.
+        assertEquals("Number two.", shown.last())
+        assertEquals(0, releases)
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, replace:
@@ -10787,7 +11138,7 @@ with:
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.orchestrator.RulesTest`
-Expected: FAIL, the build does not compile: `Work.FOLLOWING_UP`, `Event.FollowUpLength` and `Effect.TimeFollowUp` do not exist yet.
+Expected: FAIL, the build does not compile: `Work.FOLLOWING_UP`, `Event.FollowUpLength`, `Effect.TimeFollowUp` and `Event.SpeechEnded(spoken)` do not exist yet.
 
 - [ ] **Step 3: The window in the rules and its timer**
 
@@ -10833,8 +11184,8 @@ with:
 ```kotlin
  * turns off once the goal has ended and its final reply has been spoken. [followUpMillis] is the follow-up window's length
  * from the Conversations page, and [followUp] the number of the latest window, so that the end of an older one changes
- * nothing; [finalReply]: the reply that Kestrel speaks now is a final reply, whose end opens the window (design 6.6 of
- * sub-project 7).
+ * nothing; [finalReply]: the number of the final reply that Kestrel speaks now, whose end opens the window once Kestrel
+ * has spoken all of it (design 6.6 of sub-project 7).
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
@@ -10849,7 +11200,7 @@ with:
     val offAfterGoal: Boolean = false,
     val followUpMillis: Long = ConversationSettings().followUpMillis,
     val followUp: Int = 0,
-    val finalReply: Boolean = false,
+    val finalReply: Int? = null,
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
@@ -10895,6 +11246,53 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
 
 ```kotlin
+    /**
+     * A reply has been spoken, stopped, interrupted or refused, or speaking it failed. Send it once for each reply, or
+     * recognition stays off.
+     */
+    data object SpeechEnded : Event
+```
+
+with:
+
+```kotlin
+    /**
+     * A reply has been spoken to its end ([spoken]), or stopped, interrupted or refused, or speaking it failed. Send it
+     * once for each reply, or recognition stays off. Only a final reply that Kestrel spoke to its end opens the follow-up
+     * window (design 6.6 of sub-project 7).
+     */
+    data class SpeechEnded(val spoken: Boolean) : Event
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+        Event.SpeechEnded -> speechEnded(state)
+```
+
+with:
+
+```kotlin
+        is Event.SpeechEnded -> speechEnded(state, event.spoken)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+        Event.SpeechEnded ->
+            speechEnded(state).let {
+```
+
+with:
+
+```kotlin
+        is Event.SpeechEnded ->
+            speechEnded(state, event.spoken).let {
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
     data object NoWords : Feedback
 ```
 
@@ -10903,8 +11301,37 @@ with:
 ```kotlin
     data object NoWords : Feedback
 
-    /** The follow-up window opens for [seconds] (design 6.6 of sub-project 7): the bar counts them down. */
-    data class FollowUp(val seconds: Int) : Feedback
+    /**
+     * The follow-up window opens for [seconds] after final reply number [reply] (design 6.6 of sub-project 7): the bar
+     * counts them down over the reply's text.
+     */
+    data class FollowUp(val seconds: Int, val reply: Int) : Feedback
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+    /**
+     * What the conversation says, shows, asks or hands over through the voice channel (design 11 of sub-project 7). With
+     * [keep], the text stays until the voice channel releases it, as a question or a hand-over's sentence does.
+     */
+    data class ConversationText(val text: String, val keep: Boolean = false) : Feedback {
+        override fun toString() = "ConversationText(${text.length} characters, keep=$keep)"
+    }
+```
+
+with:
+
+```kotlin
+    /**
+     * What the conversation says, shows, asks or hands over through the voice channel (design 11 of sub-project 7). With
+     * [keep], the text stays until the voice channel releases it, as a question or a hand-over's sentence does.
+     * [finalReply]: the number of the final reply that it shows, over which that reply's follow-up window counts down
+     * (design 6.6 of sub-project 7).
+     */
+    data class ConversationText(val text: String, val keep: Boolean = false, val finalReply: Int? = null) : Feedback {
+        override fun toString() = "ConversationText(${text.length} characters, keep=$keep, finalReply=$finalReply)"
+    }
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
@@ -11004,27 +11431,12 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
 
 ```kotlin
-            Keyword.STOP, Keyword.CANCEL ->
-                if (state.goal != null || state.openQuestion != null) {
-                    stopGoal(state.copy(spottedStop = true))
-                } else {
-                    Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
-```
-
-with:
-
-```kotlin
-            // A final reply that the owner stopped opens no follow-up window.
-            Keyword.STOP, Keyword.CANCEL ->
-                if (state.goal != null || state.openQuestion != null) {
-                    stopGoal(state.copy(spottedStop = true, finalReply = false))
-                } else {
-                    Step(state.copy(work = Work.IDLE, spottedStop = true, finalReply = false), listOf(Effect.StopSaying))
-```
-
-In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
-
-```kotlin
+    // to start the answer.
+    private fun speechEnded(state: State): Step {
+        val ended = state.copy(speeches = maxOf(0, state.speeches - 1))
+        return when {
+            state.speeches == 1 && state.work == Work.AWAITING_TASK -> waitForTask(ended)
+            state.speeches == 1 && state.voiceQuestion != null -> waitForAnswer(ended)
             else -> stayOff(ended)
         }
 ```
@@ -11032,22 +11444,31 @@ In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
 with:
 
 ```kotlin
-            ended.speeches == 0 && state.finalReply -> stayOff(ended.copy(finalReply = false)).then { followUp(it) }
+    // to start the answer. A final reply that was not spoken to its end, because the owner or a call stopped it, Android
+    // refused or interrupted it, or no voice session could speak it, opens no follow-up window: the owner did not hear
+    // it, and its text stays on the bar (design 6.6 of sub-project 7).
+    private fun speechEnded(state: State, spoken: Boolean): Step {
+        val ended = state.copy(speeches = maxOf(0, state.speeches - 1), finalReply = state.finalReply?.takeIf { spoken })
+        val finalReply = ended.finalReply
+        return when {
+            state.speeches == 1 && state.work == Work.AWAITING_TASK -> waitForTask(ended)
+            state.speeches == 1 && state.voiceQuestion != null -> waitForAnswer(ended)
+            ended.speeches == 0 && finalReply != null -> stayOff(ended.copy(finalReply = null)).then { followUp(it, finalReply) }
             else -> stayOff(ended)
         }
     }
 
-    // Design 6.6 of sub-project 7: once Kestrel has finished speaking a final reply, the next utterance is a command
-    // without the name, for the window's length, with the screen on and the conversation open, outside a call, also in
-    // the paused mode. The bar counts the seconds down.
-    private fun followUp(state: State): Step {
+    // Design 6.6 of sub-project 7: once Kestrel has finished speaking final reply number [reply], the next utterance is a
+    // command without the name, for the window's length, with the screen on and the conversation open, outside a call,
+    // also in the paused mode. The bar counts the seconds down over the reply's text.
+    private fun followUp(state: State, reply: Int): Step {
         val opens = state.followUpMillis > 0 && state.mode != Mode.OFF && !state.inCall && state.screenOn &&
             state.work == Work.IDLE && state.conversation.open
         if (!opens) return Step(state)
         val seconds = ((state.followUpMillis + 999) / 1_000).toInt()
         return Step(
             state.copy(work = Work.FOLLOWING_UP, followUp = state.followUp + 1),
-            listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(seconds))),
+            listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(seconds, reply))),
         )
 ```
 
@@ -11068,13 +11489,18 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
 
 ```kotlin
+        val shown = Effect.Show(Feedback.ConversationText(event.text))
+        if (state.mode == Mode.OFF) return Step(state, listOf(shown, Effect.EndReply(event.reply)))
         return say(state, Reply.Channel(event.reply, event.text), shown)
 ```
 
 with:
 
 ```kotlin
-        return say(state, Reply.Channel(event.reply, event.text), shown, final = event.final)
+        val finalReply = event.reply.takeIf { event.final }
+        val shown = Effect.Show(Feedback.ConversationText(event.text, finalReply = finalReply))
+        if (state.mode == Mode.OFF) return Step(state, listOf(shown, Effect.EndReply(event.reply)))
+        return say(state, Reply.Channel(event.reply, event.text), shown, finalReply = finalReply)
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
@@ -11088,11 +11514,11 @@ with:
 
 ```kotlin
     // Kestrel's next reply ends the follow-up window (design 6.6 of sub-project 7); only a final reply opens a new one.
-    private fun say(state: State, reply: Reply, vararg first: Effect, final: Boolean = false): Step = Step(
+    private fun say(state: State, reply: Reply, vararg first: Effect, finalReply: Int? = null): Step = Step(
         state.copy(
             speeches = state.speeches + 1,
             work = if (state.work == Work.FOLLOWING_UP) Work.IDLE else state.work,
-            finalReply = final,
+            finalReply = finalReply,
         ),
         first.toList() + Effect.Say(reply),
     )
@@ -11108,7 +11534,7 @@ with:
 
 ```kotlin
             offAfterGoal = false,
-            finalReply = false,
+            finalReply = null,
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
@@ -11269,7 +11695,195 @@ with:
                     send(Event.FollowUpEnded(number))
 ```
 
-- [ ] **Step 4: The final reply, the bar's countdown and the window's length**
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Orchestrator.kt`, replace:
+
+```kotlin
+                        is Effect.Say -> notStarted += Event.SpeechEnded
+```
+
+with:
+
+```kotlin
+                        is Effect.Say -> notStarted += Event.SpeechEnded(spoken = false)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Orchestrator.kt`, replace:
+
+```kotlin
+Orchestrator then handles [Event.SpeechEnded].
+```
+
+with:
+
+```kotlin
+Orchestrator then handles [Event.SpeechEnded], as not spoken.
+```
+
+- [ ] **Step 4: The final reply, the bar's owners, its countdown and the window's length**
+
+Create `app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt`:
+
+```kotlin
+package dev.kestrel.app.listen
+
+/** Who put the text on the feedback bar that it shows last (design 6.6 of sub-project 7). */
+internal sealed interface BarOwner {
+    /**
+     * A text that nobody takes back: a mode, a transcript, "Microphone blocked", a failure, and what the conversation says,
+     * asks or hands over. A question or a hand-over's sentence stays until the next text.
+     */
+    data object Other : BarOwner
+
+    /** The instant commands' texts: the command that keeps one releases it when it ends (section 7.3). */
+    data object Commands : BarOwner
+
+    /** The conversation's final reply number [reply], over which its follow-up window counts down. */
+    data class FinalReply(val reply: Int) : BarOwner
+
+    /** The follow-up window's countdown, "Go on…" with the seconds left. */
+    data object FollowUp : BarOwner
+}
+
+/**
+ * The feedback bar as Listening shares it: it knows whose text it shows last, so that a text is taken over only from the
+ * owner that it follows and released only by its own owner (design 6.6 of sub-project 7). The bar is free once its text
+ * was released. Any thread may call it; the calls reach [bar] in their order.
+ */
+internal class OwnedBar(private val bar: FeedbackBar) {
+    // Null while the bar is free.
+    private var owner: BarOwner? = null
+
+    /** Shows [text] for [owner], as [FeedbackBar.show] does. */
+    @Synchronized
+    fun show(text: String, keep: Boolean = false, owner: BarOwner = BarOwner.Other) {
+        this.owner = owner
+        bar.show(text, keep)
+    }
+
+    /**
+     * Keeps [text] on the bar for [owner], but only while the bar is free, shows [owner]'s own text, or shows the text of
+     * [over]; otherwise it shows nothing, so that it never hides a text that someone showed since, and returns false.
+     */
+    @Synchronized
+    fun takeOver(text: String, owner: BarOwner, over: BarOwner): Boolean {
+        val current = this.owner
+        if (current != null && current != owner && current != over) return false
+        this.owner = owner
+        bar.show(text, keep = true)
+        return true
+    }
+
+    /** Lets [owner]'s kept text fade from now on, if the bar still shows it; another owner's text stays. */
+    @Synchronized
+    fun release(owner: BarOwner) {
+        if (this.owner != owner) return
+        this.owner = null
+        bar.release()
+    }
+}
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+    private val bar: FeedbackBar,
+```
+
+with:
+
+```kotlin
+    bar: FeedbackBar,
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+    /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
+    @Volatile
+    internal var microphones: () -> Microphone = microphones
+```
+
+with:
+
+```kotlin
+    /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
+    @Volatile
+    internal var microphones: () -> Microphone = microphones
+
+    // Every text of Listening reaches the bar through it, so that it knows whose text it shows (design 6.6 of
+    // sub-project 7).
+    private val bar = OwnedBar(bar)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+                    bar.show(text(effect.feedback), keep = keep)
+```
+
+with:
+
+```kotlin
+                    bar.show(text(effect.feedback), keep = keep, owner = owner(effect.feedback))
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+        // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time.
+        spoken.invokeOnCompletion { error ->
+            if (error != null && error !is CancellationException) {
+                report("A reply", error)
+                showInstead()
+            } else if (error == null && unspoken(spoken.getCompleted())) {
+                showInstead()
+            }
+            ended?.complete(Unit)
+            send(Event.SpeechEnded)
+        }
+```
+
+with:
+
+```kotlin
+        // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time. Only a reply
+        // that Kestrel spoke to its end counts as spoken (design 6.6 of sub-project 7).
+        spoken.invokeOnCompletion { error ->
+            val spoke = if (error == null) spoken.getCompleted() else null
+            if (error != null && error !is CancellationException) {
+                report("A reply", error)
+                showInstead()
+            } else if (spoke != null && unspoken(spoke)) {
+                showInstead()
+            }
+            ended?.complete(Unit)
+            send(Event.SpeechEnded(spoken = spoke == Spoke.FINISHED))
+        }
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+                if (startedCommand == effect.command) bar.release()
+```
+
+with:
+
+```kotlin
+                if (startedCommand == effect.command) bar.release(BarOwner.Commands)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+        override fun keep(text: String) = bar.show(text, keep = true)
+```
+
+with:
+
+```kotlin
+        override fun keep(text: String) = bar.show(text, keep = true, owner = BarOwner.Commands)
+```
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt`, replace:
 
@@ -11389,7 +12003,7 @@ with:
 ```kotlin
                 if (effect.feedback == Feedback.AwaitingTask) timeline.reacted("wait")
                 (effect.feedback as? Feedback.FollowUp)?.let {
-                    countDown(it.seconds)
+                    countDown(it)
                     return
                 }
 ```
@@ -11419,23 +12033,33 @@ with:
         is Feedback.FollowUp -> ListeningTexts.goOn(feedback.seconds)
     }
 
-    // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends.
-    private fun countDown(seconds: Int) {
+    // Whose text the bar shows for [feedback]: a command releases its own, and a final reply's follow-up window counts down
+    // over it (design 6.6 of sub-project 7).
+    private fun owner(feedback: Feedback): BarOwner = when (feedback) {
+        is Feedback.CommandText -> BarOwner.Commands
+        is Feedback.ConversationText -> feedback.finalReply?.let { BarOwner.FinalReply(it) } ?: BarOwner.Other
+        else -> BarOwner.Other
+    }
+
+    // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends. It takes the bar only from the
+    // final reply that it follows, and stops for good once someone else has shown a text, such as "Microphone blocked".
+    private fun countDown(window: Feedback.FollowUp) {
         followUpTicker?.cancel()
+        val reply = BarOwner.FinalReply(window.reply)
         followUpTicker = scope.launch(thread) {
-            for (left in seconds downTo 1) {
-                bar.show(ListeningTexts.goOn(left), keep = true)
+            for (left in window.seconds downTo 1) {
+                if (!bar.takeOver(ListeningTexts.goOn(left), BarOwner.FollowUp, over = reply)) return@launch
                 delay(COUNT_DOWN_MILLIS)
             }
         }
     }
 
-    // The window ended: its countdown stops and fades.
+    // The window ended: its countdown stops, and its own text fades; a text that someone else showed since stays.
     private fun endCountDown() {
         val ticker = followUpTicker ?: return
         followUpTicker = null
         ticker.cancel()
-        bar.release()
+        bar.release(BarOwner.FollowUp)
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
@@ -11483,7 +12107,7 @@ Expected: PASS.
 - [ ] **Step 6: Run `:app`'s JVM tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₃ + 7.
+Expected: BUILD SUCCESSFUL; `app` A₃ + 10.
 
 - [ ] **Step 7: Commit**
 
@@ -13308,7 +13932,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 27 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 6, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 30 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 10, Task 5 + 6, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
 - `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
