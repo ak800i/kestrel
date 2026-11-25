@@ -32,7 +32,7 @@ Code comments name this plan "plan 7D" and the design's sections as "design 6.6 
 
 ## Before you start
 
-- Tasks 1 and 2 are built (`3f19e672` and `0e374a00`); Task 3 starts from `sp3`'s HEAD after them.
+- Tasks 1 and 2 are built (`3f19e672` with `32e96e99`, and `0e374a00` with `3f8f4258`); Task 3 starts from `sp3`'s HEAD after them.
 
 - Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed, and this plan starts only after plans 7A, 7B and 7C are merged into `sp3`. This plan was written against `sp3` at `4c37cca0`, where plan 6B-basefix's code and both baselines are in (`dfa97763`), a task's witness keeps the sentence of its end (`0f90f0d8`), and plans 7A, 7B and 7C are written (plan 7C as `74670594`) but not carried out. After the reviews of 2026-11-24 and 2026-11-25, its checker ran clean against `sp3` at `67a2b01a`, where plan 7A has landed up to its Task 11 (its Task 12 changes no file), with plan 7B as committed there and plan 7C simulated on top; its old texts are the texts that those plans leave. The files that plans 7A and 7C change besides this plan's anchors are `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` (7C), `app/src/main/kotlin/dev/kestrel/app/KestrelApplication.kt` (7C), `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt` (7A), `app/src/test/kotlin/dev/kestrel/app/agent/AgentTextsTest.kt` (7A) and `app/src/androidTest/kotlin/dev/kestrel/app/agent/AgentEndToEndTest.kt` (7A); the files that plan 7A changes and this plan deletes (`AgentRunner.kt`, `AppOwnerPort.kt`, `OwnerParts.kt`, `AgentEnvironment.kt`, `AppAgentEnvironment.kt` and their tests) need no rebase, but Task 3's new files carry plan 7A's behaviour (`TaskStart`'s goal and history now in `RoundStart`, `leaveKestrel` in `VoiceChannel`, the `LIMIT` question in `VoiceAnswers`).
 - At the start of Task 1, and again at the starts of Tasks 3 and 7, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7d-voice.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7d-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 3 also set `$env:START_TASK = '3'`, and for Task 7 `$env:START_TASK = '7'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plan 6B-basefix, 7A, 7B or 7C moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
@@ -92,7 +92,7 @@ The review of 2026-11-24 found two guarantees of today's task path that plan 7B'
 
 ### Task 1: `PhoneSignals`, one screen receiver and one call listener for every watcher
 
-**Status: built** in `3f19e672`; its steps are checked, and its texts are the code as built. The fix of its review (fix-7d-1: `watchScreen` removes its watcher when the reading fails, and the readings reach each watcher in order) changes this task's text when it lands.
+**Status: built** in `3f19e672`, with the fix of its review in `32e96e99` (`ScreenSource.read` gives each first reading on the source's thread, in order with the changes, and `watchScreen` holds no watcher when the source cannot start); its steps are checked, and its texts are the code as built.
 
 Today `ListeningService` registers its own screen receiver, and `Listening` starts Android's call listener while a voice session is open. A goal must pause on a lock or a call also with listening off (design 5.5 and 6.5 of sub-project 7), so the screen and the calls move into `PhoneSignals`, which one receiver and one call listener serve for every watcher: listening now, the conversation from Task 3. Listening's behaviour does not change: the service watches the screen from its start to its end and gets the reading at once, and `Listening` gets its calls through `PhoneSignals.callMonitor()`, a `CallMonitor` like today's.
 
@@ -774,7 +774,7 @@ git commit -m "refactor(listen): one screen receiver and one call listener serve
 
 ### Task 2: `ScreenTurns`, the screen's turn
 
-**Status: built** in `0e374a00`; its steps are checked, and its texts are the code as built.
+**Status: built** in `0e374a00`, with its review's comments in `3f8f4258`; its steps are checked, and its texts are the code as built.
 
 `Listening.afterStopping` makes a new instant command, a task and Kestrel's settings wait for a cancelled command's job (spec 7.3). A goal's round must wait the same way before its first observation (design 7.1 of sub-project 7), and plan 7B's `GoalRunner` asks a `ScreenTurn` for it. The stopping job and its wait of at most 3 s move into `ScreenTurns`, which implements plan 7B's `ScreenTurn` and which `Listening` uses now; Task 3 gives the same instance to `GoalRunner`.
 
