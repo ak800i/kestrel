@@ -167,6 +167,33 @@ class ArchivedConversationStoreTest {
         assertEquals(listOf(id(2)), store.closedSince(now - 1_500).map { it.id })
     }
 
+    // The search reads the generation before it reads the conversations, so that it never keeps an index of deleted words.
+    @Test
+    fun deleteAllRaisesTheGenerationBeforeItDeletesAlsoWhenItDoesNotComplete() = runTest {
+        var seenByTheArchive = -1L
+        lateinit var watched: ArchivedConversationStore
+        watched = ArchivedConversationStore(
+            object : RecordArchive by archive {
+                override suspend fun deleteAll() {
+                    seenByTheArchive = watched.generation
+                    archive.deleteAll()
+                }
+            },
+        ) {}
+        watched.save(conversation(1, now - 2_000))
+        val before = watched.generation
+        archive.interruptions["deleteAll"] = CancellationException("stop")
+
+        assertTrue(runCatching { watched.deleteAll() }.exceptionOrNull() is CancellationException)
+
+        assertEquals(before + 1, seenByTheArchive)
+        assertEquals(before + 1, watched.generation)
+        watched.save(conversation(2, now))
+        watched.delete(id(2))
+        watched.purge(30, now)
+        assertEquals(before + 1, watched.generation)
+    }
+
     // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back.
     @Test
     fun aDeleteAllCancelledAfterTheArchiveDeletedLeavesNothingInMemoryAndNothingComesBack() = runTest {

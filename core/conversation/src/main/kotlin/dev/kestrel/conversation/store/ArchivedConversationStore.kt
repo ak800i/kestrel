@@ -36,6 +36,10 @@ class ArchivedConversationStore(
     private val held = mutableSetOf<ConversationId>()
     private val deleted = mutableSetOf<ConversationId>()
 
+    @Volatile
+    override var generation = 0L
+        private set
+
     override suspend fun open(): ConversationSnapshot? = mutex.withLock { all().values.firstOrNull { it.open } }
 
     override suspend fun save(snapshot: ConversationSnapshot) = mutex.withLock { write(listOf(snapshot)) }
@@ -62,6 +66,7 @@ class ArchivedConversationStore(
     }
 
     override suspend fun deleteAll() = mutex.withLock {
+        generation++
         change(deletes = held.toSet(), inArchive = { archive.deleteAll() }) { it.clear() }
     }
 

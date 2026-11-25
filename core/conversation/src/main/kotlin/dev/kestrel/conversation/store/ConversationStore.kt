@@ -5,6 +5,13 @@ import dev.kestrel.conversation.model.ConversationSnapshot
 
 /** The conversations on the phone (design 9.2 of sub-project 7): at most one open, the others closed until retention ends. */
 interface ConversationStore {
+    /**
+     * How many times "delete history" ran in this process: [deleteAll] raises it before it deletes anything, also when the
+     * deletion does not complete. A reader that takes it before it reads, and compares it before it keeps what it read
+     * (the search's index), never keeps the words of a deleted conversation (design 9.7).
+     */
+    val generation: Long
+
     /** The open conversation, or null. */
     suspend fun open(): ConversationSnapshot?
 
