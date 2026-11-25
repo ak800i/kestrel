@@ -93,17 +93,18 @@ Plans 7A to 7D are done and on `main` and `sp3` at `3d0a1921`; plan 7D changed m
   - R2-I1: each goal's buttons have PendingIntents of their own: `GoalNotification.intentOf` puts the goal's key (`NoticeGoal.key`, `<conversation>/<record>`) into the broadcast's data, which Android compares when it matches PendingIntents (extras it ignores), and drops `FLAG_UPDATE_CURRENT`; `goalOf` reads the data. Tests: `GoalNoticesTest.eachGoalHasAKeyOfItsOwnThatNamesItAgain` and the device test `GoalServiceTest.anOlderGoalsContinueNeverResumesTheNextGoal`, which keeps goal A's Continue, ends A, holds a goal B and sends A's Continue; with the shared PendingIntent it resumes B and fails. Task 8, Step 3 runs it.
   - R2-I2: Task 8's data check and Step 1 had `\"` around the AVD check, which PowerShell runs as a command; every PowerShell command of Tasks 8 and 9 is now written to parse cleanly in PowerShell 7 and Windows PowerShell 5.1, checked with `Parser.ParseInput` (the step helpers before each step's text), which also found and fixed two expandable strings that the parser rejects (a regex with `)` inside `$(...)`, now computed before the string, and `$mode:` read as a drive-qualified variable).
   - R2-I3: Task 8, Step 8 and Task 9, Step 6 turn listening off (`Quiet`, checked) before the crash, read the mode first after the restart and stop unless it is `off`, and set the stand-in again at once (`StandIn 120`), before anything else; the press after it still comes after `StandIn 5`.
-  - R2-M1: `GoalButtons.press` waits at most `RESTORE_WAIT_MILLIS` (5 s) and drops a tap after a slower restore, with a report of its kind (`aTapWhoseRestoreDoesNotEndInTimeIsDroppedAndReportedByItsKind`); Task 8's new Step 8a checks on the device that a tap on the posted notification that reaches or starts a new process counts for the restored goal: a start refused through the new debug hook `goal-control do=refuse` (`AppGraph.goalStartRefusals`) posts the held goal's notification, Kestrel's own `goal-control do=locate` answers its Cancel's bounds (round 2 of this review replaced an `uiautomator` dump, see below), and `run-as dev.kestrel kill -9` ends the process right before the tap.
+  - R2-M1: `GoalButtons.press` waits at most `RESTORE_WAIT_MILLIS` (5 s) and drops a tap after a slower restore, with a report of its kind (`aTapWhoseRestoreDoesNotEndInTimeIsDroppedAndReportedByItsKind`); Task 8's new Step 8a checks on the device that a tap on the posted notification that reaches or starts a new process counts for the restored goal: a start refused through the new debug hook `goal-control do=refuse` (`AppGraph.goalStartRefusals`) posts the held goal's notification, the hook `goal-control do=send-later` hands its own Cancel to `AlarmManager` (round 3 of this review replaced the screen taps of rounds 1 and 2, see below), and `run-as dev.kestrel kill -9` ends the process before the alarm sends it.
   - R2-M2: Task 1, Step 7 expects C₀ + 3.
   - R2-M3: Task 9 has Task 8's safeguards for the A71: a rules block, the owner's data recorded right after the install (`Get-OwnerDataState`, its own state file) and compared after every step (`Compare-OwnerData`), the stand-in and listening rules, stop at the first failure, and Step 8 (put the A71 back) run whatever ended the task.
   - R2-M4: the step helpers' `Listen` reads the mode after its toggle, toggles a second time only while it is still off, and stops unless it says `listening`; `Quiet` checks `off`; Task 8, Step 10 and Task 9, Step 8 check the mode that they put back. The prose "run the command again once" is gone.
   - R2-M5: the Global Constraints, this section's entries, decision 15 and the self-review say what the code does.
   - Nits: Task 9, Step 7 writes back the accessibility setting as it found it, which it prints and which must be Step 2's; the self-review names its reviews apart; Task 8, Step 6 and Task 9, Step 4 stop the measurement's loop at the first exit code other than 0.
 - **Round 2 of the second plan review (Fix first), fixed at the root.**
-  - R3-I1 and R3-M1: Task 8, Step 8a no longer reads the shade with `uiautomator dump`, whose query matched nothing and whose obvious repair could have chosen another app's button, and which unbinds Kestrel's accessibility service while it runs. Kestrel's own accessibility service finds the button through a new debug hook, `goal-control do=locate --es action cancel` (Task 6), with `NoticeButtons.bounds`, which takes only the button in Kestrel's own row, as a press does; the hook answers only the bounds as numbers, or `bounds=none` (Kestrel's row shows no such button), which stops the step. Test: `NoticeButtonsTest.theBoundsAreThoseOfTheButtonInKestrelsOwnRow` (another app's Cancel never counts; a collapsed row has none).
+  - R3-I1 and R3-M1: Task 8, Step 8a no longer reads the shade with `uiautomator dump`, whose query matched nothing and whose obvious repair could have chosen another app's button, and which unbinds Kestrel's accessibility service while it runs. Round 2 had Kestrel's own accessibility service find the button's bounds (`goal-control do=locate`) for an `input tap`; round 3 replaced that (R4-M1, below).
   - R3-M2: `StandIn` comes right after Kestrel comes to the front and before `Listen`, in Task 8, Steps 7 to 9 (8a too) and Task 9, Steps 5 to 7, so no moment exists in which Kestrel listens without the stand-in; the rules of both tasks say so.
   - Nit: Task 9, Step 8 stops when the listening mode that it put back differs from Step 2's, as Task 8, Step 10 does.
-- **The rest.** "Changes to the design" gains the wait behind the owner's command, the pause's release and the buttons as the owner's inputs; "Interfaces for 7F and 7G" gains `waitsBehindCommand`, `goalRecord`, `awaitRestored`, `ScreenTurn.take`'s `waiting`, `GoalListener.waitsBehindCommand`, `GoalRunner.paused` and `resumed`, `NoticeGoal`, `GoalButtons`, `GoalTexts.BEHIND_COMMAND` and the hook's `do=refuse` and `do=locate` (and names `ScreenTakingGoal`, `FrontCheck` and `GoalRules` only as internal); "Decisions for the controller" gains items 13 to 15. The checker is clean from Task 1 and from Tasks 4, 5 and 6.
+- **Round 3 of the second plan review (R4-M1), fixed at the root.** Step 8a taps nothing on the screen any more: the bounds of round 2 were read up to a second before the tap, and a row that another app's notification moved meanwhile could have turned the tap into one on that app's notification, on the phone that holds the owner's account. The debug hook `goal-control do=locate` (and `NoticeButtons.bounds` with its test) gives way to `goal-control do=send-later --es action cancel` (Task 6): it takes the PendingIntent of the button on Kestrel's own posted notification from `NotificationManager.getActiveNotifications()`, the very intent that the owner's tap sends (never built again), and hands it to `AlarmManager.setExact`, which sends it 5 s later (Android sends no app's alarm sooner); it answers `send=scheduled`, or `send=none`, which stops the step. The step reads the process's ID before the hook and ends the process right after its answer with `run-as dev.kestrel kill -9`, which keeps the alarm; the restored goal must then end with `dropped taps: 0`. The exact alarm needs `USE_EXACT_ALARM`, which the debug manifest declares: Android grants it at the install from API 33 (Kestrel's minimum), so no setting of the phone changes, and release builds do not have it. The choice of intent is pure (`NoticeIntents.idOf` and `intentOf`) and tested on the JVM (`NoticeIntentsTest`: the button on the notification that shows it now, never another of Kestrel's notifications with the same label). Counts stay at A₀ + 27 (`NoticeButtonsTest` 2, `NoticeIntentsTest` 1).
+- **The rest.** "Changes to the design" gains the wait behind the owner's command, the pause's release and the buttons as the owner's inputs; "Interfaces for 7F and 7G" gains `waitsBehindCommand`, `goalRecord`, `awaitRestored`, `ScreenTurn.take`'s `waiting`, `GoalListener.waitsBehindCommand`, `GoalRunner.paused` and `resumed`, `NoticeGoal`, `GoalButtons`, `GoalTexts.BEHIND_COMMAND` and the hook's `do=refuse` and `do=send-later` (and names `ScreenTakingGoal`, `FrontCheck` and `GoalRules` only as internal); "Decisions for the controller" gains items 13 to 15. The checker is clean from Task 1 and from Tasks 4, 5 and 6.
 
 ## File structure
 
@@ -4164,18 +4165,18 @@ git commit -m "feat(app): GoalService runs for every open goal with its notifica
 
 ### Task 6: The hooks `goal-service-state` and `goal-control`
 
-The controller checks Android's own rules for the goal's starts and for background audio outside the instrumentation (Task 8 on kestrel-api37 and Task 9 on the A71), so the debug build gets two hooks. `goal-service-state` reads the service in kinds and counts, with the newest audio-focus result. `goal-control` does six things. `tap` presses a button of the goal notification in SystemUI's shade by the button's key, which the press checks again in every snapshot that it acts on, so that it never presses a row that moved or another app's button; SystemUI then sends the button's broadcast as it does for the owner's finger. `touch` gives the conversation a touch as the touch watcher gives it, where a real touch on the screen is not safe, as on the A71. `speak` asks Android for the audio focus as Kestrel's voice does, inside `GoalForeground.whileSpeaking`. `focus` asks for it without that, as the control (spike S9; main spec B5). `refuse` has the goal service's next start refused as Android refuses it, so that Task 8 can check the held goal's notification that Kestrel posts without the service, and a tap on it that starts Kestrel's process. `locate` answers the bounds of a button of Kestrel's own goal notification in the shade, as Kestrel's accessibility service finds it in Kestrel's own row, so that Task 8 taps that button with `input tap` right after Kestrel's process has ended, when no hook can press it. Both requests run on the app graph's scope a moment after the hook's broadcast has returned, so that the broadcast's own standing does not count.
+The controller checks Android's own rules for the goal's starts and for background audio outside the instrumentation (Task 8 on kestrel-api37 and Task 9 on the A71), so the debug build gets two hooks. `goal-service-state` reads the service in kinds and counts, with the newest audio-focus result. `goal-control` does six things. `tap` presses a button of the goal notification in SystemUI's shade by the button's key, which the press checks again in every snapshot that it acts on, so that it never presses a row that moved or another app's button; SystemUI then sends the button's broadcast as it does for the owner's finger. `touch` gives the conversation a touch as the touch watcher gives it, where a real touch on the screen is not safe, as on the A71. `speak` asks Android for the audio focus as Kestrel's voice does, inside `GoalForeground.whileSpeaking`. `focus` asks for it without that, as the control (spike S9; main spec B5). `refuse` has the goal service's next start refused as Android refuses it, so that Task 8 can check the held goal's notification that Kestrel posts without the service, and a tap on it that starts Kestrel's process. `send-later` hands the PendingIntent of a button of Kestrel's own posted goal notification, the very one that Android holds on the notification, to `AlarmManager`, which sends it about 5 s later, so that Task 8 can end Kestrel's process meanwhile and the system delivers the button's broadcast to a new process as it delivers the owner's tap; nothing is tapped on the screen. The speak and focus requests run on the app graph's scope a moment after the hook's broadcast has returned, so that the broadcast's own standing does not count.
 
 **Files:**
-- Create: `app/src/debug/kotlin/dev/kestrel/app/debug/FocusProbe.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/GoalServiceAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/NoticeButtons.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/GoalServiceHooks.kt`
-- Modify: `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`
-- Test: `app/src/testDebug/kotlin/dev/kestrel/app/debug/GoalServiceAnswersTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/NoticeButtonsTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/debug/GoalServiceHooksTest.kt` (device)
+- Create: `app/src/debug/kotlin/dev/kestrel/app/debug/FocusProbe.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/GoalServiceAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/NoticeButtons.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/NoticeIntents.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/GoalServiceHooks.kt`
+- Modify: `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`, `app/src/debug/AndroidManifest.xml`
+- Test: `app/src/testDebug/kotlin/dev/kestrel/app/debug/GoalServiceAnswersTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/NoticeButtonsTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/NoticeIntentsTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/debug/GoalServiceHooksTest.kt` (device)
 
 **Interfaces:**
-- Consumes: Tasks 2 to 5 (`AppGraph.goalStartRefusals`, `GoalForeground.status()`, `GoalForeground.notice()`, `GoalForeground.whileSpeaking`, `GoalService.runningTypes()`, `GoalAction`, `GoalNotice`, `NoticeKind`, `ForegroundType`, `ServiceState`); plan 7B's `ConversationEngine.touched()`; `AppGraph.scope`; `ScreenSession.actions` (`global`, `expand`, `tap(key, expected, policy, guard)`) and `ScreenSession.snapshots`; `PressPolicy.ONCE`; `ScreenSnapshot`, `ScreenElement` (`key`, `parent`, `packageName`, `text`, `contentDescription`, `clickable`, `actions`), `ElementAction`, `GlobalAction.NOTIFICATIONS` and `GlobalAction.DISMISS_SHADE`; `TestHooks`, `TestHooks.HookError`.
-- Produces (package `dev.kestrel.app.debug`, debug builds only): `data class FocusResult(val granted: Boolean, val speaking: Boolean, val types: Set<ForegroundType>?)` and `object FocusProbe { @Volatile var last: FocusResult?; suspend fun request(context: Context, foreground: GoalForeground, speaking: Boolean): FocusResult; DELAY_MILLIS = 1_000L }`; `object GoalServiceAnswers { fun state(status: GoalServiceStatus, android: Set<ForegroundType>?, focus: FocusResult?): String }`; `object NoticeButtons { fun button(snapshot: ScreenSnapshot, title: String, label: String): String?; fun bounds(snapshot: ScreenSnapshot, title: String, label: String): IntRect?; fun isButton(element: ScreenElement, label: String): Boolean; fun collapsedRow(snapshot: ScreenSnapshot, title: String): String? }`; `class GoalServiceHooks(graph: AppGraph, context: Context)` with `COMMANDS = setOf("GOAL_SERVICE_STATE", "GOAL_CONTROL")`. The hooks: `dev.kestrel.hook.GOAL_SERVICE_STATE` answers `service=stopped|starting|running notice=working|held|closing|none posted=held|none actions=<a,b>|none progress=<done>/<total>|none types=<t+t>|none applied=<t+t>|none android=running|none androidTypes=<t+t>|none starts=<n> refusals=<n> focus=granted|failed|none focusBy=speak|focus|none focusTypes=<t+t>|none`, with the types `special-use` and `media-playback`; `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` answers `tapped=<action>`, `--es do touch` answers `touch=sent`, `--es do speak|focus` answers `speak=sent` or `focus=sent`, whose result `goal-service-state` shows about a second later, `--es do refuse` answers `refuse=armed`: the goal service's next start is refused as Android refuses it (`AppGraph.goalStartRefusals`), once; and `--es do locate --es action stop|continue|cancel` answers `bounds=<left>,<top>,<right>,<bottom>` (the button in Kestrel's own row, the shade left open) or `bounds=none` (the shade closed).
+- Consumes: Tasks 2 to 5 (`AppGraph.goalStartRefusals`, `GoalForeground.status()`, `GoalForeground.notice()`, `GoalForeground.whileSpeaking`, `GoalService.runningTypes()`, `GoalAction`, `GoalNotice`, `NoticeKind`, `ForegroundType`, `ServiceState`); plan 7B's `ConversationEngine.touched()`; `AppGraph.scope`; `ScreenSession.actions` (`global`, `expand`, `tap(key, expected, policy, guard)`) and `ScreenSession.snapshots`; `PressPolicy.ONCE`; `ScreenSnapshot`, `ScreenElement` (`key`, `parent`, `packageName`, `text`, `contentDescription`, `clickable`, `actions`), `ElementAction`, `GlobalAction.NOTIFICATIONS` and `GlobalAction.DISMISS_SHADE`; `GoalNotification.SERVICE_ID` and `POSTED_ID`; Android's `NotificationManager.getActiveNotifications()` and `AlarmManager.setExact` with `USE_EXACT_ALARM`; `TestHooks`, `TestHooks.HookError`.
+- Produces (package `dev.kestrel.app.debug`, debug builds only): `data class FocusResult(val granted: Boolean, val speaking: Boolean, val types: Set<ForegroundType>?)` and `object FocusProbe { @Volatile var last: FocusResult?; suspend fun request(context: Context, foreground: GoalForeground, speaking: Boolean): FocusResult; DELAY_MILLIS = 1_000L }`; `object GoalServiceAnswers { fun state(status: GoalServiceStatus, android: Set<ForegroundType>?, focus: FocusResult?): String }`; `object NoticeButtons { fun button(snapshot: ScreenSnapshot, title: String, label: String): String?; fun isButton(element: ScreenElement, label: String): Boolean; fun collapsedRow(snapshot: ScreenSnapshot, title: String): String? }`; `object NoticeIntents { data class Posted<T>(val id: Int, val buttons: List<Pair<String, T>>); fun idOf(status: GoalServiceStatus, action: GoalAction): Int?; fun <T> intentOf(posted: List<Posted<T>>, id: Int, label: String): T? }`; `class GoalServiceHooks(graph: AppGraph, context: Context)` with `COMMANDS = setOf("GOAL_SERVICE_STATE", "GOAL_CONTROL")`. The hooks: `dev.kestrel.hook.GOAL_SERVICE_STATE` answers `service=stopped|starting|running notice=working|held|closing|none posted=held|none actions=<a,b>|none progress=<done>/<total>|none types=<t+t>|none applied=<t+t>|none android=running|none androidTypes=<t+t>|none starts=<n> refusals=<n> focus=granted|failed|none focusBy=speak|focus|none focusTypes=<t+t>|none`, with the types `special-use` and `media-playback`; `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` answers `tapped=<action>`, `--es do touch` answers `touch=sent`, `--es do speak|focus` answers `speak=sent` or `focus=sent`, whose result `goal-service-state` shows about a second later, `--es do refuse` answers `refuse=armed`: the goal service's next start is refused as Android refuses it (`AppGraph.goalStartRefusals`), once; and `--es do send-later --es action stop|continue|cancel` answers `send=scheduled`: `AlarmManager` sends the button's PendingIntent, as Android holds it on Kestrel's goal notification, `SEND_LATER_MILLIS` (5 s) later; or `send=none` when Kestrel's goal notification shows no such button.
 
-Counts: `:app` JVM A₀ + 23 + 4 = A₀ + 27 (`GoalServiceAnswersTest` 1, `NoticeButtonsTest` 3). Device tests: AD₀ + 9 + 2 = AD₀ + 11 (`GoalServiceHooksTest` 2).
+Counts: `:app` JVM A₀ + 23 + 4 = A₀ + 27 (`GoalServiceAnswersTest` 1, `NoticeButtonsTest` 2, `NoticeIntentsTest` 1). Device tests: AD₀ + 9 + 2 = AD₀ + 11 (`GoalServiceHooksTest` 2).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4303,32 +4304,60 @@ class NoticeButtonsTest {
         assertEquals("row-kestrel", NoticeButtons.collapsedRow(snapshot, "Kestrel is working"))
     }
 
-    // The second review of plan 7E, round 2 (R3-I1): the hook goal-control do=locate answers the bounds of Kestrel's own
-    // button, which Kestrel finds in its own row as a press does; another app's button with the same label never counts,
-    // and a collapsed row has none.
-    @Test
-    fun theBoundsAreThoseOfTheButtonInKestrelsOwnRow() {
-        val other = IntRect(0, 100, 200, 160)
-        val kestrel = IntRect(0, 500, 200, 560)
-        val elements = listOf(
-            element("shade", null),
-            element("row-other", 0, actions = setOf(ElementAction.COLLAPSE)),
-            element("other-title", 1, text = "Download paused"),
-            element("other-cancel", 1, text = "Cancel", clickable = true).copy(bounds = other),
-            element("row-kestrel", 0, actions = setOf(ElementAction.COLLAPSE)),
-            element("kestrel-title", 4, text = "Continue the goal?"),
-            element("kestrel-cancel", 4, text = "Cancel", clickable = true).copy(bounds = kestrel),
-        )
-        val shown = ScreenSnapshot(takenAtMillis = 0, windows = listOf(shade), elements = elements)
+    private companion object {
+        const val SYSTEM_UI = "com.android.systemui"
+    }
+}
+```
 
-        assertEquals(kestrel, NoticeButtons.bounds(shown, "Continue the goal?", "Cancel"))
-        // Kestrel's row collapsed: only the other app's Cancel shows, and it never counts.
-        val collapsed = shown.copy(elements = elements.take(5).mapIndexed { index, it -> if (index == 4) it.copy(actions = setOf(ElementAction.EXPAND)) else it } + elements[5])
-        assertNull(NoticeButtons.bounds(collapsed, "Continue the goal?", "Cancel"))
+Create `app/src/testDebug/kotlin/dev/kestrel/app/debug/NoticeIntentsTest.kt`:
+
+```kotlin
+package dev.kestrel.app.debug
+
+import dev.kestrel.app.goal.ForegroundType
+import dev.kestrel.app.goal.GoalAction
+import dev.kestrel.app.goal.GoalNotice
+import dev.kestrel.app.goal.GoalNotification
+import dev.kestrel.app.goal.GoalServiceStatus
+import dev.kestrel.app.goal.NoticeKind
+import dev.kestrel.app.goal.ServiceState
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * The button's PendingIntent that the hook goal-control do=send-later hands to AlarmManager (plan 7E; the second review's
+ * R4-M1): the one on the notification that shows the button now, as Android holds it posted, never one of another of
+ * Kestrel's notifications with the same label.
+ */
+class NoticeIntentsTest {
+    @Test
+    fun theIntentIsTheButtonsOnTheNotificationThatShowsItNow() {
+        val held = GoalNotice(NoticeKind.HELD, "Continue the goal?", "Tap Continue in Kestrel's notification.", null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE))
+        val working = GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Reply to Mila", null, listOf(GoalAction.STOP, GoalAction.OPEN))
+        val posted = GoalServiceStatus(ServiceState.STOPPED, null, held, null, null, 1, 1)
+        val running = GoalServiceStatus(ServiceState.RUNNING, working, null, setOf(ForegroundType.SPECIAL_USE), setOf(ForegroundType.SPECIAL_USE), 1, 0)
+        val shown = listOf(
+            NoticeIntents.Posted(OTHER_ID, listOf(GoalAction.CANCEL.label to "other-cancel")),
+            NoticeIntents.Posted(GoalNotification.POSTED_ID, listOf(GoalAction.CANCEL.label to "held-cancel", GoalAction.CONTINUE.label to "held-continue")),
+            NoticeIntents.Posted(GoalNotification.SERVICE_ID, listOf(GoalAction.STOP.label to "working-stop")),
+        )
+
+        // The held goal posted without the service: its Cancel, not the Cancel of another of Kestrel's notifications.
+        val heldId = NoticeIntents.idOf(posted, GoalAction.CANCEL)
+        assertEquals(GoalNotification.POSTED_ID, heldId)
+        assertEquals("held-cancel", NoticeIntents.intentOf(shown, checkNotNull(heldId), GoalAction.CANCEL.label))
+        // The working goal in the service's notification: its Stop; it offers no Cancel.
+        assertEquals("working-stop", NoticeIntents.intentOf(shown, checkNotNull(NoticeIntents.idOf(running, GoalAction.STOP)), GoalAction.STOP.label))
+        assertNull(NoticeIntents.idOf(running, GoalAction.CANCEL))
+        // A notification that Android no longer shows, or a button that it does not carry, has no intent.
+        assertNull(NoticeIntents.intentOf(shown.take(1), GoalNotification.POSTED_ID, GoalAction.CANCEL.label))
+        assertNull(NoticeIntents.intentOf(shown, GoalNotification.SERVICE_ID, GoalAction.OPEN.label))
     }
 
     private companion object {
-        const val SYSTEM_UI = "com.android.systemui"
+        const val OTHER_ID = 7_001
     }
 }
 ```
@@ -4408,7 +4437,7 @@ class GoalServiceHooksTest {
         check(VoiceTests.waitUntil(10_000) { hook("GOAL_SERVICE_STATE").contains("focusBy=speak focusTypes=special-use+media-playback") }) {
             "The speak request did not answer with the speech's types"
         }
-        assertEquals("error: add --es do with one of tap, touch, speak, focus, refuse or locate", hook("GOAL_CONTROL", "do" to "other"))
+        assertEquals("error: add --es do with one of tap, touch, speak, focus, refuse or send-later", hook("GOAL_CONTROL", "do" to "other"))
         assertEquals("error: add --es action with one of stop, open, continue or cancel", hook("GOAL_CONTROL", "do" to "tap"))
         model.release()
     }
@@ -4447,10 +4476,10 @@ class GoalServiceHooksTest {
 
 - [ ] **Step 2: Run the JVM tests to see them fail**
 
-Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.debug.GoalServiceAnswersTest --tests=dev.kestrel.app.debug.NoticeButtonsTest`
-Expected: FAIL, the compiler reports `Unresolved reference 'GoalServiceAnswers'`, `Unresolved reference 'FocusResult'` and `Unresolved reference 'NoticeButtons'`.
+Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.debug.GoalServiceAnswersTest --tests=dev.kestrel.app.debug.NoticeButtonsTest --tests=dev.kestrel.app.debug.NoticeIntentsTest`
+Expected: FAIL, the compiler reports `Unresolved reference 'GoalServiceAnswers'`, `Unresolved reference 'FocusResult'`, `Unresolved reference 'NoticeButtons'` and `Unresolved reference 'NoticeIntents'`.
 
-- [ ] **Step 3: The focus probe, the answers, the buttons and the hooks**
+- [ ] **Step 3: The focus probe, the answers, the buttons, their intents and the hooks**
 
 Create `app/src/debug/kotlin/dev/kestrel/app/debug/FocusProbe.kt`:
 
@@ -4546,7 +4575,6 @@ Create `app/src/debug/kotlin/dev/kestrel/app/debug/NoticeButtons.kt`:
 package dev.kestrel.app.debug
 
 import dev.kestrel.screen.model.ElementAction
-import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 
@@ -4565,13 +4593,6 @@ internal object NoticeButtons {
             isButton(snapshot.elements[index], label) && row in ancestors(snapshot, index)
         }?.let { snapshot.elements[it].key }
     }
-
-    /**
-     * The bounds on the screen of the button [label] in the row whose title is [title]; null when the shade does not show
-     * it, also while the row is collapsed (plan 7E, Task 8, Step 8a). Only Kestrel's own row's button counts, as for [button].
-     */
-    fun bounds(snapshot: ScreenSnapshot, title: String, label: String): IntRect? =
-        button(snapshot, title, label)?.let { key -> snapshot.elements.first { it.key == key }.bounds }
 
     /** Whether [element] is SystemUI's clickable element with the label [label]: the check that a press repeats. */
     fun isButton(element: ScreenElement, label: String): Boolean =
@@ -4600,22 +4621,59 @@ internal object NoticeButtons {
 }
 ```
 
+Create `app/src/debug/kotlin/dev/kestrel/app/debug/NoticeIntents.kt`:
+
+```kotlin
+package dev.kestrel.app.debug
+
+import dev.kestrel.app.goal.GoalAction
+import dev.kestrel.app.goal.GoalNotification
+import dev.kestrel.app.goal.GoalServiceStatus
+
+/**
+ * A button's PendingIntent as Android holds it on Kestrel's own posted goal notification (plan 7E, Task 8, Step 8a), for
+ * the hook goal-control do=send-later: the very intent that the owner's tap on the button sends, taken from the
+ * notification that Android shows, never built again. Generic in the intent, so that the choice is tested without Android.
+ */
+internal object NoticeIntents {
+    /** One of Kestrel's posted notifications: its ID and its buttons, each as its label and its intent. */
+    data class Posted<T>(val id: Int, val buttons: List<Pair<String, T>>)
+
+    /**
+     * The ID of the notification that shows [action] now: the held goal's notification that Kestrel posted without the
+     * service, or else the service's own; null when neither offers [action].
+     */
+    fun idOf(status: GoalServiceStatus, action: GoalAction): Int? = when {
+        status.posted?.actions?.contains(action) == true -> GoalNotification.POSTED_ID
+        status.notice?.actions?.contains(action) == true -> GoalNotification.SERVICE_ID
+        else -> null
+    }
+
+    /** The intent of the button [label] on Kestrel's posted notification [id]; null when Android shows no such button. */
+    fun <T> intentOf(posted: List<Posted<T>>, id: Int, label: String): T? =
+        posted.firstOrNull { it.id == id }?.buttons?.firstOrNull { it.first == label }?.second
+}
+```
+
 Create `app/src/debug/kotlin/dev/kestrel/app/debug/GoalServiceHooks.kt`:
 
 ```kotlin
 package dev.kestrel.app.debug
 
+import android.app.AlarmManager
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.goal.GoalAction
+import dev.kestrel.app.goal.GoalNotice
 import dev.kestrel.app.goal.GoalService
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.PressPolicy
-import dev.kestrel.screen.model.ScreenSnapshot
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -4624,8 +4682,9 @@ import kotlinx.coroutines.launch
  * audio-focus request. goal-control presses a button of the goal notification in SystemUI's shade by its key, so that
  * SystemUI sends the button's broadcast as it does for the owner's finger and Android's rules for a start from a
  * notification apply; gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen
- * is not safe, as on the A71; or asks Android for the audio focus with and without the speech's types (spike S9). The
- * answers never contain words.
+ * is not safe, as on the A71; asks Android for the audio focus with and without the speech's types (spike S9); or has a
+ * button's own PendingIntent sent a few seconds later, to a process that has ended meanwhile. The answers never contain
+ * words.
  */
 internal class GoalServiceHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
@@ -4653,8 +4712,8 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             graph.goalStartRefusals.set(true)
             "refuse=armed"
         }
-        "locate" -> locate(intent.getStringExtra(EXTRA_ACTION))
-        else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse or locate")
+        "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
+        else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse or send-later")
     }
 
     private suspend fun tap(name: String?): String {
@@ -4663,7 +4722,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         if (action !in notice.actions) throw HookError("the goal notification has no ${action.name.lowercase()} now")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         session.actions.global(GlobalAction.NOTIFICATIONS)
-        val key = inShade(session) { NoticeButtons.button(it, notice.title, action.label) ?: expand(session, it, notice.title) }
+        val key = buttonInShade(session, notice, action)
         if (key == null) {
             session.actions.global(GlobalAction.DISMISS_SHADE)
             throw HookError("the goal notification's ${action.name.lowercase()} is not in the shade")
@@ -4684,40 +4743,38 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
     }
 
     /**
-     * The bounds of the goal notification's button in SystemUI's shade, as Kestrel's own accessibility service finds it in
-     * Kestrel's own row (`NoticeButtons`), for Task 8, Step 8a of plan 7E, which taps there right after Kestrel's process
-     * has ended: `bounds=<left>,<top>,<right>,<bottom>` in the screen's pixels, with the shade left open, or `bounds=none`,
-     * with the shade closed, when Kestrel's row does not show the button. Only numbers, never a word of the shade.
+     * Hands the PendingIntent of the goal notification's button, as Android holds it on Kestrel's posted notification, to
+     * AlarmManager, which sends it [SEND_LATER_MILLIS] later (Task 8, Step 8a of plan 7E; the second review's R4-M1). The
+     * step ends Kestrel's process meanwhile, and the system delivers the button's broadcast to a new process as it
+     * delivers the owner's tap. Nothing is tapped on the screen, so a row that moves in the shade can never turn it into a
+     * tap on another app's notification. `send=scheduled`, or `send=none` when Kestrel's goal notification shows no such
+     * button. USE_EXACT_ALARM in the debug manifest allows the exact alarm without a setting of the phone.
      */
-    private suspend fun locate(name: String?): String {
+    private fun sendLater(name: String?): String {
         val action = actionOf(name)
-        val notice = graph.goalForeground.notice()?.takeIf { action in it.actions } ?: return "bounds=none"
-        val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
-        session.actions.global(GlobalAction.NOTIFICATIONS)
-        val bounds = inShade(session) { NoticeButtons.bounds(it, notice.title, action.label) ?: expand(session, it, notice.title) }
-        if (bounds == null) {
-            session.actions.global(GlobalAction.DISMISS_SHADE)
-            return "bounds=none"
+        val id = NoticeIntents.idOf(graph.goalForeground.status(), action) ?: return "send=none"
+        val posted = context.getSystemService(NotificationManager::class.java).activeNotifications.map { shown ->
+            NoticeIntents.Posted(shown.id, (shown.notification.actions ?: emptyArray()).map { it.title.toString() to it.actionIntent })
         }
-        return "bounds=${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}"
+        val button = NoticeIntents.intentOf(posted, id, action.label) ?: return "send=none"
+        val alarms = context.getSystemService(AlarmManager::class.java)
+        if (!alarms.canScheduleExactAlarms()) throw HookError("Kestrel may not set an exact alarm")
+        alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + SEND_LATER_MILLIS, button)
+        return "send=scheduled"
     }
 
     private fun actionOf(name: String?): GoalAction = GoalAction.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
         ?: throw HookError("add --es action with one of stop, open, continue or cancel")
 
-    // The shade opens with an animation, and a collapsed row shows its buttons only once it is expanded: [read] gives what
-    // it looks for in a snapshot of the shade, or null, after it asked to expand Kestrel's row ([expand]).
-    private suspend fun <T : Any> inShade(session: ScreenSession, read: suspend (ScreenSnapshot) -> T?): T? {
+    // The shade opens with an animation, and a collapsed row shows its buttons only once it is expanded: the key of the
+    // button in Kestrel's own row, or null, after it asked to expand that row.
+    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction): String? {
         repeat(SHADE_TRIES) {
             delay(SHADE_MILLIS)
-            read(session.snapshots.current().snapshot)?.let { return it }
+            val snapshot = session.snapshots.current().snapshot
+            NoticeButtons.button(snapshot, notice.title, action.label)?.let { return it }
+            NoticeButtons.collapsedRow(snapshot, notice.title)?.let { session.actions.expand(it) }
         }
-        return null
-    }
-
-    // Expands Kestrel's row when it is collapsed; nothing is found in this snapshot either way.
-    private suspend fun <T> expand(session: ScreenSession, snapshot: ScreenSnapshot, title: String): T? {
-        NoticeButtons.collapsedRow(snapshot, title)?.let { session.actions.expand(it) }
         return null
     }
 
@@ -4727,6 +4784,9 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         private const val EXTRA_ACTION = "action"
         private const val SHADE_TRIES = 5
         private const val SHADE_MILLIS = 600L
+
+        // Android sends no app's alarm sooner than 5 s after it was set (AlarmManager's minimum futurity).
+        private const val SEND_LATER_MILLIS = 5_000L
     }
 }
 ```
@@ -4744,9 +4804,26 @@ with:
         if (command in GoalServiceHooks.COMMANDS) return GoalServiceHooks(graph, context).run(command, intent)
 ```
 
+In `app/src/debug/AndroidManifest.xml`, replace:
+
+```xml
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+```
+
+with:
+
+```xml
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- The hook goal-control do=send-later has a goal notification's button sent a few seconds later by an exact alarm
+         (plan 7E, Task 8, Step 8a). Android grants USE_EXACT_ALARM at the install (API 33 and later, Kestrel's minimum),
+         so the hook changes no setting of the phone; release builds do not have it. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+```
+
 - [ ] **Step 4: Run the tests to see them pass**
 
-Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.debug.GoalServiceAnswersTest --tests=dev.kestrel.app.debug.NoticeButtonsTest`
+Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.debug.GoalServiceAnswersTest --tests=dev.kestrel.app.debug.NoticeButtonsTest --tests=dev.kestrel.app.debug.NoticeIntentsTest`
 Expected: PASS, 4 tests.
 
 - [ ] **Step 5: Run `:app`'s JVM tests and lint, compile the device tests, count them and stop Gradle**
@@ -5086,10 +5163,10 @@ Expected, in order: `stand-in: 120 s` (each `StandIn` prints its line, or stops 
 
 - [ ] **Step 8a: A tap on the posted notification that starts Kestrel's process**
 
-The held goal's notification that Kestrel posts without the service outlives Kestrel's process, and a tap on it can reach a process that has not finished its restore, or start one (the first review's M3 and the second review's R2-M1). The step sets the stand-in before listening is on; has the goal service's next start refused (`goal-control do=refuse`), so that a goal is held and its notification posted without the service; and turns listening off, so that nothing can be heard after the restart. Then Kestrel's own accessibility service finds the posted notification's Cancel in Kestrel's own row of the shade (`goal-control do=locate`, with `NoticeButtons`, as a press does), and the hook answers only its bounds as numbers, or `bounds=none`, which stops the step: no other app's button can be chosen, and no word of the shade leaves the phone. One shell command then ends Kestrel's process (`run-as dev.kestrel kill -9`) and taps the middle of those bounds a few milliseconds later; the shade stays open between the two. The tap's broadcast reaches a new process of Kestrel, whichever starts it first, the tap or the accessibility service's binding, and its receiver must wait for the conversation's restore and count the tap for the restored goal. Cancel runs no round, so no stand-in is needed after the restart; the stand-in covers the goal before the kill.
+The held goal's notification that Kestrel posts without the service outlives Kestrel's process, and a tap on it can reach a process that has not finished its restore, or start one (the first review's M3 and the second review's R2-M1). The step sets the stand-in before listening is on; has the goal service's next start refused (`goal-control do=refuse`), so that a goal is held and its notification posted without the service; and turns listening off, so that nothing can be heard after the restart. It reads the process's ID first. Then the hook `goal-control do=send-later --es action cancel` takes the posted notification's own Cancel, the PendingIntent that Android holds on Kestrel's notification and that the owner's tap would send, and hands it to `AlarmManager`, which sends it 5 s later; the hook answers `send=scheduled`, or `send=none` when Kestrel's notification shows no Cancel, which stops the step. Right after the answer the step ends Kestrel's process (`run-as dev.kestrel kill -9`, which, unlike a stop of the app, keeps its alarms). Nothing is tapped on the screen, so no other app's notification can be touched however the shade's rows move (the second review's R4-M1), and no word of the shade leaves the phone. The button's broadcast reaches a new process of Kestrel, whichever starts it first, the broadcast or the accessibility service's binding, and its receiver must wait for the conversation's restore and count the Cancel for the restored goal. Cancel runs no round, so no stand-in is needed after the restart; the stand-in covers the goal before the kill.
 
-Run, after the step helpers: `& $adb -s $s logcat -c; & $adb -s $s shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; StandIn 120; Listen; & $adb -s $s shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; Hook 'GOAL_CONTROL --es do refuse'; Heard 'Kestrel, check a tap that starts Kestrel'; Start-Sleep -Seconds 5; Quiet; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $located = Hook 'GOAL_CONTROL --es do locate --es action cancel'; $at = [regex]::Match($located, 'bounds=(\d+),(\d+),(\d+),(\d+)'); if (-not $at.Success) { & $adb -s $s shell cmd statusbar collapse; Write-Error "Kestrel's own row shows no Cancel ($located): stop and report" -ErrorAction Stop }; $x = [int](([int]$at.Groups[1].Value + [int]$at.Groups[3].Value) / 2); $y = [int](([int]$at.Groups[2].Value + [int]$at.Groups[4].Value) / 2); "cancel at: $x,$y"; $old = "$(& $adb -s $s shell pidof dev.kestrel)".Trim(); & $adb -s $s shell "run-as dev.kestrel kill -9 $old; input tap $x $y"; Restarted $old; Start-Sleep -Seconds 8; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; "mode: $(Mode)"; & $adb -s $s shell cmd statusbar collapse; "dropped taps: $(@(& $adb -s $s logcat -d | Select-String "A goal notification's button failed").Count)"`
-Expected, in order: `stand-in: 120 s`; `mode: listening`; `expire=sent`; `refuse=armed`; `mode: off`; `goal=interrupted`; `service=stopped notice=none posted=held actions=cancel,continue … refusals=1` (the refused start held the goal, and Kestrel posted its notification); `cancel at:` and two numbers; `process: new bound: True`; `restored=goal-held` (the kill is no owner's stop); `goal=none` (the tap's Cancel counted for the restored goal); a `goal-service-state` line with `posted=none` (note its `starts=` and `service=`: the new process may have started the service for the restored goal before the Cancel); `mode: off`; `dropped taps: 0`. A `goal=interrupted` at the end means that the tap was lost: stop, run the data check, and report, with `dropped taps:`, which counts the receiver's drops after a slow restore. When the hook answers `bounds=none` (Kestrel's row shows no Cancel), the command stops: run the data check and report.
+Run, after the step helpers: `& $adb -s $s logcat -c; & $adb -s $s shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; StandIn 120; Listen; & $adb -s $s shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; Hook 'GOAL_CONTROL --es do refuse'; Heard 'Kestrel, check a tap that starts Kestrel'; Start-Sleep -Seconds 5; Quiet; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $old = "$(& $adb -s $s shell pidof dev.kestrel)".Trim(); $sent = Hook 'GOAL_CONTROL --es do send-later --es action cancel'; if ("$sent" -notmatch 'send=scheduled') { Write-Error "Kestrel's goal notification shows no Cancel ($sent): stop and report" -ErrorAction Stop }; & $adb -s $s shell "run-as dev.kestrel kill -9 $old"; Restarted $old; Start-Sleep -Seconds 8; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; "mode: $(Mode)"; "dropped taps: $(@(& $adb -s $s logcat -d | Select-String "A goal notification's button failed").Count)"`
+Expected, in order: `stand-in: 120 s`; `mode: listening`; `expire=sent`; `refuse=armed`; `mode: off`; `goal=interrupted`; `service=stopped notice=none posted=held actions=cancel,continue … refusals=1` (the refused start held the goal, and Kestrel posted its notification); `send=scheduled`; `process: new bound: True`; `restored=goal-held` (the kill is no owner's stop, and the Cancel had not come before it); `goal=none` (the Cancel that the alarm sent counted for the restored goal); a `goal-service-state` line with `posted=none` (note its `starts=` and `service=`: the new process may have started the service for the restored goal before the Cancel); `mode: off`; `dropped taps: 0`. A `goal=interrupted` at the end means that the Cancel was lost: stop, run the data check, and report, with `dropped taps:`, which counts the receiver's drops after a slow restore. When the hook answers `send=none` (Kestrel's notification shows no Cancel), the command stops: run the data check and report. A `restored=goal-ended` or `goal=none` before the kill means that the Cancel reached the old process: stop, run the data check, and report.
 
 - [ ] **Step 9: The owner's stop in "Active apps"**
 
@@ -5105,7 +5182,7 @@ Expected: `mode:` and the mode of Step 1 (the command stops when it is another o
 
 - [ ] **Step 11: Note the results**
 
-Add to `.superpowers\sdd\progress.md`, under "## Plan 7E" (a delegated agent writes these lines into its report under "## Ledger lines", and the controller copies them): the build's commit on kestrel-api37; the data check's answers before and after every step; the counts of Tasks 1 to 7; the numbers of tests that passed and were skipped in Steps 3 to 6; the times of Step 6 (the write run, the close, the index's read, the first search, the restore and the search right after a start); and S9's findings on kestrel-api37: for each of the spoken start (Step 7), the start from the notification's Continue (Step 7) and the start at a restart (Step 8), whether Android allowed it (`refusals=0`) or refused it, with the types that Android applied (`androidTypes=`) and the `allowStartForeground` and `allowWhileInUse` lines; the audio focus for `speak` and `focus` while the goal worked, after the restart, and after the goal's end, with the audio service's lines and the assistant role's holders; whether the pull of the shade held the goal (Step 3); whether the tap on the posted notification that started Kestrel's process counted (Step 8a, with `dropped taps:`); and the reason and sub-reason of the owner's stop with the restore's answer (Step 9).
+Add to `.superpowers\sdd\progress.md`, under "## Plan 7E" (a delegated agent writes these lines into its report under "## Ledger lines", and the controller copies them): the build's commit on kestrel-api37; the data check's answers before and after every step; the counts of Tasks 1 to 7; the numbers of tests that passed and were skipped in Steps 3 to 6; the times of Step 6 (the write run, the close, the index's read, the first search, the restore and the search right after a start); and S9's findings on kestrel-api37: for each of the spoken start (Step 7), the start from the notification's Continue (Step 7) and the start at a restart (Step 8), whether Android allowed it (`refusals=0`) or refused it, with the types that Android applied (`androidTypes=`) and the `allowStartForeground` and `allowWhileInUse` lines; the audio focus for `speak` and `focus` while the goal worked, after the restart, and after the goal's end, with the audio service's lines and the assistant role's holders; whether the pull of the shade held the goal (Step 3); whether the posted notification's Cancel, sent by the alarm to a new process of Kestrel, counted (Step 8a, with `dropped taps:`); and the reason and sub-reason of the owner's stop with the restore's answer (Step 9).
 
 ---
 
@@ -5210,7 +5287,7 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 - Plan 7B's `ProcessEnd` (`OwnerStopped(atWall)`, `Other`), `ConversationEngine.restore(previous: ProcessEnd)`; this plan's `ExitReason.UNCLEAR_STOP`, `exitReasonOf(reason, timestamp, sdk, updatedAt)`, `processEndOf(record)`, `readProcessEnd` and `AppGraph.previousProcessEnd()`, over the graph's one `AndroidExitRecords`.
 
 **The checks (plans 7F and 7G)**
-- The hooks `dev.kestrel.hook.GOAL_SERVICE_STATE` (answer: `service=… notice=… posted=… actions=… progress=… types=… applied=… android=… androidTypes=… starts=<n> refusals=<n> focus=… focusBy=… focusTypes=…`) and `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` (`tapped=<action>`), `--es do touch` (`touch=sent`) `--es do speak|focus` (`speak=sent`, `focus=sent`), `--es do refuse` (`refuse=armed`) and `--es do locate --es action stop|continue|cancel` (`bounds=<left>,<top>,<right>,<bottom>` of the button in Kestrel's own row, or `bounds=none`). Plan 7G adds them to `scripts\hook.ps1` as `goal-service-state` and `goal-control -Do tap|touch|speak|focus|refuse|locate [-Action …]`, with Pester cases in `scripts\test-scripts.ps1`.
+- The hooks `dev.kestrel.hook.GOAL_SERVICE_STATE` (answer: `service=… notice=… posted=… actions=… progress=… types=… applied=… android=… androidTypes=… starts=<n> refusals=<n> focus=… focusBy=… focusTypes=…`) and `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` (`tapped=<action>`), `--es do touch` (`touch=sent`) `--es do speak|focus` (`speak=sent`, `focus=sent`), `--es do refuse` (`refuse=armed`) and `--es do send-later --es action stop|continue|cancel` (`send=scheduled`: the button's own PendingIntent on Kestrel's goal notification, sent by `AlarmManager` 5 s later; or `send=none`). Plan 7G adds them to `scripts\hook.ps1` as `goal-service-state` and `goal-control -Do tap|touch|speak|focus|refuse|send-later [-Action …]`, with Pester cases in `scripts\test-scripts.ps1`.
 - Plan 7F's typed start check (design 10.6 and 15.2): with `ConversationActivity` in front and listening off, a typed command (plan 7F's `conversation-type`, or the screen itself), then `GOAL_SERVICE_STATE` expects `service=running … starts=1 refusals=0`, with the service's `allowStartForeground` and `allowWhileInUse` lines and a `do=speak` after the screen went to the back; on kestrel-api37 as Task 8, Step 7 does, and on the A71 as Task 9, Step 5 does, together with design 15.2's typed goal with listening off.
 - Plan 7G's tasks `interrupt-continue` and `resume-after-death` may use `GOAL_CONTROL --es do touch` or a real tap, `crash`, `CONVERSATION_CONTROL --es do restore-check` and `GOAL_CONTROL --es do tap --es action continue`, as Task 8, Steps 7 and 8, do; `resume-after-death` carries design 15.2's check that a yes after a restart continues from the checklist with a fresh observation. An interruption by Android's refusal ends a round as `end=INTERRUPTED`, as a touch does.
 - `ConversationSearchSpeedTest` with `-Pandroid.testInstrumentationRunnerArguments.kestrelSearchSpeed=write`, then `=search`, then `=start`, logging `wrote 300 conversations in <s> s`, `closed a conversation in <ms> ms`, `read the index in <ms> ms`, `searched 300 conversations in <ms> ms`, `restored the open conversation in <ms> ms` and `searched right after a start in <ms> ms` under `KestrelSearch`.
@@ -5229,7 +5306,7 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 9. **The debug hooks `goal-control do=touch|speak|focus`** give the conversation a touch without touching the A71's screen, and ask for the audio focus outside the instrumentation. Recommendation: accept; the device tests check the real touch watcher (the pull of the shade, and sub-project 5's tests).
 10. **`scripts\hook.ps1` learns this plan's hooks in plan 7G**, as plan 7D's. Recommendation: accept; until then Tasks 8 and 9 send them with `am broadcast`.
 11. **Spike S9's outcome in the main spec.** Recommendation: after Task 9, the controller writes S9's findings on both devices into the main spec's section 19 and B5, and into design 10.6 where they change its sentence on `mediaPlayback`, in a documentation commit; when a start was refused, the owner first decides what follows.
-12. **The goal notification that the owner swipes away comes back with the next change of the goal**, as the listening notification does, not at once. Recommendation: accept; posting it again at once would undo the owner's own swipe, and a held goal keeps "Kestrel, continue" and, from plan 7F, the conversation screen. The held goal's notification that Kestrel posts without the service also outlives Kestrel's process when Android ends it: the next start removes it (the posted notice is empty at every start), and a tap on it before then starts Kestrel's process, whose receiver waits for the conversation's restore, at most 5 s, and counts the tap for the restored goal, which has the same conversation and record (the reviews' M3 and R2-M1); Task 8, Step 8a checks it on kestrel-api37, with a start refused through the debug hook `goal-control do=refuse`, the button's bounds from `goal-control do=locate`, and the process ended right before the tap.
+12. **The goal notification that the owner swipes away comes back with the next change of the goal**, as the listening notification does, not at once. Recommendation: accept; posting it again at once would undo the owner's own swipe, and a held goal keeps "Kestrel, continue" and, from plan 7F, the conversation screen. The held goal's notification that Kestrel posts without the service also outlives Kestrel's process when Android ends it: the next start removes it (the posted notice is empty at every start), and a tap on it before then starts Kestrel's process, whose receiver waits for the conversation's restore, at most 5 s, and counts the tap for the restored goal, which has the same conversation and record (the reviews' M3 and R2-M1); Task 8, Step 8a checks it on kestrel-api37, with a start refused through the debug hook `goal-control do=refuse`, the posted notification's own Cancel handed to `AlarmManager` by `goal-control do=send-later`, and the process ended before the alarm sends it.
 
 13. **The wait behind the owner's command is a field of the conversation's view (amendment of 2026-11-25).** The round's screen turn reports it through `ScreenTurn.take`'s `waiting`, the goal's listener, and the engine, which carries it as it carries the round's step, so that the notification, plan 7F's screen and any later reader take it from the one view. The other form, a flow of `:app`'s `ScreenTurns` that the notification combines with the view, would put a goal's state beside the view and need each reader to combine it again. The notification says "Waiting for your command to finish" in place of the current item; `conversation-state` and `goal-service-state` keep their lines. Recommendation: accept.
 14. **A pause lets go of the screen's turn once no step can act (amendment of 2026-11-25; plan 7D's re-review, R5-1; settled by the controller).** The controller ruled out a release while an action that a gate guarded may still run. `ScreenTakingGoal` keeps the span from the run's take of the turn to its next model call or its next wait for the owner; a pause in that span lets go only at its end, and a pause during a model call lets go at once. It needs no change of `:core:agent`'s ports: the goal port's `stepStarted` already comes right before every model call, after the turn's gate, the observation and the steering, and `releaseScreen` as every wait for the owner starts. The span is wider than the action alone (it also covers the observation after it and the next turn's steering), which keeps the turn a little longer than needed, never shorter.
@@ -5243,5 +5320,5 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 - **The re-review of 2026-11-25.** N1: one reader of the exit record (`AndroidExitRecords`, built once in the app graph) and one reading of reason 10 for both restores, with `ExitReason.UNCLEAR_STOP` on Android 13 near an update, after which listening stays off (`ListeningTest.kestrelStaysOffAfterAStopThatCannotBeToldFromAnUpdate`) and the goal is held (Task 4). N2: Task 8, Step 9 and Task 9, Step 7 end the earlier conversation first and expect `commands=1`. N3: Task 9, Step 7 prints `lastUpdateTime` beside the exit record's time and names Step 4's install. N4: the minute around an update counts on both sides, with its cases in `ExitRecordsTest`. N5: Task 8, Step 7 records the assistant role's holders, and decision 12 says that the posted notification outlives the process. N6: the amendments are now in plan 7B's Tasks 7 and 10.
 - **Placeholders.** Each step has its code or its command; Task 8, Step 10 and Task 9, Step 8 take values that their Steps 1 and 2 printed, which the steps name.
 - **Type consistency.** `Interruption.BACKGROUND_REFUSED`, `GoalHold.BACKGROUND_REFUSED`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`, `ConversationEngine.backgroundRefused(command)`, `ConversationView.hold` and `goalEnding`, `ConversationTexts.BACKGROUND_REFUSED` and `CONTINUE_IN_NOTIFICATION` (Task 1); `ProcessEnd` and `restore(previous)` (plan 7B) and `ExitReason.UNCLEAR_STOP`, `exitReasonOf`, `processEndOf`, `readProcessEnd` and `AppGraph.previousProcessEnd` (Task 4); `ConversationView.goalRecord`, `waitsBehindCommand` and `ConversationEngine.awaitRestored()` (Tasks 1 and 1c); `GoalNotice(kind, title, text, progress, actions, goal)`, `NoticeGoal(conversation, record)` with `key` and `ofKey`, `NoticeKind`, `NoticeProgress(done, total)`, `GoalAction(label, intent, resumes)` with `stops`, `broadcast` and `ofBroadcast`, `GoalNotices.CLOSING` and `of`, `GoalButtons.input`, `press` and `RESTORE_WAIT_MILLIS` (Task 2); `ForegroundType`, `ServiceState`, `Shown(notice, types)`, `GoalServiceEvent.Viewed(goal, stopping, command, replying, notice)`, `GoalServiceCommand.Start` and `HoldGoal(command)`, `GoalServiceRules.next/shown/posted/types`, `GoalServiceStatus(service, notice, posted, types, applied, starts, refusals)` and `GoalForeground(start, holdGoal, sdk, report)` with `follow`, `started`, `applied`, `failed`, `destroyed`, `whileSpeaking`, `status`, `notice`, `shown` and `posted` (Task 3) are the names of Tasks 5 and 6; `GoalNotification` (`intentOf(context, action, goal)`, `goalOf`), `GoalService.start` and `runningTypes`, and `AppGraph.goalStartRefusals` (Task 5) are the names of Task 6 and the tests; `FocusResult(granted, speaking, types)` and `FocusProbe` (Task 6).
-- **Safety.** No file of plan 6BF's safety work changes; the notification carries no words of the owner's off the phone, its lock-screen version hides the item, Continue needs the owner's unlock, its receiver is not exported and acts only for the goal that a button's notice showed and only while that goal's notice offers what the button does, and its buttons give only `Stop` and `Continue`, which carry no words (D8). Task 8 and Task 9 set the stand-in round before every `heard` and Continue, keep listening off across a restart until the stand-in is set again, and compare the owner's data by machine after every step. The hooks answer kinds and counts only, and press only Kestrel's own button, by its key, checked again at the press.
-- **The amendment of 2026-11-25 (plans 7A to 7D as built, at `3d0a1921`).** Task 1's old texts follow plan 7D's `ownRequest`; Tasks 1b and 1c carry plan 7D's two items left to this plan (R5-1, with the controller's rule that a pause never lets go while a step may act, and the wait behind the owner's command), each test-first with its failing run; Tasks 2 and 5 make every notification button an owner's input with its own number; the device tests end their work through plan 7D's `ConversationTests`; Task 7 follows plan 7D's `RoomRecordArchive`; Task 8 follows plan 7D's gate (the data check with `Get-GoogleAccountCount`, a delegated agent's rules, the flaky class); the counts are measured at `3d0a1921`. The first plan review of the amendment (I1 to I3, M1 to M5, nits) and its second review (R2-I1 to R2-I3, R2-M1 to R2-M5, nits) are fixed at their roots (see the amendment's entries). The checker is clean from Tasks 1, 4, 5 and 6, and the two `Select-String` checks of "Before you start" give 17 and 12 matches there.
+- **Safety.** No file of plan 6BF's safety work changes; the notification carries no words of the owner's off the phone, its lock-screen version hides the item, Continue needs the owner's unlock, its receiver is not exported and acts only for the goal that a button's notice showed and only while that goal's notice offers what the button does, and its buttons give only `Stop` and `Continue`, which carry no words (D8). Task 8 and Task 9 set the stand-in round before every `heard` and Continue, keep listening off across a restart until the stand-in is set again, and compare the owner's data by machine after every step. The hooks answer kinds and counts only, press only Kestrel's own button, by its key, checked again at the press, and send only the PendingIntent that Android holds on Kestrel's own notification; Step 8a taps nothing on the screen.
+- **The amendment of 2026-11-25 (plans 7A to 7D as built, at `3d0a1921`).** Task 1's old texts follow plan 7D's `ownRequest`; Tasks 1b and 1c carry plan 7D's two items left to this plan (R5-1, with the controller's rule that a pause never lets go while a step may act, and the wait behind the owner's command), each test-first with its failing run; Tasks 2 and 5 make every notification button an owner's input with its own number; the device tests end their work through plan 7D's `ConversationTests`; Task 7 follows plan 7D's `RoomRecordArchive`; Task 8 follows plan 7D's gate (the data check with `Get-GoogleAccountCount`, a delegated agent's rules, the flaky class); the counts are measured at `3d0a1921`. The first plan review of the amendment (I1 to I3, M1 to M5, nits) and its second review (R2-I1 to R2-I3, R2-M1 to R2-M5, nits; its round 2, R3-I1, R3-M1, R3-M2 and a nit; its round 3, R4-M1) are fixed at their roots (see the amendment's entries). The checker is clean from Tasks 1, 4, 5 and 6, and the two `Select-String` checks of "Before you start" give 17 and 12 matches there.
