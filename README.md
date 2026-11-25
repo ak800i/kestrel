@@ -68,7 +68,7 @@ Kestrel is tested only on the `kestrel-api37` emulator and on a Galaxy A71. The 
 
 ```powershell
 scripts\create-avd.ps1                    # once: installs Android 17 and creates kestrel-api37
-$serial = scripts\start-emulator.ps1      # starts the emulator and prints its adb serial
+$serial = scripts\start-emulator.ps1      # starts the emulator without a window and prints its adb serial (-Window: with one)
 scripts\connected-test.ps1 -Serial $serial :core:privacy:connectedDebugAndroidTest :core:voice:connectedDebugAndroidTest :app:connectedDebugAndroidTest
 scripts\command-test.ps1 -Serial $serial  # the instant commands' device tests, on the emulator only, which the line above skips
 scripts\install.ps1 -Serial $serial       # runs the privacy audit, then installs the debug build with adb install -r
@@ -98,6 +98,8 @@ The scripts use the adb of the Android SDK. To use the same adb for the commands
 ```
 
 `start-emulator.ps1` starts the emulator with software rendering (`-gpu swiftshader`), because with the computer's graphics card the emulator slowed down after a few hours of tests. Android inside the emulator can still slow down after many hours of tests. If the device tests become slow, or Android restarts while they run, restart the emulator with a cold boot: run `& $adb -s $serial emu kill`, wait until the emulator has closed, and then run `$serial = scripts\start-emulator.ps1 -ColdBoot`. A normal start would bring the slow state back from the emulator's Quick Boot snapshot, and restarting Android inside the emulator is not enough.
+
+`start-emulator.ps1` starts the emulator without a window (`-no-window`), because only the emulator's window links Android's clipboard to Windows' clipboard. The window does so while the emulator's setting "Enable clipboard sharing" (Extended controls > Settings) is on, and that setting is one for every AVD of this Windows user, `zoran` too; the emulator has no command-line option, feature or AVD setting for it. Android's side of the link sends each clip to Windows on a thread of its own, and the window sends Windows' clip back into Android, so an older clip could replace a newer one a moment later: `ClipboardHookTest` failed so now and then. The tests' clips would also replace your Windows clipboard. For a step in which you work in the emulator's window, close the emulator and start it with `scripts\start-emulator.ps1 -Window`; afterwards close it and start it again without `-Window`. When kestrel-api37 already runs, the script warns if it runs with its window while clipboard sharing is on and `-Window` was not given, or without a window when `-Window` was given. It reads the setting as it is now; turning it on or off in the window applies at once.
 
 ### Test hooks
 

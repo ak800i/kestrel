@@ -1,8 +1,16 @@
 # Starts kestrel-api37 if it is not running, waits until Android has booted and prints its adb serial.
-# The emulator keeps running in its own window after this script ends.
+# The emulator keeps running after this script ends.
 # -ColdBoot starts Android afresh instead of from the emulator's Quick Boot snapshot. Use it after closing a slow
 # emulator, because the snapshot would bring the slow state back.
-param([switch]$ColdBoot)
+# The emulator runs without a window (-no-window), because only its window links Android's clipboard to Windows'
+# clipboard. The window does so while the emulator's setting "Enable clipboard sharing" is on, and that setting is one
+# for every AVD of this Windows user (zoran too); the emulator has no command-line option, feature or AVD setting for it.
+# Android's side of the link sends each clip to Windows on a thread of its own, and the window sends Windows' clip back,
+# so an older clip can replace a newer one a moment later (ClipboardHookTest failed so in plan 7E's Task 8), and every
+# clip of the tests would also replace the owner's Windows clipboard. -Window starts the emulator with its window, for a
+# plan step in which the owner works in it; close it afterwards and start it again without -Window. When kestrel-api37
+# already runs, the script warns if it runs otherwise than asked.
+param([switch]$ColdBoot, [switch]$Window)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 Use-KestrelToolchain
@@ -12,6 +20,13 @@ $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
 if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: & '$adb' -s $serial emu kill" }
+if ($serial) {
+    foreach ($process in @(Get-EmulatorProcess $name)) {
+        $warning = Get-EmulatorWindowWarning -AvdName $name -ProcessName $process.Name -Window $Window.IsPresent `
+            -ClipboardSharing (Test-EmulatorClipboardSharing) -CloseCommand "& '$adb' -s $serial emu kill"
+        if ($warning) { Write-Warning $warning }
+    }
+}
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
     $running = Get-CimInstance Win32_Process -Filter "Name LIKE 'qemu-system%'" |
@@ -27,6 +42,7 @@ if (-not $serial) {
         # metrics either.
         $arguments = @('-avd', $name, '-no-boot-anim', '-gpu', 'swiftshader', '-crash-report-mode', 'never', '-no-metrics')
         if ($ColdBoot) { $arguments += '-no-snapshot-load' }
+        if (-not $Window) { $arguments += '-no-window' }
         $started = Start-Process -FilePath $emulator -ArgumentList $arguments -WindowStyle Minimized -PassThru
         $null = $started.Handle  # Keeps the exit code readable after the process ends.
     }

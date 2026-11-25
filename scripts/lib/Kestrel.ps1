@@ -355,6 +355,32 @@ function Get-EmulatorProcess([string]$AvdName) {
         Where-Object { $_.CommandLine -match "-avd\s+$([regex]::Escape($AvdName))(\s|$)" }
 }
 
+# Whether the emulator's setting "Enable clipboard sharing" (Extended controls > Settings) is on. It is one setting for
+# every AVD of this Windows user, and the emulator treats a missing value as on. Only an emulator with a window uses it.
+function Test-EmulatorClipboardSharing {
+    $value = (Get-ItemProperty 'HKCU:\Software\Android Open Source Project\Emulator\set' -Name clipboardSharing `
+            -ErrorAction SilentlyContinue).clipboardSharing
+    return ($null -eq $value) -or ("$value" -ne 'false')
+}
+
+# The warning for a running emulator whose qemu process is $ProcessName ('qemu-system-x86_64.exe' with a window,
+# 'qemu-system-x86_64-headless.exe' without one), when scripts\start-emulator.ps1 was asked for a window ($Window) or
+# not, and the clipboard sharing is $ClipboardSharing; $null when it runs as asked. $CloseCommand closes the emulator.
+function Get-EmulatorWindowWarning([string]$AvdName, [string]$ProcessName, [bool]$Window, [bool]$ClipboardSharing,
+    [string]$CloseCommand) {
+    $headless = $ProcessName -match '-headless'
+    if ($Window -and $headless) {
+        return "$AvdName runs without a window. To get one, close it with $CloseCommand and run " +
+            'scripts\start-emulator.ps1 -Window.'
+    }
+    if (-not $Window -and -not $headless -and $ClipboardSharing) {
+        return "$AvdName runs with its window while the emulator's setting 'Enable clipboard sharing' is on, so the " +
+            "emulator links Android's clipboard to Windows' clipboard, and the clipboard tests are unreliable. Close it with " +
+            "$CloseCommand and run scripts\start-emulator.ps1 without -Window."
+    }
+    return $null
+}
+
 # Reads the index of a stream's volume from the answer of 'cmd media_session volume --stream <stream> --get', whose line
 # reads '[V] volume is 7 in range [0..25]'. Throws when the answer has no such line.
 function Get-StreamVolume([string[]]$Lines) {

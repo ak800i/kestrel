@@ -516,6 +516,35 @@ Describe 'Get-EmulatorProcess' {
     }
 }
 
+Describe 'Get-EmulatorWindowWarning' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        $windowed = 'qemu-system-x86_64.exe'
+        $headless = 'qemu-system-x86_64-headless.exe'
+    }
+
+    It 'warns when the emulator runs with its window while the clipboard sharing is on and no window was asked for' {
+        $warning = Get-EmulatorWindowWarning -AvdName kestrel-api37 -ProcessName $windowed -Window $false `
+            -ClipboardSharing $true -CloseCommand 'adb emu kill'
+        $warning | Should -Match "^kestrel-api37 runs with its window while the emulator's setting 'Enable clipboard sharing' is on"
+        $warning | Should -Match 'Close it with adb emu kill and run scripts\\start-emulator\.ps1 without -Window\.$'
+    }
+
+    It 'warns when a window was asked for and the emulator runs without one' {
+        Get-EmulatorWindowWarning -AvdName kestrel-api37 -ProcessName $headless -Window $true -ClipboardSharing $true |
+            Should -Match 'kestrel-api37 runs without a window'
+    }
+
+    It 'does not warn when the emulator runs as asked, or with its window while the clipboard sharing is off' {
+        Get-EmulatorWindowWarning -AvdName kestrel-api37 -ProcessName $headless -Window $false -ClipboardSharing $true |
+            Should -BeNullOrEmpty
+        Get-EmulatorWindowWarning -AvdName kestrel-api37 -ProcessName $windowed -Window $true -ClipboardSharing $true |
+            Should -BeNullOrEmpty
+        Get-EmulatorWindowWarning -AvdName kestrel-api37 -ProcessName $windowed -Window $false -ClipboardSharing $false |
+            Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Get-LargestRowId' {
     BeforeAll {
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
