@@ -5,6 +5,9 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskCancellation
 import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.goal.HistoryPort
+import dev.kestrel.agent.goal.HistoryQuery
+import dev.kestrel.agent.goal.HistoryResult
 import dev.kestrel.agent.goal.NoGoal
 import dev.kestrel.agent.goal.NoHistory
 import dev.kestrel.agent.goal.Steer
@@ -103,7 +106,7 @@ class GoalRunner(
             // A round that a touch or a stop cancelled before it first ran prepares nothing.
             currentCoroutineContext().ensureActive()
             screen.take()
-            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))) {
+            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, searched(plan), RoundPurpose.GOAL))) {
                 is RoundSetup.Refused -> {
                     result = TaskReport(setup.end)
                     refused = setup.sentence
@@ -124,6 +127,18 @@ class GoalRunner(
         }
         finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR), refused, stopped = cancellation != null)
         if (cancellation != null) throw cancellation
+    }
+
+    // The round's search of past conversations, which reads the store only once it holds every write that the conversation
+    // queued before the search.
+    private fun searched(plan: RoundPlan): HistoryPort {
+        val port = history.port(plan.self)
+        return object : HistoryPort {
+            override suspend fun search(query: HistoryQuery): HistoryResult {
+                plan.stored()
+                return port.search(query)
+            }
+        }
     }
 
     // One run of the agent with the round's ports, its request and the conversation's test mode (design 12.4), while the

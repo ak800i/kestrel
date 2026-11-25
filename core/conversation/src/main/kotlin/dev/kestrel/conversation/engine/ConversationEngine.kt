@@ -75,7 +75,8 @@ import kotlinx.coroutines.launch
  * as an event or a message, so that no input waits for the store. The loop keeps the open conversation's records and gives
  * the writer its snapshot at every change; the writer stores the snapshots, the closes and the switches in order, and a
  * round's trace waits until the record that holds it is saved, so that the record survives the end of Kestrel's process
- * (design 6.7). The machine's timers are deadlines on the clock that counts the phone's sleep
+ * (design 6.7), and a round's search, the search of a past conversation and "delete history" wait until the writer has
+ * stored every write queued before them. The machine's timers are deadlines on the clock that counts the phone's sleep
  * ([ConversationClock.sinceBootMillis]): before it handles any message, an input and a signal too, the loop ends every
  * timer whose deadline has passed, and a coroutine's `delay`, which stops while the phone sleeps, only wakes it. Work that
  * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order, and the end
@@ -135,6 +136,9 @@ class ConversationEngine(
 
         /** Stores [closing] closed and opens [id] in one transaction (D23). */
         class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+
+        /** Completes [done] once every write before it is stored. */
+        class Barrier(val done: CompletableDeferred<Unit>) : Write
     }
 
     /** Timer [number]'s deadline on the clock that counts sleep, and the coroutine that wakes the loop for it. */
@@ -472,7 +476,7 @@ class ConversationEngine(
         localJob = scope.launch(start = CoroutineStart.ATOMIC) {
             val outcome = try {
                 currentCoroutineContext().ensureActive()
-                local.run(effect.request, asked, owner)
+                local.run(effect.request, asked, owner, ::stored)
             } catch (e: CancellationException) {
                 post(ConversationEvent.LocalEnded(effect.command, LocalOutcome.Quiet))
                 throw e
@@ -601,6 +605,7 @@ class ConversationEngine(
         self = RecordRef(id, goal.record),
         zone = clock.zone(),
         waiting = goal.inbox.pending().size,
+        stored = ::stored,
     )
 
     private fun load(snapshot: ConversationSnapshot) {
@@ -683,6 +688,7 @@ class ConversationEngine(
             } catch (e: Exception) {
                 report("Closing the conversation", e)
             }
+            is Write.Barrier -> write.done.complete(Unit)
             is Write.Reopen -> {
                 val opened = try {
                     store.reopen(write.id, write.closing, write.nowWall, write.testMode)
@@ -696,6 +702,14 @@ class ConversationEngine(
                 inbox.trySend(Message.Reopened(opened, failed = false))
             }
         }
+    }
+
+    // Returns once the writer has stored every write that the loop queued before this call, so that a search of the store
+    // or "delete history" sees each of them; any coroutine may call it.
+    private suspend fun stored() {
+        val done = CompletableDeferred<Unit>()
+        writes.send(Write.Barrier(done))
+        done.await()
     }
 
     // A closed conversation keeps no goal and no steering: they belong to the open one's goal only. An open one's goal keeps

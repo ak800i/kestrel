@@ -130,6 +130,8 @@ internal object GoalRules {
             )
             PhoneSignal.CALL_IDLE -> back(state.copy(phone = phone.copy(ringing = false, inCall = false)))
             PhoneSignal.AGENT_CALL -> agentCall(state.copy(phone = phone.copy(ringing = false, inCall = true)))
+            // The engine has read its deadlines before this signal; the screen alone says nothing of the owner.
+            PhoneSignal.SCREEN_ON -> MachineStep(state)
         }
     }
 

@@ -7,6 +7,7 @@ import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.OwnerInput
+import dev.kestrel.conversation.store.RecordRef
 
 /**
  * The conversation's state (design 6.1 of sub-project 7). At most one conversation is open: [id] is null when none is, and
@@ -16,8 +17,8 @@ import dev.kestrel.conversation.model.OwnerInput
  * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
  * until the owner is there ([PhoneState.present]), [heldReport] is a goal's final reply and [heldWords] a held goal's
  * round report with how to go on, each waiting for him (design 6.4). [local] is a local request or a switch that runs; [next] a command
- * that waits for the goal that "stop" ended or for the local request; [closeAfterGoal] closes the conversation once its
- * goal has ended, after a change of test mode. [continueAnswer] is the owner's input
+ * that waits for the goal that "stop" ended or for the local request; [closeAfterWork] closes the conversation once its
+ * goal or its local request has ended and its record holds the end, after a change of test mode. [continueAnswer] is the owner's input
  * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
  * mode is not `OFF`, so the voice can speak a question and hear its answer, also in the paused mode); while it is off, a
  * spoken conversation's questions wait as typed ones do (decision 10 of plan 7B). The engine sets it before it restores.
@@ -44,7 +45,7 @@ data class ConversationState(
     val heldWords: ChannelOutput.Said? = null,
     val local: LocalRun? = null,
     val next: OwnerInput? = null,
-    val closeAfterGoal: Boolean = false,
+    val closeAfterWork: Boolean = false,
     val phone: PhoneState = PhoneState(),
     val timers: Timers = Timers(),
     val settings: ConversationSettings = ConversationSettings(),
@@ -58,10 +59,11 @@ internal val ConversationState.openId: ConversationId get() = checkNotNull(id) {
 data class OpenQuestion(val number: Int, val kind: QuestionKind, val replyOpen: Boolean = false)
 
 /**
- * A local request or a switch that runs as [command] for the owner's [input]; [record] is a memory request's record.
- * [cancelled] once "stop" cancelled it.
+ * A local request or a switch that runs as [command] for the owner's [input]; [record] is a memory request's record, named
+ * with its conversation, so that its end is recorded there whatever is open when the request ends. [cancelled] once
+ * "stop" cancelled it.
  */
-data class LocalRun(val command: Int, val record: Int?, val input: OwnerInput, val cancelled: Boolean = false)
+data class LocalRun(val command: Int, val record: RecordRef?, val input: OwnerInput, val cancelled: Boolean = false)
 
 /**
  * The phone as `PhoneSignals` reports it. [known] once a lock signal (`LOCKED` or `UNLOCKED`) has said whether the phone is

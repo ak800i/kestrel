@@ -718,13 +718,110 @@ class ConversationEngineTest {
         assertEquals(EndReason.CANCELLED, store.open()!!.records.single().end)
     }
 
-    // A store whose saves wait for [gate] while it is set.
+    // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
+        val calls = mutableListOf<String>()
 
         override suspend fun save(snapshot: ConversationSnapshot) {
             gate?.await()
             inner.save(snapshot)
+            calls += "save"
         }
+
+        override suspend fun deleteAll() {
+            inner.deleteAll()
+            calls += "deleteAll"
+        }
+    }
+
+    // A change of test mode while "Remember that …" asks waits for the request: the conversation closes with the record's
+    // end, and the next command runs in a new conversation under the new test mode.
+    @Test
+    fun aChangeOfTestModeWaitsForAMemoryRequestAndClosesAfterItsEnd() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1)))
+        engine.restore()
+        engine.submit(input(InputChannel.TEXT, InputIntent.Remember("the gate code", "4321")))
+        runCurrent()
+        val id = engine.view.value.id!!
+        assertEquals(QuestionKind.YES_NO, text.asked.last().kind)
+
+        testMode.value = true
+        runCurrent()
+        assertEquals(id, engine.view.value.id)
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes)))
+        runCurrent()
+        assertNull(engine.view.value.id)
+        val record = store.get(id)!!.records.single()
+        assertEquals(EndReason.FINISHED, record.end)
+        assertEquals(ConversationTexts.REMEMBERED, record.answer)
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertTrue(engine.view.value.testMode)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // The screen comes on after a sleep: the view shows at once that the quiet time ended, for the bar and the notification.
+    @Test
+    fun theScreenComingOnShowsAQuietTimeThatEndedInTheSleep() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertNotNull(engine.view.value.id)
+
+        clock.sleep(10 * 60_000L)
+        engine.signal(PhoneSignal.SCREEN_ON)
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+        assertEquals(QuietClock.Off, engine.view.value.quiet)
+    }
+
+    // "Continue the conversation about X" reads the store only after every write queued before it: here the close of the
+    // conversation that it looks for, which waits for the store.
+    @Test
+    fun theSearchForAPastConversationWaitsForTheWritesBeforeIt() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(spoken("Read my latest SMS"))
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        gated.gate = gate
+
+        engine.endQuietTime()
+        engine.submit(input(InputChannel.VOICE, InputIntent.ContinuePast("latest SMS")))
+        runCurrent()
+        assertTrue(voice.asked.none { it.kind == QuestionKind.SWITCH })
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(QuestionKind.SWITCH, voice.asked.last().kind)
+    }
+
+    // "Delete history" deletes only after every write queued before it, so that a save that waited is deleted too.
+    @Test
+    fun deleteHistoryWaitsForTheWritesBeforeIt() = scope.runTest {
+        text.answers += ChannelAnswer.Yes
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        gated.gate = gate
+
+        engine.endQuietTime()
+        engine.submit(input(InputChannel.TEXT, InputIntent.DeleteHistory))
+        runCurrent()
+        assertFalse("deleteAll" in gated.calls)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("save", "deleteAll"), gated.calls.takeLast(2))
+        assertTrue(archive.rows.isEmpty())
     }
 }

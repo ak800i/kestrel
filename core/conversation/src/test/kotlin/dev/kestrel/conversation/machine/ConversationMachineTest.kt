@@ -317,6 +317,37 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
     }
 
+    // A change of test mode waits for a running memory request, as it waits for a goal: the conversation closes once the
+    // request's end is recorded, and a command that waited runs in a new conversation under the new test mode.
+    @Test
+    fun aChangeOfTestModeWaitsForARunningMemoryRequest() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val changed = step(remembering.state, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true))
+        assertFalse(changed.has<ConversationEffect.Close>())
+        assertEquals(id, changed.state.id)
+        val waiting = step(changed.state, spoken("Turn on Wi-Fi")).state
+
+        val done = step(waiting, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+
+        val end = done.effects.indexOf(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED))
+        assertTrue(end >= 0 && end < done.effects.indexOf(ConversationEffect.Close(id)))
+        assertEquals(1, done.effect<ConversationEffect.StartGoal>().record)
+        assertTrue(done.state.testMode)
+    }
+
+    // A memory request's record names its own conversation, so that its end never needs an open one.
+    @Test
+    fun aMemoryRequestEndsAlsoWithoutAnOpenConversation() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+
+        val done = step(remembering.state.copy(id = null), ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+
+        assertNull(done.state.local)
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), done.effect<ConversationEffect.EndRecord>())
+    }
+
     @Test
     fun continuingAPastConversationFromNoneAndFromAnOpenOne() {
         val about = spoken(InputIntent.ContinuePast("the trip"))
@@ -364,7 +395,7 @@ class ConversationMachineTest : MachineTesting() {
 
         val stopping = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true))
         assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED), stopping.effect<ConversationEffect.CancelGoal>())
-        assertTrue(stopping.state.closeAfterGoal)
+        assertTrue(stopping.state.closeAfterWork)
 
         val final = ended(stopping.state, TaskReport(EndReason.CANCELLED), "Cancelled.")
         assertEquals(listOf(ChannelOutput.Report(1, "Cancelled.")), final.outputs())
@@ -497,7 +528,7 @@ class ConversationMachineTest : MachineTesting() {
         val ending = step(idle, ConversationEvent.Restored(snapshot.copy(goal = GoalState(1, GoalPhase.ACTING, now - 10_000))))
         assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), ending.effect<ConversationEffect.EndHeldGoal>())
         assertFalse(ending.has<ConversationEffect.AskContinueGoal>())
-        assertTrue(ending.state.closeAfterGoal)
+        assertTrue(ending.state.closeAfterWork)
 
         val final = ended(ending.state, TaskReport(EndReason.CANCELLED), "Cancelled.")
         assertEquals("Cancelled.", (final.outputs().single() as ChannelOutput.Report).text)

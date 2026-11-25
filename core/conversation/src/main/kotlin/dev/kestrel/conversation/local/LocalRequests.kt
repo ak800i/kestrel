@@ -35,13 +35,17 @@ class LocalRequests(
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
 ) {
-    /** Answers [request]: memory requests through [owner], which records them; the others through [dialogue]. */
-    suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome = when (request) {
+    /**
+     * Answers [request]: memory requests through [owner], which records them; the others through [dialogue]. [stored]
+     * returns once the store holds every write of the conversation queued before the call (the engine's writer): the search
+     * and the deletion call it first, so that they see each of those writes.
+     */
+    suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue, stored: suspend () -> Unit = {}): LocalOutcome = when (request) {
         is LocalRequest.Remember -> remember(request, owner)
         is LocalRequest.Forget -> forget(request, owner)
         is LocalRequest.SaveRoutine -> routines(request.name, owner)?.let { LocalOutcome.Reply(it) } ?: LocalOutcome.Quiet
-        LocalRequest.DeleteHistory -> deleteHistory(dialogue)
-        is LocalRequest.ContinuePast -> continuePast(request.topic, dialogue)
+        LocalRequest.DeleteHistory -> deleteHistory(dialogue, stored)
+        is LocalRequest.ContinuePast -> continuePast(request.topic, dialogue, stored)
     }
 
     private suspend fun remember(request: LocalRequest.Remember, owner: OwnerPort): LocalOutcome {
@@ -58,10 +62,11 @@ class LocalRequests(
         return LocalOutcome.Reply(ConversationTexts.FORGOTTEN)
     }
 
-    private suspend fun deleteHistory(dialogue: Dialogue): LocalOutcome {
+    private suspend fun deleteHistory(dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome {
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
         if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
         return try {
+            stored()
             deleteLogs()
             store.deleteAll()
             LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)
@@ -73,7 +78,8 @@ class LocalRequests(
         }
     }
 
-    private suspend fun continuePast(topic: String?, dialogue: Dialogue): LocalOutcome {
+    private suspend fun continuePast(topic: String?, dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome {
+        stored()
         val match = when (val found = search.conversation(topic)) {
             is ConversationLookup.Found -> found.match
             ConversationLookup.NotFound -> return LocalOutcome.Reply(ConversationTexts.NOT_FOUND)

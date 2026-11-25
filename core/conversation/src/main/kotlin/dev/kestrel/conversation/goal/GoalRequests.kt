@@ -17,8 +17,10 @@ import java.time.ZoneId
  * One round to run (design 7.1 and 7.6 of sub-project 7): the goal's [record] as it is now, the conversation's [earlier]
  * records (oldest first, the older ones condensed), the owner's [text] of a first round, the [resume] cause of a later
  * one, the conversation's fixed [testMode], when it was continued, the round's [limits], the debug hook's [options], the
- * goal's own record for the search ([self]), the phone's [zone], and how many of the record's steering lines still wait
- * in the goal's inbox ([waiting]), which the run takes before its first step. toString prints no words.
+ * goal's own record for the search ([self]), the phone's [zone], how many of the record's steering lines still wait in
+ * the goal's inbox ([waiting]), which the run takes before its first step, and [stored], which returns once the store
+ * holds every write of the conversation queued before the call (the engine's writer), so that each search of the round
+ * sees them. toString prints no words.
  */
 class RoundPlan(
     val record: CommandRecord,
@@ -32,6 +34,7 @@ class RoundPlan(
     val self: RecordRef,
     val zone: ZoneId,
     val waiting: Int = 0,
+    val stored: suspend () -> Unit = {},
 ) {
     override fun toString(): String = "RoundPlan(record=${record.number}, earlier=${earlier.size}, resume=$resume, testMode=$testMode, waiting=$waiting)"
 }

@@ -7,6 +7,7 @@ import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
 import dev.kestrel.agent.goal.GoalLimits
+import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
@@ -24,8 +25,10 @@ import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.store.ArchivedConversationStore
+import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.store.Searchable
 import dev.kestrel.conversation.testing.FakeGoalEnvironment
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
@@ -34,11 +37,14 @@ import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.Category
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
@@ -96,12 +102,18 @@ class GoalRunnerTest {
 
     private fun record(text: String = "Read my latest SMS") = CommandRecord(1, 0, InputChannel.TEXT, text)
 
-    private fun plan(record: CommandRecord, testMode: Boolean = false) =
-        RoundPlan(record, emptyList(), record.request, null, testMode, null, GoalLimits(), emptyMap(), RecordRef(id, record.number), ManualConversationClock.BELGRADE)
+    private fun plan(record: CommandRecord, testMode: Boolean = false, stored: suspend () -> Unit = {}) = RoundPlan(
+        record, emptyList(), record.request, null, testMode, null, GoalLimits(), emptyMap(), RecordRef(id, record.number), ManualConversationClock.BELGRADE,
+        stored = stored,
+    )
 
-    private fun TestScope.runner(environment: GoalEnvironment, screen: ScreenTurn = ScreenTurn { }): GoalRunner {
+    private fun TestScope.runner(
+        environment: GoalEnvironment,
+        screen: ScreenTurn = ScreenTurn { },
+        store: ConversationStore = ArchivedConversationStore(MemoryArchive(), backgroundScope) {},
+    ): GoalRunner {
         val clock = ManualConversationClock({ testScheduler.currentTime })
-        return GoalRunner(environment, screen, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { _, error -> throw error }
+        return GoalRunner(environment, screen, HistorySearch(store, { 30 }, clock), clock) { _, error -> throw error }
     }
 
     private fun environment(vararg replies: kotlinx.serialization.json.JsonObject) = FakeGoalEnvironment(replies.toList()).apply { data.answer("list_sms", sms) }
@@ -298,6 +310,32 @@ class GoalRunnerTest {
         assertEquals(EndReason.FINISHED, listener.ends.single().report.end)
         assertFalse(goal.steer("Also check Ana's", InputChannel.TEXT))
         assertTrue(goal.inbox.pending().isEmpty())
+    }
+
+    // A round's search of past conversations reads the store only once it holds every write of the conversation queued
+    // before the search (the plan's stored, the engine's writer), so that it sees a conversation that was just closed.
+    @Test
+    fun aRoundsSearchWaitsUntilTheConversationsWritesAreStored() = runTest {
+        val environment = environment(listSms, finish(1))
+        var read = false
+        val inner = ArchivedConversationStore(MemoryArchive(), backgroundScope) {}
+        val store = object : ConversationStore by inner {
+            override suspend fun searchable(): Searchable {
+                read = true
+                return inner.searchable()
+            }
+        }
+        val stored = CompletableDeferred<Unit>()
+        runner(environment, store = store).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record(), stored = { stored.await() }), FakeOwner())
+        advanceUntilIdle()
+
+        val search = async { environment.starts.single().history.search(HistoryQuery("Mila")) }
+        runCurrent()
+        assertFalse(read)
+
+        stored.complete(Unit)
+        search.await()
+        assertTrue(read)
     }
 
     @Test
