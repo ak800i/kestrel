@@ -32,6 +32,8 @@ Code comments name this plan "plan 7D" and the design's sections as "design 6.6 
 
 ## Before you start
 
+- Tasks 1 and 2 are built (`3f19e672` and `0e374a00`); Task 3 starts from `sp3`'s HEAD after them.
+
 - Sub-project 7 starts only after plan 6B-basefix (`docs\superpowers\plans\2026-11-24-eval-6b-basefix.md`) is pushed, and this plan starts only after plans 7A, 7B and 7C are merged into `sp3`. This plan was written against `sp3` at `4c37cca0`, where plan 6B-basefix's code and both baselines are in (`dfa97763`), a task's witness keeps the sentence of its end (`0f90f0d8`), and plans 7A, 7B and 7C are written (plan 7C as `74670594`) but not carried out. After the reviews of 2026-11-24 and 2026-11-25, its checker ran clean against `sp3` at `67a2b01a`, where plan 7A has landed up to its Task 11 (its Task 12 changes no file), with plan 7B as committed there and plan 7C simulated on top; its old texts are the texts that those plans leave. The files that plans 7A and 7C change besides this plan's anchors are `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt` (7C), `app/src/main/kotlin/dev/kestrel/app/KestrelApplication.kt` (7C), `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt` (7A), `app/src/test/kotlin/dev/kestrel/app/agent/AgentTextsTest.kt` (7A) and `app/src/androidTest/kotlin/dev/kestrel/app/agent/AgentEndToEndTest.kt` (7A); the files that plan 7A changes and this plan deletes (`AgentRunner.kt`, `AppOwnerPort.kt`, `OwnerParts.kt`, `AgentEnvironment.kt`, `AppAgentEnvironment.kt` and their tests) need no rebase, but Task 3's new files carry plan 7A's behaviour (`TaskStart`'s goal and history now in `RoundStart`, `leaveKestrel` in `VoiceChannel`, the `LIMIT` question in `VoiceAnswers`).
 - At the start of Task 1, and again at the starts of Tasks 3 and 7, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7d-voice.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7d-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 3 also set `$env:START_TASK = '3'`, and for Task 7 `$env:START_TASK = '7'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plan 6B-basefix, 7A, 7B or 7C moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
 - At the start of Task 3, check that plans 7A, 7B and 7C as merged have what this plan consumes: `Select-String -Path core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationEngine.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\goal\GoalEnvironment.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\channel\OwnerChannel.kt, core\agent\src\main\kotlin\dev\kestrel\agent\port\OwnerPort.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\goal\GoalRunner.kt, app\src\main\kotlin\dev\kestrel\app\AppGraph.kt -Pattern 'fun awaitingCommand|fun endQuietTime|var restored|interface GoalEnvironment|fun interface ScreenTurn|class Refused\(val sentence: String, val end: EndReason\)|data class Shown|fun leaveKestrel|val conversationStore|SWITCH, DELETE_HISTORY|val cancellation = try'`. Expected: 12 matches (`fun leaveKestrel` matches in `OwnerChannel` and in `OwnerPort`; `SWITCH, DELETE_HISTORY` and `val cancellation = try` are plan 7B's changes for this plan, `2113f5a0`). Otherwise stop and ask the controller.
@@ -90,6 +92,8 @@ The review of 2026-11-24 found two guarantees of today's task path that plan 7B'
 
 ### Task 1: `PhoneSignals`, one screen receiver and one call listener for every watcher
 
+**Status: built** in `3f19e672`; its steps are checked, and its texts are the code as built. The fix of its review (fix-7d-1: `watchScreen` removes its watcher when the reading fails, and the readings reach each watcher in order) changes this task's text when it lands.
+
 Today `ListeningService` registers its own screen receiver, and `Listening` starts Android's call listener while a voice session is open. A goal must pause on a lock or a call also with listening off (design 5.5 and 6.5 of sub-project 7), so the screen and the calls move into `PhoneSignals`, which one receiver and one call listener serve for every watcher: listening now, the conversation from Task 3. Listening's behaviour does not change: the service watches the screen from its start to its end and gets the reading at once, and `Listening` gets its calls through `PhoneSignals.callMonitor()`, a `CallMonitor` like today's.
 
 **Files:**
@@ -99,11 +103,11 @@ Today `ListeningService` registers its own screen receiver, and `Listening` star
 
 **Interfaces:**
 - Consumes: `dev.kestrel.app.listen.CallMonitor` and `AndroidCallMonitor`; `dev.kestrel.app.orchestrator.CallState`.
-- Produces (package `dev.kestrel.app.phone`): `internal fun interface PhoneWatch { fun stop() }`; `internal interface ScreenSource { fun start(report: (Boolean) -> Unit, cameOn: () -> Unit); fun stop(); fun current(): Boolean }`; `internal class AndroidScreenSource(context: Context) : ScreenSource`; `internal class PhoneSignals(screens: ScreenSource, calls: CallMonitor)` with `fun watchScreen(cameOn: () -> Unit = {}, listener: (Boolean) -> Unit): PhoneWatch`, `fun watchCalls(listener: (CallState) -> Unit): PhoneWatch` and `fun callMonitor(): CallMonitor`; `AppGraph.phoneSignals: PhoneSignals` (`internal`, built on first use).
+- Produces (package `dev.kestrel.app.phone`): `internal fun interface PhoneWatch { fun stop() }`; `internal interface ScreenSource { fun start(report: (Boolean) -> Unit, cameOn: () -> Unit); fun stop(); fun read(reading: (Boolean) -> Unit) }`, whose reports and readings run on the source's one thread (Android's main thread) in order; `internal class AndroidScreenSource(context: Context) : ScreenSource`; `internal class PhoneSignals(screens: ScreenSource, calls: CallMonitor)` with `fun watchScreen(cameOn: () -> Unit = {}, listener: (Boolean) -> Unit): PhoneWatch`, `fun watchCalls(listener: (CallState) -> Unit): PhoneWatch` and `fun callMonitor(): CallMonitor`; `AppGraph.phoneSignals: PhoneSignals` (`internal`, built on first use).
 
-Counts: `:app` JVM A₀ + 5 (`PhoneSignalsTest` 5). Device tests: AD₀, unchanged.
+Counts: `:app` JVM A₀ + 7 (`PhoneSignalsTest` 7). Device tests: AD₀, unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `app/src/test/kotlin/dev/kestrel/app/phone/PhoneSignalsTest.kt`:
 
@@ -190,10 +194,51 @@ class PhoneSignalsTest {
 
         calls.failure = null
         val seen = mutableListOf<CallState>()
-        phone.watchCalls { seen += it }
+        val watch = phone.watchCalls { seen += it }
         calls.change(CallState.RINGING)
+        // With the failed watch left behind, Android's listener would stay registered after this last watch stops.
+        watch.stop()
 
         assertEquals(listOf(CallState.RINGING), seen)
+        assertEquals(1, calls.stops)
+    }
+
+    @Test
+    fun aScreenWatchWhoseSourceCannotStartLeavesNoWatcherBehind() {
+        screens.failure = IllegalStateException("Receiver failed")
+        assertThrows(IllegalStateException::class.java) { phone.watchScreen { } }
+
+        screens.failure = null
+        val seen = mutableListOf<Boolean>()
+        val watch = phone.watchScreen { seen += it }
+        screens.change(true)
+        watch.stop()
+
+        assertEquals(1, screens.starts)
+        assertEquals(listOf(false, true), seen)
+        assertEquals(1, screens.stops)
+    }
+
+    @Test
+    fun aWatchFromAnotherThreadGetsItsFirstReadingOnTheSourcesThreadInOrderWithTheReports() {
+        val listening = mutableListOf<Boolean>()
+        val conversation = mutableListOf<Boolean>()
+        val stopped = mutableListOf<Boolean>()
+        screens.now = true
+        phone.watchScreen { listening += it }
+
+        screens.queued = true
+        phone.watchScreen { conversation += it }
+        phone.watchScreen { stopped += it }.stop()
+        // The screen goes off while the source's thread has yet to come to the new watches' readings.
+        screens.change(false)
+        assertEquals(emptyList<Boolean>(), conversation)
+        screens.runQueued()
+
+        // The reading is the state when the source's thread reads it, so the old "on" never comes after the change.
+        assertEquals(listOf(false, false), conversation)
+        assertEquals(listOf(true, false), listening)
+        assertEquals(emptyList<Boolean>(), stopped)
     }
 
     @Test
@@ -213,10 +258,16 @@ class PhoneSignalsTest {
         var now = false
         var starts = 0
         var stops = 0
+        var failure: Exception? = null
+
+        // The source's one thread runs every reading and report at once, or, while queued, in order at runQueued.
+        var queued = false
+        private val thread = ArrayDeque<() -> Unit>()
         private var report: ((Boolean) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
         override fun start(report: (Boolean) -> Unit, cameOn: () -> Unit) {
+            failure?.let { throw it }
             starts++
             this.report = report
             this.cameOn = cameOn
@@ -228,15 +279,25 @@ class PhoneSignalsTest {
             cameOn = null
         }
 
-        override fun current(): Boolean = now
+        override fun read(reading: (Boolean) -> Unit) = onThread { reading(now) }
 
         fun change(on: Boolean) {
             now = on
-            checkNotNull(report) { "Nothing watches the screen" }.invoke(on)
+            val report = checkNotNull(report) { "Nothing watches the screen" }
+            onThread { report(on) }
         }
 
         fun comeOn() {
-            checkNotNull(cameOn) { "Nothing watches the screen" }.invoke()
+            val cameOn = checkNotNull(cameOn) { "Nothing watches the screen" }
+            onThread { cameOn() }
+        }
+
+        fun runQueued() {
+            while (thread.isNotEmpty()) thread.removeFirst().invoke()
+        }
+
+        private fun onThread(action: () -> Unit) {
+            if (queued) thread.addLast(action) else action()
         }
     }
 
@@ -264,12 +325,12 @@ class PhoneSignalsTest {
 }
 ```
 
-- [ ] **Step 2: Run the test to see it fail**
+- [x] **Step 2: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.phone.PhoneSignalsTest`
 Expected: FAIL, the compiler reports `Unresolved reference 'PhoneSignals'`.
 
-- [ ] **Step 3: Create the signals and Android's screen source**
+- [x] **Step 3: Create the signals and Android's screen source**
 
 Create `app/src/main/kotlin/dev/kestrel/app/phone/PhoneSignals.kt`:
 
@@ -285,7 +346,11 @@ internal fun interface PhoneWatch {
     fun stop()
 }
 
-/** Android's screen and lock (design spec, section 8.5). Any thread may call it. */
+/**
+ * Android's screen and lock (design spec, section 8.5). Any thread may call it. Every report, every [start]'s cameOn and
+ * every [read] runs on the source's one thread, in the order in which they happen there, so that no reading can come
+ * after a newer change.
+ */
 internal interface ScreenSource {
     /**
      * Starts to report every change to [report]: whether the screen is on and the phone unlocked; and each time the screen
@@ -296,18 +361,22 @@ internal interface ScreenSource {
     /** Stops the reports. */
     fun stop()
 
-    /** Whether the screen is on and the phone unlocked now. */
-    fun current(): Boolean
+    /**
+     * Gives [reading] whether the screen is on and the phone unlocked, read on the source's thread: at once when the caller
+     * is on it, otherwise after the reports that are already on their way there.
+     */
+    fun read(reading: (Boolean) -> Unit)
 }
 
 /**
  * The phone's screen, lock and calls for every part of Kestrel that watches them (design 5.5 and 6.5 of sub-project 7):
  * listening while its service runs, and from plan 7D's Task 3 the conversation while it is open, so that a goal pauses on
  * a lock or a call also with listening off. One screen receiver and one call listener serve every watch: each starts
- * with its first watch and stops with its last. A new screen watch gets the reading at once. Every new call watch
- * registers Android's listener again, which reports the state at once, as [CallMonitor] promises at each start, so that
- * a watch that starts after the owner allowed the phone state sees the calls. Any thread may call it; a listener is
- * called on Android's thread and must return at once.
+ * with its first watch and stops with its last. A new screen watch gets its first reading on the screen source's thread,
+ * as every change, so that the reading never comes after a newer change. Every new call watch registers Android's
+ * listener again, which reports the state at once, as [CallMonitor] promises at each start, so that a watch that starts
+ * after the owner allowed the phone state sees the calls. Any thread may call it; a screen listener is called on the
+ * screen source's thread and a call listener on Android's, and each must return at once.
  */
 internal class PhoneSignals(private val screens: ScreenSource, private val calls: CallMonitor) {
     // One object per watch, so that the same listener given twice is watched twice and stopped once each.
@@ -320,16 +389,25 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     private val callWatchers = mutableListOf<Watcher<CallState>>()
 
     /**
-     * Watches the screen: [listener] gets the reading now and every change, and [cameOn] hears each time the screen comes
-     * on, locked or not, until the watch stops. [listener] comes last, so that a trailing lambda is the reading's.
+     * Watches the screen: [listener] gets the reading first and then every change, and [cameOn] hears each time the screen
+     * comes on, locked or not, until the watch stops. On the screen source's thread the first reading comes at once,
+     * otherwise a moment later; a watch that stops before it gets none. Throws what [ScreenSource.start] throws, and then
+     * holds no watch. [listener] comes last, so that a trailing lambda is the reading's.
      */
     fun watchScreen(cameOn: () -> Unit = {}, listener: (Boolean) -> Unit): PhoneWatch {
         val watcher = ScreenWatcher(listener, cameOn)
         synchronized(lock) {
             screenWatchers += watcher
-            if (screenWatchers.size == 1) screens.start(::screenChanged, ::screenCameOn)
+            if (screenWatchers.size == 1) {
+                try {
+                    screens.start(::screenChanged, ::screenCameOn)
+                } catch (e: Exception) {
+                    screenWatchers.remove(watcher)
+                    throw e
+                }
+            }
         }
-        listener(screens.current())
+        screens.read { on -> if (synchronized(lock) { watcher in screenWatchers }) listener(on) }
         return once {
             synchronized(lock) { if (screenWatchers.remove(watcher) && screenWatchers.isEmpty()) screens.stop() }
         }
@@ -404,15 +482,19 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 
 /**
  * Android's screen and lock (design spec, section 8.5), as ListeningService read them until plan 7D: Kestrel counts the
  * phone as unlocked after USER_PRESENT until the screen goes off, because KeyguardManager can learn of the unlock a moment
- * later, and a SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock. Android calls the receiver
- * on the main thread.
+ * later, and a SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock. The source's thread is the
+ * main thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
  */
 internal class AndroidScreenSource(private val context: Context) : ScreenSource {
+    private val main = Handler(Looper.getMainLooper())
+
     // The owner unlocked the phone since the screen last went off (USER_PRESENT).
     @Volatile
     private var unlocked = false
@@ -440,7 +522,7 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
             // SCREEN_ON and SCREEN_OFF come from the system, but USER_PRESENT comes from SystemUI, and Android gives another
             // app's broadcasts only to an exported receiver. All three are protected broadcasts, which other apps cannot
             // send.
-            context.registerReceiver(screen, filter, Context.RECEIVER_EXPORTED)
+            context.registerReceiver(screen, filter, null, main, Context.RECEIVER_EXPORTED)
             receiver = screen
         }
     }
@@ -452,7 +534,11 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
     }
 
-    override fun current(): Boolean {
+    override fun read(reading: (Boolean) -> Unit) {
+        if (main.looper.isCurrentThread) reading(current()) else main.post { reading(current()) }
+    }
+
+    private fun current(): Boolean {
         val interactive = context.getSystemService(PowerManager::class.java).isInteractive
         val locked = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
         return interactive && (unlocked || !locked)
@@ -462,12 +548,12 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
 }
 ```
 
-- [ ] **Step 4: Run the test to see it pass**
+- [x] **Step 4: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.phone.PhoneSignalsTest`
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Listening's service and the graph use the signals**
+- [x] **Step 5: Listening's service and the graph use the signals**
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/ListeningService.kt`, replace:
 
@@ -670,14 +756,14 @@ with:
     /** The microphone of the newest voice session, for the debug hook voice-route (plan 2E). */
 ```
 
-- [ ] **Step 6: Build and run the JVM tests**
+- [x] **Step 6: Build and run the JVM tests**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin`
-Expected: BUILD SUCCESSFUL; `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"` gives A₀ + 5.
+Expected: BUILD SUCCESSFUL; `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"` gives A₀ + 7.
 
 Run: `scripts\gradle.ps1 --stop`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/kotlin/dev/kestrel/app/phone app/src/main/kotlin/dev/kestrel/app/listen/ListeningService.kt app/src/main/kotlin/dev/kestrel/app/AppGraph.kt app/src/test/kotlin/dev/kestrel/app/phone/PhoneSignalsTest.kt
@@ -687,6 +773,8 @@ git commit -m "refactor(listen): one screen receiver and one call listener serve
 ---
 
 ### Task 2: `ScreenTurns`, the screen's turn
+
+**Status: built** in `0e374a00`; its steps are checked, and its texts are the code as built.
 
 `Listening.afterStopping` makes a new instant command, a task and Kestrel's settings wait for a cancelled command's job (spec 7.3). A goal's round must wait the same way before its first observation (design 7.1 of sub-project 7), and plan 7B's `GoalRunner` asks a `ScreenTurn` for it. The stopping job and its wait of at most 3 s move into `ScreenTurns`, which implements plan 7B's `ScreenTurn` and which `Listening` uses now; Task 3 gives the same instance to `GoalRunner`.
 
@@ -701,7 +789,7 @@ git commit -m "refactor(listen): one screen receiver and one call listener serve
 
 Counts: `:app` JVM A₁ + 3 (`ScreenTurnsTest` 3). Device tests: AD₀, unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `app/src/test/kotlin/dev/kestrel/app/listen/ScreenTurnsTest.kt`:
 
@@ -774,12 +862,12 @@ class ScreenTurnsTest {
 }
 ```
 
-- [ ] **Step 2: Run the test to see it fail**
+- [x] **Step 2: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.listen.ScreenTurnsTest`
 Expected: FAIL, the compiler reports `Unresolved reference 'ScreenTurns'`.
 
-- [ ] **Step 3: Create the screen's turn**
+- [x] **Step 3: Create the screen's turn**
 
 Create `app/src/main/kotlin/dev/kestrel/app/listen/ScreenTurns.kt`:
 
@@ -834,12 +922,12 @@ internal class ScreenTurns(
 private class StuckCommandException : Exception()
 ```
 
-- [ ] **Step 4: Run the test to see it pass**
+- [x] **Step 4: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.listen.ScreenTurnsTest`
 Expected: PASS, 3 tests.
 
-- [ ] **Step 5: Listening waits through the screen's turn**
+- [x] **Step 5: Listening waits through the screen's turn**
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
 
@@ -1085,14 +1173,38 @@ with:
             options = storedOptions,
 ```
 
-- [ ] **Step 6: Build and run the JVM tests**
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+        // A command that was cancelled while it waited for the stopping job never runs.
+```
+
+with:
+
+```kotlin
+        // A command that was cancelled while it waited for a cancelled job that held the screen in [turns] never runs.
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+    // Section 7.3: the cancelled job is kept as the stopping job, so that nothing new acts on the screen before it has
+```
+
+with:
+
+```kotlin
+    // Section 7.3: the cancelled job holds the screen in [turns], so that nothing new acts on the screen before it has
+```
+
+- [x] **Step 6: Build and run the JVM tests**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin`
 Expected: BUILD SUCCESSFUL; the count gives A₁ + 3, and `ListeningTest`'s `aStuckCancelledCommandHoldsTheNextOneForAtMostThreeSeconds` and `aNewCommandWaitsUntilTheCancelledOneHasCompleted` pass unchanged.
 
 Run: `scripts\gradle.ps1 --stop`
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add app/src/main/kotlin/dev/kestrel/app/listen/ScreenTurns.kt app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt app/src/main/kotlin/dev/kestrel/app/AppGraph.kt app/src/test/kotlin/dev/kestrel/app/listen/ScreenTurnsTest.kt app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt
@@ -1142,7 +1254,7 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 - Produces (`TaskWitness`): `said`, `watch` and `evidence` without `ended`; `TaskEvidence(said, markerInData)` without `spoken`.
 - Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply)`. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
 
-Counts: `:app` JVM A₂ + 2 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 5 + 1 = 6, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
+Counts: `:app` JVM A₂ + 2 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 7 + 1 = 8, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
 
 - [ ] **Step 1: Check the plans that this task consumes, and count the tests of the files that it deletes**
 
@@ -1852,7 +1964,7 @@ class ConversationSignalsTest {
             cameOn = null
         }
 
-        override fun current(): Boolean = now
+        override fun read(reading: (Boolean) -> Unit) = reading(now)
 
         fun change(on: Boolean) {
             now = on
@@ -12389,14 +12501,14 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
     }
 ```
 
 with:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
@@ -12414,15 +12526,15 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-    private var switchClosing: ConversationSnapshot? = null
-    private var switchChosen: ConversationSnapshot? = null
+    private var switching = false
+    private var switchEnd: Message.Reopened? = null
 ```
 
 with:
 
 ```kotlin
-    private var switchClosing: ConversationSnapshot? = null
-    private var switchChosen: ConversationSnapshot? = null
+    private var switching = false
+    private var switchEnd: Message.Reopened? = null
 
     // While the settings page's "Delete history" runs, no write reaches the writer, so that none comes between the writer's
     // barrier that the deletion waits for and the deletion: the open conversation's changes wait as during a switch
@@ -12575,29 +12687,29 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        switchChosen = null
+        switching = true
         writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
 ```
 
 with:
 
 ```kotlin
-        switchChosen = null
+        switching = true
         send(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        switchChosen?.let { writes.trySend(Write.Save(it, emptyList())) }
-        switchClosing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
+        end.chosen?.let { writes.trySend(Write.Save(it, emptyList())) }
+        end.closing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
 ```
 
 with:
 
 ```kotlin
-        switchChosen?.let { send(Write.Save(it, emptyList())) }
-        switchClosing?.let { send(Write.Save(it.copy(open = true), emptyList())) }
+        end.chosen?.let { send(Write.Save(it, emptyList())) }
+        end.closing?.let { send(Write.Save(it.copy(open = true), emptyList())) }
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -12858,7 +12970,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 23 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 5, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 25 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
 - `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
@@ -12915,5 +13027,6 @@ The controller settled items 1 to 9 on 2026-11-24; the plan carries them as foll
 - **Spec coverage.** Design 5.5 (the voice rules without the task): Task 3, with D9 and plan 7B's decision 10 in `Rules`. Design 5.6 (the wiring): Task 3, with plan 7C's store and clock. Design 6.5's voice and phone parts: Tasks 1 and 3 (`PhoneSignals`, `ConversationSignals`, the call backstop). Design 6.6 (the follow-up window) with design 3.6's words that keep their meaning: Task 4. Design 6.8 and 9.6 (a new conversation and a past one by voice): Task 5. Design 9.7 ("delete history" through the conversation): by voice in Task 3, from the settings page in Task 7. Design 11 (the voice channel): Task 3's `VoiceChannel`, `VoiceAnswers` and `VoicePath`. Design 12.2 (the typed reading): Task 5's `Requests.typed`. Design 14.2 item 4 (one switch-over): Task 3. Design 14.3 (the regression gate): Task 3's `RulesTest` table and plan 7B's mapping, Task 3's `GoalPauseTest`, and Task 8's device suites and dry suite. Design 14.4 (the hooks): Tasks 3 and 6; `conversation-type` and `hook.ps1`: plans 7F and 7G.
 - **Placeholders.** Every step shows its code or its command. The counts that depend on plans 7A to 7C are measured (A₀, E₀, AD₀, C₀, G₀, D) and named.
 - **The review of 2026-11-24.** C1: `RulesTest`'s helper `ownQuestion` has no `@Test` (Task 3; the counts are 99, 103 and 104). I1: plan 7B (`2113f5a0`) and Task 3's table. I2: Task 3 (`Runner`, `Refusals`, `RunnerTest`). I3: plan 7B's `QuestionKind.DELETE_HISTORY`, `VoiceAnswers` and `VoiceAnswersTest.continueOrGoOnNeverDeletesTheHistory` (Task 3). I4: `storedConversationSettings` and `StoredSettingsTest` (Task 3). I5 and N1: `GoalPauseTest` with `HeldModel` (Task 3, run in Task 8): the goal stays paused until the yes, and only then does the model get its next request. I6: the ports of `OwnerSupport.kt` (Task 3). M1 and N2's pattern: "Before you start" (12 matches, with `val cancellation = try`). M2: Task 8 turns listening on before the dry suite and off after it. M3: `Event.ChannelWithdraws` (Task 3). M4: `VoiceView` and `forVoice` (Task 3). M5: "Interfaces for 7E and 7F" (`ScreenTurns`). M6: the header's paths and base, item 9. M7: `AppGoalEnvironment.prepare` checks the service first (Task 3). M8: Task 8's step 3. M9: `AgentTests.run` (Task 3). The held goal at Kestrel's own screen (7A Task 8's review): its sentence reaches the voice and the bar, and `AgentEndToEndTest.theAgentStaysOutOfKestrelsOwnApp` checks that Kestrel says it (Task 3).
+- **The review of Task 1 (2026-11-25).** M1: `aCallWatchWhoseListenerCannotStartLeavesNoWatcherBehind` stops its second watch and checks that Android's listener stopped, so it fails without the rollback. M2: `watchScreen` removes its watcher when the screen source cannot start (`aScreenWatchWhoseSourceCannotStartLeavesNoWatcherBehind`). M3: `ScreenSource.read` replaces `current()`, and a screen watch's first reading comes on the source's thread in order with the changes (`aWatchFromAnotherThreadGetsItsFirstReadingOnTheSourcesThreadInOrderWithTheReports`); `AndroidScreenSource` reads on the main thread, where its receiver runs. Task 1 counts `PhoneSignalsTest` 7.
 - **Type consistency.** `VoicePath`, `VoiceChannel`, the ports of `OwnerSupport.kt`, `VoiceView`, `VoiceQuestion`, `Event.ChannelSays(reply, text, final)`, `Effect.Converse(intent, heard)`, `InputIds.next()`, `Requests.intent` and `Requests.typed`, `AppGoalEnvironment`, `RoundModels`, `RoundEvidences`, `GoalOwner`, `ConversationSignals`, `PhoneSignals` and `ConversationHookAnswers` have the same signatures in the tasks that make them, the tasks that use them and "Interfaces for 7E and 7F"; plan 7B's types are those of its "Interfaces for 7C and 7D", and plan 7C's those of its "Interfaces for plans 7D, 7E and 7F".
 - **The safety work of plan 6B-basefix.** `CheckedLaunch` and `ScreenAction.Launch` stay in the round's ports, which `AppGoalEnvironment` builds as `AppAgentEnvironment` did; the witness and its marker check stay (`DebugTaskWitness`, `RoundEvidences`); `agent-state`'s `question=` keeps its values; the owner's touches and the signals at a round's end stay in `RoundEvidences` for `agent-task -Result`.
