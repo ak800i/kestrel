@@ -20,7 +20,7 @@ class RetentionTest {
     fun retentionPurgesAtOnceDailyAndWhenItShortens() = runTest {
         val day = ArchivedConversationStore.DAY_MILLIS
         val clock = ManualConversationClock({ testScheduler.currentTime })
-        val store = ArchivedConversationStore(MemoryArchive()) {}
+        val store = ArchivedConversationStore(MemoryArchive(), backgroundScope) {}
         fun closed(n: Int, age: Long) = ConversationSnapshot(
             ConversationId(n.toString().padStart(32, '0')), clock.wallMillis() - age, clock.wallMillis() - age, open = false, testMode = true,
             records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Request $n")),
@@ -48,7 +48,7 @@ class RetentionTest {
         val day = ArchivedConversationStore.DAY_MILLIS
         val hour = 60 * 60_000L
         val clock = ManualConversationClock({ testScheduler.currentTime })
-        val store = ArchivedConversationStore(MemoryArchive()) {}
+        val store = ArchivedConversationStore(MemoryArchive(), backgroundScope) {}
         fun closed(n: Int, last: Long) = ConversationSnapshot(
             ConversationId(n.toString().padStart(32, '0')), last, last, open = false, testMode = true,
             records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Request $n")),

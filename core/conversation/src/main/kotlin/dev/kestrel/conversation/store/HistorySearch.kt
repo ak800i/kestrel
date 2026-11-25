@@ -9,8 +9,6 @@ import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /** The past conversation that "continue the conversation about X" found (design 9.6 of sub-project 7). */
 data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String) {
@@ -18,35 +16,54 @@ data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val
 }
 
 /**
+ * What the search for a conversation to continue gave (design 9.6): a match, none, or the mark that the index of past
+ * conversations is being rebuilt, or cannot be read now.
+ */
+sealed interface ConversationLookup {
+    data class Found(val match: ConversationMatch) : ConversationLookup
+
+    data object NotFound : ConversationLookup
+
+    data object Rebuilding : ConversationLookup
+
+    data object Unavailable : ConversationLookup
+}
+
+/**
  * The on-device search over past conversations (design 9.4 of sub-project 7), behind plan 7A's `search_conversations`, and
- * the search for a conversation to continue (design 9.6). It has three parts: the entries' source, which folds the records
- * of the closed conversations within retention and of the open one into [SearchEntry]s (never an observation or a
- * screenshot, which no record holds); [HistoryRanking], which matches and orders them; and the details of the best
- * matches, which their records give. The source keeps each record's entry in memory only, like the vault, until the record
- * changes or goes, or [forgetAll] drops them. A search that "delete history" overtook, which the store's
- * [ConversationStore.generation] tells, keeps nothing that it read and finds nothing (design 9.7).
+ * the search for a conversation to continue (design 9.6). It reads what the store's [ConversationStore.searchable] gives:
+ * the index of past conversations, whose records within retention it searches, and the open conversation, whose records
+ * other than the asking command's it folds at each search (never an observation or a screenshot, which no record holds).
+ * [HistoryRanking] matches and orders them, and only the best matches' bodies are read, in one call, for their details.
+ * While the index is being rebuilt, or cannot be read, the search says so ([HistoryResult.REBUILDING],
+ * [HistoryResult.FAILED], [ConversationLookup.Rebuilding], [ConversationLookup.Unavailable]) and gives no match, not even
+ * from the open conversation, because a part of the matches would read as "nothing older matched" (design 9.4). It keeps
+ * nothing itself, and a search that "delete history" overtook, which the store's [ConversationStore.generation] tells,
+ * gives out nothing that it read (design 9.7). Each search ranks the whole index, so a caller that searches as the owner
+ * types (plan 7F) waits until the typing pauses.
  */
 class HistorySearch(
     private val store: ConversationStore,
     private val retentionDays: () -> Int,
     private val clock: ConversationClock,
 ) {
-    private class Indexed(val record: CommandRecord, val entry: SearchEntry)
-
-    private val mutex = Mutex()
-    private val indexes = HashMap<RecordRef, Indexed>()
-
-    /** How many records' entries are kept now. */
-    val indexed: Int get() = synchronized(indexes) { indexes.size }
-
     /** The commands that match [query], other than [excluding], which asks. */
-    suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult = mutex.withLock {
-        if (HistoryRanking.wanted(query.text).isEmpty()) return@withLock HistoryResult(emptyList())
+    suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult {
         val generation = store.generation
-        val reach = store.closedSince(since()) + listOfNotNull(store.open())
-        val entries = entries(reach, generation, prune = true) ?: return@withLock HistoryResult(emptyList())
-        val ranked = HistoryRanking.rank(entries.filter { it.ref != excluding }, query, clock.zone())
-        HistoryResult(details(ranked.take(HistoryPort.MAX_MATCHES)), more = ranked.size > HistoryPort.MAX_MATCHES)
+        val searchable = when (val read = store.searchable()) {
+            is Searchable.Ready -> read
+            Searchable.Rebuilding -> return HistoryResult.REBUILDING
+            Searchable.Failed -> return HistoryResult.FAILED
+        }
+        val open = searchable.open
+        val reach = reach(searchable.past).mapTo(HashSet()) { it.id }
+        val indexes = searchable.past.searches + listOfNotNull(open?.let { SearchIndex.of(listOf(it)) })
+        val ranked = HistoryRanking.rank(indexes, query, clock.zone(), reached = { record ->
+            record.ref != excluding && (record.ref.conversation in reach || record.ref.conversation == open?.id)
+        })
+        val matches = details(ranked.take(HistoryPort.MAX_MATCHES), open)
+        if (store.generation != generation) return HistoryResult(emptyList())
+        return HistoryResult(matches, more = ranked.size > HistoryPort.MAX_MATCHES)
     }
 
     /** The search as the agent's port for the command [excluding], which asks. */
@@ -58,58 +75,41 @@ class HistorySearch(
 
     /**
      * The closed conversation within retention that holds the best match for [topic], the newer on a tie; without a topic
-     * (or with only words that hold none), the newest closed conversation. Null when none matches.
+     * (or with only words that hold none), the newest closed conversation that holds a command.
      */
-    suspend fun conversation(topic: String?): ConversationMatch? = mutex.withLock {
+    suspend fun conversation(topic: String?): ConversationLookup {
         val generation = store.generation
-        // closedSince gives the newest change first.
-        val closed = store.closedSince(since()).filter { it.records.isNotEmpty() }
-        if (topic == null || HistoryRanking.wanted(topic).isEmpty()) {
-            return@withLock closed.firstOrNull()?.takeIf { store.generation == generation }?.let(::matchOf)
+        val searchable = when (val read = store.searchable()) {
+            is Searchable.Ready -> read
+            Searchable.Rebuilding -> return ConversationLookup.Rebuilding
+            Searchable.Failed -> return ConversationLookup.Unavailable
         }
-        val entries = entries(closed, generation, prune = false) ?: return@withLock null
-        val best = HistoryRanking.rank(entries, HistoryQuery(topic), clock.zone()).firstOrNull()
-        best?.let { ranked -> closed.firstOrNull { it.id == ranked.entry.ref.conversation } }?.let(::matchOf)
+        val closed = reach(searchable.past).filter { it.firstRequest != null }
+        val best = if (topic == null || HistoryRanking.wanted(topic).isEmpty()) {
+            closed.firstOrNull()
+        } else {
+            val byId = closed.associateBy { it.id }
+            HistoryRanking.rank(searchable.past.searches, HistoryQuery(topic), clock.zone(), reached = { it.ref.conversation in byId })
+                .firstOrNull()?.let { byId[it.entry.ref.conversation] }
+        }
+        val request = best?.firstRequest?.takeIf { store.generation == generation } ?: return ConversationLookup.NotFound
+        return ConversationLookup.Found(ConversationMatch(best.id, best.openedAtWall, request))
     }
 
-    /** Drops every kept entry ("delete history", design 9.7). */
-    fun forgetAll() = synchronized(indexes) { indexes.clear() }
+    // The closed conversations within retention, the newest change first.
+    private fun reach(past: PastIndex): List<PastConversation> {
+        val since = clock.wallMillis() - retentionDays() * ArchivedConversationStore.DAY_MILLIS
+        return past.conversations.filter { it.lastWall >= since }
+    }
 
-    /**
-     * The entries of [conversations]' records, each folded once while its record stays the same. When [conversations] are
-     * all that the search reaches ([prune]), the entries of the records that went (deleted, purged or out of reach) go too.
-     * Null, and nothing kept, when "delete history" ran since the store's [generation] that [conversations] were read at: it
-     * raises the generation before it deletes, and [forgetAll] takes the same lock after it, so no deleted word stays.
-     */
-    private fun entries(conversations: List<ConversationSnapshot>, generation: Long, prune: Boolean): List<SearchEntry>? =
-        synchronized(indexes) {
-            if (store.generation != generation) return null
-            val entries = conversations.flatMap { snapshot ->
-                snapshot.records.map { record ->
-                    val ref = RecordRef(snapshot.id, record.number)
-                    indexes[ref]?.takeIf { it.record === record }?.entry
-                        ?: SearchEntry.of(snapshot.id, record).also { indexes[ref] = Indexed(record, it) }
-                }
-            }
-            if (prune) {
-                val kept = entries.mapTo(HashSet()) { it.ref }
-                indexes.keys.retainAll(kept)
-            }
-            entries
-        }
-
-    /** The details of [ranked], in its order, from their records. */
-    private suspend fun details(ranked: List<RankedEntry>): List<HistoryMatch> {
-        val conversations = HashMap<ConversationId, ConversationSnapshot?>()
+    /** The details of [ranked], in its order, from their records: the open conversation's from memory, the others' bodies read in one call. */
+    private suspend fun details(ranked: List<RankedEntry>, open: ConversationSnapshot?): List<HistoryMatch> {
+        val closed = ranked.mapTo(LinkedHashSet()) { it.entry.ref.conversation } - setOfNotNull(open?.id)
+        val bodies = store.getAll(closed) + listOfNotNull(open).associateBy { it.id }
         return ranked.mapNotNull { (entry) ->
-            val snapshot = conversations.getOrPut(entry.ref.conversation) { store.get(entry.ref.conversation) }
-            snapshot?.records?.firstOrNull { it.number == entry.ref.record }?.let(::match)
+            bodies[entry.ref.conversation]?.records?.firstOrNull { it.number == entry.ref.record }?.let(::match)
         }
     }
-
-    private fun since(): Long = clock.wallMillis() - retentionDays() * ArchivedConversationStore.DAY_MILLIS
-
-    private fun matchOf(snapshot: ConversationSnapshot) = ConversationMatch(snapshot.id, snapshot.openedAtWall, snapshot.records.first().request)
 
     private fun match(record: CommandRecord) = HistoryMatch(
         atMillis = record.atWall,
@@ -120,5 +120,5 @@ class HistorySearch(
         data = record.data.map { HistoryData(it.tool, it.text) },
     )
 
-    override fun toString(): String = "HistorySearch(indexed=$indexed)"
+    override fun toString(): String = "HistorySearch"
 }
