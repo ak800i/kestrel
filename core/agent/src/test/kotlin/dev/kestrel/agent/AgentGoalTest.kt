@@ -563,6 +563,25 @@ class AgentGoalTest {
         assertTrue(harness.log.texts(TaskLog.Kind.ERROR).contains("history: java.lang.IllegalStateException"))
     }
 
+    // Design 9.2 and 9.4 of sub-project 7: while the index of past conversations is rebuilt, or after it failed, the step says
+    // so, and nothing is logged as an error, because the store noted a failure once.
+    @Test
+    fun aSearchThatCannotRunSaysWhy() = runTest {
+        val sentences = mapOf(
+            HistoryResult.REBUILDING to "Kestrel is still rebuilding the index of its past conversations and can't search them yet.",
+            HistoryResult.FAILED to "Kestrel cannot read its past conversations right now and tries again by itself later.",
+        )
+        for ((result, sentence) in sentences) {
+            val harness = Harness(Screens.chats(), listOf(call("search_conversations", null, null, null, "query" to "Mila"), fail()))
+            harness.history.result = result
+
+            assertEquals(EndReason.FAILED_BY_MODEL, harness.run("What did Mila send?").end)
+
+            assertTrue(harness.requestText(1).contains("Result: searched past conversations for Mila → failed: $sentence"))
+            assertTrue(harness.log.texts(TaskLog.Kind.ERROR).none { it.startsWith("history:") })
+        }
+    }
+
     // Design 7.6 of sub-project 7: Kestrel's own lines start a resumed goal's run, and its request is in its record already.
     @Test
     fun aResumedGoalStartsWithItsOwnLinesAndAFreshLook() = runTest {

@@ -24,10 +24,30 @@ data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: L
 /**
  * The earlier commands that match, at most [HistoryPort.MAX_MATCHES], best match first (design 9.4 of sub-project 7): a
  * record scores by how many of the query's words it holds, and of two that score alike the newer comes first. [more] says
- * that more commands matched than [matches] holds.
+ * that more commands matched than [matches] holds. [unavailable] says why the search could not run (design 9.2): Kestrel is
+ * rebuilding the index of its past conversations, or cannot read it now; such a result has no match ([REBUILDING],
+ * [FAILED]).
  */
-data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false) {
-    override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more)"
+data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false, val unavailable: HistoryUnavailable? = null) {
+    init {
+        require(unavailable == null || (matches.isEmpty() && !more)) { "A search that could not run has no match" }
+    }
+
+    override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more, unavailable=$unavailable)"
+
+    companion object {
+        val REBUILDING = HistoryResult(emptyList(), unavailable = HistoryUnavailable.REBUILDING)
+        val FAILED = HistoryResult(emptyList(), unavailable = HistoryUnavailable.FAILED)
+    }
+}
+
+/** Why a search over past conversations could not run (design 9.2 of sub-project 7). */
+enum class HistoryUnavailable {
+    /** The index of past conversations is being rebuilt from them. */
+    REBUILDING,
+
+    /** The index could not be read or rebuilt; Kestrel has noted it once and tries again by itself later. */
+    FAILED,
 }
 
 /**
