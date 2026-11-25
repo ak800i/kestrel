@@ -54,7 +54,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 - **Every start or resume of the goal's work starts the service.** The service starts when a goal opens, also when a restart restores a held goal, and again whenever the goal's work begins again after a hold, also while the service still runs. So the typed start comes from `ConversationActivity` in front, the spoken start from the voice path while `ListeningService` runs, and the resume from the notification's Continue from its broadcast, as design 10.6 names them. A new start from the owner's own action is how a running service may gain Android's while-in-use standing, which Android 17 asks of an app that plays audio in the background (main spec B5). A start that Android refuses for a service that still runs counts, and changes nothing else. A goal that is ending (a stop, or the owner's stop at a restart) starts nothing.
 - **Background audio on Android 17 depends on while-in-use, not on the type.** Android 17 lets an app play audio in the background only from a foreground service that is not a short service and, for an app that targets API 37, has while-in-use (main spec B5). Design 10.6 chose `mediaPlayback` as the type that the service has while it speaks, so the service adds it (`GoalForeground.whileSpeaking`); spike S9 records, outside the instrumentation, whether Android gives the audio focus with that type, with `specialUse` alone, and without a service (Task 8, Step 7).
 - **The service stays for the final reply.** The service stops when the goal has ended and its final reply has been spoken or shown (the view's quiet clock is no longer held for `REPLYING`), so that a typed goal's spoken report keeps its service. Meanwhile it shows "Kestrel finished the goal" without buttons. When the goal ends while the phone is locked or a call lasts, the report waits for the owner's return (design 6.4), and the notification keeps saying "Kestrel finished the goal" until then.
-- **The notification's buttons keep the conversation's channel, and only the buttons that it shows count.** A tap on Kestrel's own notification is neither speech nor typing and carries no words, so its input takes the channel of the owner's latest input (`ConversationView.replyChannel`), and the replies stay as they were (design 11). A broadcast of a button that the notification no longer shows, such as a stale Continue, does nothing.
+- **The notification's buttons keep the conversation's channel, and count only for the goal that their notice showed.** A tap on Kestrel's own notification is neither speech nor typing and carries no words, so its input takes the channel of the owner's latest input (`ConversationView.replyChannel`), and the replies stay as they were (design 11). Each button's broadcast names the goal that its notice shows, by the conversation and the goal's record, and a tap for another goal does nothing. A Continue counts only while the goal's notice offers Continue, so a stale Continue does nothing; a button that stops counts while the notice offers any way to stop, because the owner's tap on Stop can arrive after his pull of the shade held the goal. A tap that starts Kestrel's process waits for the conversation's restore and is judged against the restored goal.
 - **What the notification says, and the order of its buttons.** While the goal works: "Kestrel is working", the current checklist item and the checklist's progress bar, Stop and Open. While it is held: "Continue the goal?", how to go on for its hold (`ConversationTexts.held`, the sentence that Kestrel says, so "Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'." for a goal held at Kestrel's own screen), Cancel and then Continue: the first button always ends the goal, also when a touch held it while the owner reached for Stop. Continue asks Android for the owner's unlock (`setAuthenticationRequired`), so that nobody resumes a goal from the lock screen; Stop and Cancel need none. The conversation's view gains `hold` and `goalEnding`, so that the notification can name the hold and the service does not start for a goal that is ending. The lock screen shows only "Kestrel is working on a task". When the owner swipes the notification away, it comes back with the next change of the goal, as the listening notification comes back with the next change of mode (spec 8.6).
 - **Open.** The notification's tap and its Open open Kestrel's launcher activity through `ListeningService.openKestrel`, which plan 7F points at `ConversationActivity`. While the goal acts, the owner's pull of the shade is a touch for the touch watcher (a device test checks it), and Kestrel's own screen in front holds the goal at the round's gate (design 10.2), so the tap interrupts the goal without code of its own.
 - **The owner's stop in "Active apps".** Android's Task Manager stops the whole app without a callback, and its documentation names `ApplicationExitInfo.REASON_USER_REQUESTED` as the record to look for at the next start; Android gives the same reason for a force stop in Settings and for removing the app from the recent apps, which are the owner's stops too, and no public sub-reason tells them apart. Before Android 14, an update of the app gave that reason as well; from Android 14 an update gives `REASON_PACKAGE_UPDATED`. Kestrel reads the record once, with the reader that listening's restore already uses, and gives it one reading for both restores (the controller's decision of 2026-11-25): a `REASON_USER_REQUESTED` is the owner's stop, so listening stays off and a restored goal ends, except on Android 13 within a minute of Kestrel's last install or update, before or after it, where it cannot be told from the update: listening stays off as before, and the goal is held and asks "Continue the goal?", as for any other end. The restore (plan 7B) ends the goal as "stop" does only when that stop came after the conversation's snapshot was saved.
@@ -78,15 +78,25 @@ Plans 7A to 7D are done and on `main` and `sp3` at `3d0a1921`; plan 7D changed m
 - **Task 5: the receiver and the device tests.** `GoalActionReceiver` hands the broadcast to `GoalButtons.input`. `GoalServiceTest` and `GoalServiceHooksTest` end their goals through `AgentTests.stop()`, which stops whatever "stop" stops through plan 7D's `ConversationTests.endWork()`, instead of an input of their own; their starts close the conversation through `AgentTests.run` (`ConversationTests.close()`). The lock test checks that the paused round let go of the screen's turn (Task 1b).
 - **Task 7: plan 7D's `RoomRecordArchive`.** Plan 7D's Task 7 gave `RoomRecordArchive` a second parameter, the archive's "delete history"; the measurement passes the test table's own `deleteAll()`, as `RoomRecordArchiveTest` does.
 - **Task 8: a delegated agent with a strict brief, and plan 7D's gate's lessons.** Task 8 names its rules: only kestrel-api37 and only the steps' commands; a data check before Step 2, after each of Steps 2 to 10 and at the end, which counts the Google accounts with `Get-GoogleAccountCount` (`scripts\lib\DeviceGuard.ps1`) instead of a raw `Select-String`, which counts one account more than once, and reads `provider-standin`; stop and report at the first failure, with no retry or cold boot but the allowances that a step names (plan 7D's known flaky `SystemUiFilterTest`, run alone once); the Gradle and emulator locks; a report without words; the ledger lines in the report. Step 3 gives the numbers against plan 7D's gate run 2, and Steps 7 and 8 describe plan 7D's stand-in round as built (it ends the goal with its reply).
-- **The counts.** `:app` JVM A₀ + 21 (680), device AD₀ + 11 (466), `:core:conversation` C₀ + 7 (288), `:core:agent` G₀ + 1 (314); every task's own counts follow.
+- **The counts.** `:app` JVM A₀ + 24 (683), device AD₀ + 11 (466), `:core:conversation` C₀ + 9 (290), `:core:agent` G₀ + 2 (315); every task's own counts follow.
+- **The plan review of 2026-11-25 (Fix first), fixed at the root.**
+  - I1: `ConversationEngineTest.aPauseDuringAModelCallLetsGoOfTheTurnAtOnce` (Task 1b) holds the round inside its first model call (the fixture's new `FakeGoalEnvironment.beforeCall`), pauses it, and checks at once that the turn is let go; it fails without the engine's call of `GoalRunner.paused()`. The earlier engine test, a pause during Kestrel's speech, now checks the other half: the turn stays until the step has ended.
+  - I2: a button that stops (Stop or Cancel, `GoalAction.stops`) counts while the goal's notice offers any way to stop, so the owner's tap on Stop that arrives after his pull of the shade held the goal still stops it; Continue counts only while the notice offers Continue (`GoalNoticesTest.aStoppingButtonCountsWhileTheGoalsNoticeOffersAnyWayToStop`).
+  - I3: every step of Task 8 that sends `heard` or a Continue first sets plan 7D's stand-in round through `StandIn`, which checks the hook's answer and stops the command when it is not set, so no goal's round can reach the owner's Copilot profile; Step 7 sets it again before its Continue. Task 9 does the same on the A71.
+  - M1: Task 8's data check is `Get-OwnerDataState` (Step 1, saved with `Export-Clixml` in the controller's git-ignored `.superpowers\sdd\`) and `Compare-OwnerData` after every step, which compare by machine and read Kestrel after `stop-app` too; any difference stops the task.
+  - M2: each button's broadcast names the goal that its notice shows, by the conversation's id and the goal's record (`NoticeGoal`, from the new `ConversationView.goalRecord`), and the receiver ignores a tap for another goal (`GoalNoticesTest.aButtonCountsOnlyForTheGoalThatItsNoticeShowed`). Not the command number, which the controller named as an example: a goal's command number belongs to one process (it is not stored) and changes at every resume, so it would drop a tap after a restart and a Stop after a resume; the record names the goal across both.
+  - M3: the receiver keeps the broadcast alive (`goAsync`) and decides after `ConversationEngine.awaitRestored()` (new, Task 1) against the restored goal's notice (`GoalButtons.press`), so a tap on the held goal's notification that Kestrel posted without the service, which starts Kestrel's process, counts for the restored goal (same conversation and record) instead of being lost. Tests: `GoalNoticesTest.aTapThatStartsKestrelsProcessWaitsForTheRestoreAndCountsForTheRestoredGoal` and `ConversationEngineTest.awaitRestoredReturnsOnceTheRestoreHasRunWithTheRestoredGoalInTheView`. The receiver now judges every tap against the conversation's view, the one source of the notice, instead of the coordinator's copy.
+  - M4: "Interfaces for 7F and 7G" names only public API of `:core:conversation` and `:core:agent` (`GoalRunner.paused` and `resumed`, `ScreenTurn.take`, `GoalListener.waitsBehindCommand`, `ConversationEngine.awaitRestored`, the view's fields) and `:app`'s internal API, which plans 7F and 7G, in `:app`, may use; it says that `ScreenTakingGoal`, `FrontCheck` and `GoalRules` are internal and not for them.
+  - M5: a gate that holds the run at the crashed app's Back is no check of `FrontCheck`'s own: the screen is read again and every check is kept (`ScreenTurnTest.pausesAtACrashedAppsBackUseUpNoneOfTheObservationsChecks`, which fails with the gated Back of the earlier amendment).
+  - Nits: Task 8, Step 9 and Task 9, Step 7 stop before the stop when the accessibility setting reads `null` or nothing, so they never write the text `null` back; Task 1b's count line says that its first 3 come from Task 1.
 - **The rest.** "Changes to the design" gains the wait behind the owner's command, the pause's release and the buttons as the owner's inputs; "Interfaces for 7F and 7G" gains `waitsBehindCommand`, `ScreenTurn.take`'s `waiting`, `GoalListener.waitsBehindCommand`, `ScreenTakingGoal.paused` and `resumed` with `GoalRunner.paused` and `resumed`, `GoalButtons` and `GoalTexts.BEHIND_COMMAND`; "Decisions for the controller" gains items 13 to 15. The checker is clean from Task 1 and from Tasks 4, 5 and 6.
 
 ## File structure
 
 | File | Responsibility |
 |---|---|
-| `core/agent/src/main/kotlin/dev/kestrel/agent/TaskReport.kt`; `core/conversation/` `model/GoalState.kt`, `ConversationTexts.kt`, `machine/ConversationEvent.kt`, `machine/GoalRules.kt`, `machine/ConversationMachine.kt`, `engine/ConversationEngine.kt`, `engine/ConversationView.kt`; `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt`; tests `GoalRulesTest.kt`, `ConversationEngineTest.kt`, `AgentTextsTest.kt` | Task 1: a refused start holds the goal, and the view names the hold and a goal's ending |
-| `core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt`; `core/conversation/` `goal/GoalEnvironment.kt`, `goal/ScreenTakingGoal.kt`, `goal/GoalRunner.kt`, `engine/ConversationEngine.kt`; tests `core/agent/src/test/kotlin/dev/kestrel/agent/ScreenTurnTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoalTest.kt` (new), `ConversationEngineTest.kt` | Task 1b: a pause lets go of the screen's turn once no step can act, and the observation's Back passes the gate |
+| `core/agent/src/main/kotlin/dev/kestrel/agent/TaskReport.kt`; `core/conversation/` `model/GoalState.kt`, `ConversationTexts.kt`, `machine/ConversationEvent.kt`, `machine/GoalRules.kt`, `machine/ConversationMachine.kt`, `engine/ConversationEngine.kt`, `engine/ConversationView.kt`; `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt`; tests `GoalRulesTest.kt`, `ConversationEngineTest.kt`, `AgentTextsTest.kt` | Task 1: a refused start holds the goal, the view names the hold, a goal's ending and its record, and the engine says when its restore has run |
+| `core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt`; `core/conversation/` `goal/GoalEnvironment.kt`, `goal/ScreenTakingGoal.kt`, `goal/GoalRunner.kt`, `engine/ConversationEngine.kt`, fixture `testing/FakeGoalEnvironment.kt`; tests `core/agent/src/test/kotlin/dev/kestrel/agent/ScreenTurnTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoalTest.kt` (new), `ConversationEngineTest.kt` | Task 1b: a pause lets go of the screen's turn once no step can act, and the observation's Back passes the gate |
 | `core/conversation/` `goal/GoalEnvironment.kt`, `goal/RunningGoal.kt`, `goal/ScreenTakingGoal.kt`, `engine/ConversationEngine.kt`, `engine/ConversationView.kt`, fixture `testing/FakeScreenTurn.kt`; `app/src/main/kotlin/dev/kestrel/app/listen/ScreenTurns.kt`; tests `GoalRunnerTest.kt`, `ScreenTakingGoalTest.kt`, `ConversationEngineTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/ScreenTurnsTest.kt`, `ListeningTest.kt` | Task 1c: the view says when the round waits behind the owner's command |
 | `app/src/main/kotlin/dev/kestrel/app/goal/GoalTexts.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalNotice.kt` (new); test `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt` (new) | Task 2: the notification's words and buttons, with the wait behind the owner's command and each button as the owner's input |
 | `app/src/main/kotlin/dev/kestrel/app/goal/GoalServiceRules.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalForeground.kt` (new); tests `app/src/test/kotlin/dev/kestrel/app/goal/GoalServiceRulesTest.kt`, `app/src/test/kotlin/dev/kestrel/app/goal/GoalForegroundTest.kt` (new) | Task 3: when the service runs, what Kestrel posts without it, with which types, and a refusal |
@@ -115,9 +125,9 @@ Design 10.6 of sub-project 7: "When Android refuses a start, Kestrel says 'Andro
 
 **Interfaces:**
 - Consumes: plan 7A's `Interruption` and `TaskReport.interruption`; plan 7B's `GoalHold`, `GoalRules.touched`, `GoalHold.of`, `GoalRules.held`, `ConversationTexts.held`, `ConversationEvent.Touched`, `ConversationEffect.InterruptGoal`, `ConversationEngine.touched()`, `ConversationView`; plan 7D's `AgentTexts.sentence`.
-- Produces: `Interruption.BACKGROUND_REFUSED` (package `dev.kestrel.agent`); `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED = "Android didn't let me start working in the background."` and `ConversationTexts.CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."` (plan 7F changes it), with `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED) == CONTINUE_IN_NOTIFICATION` (plan 7B's `held(hold)`, which this task makes one `when` over every `GoalHold`; `GoalRules.backgroundRefused` and the tests of `:core:conversation` take the sentence from it, so plan 7F changes it in `ConversationTexts` alone); `ConversationEvent.BackgroundRefused(command: Int)`; `GoalRules.backgroundRefused(state: ConversationState, command: Int): MachineStep`; `fun ConversationEngine.backgroundRefused(command: Int)` (any thread; never blocks), where [command] is the view's `command` when the refused start was asked; `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?` (the last two fields, default null); `AgentTexts.sentence` gives `ConversationTexts.BACKGROUND_REFUSED` as the reason of an interruption with that cause.
+- Produces: `Interruption.BACKGROUND_REFUSED` (package `dev.kestrel.agent`); `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED = "Android didn't let me start working in the background."` and `ConversationTexts.CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."` (plan 7F changes it), with `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED) == CONTINUE_IN_NOTIFICATION` (plan 7B's `held(hold)`, which this task makes one `when` over every `GoalHold`; `GoalRules.backgroundRefused` and the tests of `:core:conversation` take the sentence from it, so plan 7F changes it in `ConversationTexts` alone); `ConversationEvent.BackgroundRefused(command: Int)`; `GoalRules.backgroundRefused(state: ConversationState, command: Int): MachineStep`; `fun ConversationEngine.backgroundRefused(command: Int)` (any thread; never blocks), where [command] is the view's `command` when the refused start was asked; `ConversationView.hold: GoalHold?`, `ConversationView.goalEnding: GoalEnding?` and `ConversationView.goalRecord: Int?` (the open goal's record number in its conversation, which with the view's `id` names the goal across Kestrel's processes, for the notification's buttons; the last three fields, default null); `suspend fun ConversationEngine.awaitRestored()`, which returns once `restore()` has run, so that an input that started Kestrel's process can be judged against the restored view; `AgentTexts.sentence` gives `ConversationTexts.BACKGROUND_REFUSED` as the reason of an interruption with that cause.
 
-Counts: `:core:conversation` C₀ + 2 (`GoalRulesTest` + 1, `ConversationEngineTest` + 1). `:app` JVM A₀, unchanged (`AgentTextsTest` gains a check in an existing test). `:core:agent` G₀, unchanged.
+Counts: `:core:conversation` C₀ + 3 (`GoalRulesTest` + 1, `ConversationEngineTest` + 2). `:app` JVM A₀, unchanged (`AgentTextsTest` gains a check in an existing test). `:core:agent` G₀, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -223,6 +233,7 @@ with:
         // Plan 7E; design 10.6 of sub-project 7: the goal is held as interrupted, and the view names why.
         assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
         assertEquals(GoalHold.BACKGROUND_REFUSED, engine.view.value.hold)
+        assertEquals(1, engine.view.value.goalRecord)
         assertEquals(Interruption.BACKGROUND_REFUSED, engine.outcome(1)!!.report.interruption)
         assertTrue(text.texts().last().endsWith(ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)))
 
@@ -231,6 +242,31 @@ with:
         assertNull(engine.view.value.goal)
         assertNull(engine.view.value.hold)
         assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // Plan 7E: a tap on the goal notification can start Kestrel's process; the receiver waits until the conversation is
+    // restored, and then reads the restored goal, which the view names by its conversation and its record.
+    @Test
+    fun awaitRestoredReturnsOnceTheRestoreHasRunWithTheRestoredGoalInTheView() = scope.runTest {
+        val now = ManualConversationClock.BASE
+        val id = ConversationId("0123456789abcdef0123456789abcdef")
+        val record = CommandRecord(1, now - 60_000, InputChannel.TEXT, "Archive my newsletters")
+        store.save(ConversationSnapshot(id, now - 60_000, now - 30_000, open = true, testMode = false, records = listOf(record), goal = GoalState(1, GoalPhase.ACTING, now - 30_000)))
+        val engine = engine(environment(), ArchivedConversationStore(archive, backgroundScope) {})
+        var seen: ConversationView? = null
+        launch {
+            engine.awaitRestored()
+            seen = engine.view.value
+        }
+        runCurrent()
+        assertNull(seen)
+
+        assertEquals(RestoreResult.GOAL_HELD, engine.restore())
+        runCurrent()
+
+        assertEquals(id, seen?.id)
+        assertEquals(GoalPhase.INTERRUPTED, seen?.goal)
+        assertEquals(1, seen?.goalRecord)
     }
 
     @Test
@@ -275,7 +311,7 @@ with:
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.machine.GoalRulesTest --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: FAIL, the compiler reports `Unresolved reference 'BackgroundRefused'` and `Unresolved reference 'BACKGROUND_REFUSED'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'BackgroundRefused'`, `Unresolved reference 'BACKGROUND_REFUSED'`, `Unresolved reference 'goalRecord'` and `Unresolved reference 'awaitRestored'`.
 
 - [ ] **Step 3: The cause, the hold and the sentences**
 
@@ -475,6 +511,12 @@ with:
      * asked (plan 7E; design 10.6 of sub-project 7). Any thread; never blocks.
      */
     fun backgroundRefused(command: Int) = post(ConversationEvent.BackgroundRefused(command))
+
+    /**
+     * Returns once [restore] has run, with the restored conversation in [view] (plan 7E): a tap on the goal notification
+     * that started Kestrel's process is judged against the restored goal, not against the empty view before it.
+     */
+    suspend fun awaitRestored() = started.await()
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -492,6 +534,7 @@ with:
             ownRequest = current.local?.cancelled == false,
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
+            goalRecord = current.goal?.record,
         )
 ```
 
@@ -519,8 +562,9 @@ with:
 
 ```kotlin
  * that the voice stops it before the command in "Stop. Kestrel, …", why a held goal is held ([hold], which the goal
- * notification names) and whether the goal is ending ([goalEnding], for which the goal service does not start; plan 7E).
- * toString prints no words.
+ * notification names), whether the goal is ending ([goalEnding], for which the goal service does not start), and the open
+ * goal's record number ([goalRecord], which with [id] names the goal across Kestrel's processes, for the notification's
+ * buttons; plan 7E). toString prints no words.
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
@@ -536,6 +580,7 @@ with:
     val ownRequest: Boolean = false,
     val hold: GoalHold? = null,
     val goalEnding: GoalEnding? = null,
+    val goalRecord: Int? = null,
 ) {
 ```
 
@@ -548,7 +593,7 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/Conversati
 with:
 
 ```kotlin
-            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding)"
+            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, goalRecord=$goalRecord)"
 ```
 
 - [ ] **Step 5: The round's sentence**
@@ -614,18 +659,18 @@ Design 6.5 of sub-project 7, as plan 7D built it: a goal's round holds the scree
 
 Letting go at once at every pause would open a gap of its own: between a gate that the run has passed and the end of the step that the gate let through (its fresh read of the screen, its safety check, its action, the observation after it, Kestrel's speech), the step may act on the screen, and an instant command must not start beside it (the controller's decision of 2026-11-25). So the round's own view of the turn, `ScreenTakingGoal`, through which every turn of the round goes, the round's first one too, is the one rule for a pause: from the moment the run asks for the turn (`takeScreen`) until its next model call starts (`stepStarted`, which the run calls right before every model call, after the turn's gate, the observation and the steering) or its next wait for the owner starts (`releaseScreen`), a step may act, and a pause that comes then lets go of the turn only when that span ends; a pause that comes while the round waits for its model lets go at once. A resume before the span ends keeps the turn, because the goal acts again. The engine reaches the running round's view through `GoalRunner.paused()` and `GoalRunner.resumed()`. `:core:agent`'s ports do not change: the span's ends are the goal port's existing `stepStarted` and `releaseScreen`.
 
-The Back with which an observation closes an app that crashed acts on the screen while the goal may be paused, because the observation passed no pause gate. It now passes the gate first, as every other action does (D2).
+The Back with which an observation closes an app that crashed acts on the screen while the goal may be paused, because the observation passed no pause gate. It now passes the gate first, as every other action does (D2), and a gate that held the run is no check of its own: the screen is read again, and the observation keeps all of its checks for the screen after the pause.
 
 **Files:**
-- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoal.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRunner.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`
+- Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoal.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRunner.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, fixture `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt`
 - Create (test): `core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoalTest.kt`
 - Test: `core/agent/src/test/kotlin/dev/kestrel/agent/ScreenTurnTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`
 
 **Interfaces:**
 - Consumes: plan 7D's `ScreenTurn` (`take`, `release`), `ScreenTakingGoal`, `GoalRunner`'s screen turn, `GoalPort.stepStarted`, `takeScreen` and `releaseScreen`, `TaskRun.gate()` and `waitForOwner`, `FrontCheck.checked`, `ConversationEffect.PauseGoal` and `ResumePausedGoal`, `ConversationOwner.pause()` and `resume()`; the fixtures' `FakeGoal.screenTurn` and `screenTurns` (`:core:agent`) and `FakeScreenTurn` (`takes`, `releases`, `holds`).
-- Produces: `ScreenTakingGoal.paused()` and `resumed()` (any thread), with the span from `takeScreen` to the next `stepStarted` or `releaseScreen` in which a pause's release waits; `GoalRunner.paused()` and `GoalRunner.resumed()`, which reach the running round's `ScreenTakingGoal`; `GoalRunner.round` takes its first turn and lets go of its last through its `ScreenTakingGoal` too; the engine calls `paused()` with `ConversationOwner.pause()` for every `ConversationEffect.PauseGoal`, and `resumed()` before `ConversationOwner.resume()` for every `ResumePausedGoal`. `FrontCheck.checked` closes an app that crashed with Back only when `TaskRun.gate()` returns false; a gate that held the run reads the screen again first.
+- Produces: `ScreenTakingGoal.paused()` and `resumed()` (any thread), with the span from `takeScreen` to the next `stepStarted` or `releaseScreen` in which a pause's release waits; `GoalRunner.paused()` and `GoalRunner.resumed()`, which reach the running round's `ScreenTakingGoal`; `GoalRunner.round` takes its first turn and lets go of its last through its `ScreenTakingGoal` too; the engine calls `paused()` with `ConversationOwner.pause()` for every `ConversationEffect.PauseGoal`, and `resumed()` before `ConversationOwner.resume()` for every `ResumePausedGoal`. `FrontCheck.checked` closes an app that crashed with Back only when `TaskRun.gate()` returns false; a gate that held the run reads the screen again first and uses up none of the observation's checks. `FakeGoalEnvironment.beforeCall: suspend (Int) -> Unit`, which runs before each model call with the number of that call (1, 2, …), so that a test can hold a round inside its model call.
 
-Counts: `:core:agent` G₀ + 1 (`ScreenTurnTest` + 1). `:core:conversation` C₀ + 2 + 3 = C₀ + 5 (`ScreenTakingGoalTest` 2, `ConversationEngineTest` + 1). `:app` JVM A₀, unchanged.
+Counts: `:core:agent` G₀ + 2 (`ScreenTurnTest` + 2). `:core:conversation` C₀ + 3 (Task 1) + 4 = C₀ + 7 (`ScreenTakingGoalTest` 2, `ConversationEngineTest` + 2). `:app` JVM A₀, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -744,6 +789,21 @@ with:
         assertTrue(harness.screen.actions.any { it is ScreenAction.Global })
     }
 
+    // Plan 7E: a gate that holds the run at the crashed app's Back is no check of the observation's own: however many
+    // pauses come there, the observation still closes the app once the run may act, and never ends the task as stuck.
+    @Test
+    fun pausesAtACrashedAppsBackUseUpNoneOfTheObservationsChecks() = runTest {
+        val crashed = ScreenBuilder.screen("android", "Viber keeps stopping") { button("Close app", 300) }
+        val harness = Harness(crashed, listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        repeat(3) { harness.owner.gates += Gate.RESUMED }
+        harness.screen.onSnapshot = { if (harness.screen.actions.any { it is ScreenAction.Global }) harness.screen.current = Screens.chats() }
+
+        val report = harness.run("Open Ana's chat")
+
+        assertEquals(1, harness.screen.actions.count { it is ScreenAction.Global })
+        assertEquals(EndReason.FAILED_BY_MODEL, report.end)
+    }
+
     // The observation after a pause closes an app that crashed meanwhile with Back, which is an action on the screen; it
     // waits for the turn, because the owner's command may still act there.
 ```
@@ -792,13 +852,38 @@ with:
         assertFalse(screen.holds)
     }
 
+    // Plan 7D's re-review, R5-1: a lock pauses the goal while its round waits inside a model call, with the screen's turn
+    // held. No step can act then, so the engine has the round let go of the turn at once, and the owner's instant commands
+    // work during the pause, before the model answers.
+    @Test
+    fun aPauseDuringAModelCallLetsGoOfTheTurnAtOnce() = scope.runTest {
+        val answering = CompletableDeferred<Unit>()
+        val screen = FakeScreenTurn()
+        val environment = environment(listSms, listSms, finish(2)).apply { beforeCall = { if (it == 1) answering.await() } }
+        val engine = engine(environment, screen = screen)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertTrue(screen.holds)
+
+        engine.signal(PhoneSignal.LOCKED)
+        runCurrent()
+
+        assertEquals(GoalPhase.PAUSED, engine.view.value.goal)
+        assertFalse(screen.holds)
+        answering.complete(Unit)
+        runCurrent()
+        assertFalse(screen.holds)
+        assertTrue(engine.view.value.records.single().data.isEmpty())
+    }
+
     // A save that fails is reported; the view still shows the step, and the next step saves the conversation again.
 ```
 
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 --continue :core:agent:test --tests=dev.kestrel.agent.ScreenTurnTest :core:conversation:test --tests=dev.kestrel.conversation.goal.ScreenTakingGoalTest --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: FAIL: `ScreenTurnTest > aCrashedAppInTheFirstObservationIsClosedOnlyAfterTheGate` (the Back came before any turn, so the first `assertTrue` fails), and the compiler reports `Unresolved reference 'paused'` and `Unresolved reference 'resumed'` in `ScreenTakingGoalTest.kt`.
+Expected: FAIL: `ScreenTurnTest > aCrashedAppInTheFirstObservationIsClosedOnlyAfterTheGate` (the Back came before any turn, so the first `assertTrue` fails) and `ScreenTurnTest > pausesAtACrashedAppsBackUseUpNoneOfTheObservationsChecks` (the Back came before the pauses, at the first check); the compiler reports `Unresolved reference 'paused'` and `Unresolved reference 'resumed'` in `ScreenTakingGoalTest.kt` and `Unresolved reference 'beforeCall'` in `ConversationEngineTest.kt`.
 
 - [ ] **Step 3: The observation's Back passes the gate**
 
@@ -819,24 +904,114 @@ with:
 In `core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt`, replace:
 
 ```kotlin
+        var current = snapshot
+        repeat(CHECKS) {
+            current = pastKestrel(current) { run.fresh() }
+            val front = ScreenTree.frontWindow(current)?.packageName
+            when {
+                run.settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = run.label(front) ?: front)
+                PlayServices.handsOver(current) -> run.handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
                 crashed(current) -> {
                     run.ports.screen.act(ScreenAction.Global(GlobalKind.BACK))
                     appStopped = true
                 }
+                else -> return current
+            }
+            current = run.fresh()
+        }
 ```
 
 with:
 
 ```kotlin
-                // Back acts on the screen, so it passes the pause gate first (D2; plan 7E), and a gate that held the run
-                // leaves the screen, which may have changed meanwhile, to be read again.
-                crashed(current) -> if (!run.gate()) {
+        var current = snapshot
+        var checks = 0
+        while (checks < CHECKS) {
+            current = pastKestrel(current) { run.fresh() }
+            val front = ScreenTree.frontWindow(current)?.packageName
+            when {
+                run.settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = run.label(front) ?: front)
+                PlayServices.handsOver(current) -> run.handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
+                crashed(current) -> {
+                    // Back acts on the screen, so it passes the pause gate first (D2; plan 7E). A gate that held the run
+                    // is no check: the screen, which may have changed meanwhile, is read again, and every check is kept.
+                    if (run.gate()) {
+                        current = run.fresh()
+                        continue
+                    }
                     run.ports.screen.act(ScreenAction.Global(GlobalKind.BACK))
                     appStopped = true
                 }
+                else -> return current
+            }
+            checks++
+            current = run.fresh()
+        }
 ```
 
 - [ ] **Step 4: The round's one rule for a pause**
+
+The tests hold a round inside its model call through the fixture. In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt`, replace:
+
+```kotlin
+ * and one scripted model whose replies serve the conversation's rounds in order. [afterCall] runs after each model reply
+ * with the number of requests so far: a test may steer or touch there. [sentenceOf] is the sentence of every report.
+```
+
+with:
+
+```kotlin
+ * and one scripted model whose replies serve the conversation's rounds in order. [beforeCall] runs before each model call
+ * with that call's number (1, 2, …), and may hold the round there; [afterCall] runs after each model reply with the number
+ * of requests so far: a test may steer or touch there. [sentenceOf] is the sentence of every report.
+```
+
+In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt`, replace:
+
+```kotlin
+    var afterCall: (Int) -> Unit = {}
+
+    private val watched: ModelPort = Watched(model) { afterCall(it) }
+```
+
+with:
+
+```kotlin
+    var beforeCall: suspend (Int) -> Unit = {}
+    var afterCall: (Int) -> Unit = {}
+
+    private val watched: ModelPort = Watched(model, { beforeCall(it) }) { afterCall(it) }
+```
+
+In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt`, replace:
+
+```kotlin
+    private class Watched(private val scripted: ScriptedModel, private val after: (Int) -> Unit) : ModelPort {
+        override val model: ModelInfo get() = scripted.model
+
+        override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse =
+            scripted.call(role, request, step).also { after(scripted.requests.size) }
+    }
+```
+
+with:
+
+```kotlin
+    private class Watched(
+        private val scripted: ScriptedModel,
+        private val before: suspend (Int) -> Unit,
+        private val after: (Int) -> Unit,
+    ) : ModelPort {
+        override val model: ModelInfo get() = scripted.model
+
+        override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse {
+            before(scripted.requests.size + 1)
+            return scripted.call(role, request, step).also { after(scripted.requests.size) }
+        }
+    }
+```
+
+Then the rule itself.
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt`, replace:
 
@@ -1042,17 +1217,17 @@ with:
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.ScreenTurnTest :core:conversation:test --tests=dev.kestrel.conversation.goal.ScreenTakingGoalTest --tests=dev.kestrel.conversation.engine.ConversationEngineTest --tests=dev.kestrel.conversation.goal.GoalRunnerTest`
-Expected: PASS, with `ScreenTurnTest`'s 3 (plan 7D's `theObservationAfterAPauseClosesACrashedAppOnlyAfterTheTurn` among them), `ScreenTakingGoalTest`'s 2 and plan 7D's `GoalRunnerTest.theRoundLetsGoOfTheTurnOnEveryPath`.
+Expected: PASS, with `ScreenTurnTest`'s 4 (plan 7D's `theObservationAfterAPauseClosesACrashedAppOnlyAfterTheTurn` among them), `ScreenTakingGoalTest`'s 2 and plan 7D's `GoalRunnerTest.theRoundLetsGoOfTheTurnOnEveryPath`.
 
 - [ ] **Step 6: Run the three modules' tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:agent:test :core:conversation:test :app:testDebugUnitTest :core:conversation:check`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app\build\test-results\testDebugUnitTest` A₀, `core\conversation\build\test-results\test` C₀ + 5, `core\agent\build\test-results\test` G₀ + 1.
+Expected: BUILD SUCCESSFUL; `app\build\test-results\testDebugUnitTest` A₀, `core\conversation\build\test-results\test` C₀ + 7, `core\agent\build\test-results\test` G₀ + 2.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt core/agent/src/test/kotlin/dev/kestrel/agent/ScreenTurnTest.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoal.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRunner.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoalTest.kt core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt
+git add core/agent/src/main/kotlin/dev/kestrel/agent/loop/FrontCheck.kt core/agent/src/test/kotlin/dev/kestrel/agent/ScreenTurnTest.kt core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoal.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRunner.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/ScreenTakingGoalTest.kt core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt
 git commit -m "fix(agent, conversation): a pause lets go of the round's screen turn once no step that a gate let through can act, at once during a model call, and the observation's Back on a crashed app passes the gate (plan 7E; plan 7D's re-review, R5-1)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -1072,7 +1247,7 @@ The name says "behind": the conversation already has `HoldReason.WAITING_FOR_COM
 - Consumes: plan 7D's `ScreenTurn`, `ScreenTurns` (`startCommand`, `stopped`, `take`, `release`, `commandEnded`), Task 1b's `ScreenTakingGoal` (through which every turn of a round goes), `RunningGoal.takeAct`, `GoalListener`, the engine's `Message.Step` and `roundStep`; Task 1's `ConversationView.hold` and `goalEnding`.
 - Produces: `ScreenTurn.take(after: Long?, waiting: () -> Unit): Boolean`, whose [waiting] hears each start of a wait behind the owner's command that goes on; `GoalListener.waitsBehindCommand(waits: Boolean)` (must not block); `ConversationView.waitsBehindCommand: Boolean` (the last field, default false), true only while the open goal works (`ACTING`, `ASKING`, `HANDED_OVER`) and its round waits behind the owner's command; `FakeScreenTurn.command: CompletableDeferred<Unit>?`, the owner's command that the next take waits behind.
 
-Counts: `:app` JVM A₀ + 1 (`ScreenTurnsTest` + 1). `:core:conversation` C₀ + 5 + 2 = C₀ + 7 (`GoalRunnerTest` + 1, `ConversationEngineTest` + 1). `:core:agent` G₀ + 1, unchanged.
+Counts: `:app` JVM A₀ + 1 (`ScreenTurnsTest` + 1). `:core:conversation` C₀ + 7 + 2 = C₀ + 9 (`GoalRunnerTest` + 1, `ConversationEngineTest` + 1). `:core:agent` G₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1743,6 +1918,7 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/Conversati
 ```kotlin
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
+            goalRecord = current.goal?.record,
         )
 ```
 
@@ -1751,6 +1927,7 @@ with:
 ```kotlin
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
+            goalRecord = current.goal?.record,
             waitsBehindCommand = own && roundBehindCommand && current.goal?.phase in WORKING,
         )
 ```
@@ -1758,29 +1935,29 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
- * notification names) and whether the goal is ending ([goalEnding], for which the goal service does not start; plan 7E).
- * toString prints no words.
+ * goal's record number ([goalRecord], which with [id] names the goal across Kestrel's processes, for the notification's
+ * buttons; plan 7E). toString prints no words.
 ```
 
 with:
 
 ```kotlin
- * notification names), whether the goal is ending ([goalEnding], for which the goal service does not start), and whether
- * the working goal's round waits behind the owner's instant command ([waitsBehindCommand], which the goal notification
- * says, because the bar belongs to the command then; plan 7E). toString prints no words.
+ * goal's record number ([goalRecord], which with [id] names the goal across Kestrel's processes, for the notification's
+ * buttons), and whether the working goal's round waits behind the owner's instant command ([waitsBehindCommand], which the
+ * goal notification says, because the bar belongs to the command then; plan 7E). toString prints no words.
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
-    val goalEnding: GoalEnding? = null,
+    val goalRecord: Int? = null,
 ) {
 ```
 
 with:
 
 ```kotlin
-    val goalEnding: GoalEnding? = null,
+    val goalRecord: Int? = null,
     val waitsBehindCommand: Boolean = false,
 ) {
 ```
@@ -1788,13 +1965,13 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
 
 ```kotlin
-            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding)"
+            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, goalRecord=$goalRecord)"
 ```
 
 with:
 
 ```kotlin
-            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, behind=$waitsBehindCommand)"
+            "kept=$keptForOwner, own=$ownRequest, hold=$hold, ending=$goalEnding, goalRecord=$goalRecord, behind=$waitsBehindCommand)"
 ```
 
 - [ ] **Step 5: Run the tests to see them pass**
@@ -1805,7 +1982,7 @@ Expected: PASS, with `ScreenTurnsTest`'s 8.
 - [ ] **Step 6: Run the three modules' tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:agent:test :core:conversation:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :core:conversation:check`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app\build\test-results\testDebugUnitTest` A₀ + 1, `core\conversation\build\test-results\test` C₀ + 7, `core\agent\build\test-results\test` G₀ + 1.
+Expected: BUILD SUCCESSFUL; `app\build\test-results\testDebugUnitTest` A₀ + 1, `core\conversation\build\test-results\test` C₀ + 9, `core\agent\build\test-results\test` G₀ + 2.
 
 - [ ] **Step 7: Commit**
 
@@ -1818,17 +1995,17 @@ git commit -m "feat(conversation, app): the screen's turn says when a goal's rou
 
 ### Task 2: The notification's words and buttons
 
-Design 10.6 of sub-project 7 and the main spec's section 15: the goal notification says "Kestrel is working" with the current checklist item and a progress bar, and has Stop and Open; with the goal held, it asks "Continue the goal?" with Cancel and Continue, in that order, so that a tap meant as Stop lands on Cancel when a touch holds the goal while the owner reaches for Stop (the owner's decision of 2026-11-25). `GoalNotices` builds that from the conversation's view, apart from Android, so that a JVM test checks it; `GoalAction` names each button with the owner's input that it gives, and whether it resumes what Kestrel does, which Task 5 makes ask for the owner's unlock. After the goal's end, while its final reply is said or waits for the owner's return, the notification says "Kestrel finished the goal". While the working goal's round waits behind the owner's instant command (Task 1c), the notification says "Waiting for your command to finish" in place of the current item, because the bar shows the command's own text then. A tap on a button is an input of the owner's like a spoken or typed one (plan 7D): `GoalButtons.input` gives it the next number of the owner's inputs (`InputIds.next`) at the moment of the tap, and only for a button that the notification shows, so that a Continue that resumes the goal is his newest act, and an instant command that he started before the tap lets the round have the screen (plan 7D's `ScreenTurns`).
+Design 10.6 of sub-project 7 and the main spec's section 15: the goal notification says "Kestrel is working" with the current checklist item and a progress bar, and has Stop and Open; with the goal held, it asks "Continue the goal?" with Cancel and Continue, in that order, so that a tap meant as Stop lands on Cancel when a touch holds the goal while the owner reaches for Stop (the owner's decision of 2026-11-25). `GoalNotices` builds that from the conversation's view, apart from Android, so that a JVM test checks it; `GoalAction` names each button with the owner's input that it gives, and whether it resumes what Kestrel does, which Task 5 makes ask for the owner's unlock. After the goal's end, while its final reply is said or waits for the owner's return, the notification says "Kestrel finished the goal". While the working goal's round waits behind the owner's instant command (Task 1c), the notification says "Waiting for your command to finish" in place of the current item, because the bar shows the command's own text then. A tap on a button is an input of the owner's like a spoken or typed one (plan 7D): `GoalButtons.input` gives it the next number of the owner's inputs (`InputIds.next`) at the moment of the tap, so that a Continue that resumes the goal is his newest act, and an instant command that he started before the tap lets the round have the screen (plan 7D's `ScreenTurns`). It counts only for the goal that the notice shows, which each notice names by its conversation and its record (`NoticeGoal`, from the view's `id` and `goalRecord`), because a command number belongs to one process and changes at every resume: a tap for another goal, also one that comes late after a goal ended and a new one opened, is nothing. A button that stops counts while the goal's notice offers any way to stop, because the owner's tap on Stop can arrive after a touch (his pull of the shade) held the goal and the notice offers Cancel instead; Continue counts only while the notice offers Continue. `GoalButtons.press` decides a tap after the conversation's restore, so that a tap that started Kestrel's process (on the held goal's notification that Kestrel posted without the service, which outlives the process) is judged against the restored goal and not lost.
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/goal/GoalTexts.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalNotice.kt`
 - Test: `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt`
 
 **Interfaces:**
-- Consumes: Task 1's `ConversationView.hold`, `ConversationTexts.held`, `ConversationTexts.CONTINUE_GOAL`; Task 1c's `ConversationView.waitsBehindCommand`; plan 7B's `ConversationView` (`goal`, `checklist`), `ChecklistSummary(done, total, current)`, `GoalState.HELD`, `OwnerInput(id, channel, intent, atMillis)`, `InputChannel`, `InputIntent.Stop` and `InputIntent.Continue`.
-- Produces (package `dev.kestrel.app.goal`, all `internal`): `object GoalTexts { CHANNEL = "Goals"; WORKING = "Kestrel is working"; BEHIND_COMMAND = "Waiting for your command to finish"; FINISHED = "Kestrel finished the goal"; PUBLIC = "Kestrel is working on a task"; STOP = "Stop"; OPEN = "Open"; CONTINUE = "Continue"; CANCEL = "Cancel" }`; `enum class GoalAction(val label: String, val intent: InputIntent?, val resumes: Boolean) { STOP, OPEN, CONTINUE, CANCEL }` (only `CONTINUE` resumes) with `val broadcast: String` (`"dev.kestrel.goal.<NAME>"`) and `GoalAction.ofBroadcast(action: String?): GoalAction?`; `enum class NoticeKind { WORKING, HELD, CLOSING }`; `data class NoticeProgress(val done: Int, val total: Int)`; `data class GoalNotice(val kind: NoticeKind, val title: String, val text: String?, val progress: NoticeProgress?, val actions: List<GoalAction>)`; `object GoalNotices { val CLOSING: GoalNotice; fun of(view: ConversationView): GoalNotice? }`; a held notice's actions are `[CANCEL, CONTINUE]`; `object GoalButtons { fun input(broadcast: String?, shown: GoalNotice?, channel: InputChannel, next: () -> Long, atMillis: Long): OwnerInput? }`.
+- Consumes: Task 1's `ConversationView.hold` and `goalRecord`, `ConversationTexts.held`, `ConversationTexts.CONTINUE_GOAL`; Task 1c's `ConversationView.waitsBehindCommand`; plan 7B's `ConversationView` (`id`, `goal`, `checklist`, `replyChannel`), `ConversationId`, `ChecklistSummary(done, total, current)`, `GoalState.HELD`, `OwnerInput(id, channel, intent, atMillis)`, `InputChannel`, `InputIntent.Stop` and `InputIntent.Continue`.
+- Produces (package `dev.kestrel.app.goal`, all `internal`): `object GoalTexts { CHANNEL = "Goals"; WORKING = "Kestrel is working"; BEHIND_COMMAND = "Waiting for your command to finish"; FINISHED = "Kestrel finished the goal"; PUBLIC = "Kestrel is working on a task"; STOP = "Stop"; OPEN = "Open"; CONTINUE = "Continue"; CANCEL = "Cancel" }`; `enum class GoalAction(val label: String, val intent: InputIntent?, val resumes: Boolean) { STOP, OPEN, CONTINUE, CANCEL }` (only `CONTINUE` resumes) with `val stops: Boolean` (`STOP` and `CANCEL`), `val broadcast: String` (`"dev.kestrel.goal.<NAME>"`) and `GoalAction.ofBroadcast(action: String?): GoalAction?`; `enum class NoticeKind { WORKING, HELD, CLOSING }`; `data class NoticeProgress(val done: Int, val total: Int)`; `data class NoticeGoal(val conversation: ConversationId, val record: Int)`; `data class GoalNotice(val kind: NoticeKind, val title: String, val text: String?, val progress: NoticeProgress?, val actions: List<GoalAction>, val goal: NoticeGoal? = null)`; `object GoalNotices { val CLOSING: GoalNotice; fun of(view: ConversationView): GoalNotice? }`; a held notice's actions are `[CANCEL, CONTINUE]`; `object GoalButtons { fun input(broadcast: String?, goal: NoticeGoal?, shown: GoalNotice?, channel: InputChannel, next: () -> Long, atMillis: Long): OwnerInput?; suspend fun press(broadcast: String?, goal: NoticeGoal?, restored: suspend () -> ConversationView, next: () -> Long, now: () -> Long): OwnerInput? }`.
 
-Counts: `:app` JVM A₀ + 1 + 5 = A₀ + 6 (`GoalNoticesTest` 5).
+Counts: `:app` JVM A₀ + 1 + 8 = A₀ + 9 (`GoalNoticesTest` 8).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1840,11 +2017,16 @@ package dev.kestrel.app.goal
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.engine.ChecklistSummary
 import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -1853,6 +2035,11 @@ import org.junit.Test
 /** The goal notification's words and buttons (design 10.6 of sub-project 7; plan 7E). */
 class GoalNoticesTest {
     private val working = listOf(GoalAction.STOP, GoalAction.OPEN)
+    private val id = ConversationId("0123456789abcdef0123456789abcdef")
+    private val goal = NoticeGoal(id, 2)
+
+    // The open goal of record 2 in the conversation [id], in [phase].
+    private fun view(phase: GoalPhase, hold: GoalHold? = null) = ConversationView(id = id, goal = phase, hold = hold, goalRecord = 2)
 
     @Test
     fun aWorkingGoalShowsItsCurrentItemAndProgressWithStopAndOpen() {
@@ -1905,27 +2092,68 @@ class GoalNoticesTest {
 
     // Plan 7E with plan 7D's ScreenTurns: a tap on a button that the notification shows is the owner's input of that
     // moment, with the next number of his inputs, so that a Continue that resumes the goal has an instant command that he
-    // started before the tap let go of the screen; a button that the notification no longer shows gives nothing and takes
-    // no number.
+    // started before the tap let go of the screen; a button that counts for nothing takes no number.
     @Test
-    fun aShownButtonIsTheOwnersNewestInputAndAStaleOneIsNothing() {
+    fun aShownButtonIsTheOwnersNewestInputAndAStaleContinueIsNothing() {
         var newest = 41L
-        val held = GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.TOUCH))
+        val held = GoalNotices.of(view(GoalPhase.INTERRUPTED, GoalHold.TOUCH))
 
         assertEquals(
             OwnerInput(42, InputChannel.TEXT, InputIntent.Continue, 7),
-            GoalButtons.input(GoalAction.CONTINUE.broadcast, held, InputChannel.TEXT, { ++newest }, 7),
+            GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, held, InputChannel.TEXT, { ++newest }, 7),
         )
         assertEquals(
             OwnerInput(43, InputChannel.VOICE, InputIntent.Stop, 8),
-            GoalButtons.input(GoalAction.CANCEL.broadcast, held, InputChannel.VOICE, { ++newest }, 8),
+            GoalButtons.input(GoalAction.CANCEL.broadcast, goal, held, InputChannel.VOICE, { ++newest }, 8),
         )
         // A Continue from a notification that the working goal replaced, and Open, which sends no broadcast.
-        val working = GoalNotices.of(ConversationView(goal = GoalPhase.ACTING))
-        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, working, InputChannel.TEXT, { ++newest }, 9))
-        assertNull(GoalButtons.input(GoalAction.OPEN.broadcast, working, InputChannel.TEXT, { ++newest }, 9))
-        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, null, InputChannel.TEXT, { ++newest }, 9))
+        val working = GoalNotices.of(view(GoalPhase.ACTING))
+        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, working, InputChannel.TEXT, { ++newest }, 9))
+        assertNull(GoalButtons.input(GoalAction.OPEN.broadcast, goal, working, InputChannel.TEXT, { ++newest }, 9))
+        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, goal, null, InputChannel.TEXT, { ++newest }, 9))
         assertEquals(43L, newest)
+    }
+
+    // The review of plan 7E (I2): the owner's pull of the shade is a touch, which holds the goal, so his tap on Stop can
+    // arrive after the held notice, which offers Cancel, replaced the working one. Any button that stops counts while the
+    // goal's notice offers a way to stop; Continue needs its own button.
+    @Test
+    fun aStoppingButtonCountsWhileTheGoalsNoticeOffersAnyWayToStop() {
+        val held = GoalNotices.of(view(GoalPhase.INTERRUPTED, GoalHold.TOUCH))
+        val working = GoalNotices.of(view(GoalPhase.ACTING))
+
+        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.STOP.broadcast, goal, held, InputChannel.TEXT, { 1 }, 0)?.intent)
+        assertEquals(InputIntent.Stop, GoalButtons.input(GoalAction.CANCEL.broadcast, goal, working, InputChannel.TEXT, { 1 }, 0)?.intent)
+        // The notice after the goal's end offers nothing, so nothing stops.
+        assertNull(GoalButtons.input(GoalAction.STOP.broadcast, null, GoalNotices.CLOSING, InputChannel.TEXT, { 1 }, 0))
+    }
+
+    // The review of plan 7E (M2): each notice names its goal by its conversation and its record, which outlive a resume and
+    // Kestrel's process, and a button counts only for that goal: a late tap meant for another goal is nothing.
+    @Test
+    fun aButtonCountsOnlyForTheGoalThatItsNoticeShowed() {
+        val held = GoalNotices.of(view(GoalPhase.INTERRUPTED, GoalHold.TOUCH))
+        assertEquals(goal, held?.goal)
+        assertNull(GoalNotices.CLOSING.goal)
+
+        assertNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, NoticeGoal(id, 1), held, InputChannel.TEXT, { 1 }, 0))
+        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, NoticeGoal(ConversationId("fedcba9876543210fedcba9876543210"), 2), held, InputChannel.TEXT, { 1 }, 0))
+        assertNull(GoalButtons.input(GoalAction.CANCEL.broadcast, null, held, InputChannel.TEXT, { 1 }, 0))
+    }
+
+    // The review of plan 7E (M3): a tap on the held goal's notification that Kestrel posted without the service can start
+    // Kestrel's process. The press waits until the conversation is restored, and decides against the restored goal's
+    // notice, so the tap is neither lost nor judged against the empty view before the restore.
+    @Test
+    fun aTapThatStartsKestrelsProcessWaitsForTheRestoreAndCountsForTheRestoredGoal() = runTest {
+        val restored = CompletableDeferred<ConversationView>()
+        val pressed = async { GoalButtons.press(GoalAction.CONTINUE.broadcast, goal, { restored.await() }, { 42 }, { 7 }) }
+        runCurrent()
+        assertFalse(pressed.isCompleted)
+
+        restored.complete(view(GoalPhase.INTERRUPTED, GoalHold.RESTART).copy(replyChannel = InputChannel.TEXT))
+
+        assertEquals(OwnerInput(42, InputChannel.TEXT, InputIntent.Continue, 7), pressed.await())
     }
 }
 ```
@@ -1976,6 +2204,7 @@ package dev.kestrel.app.goal
 
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
@@ -1995,6 +2224,9 @@ internal enum class GoalAction(val label: String, val intent: InputIntent?, val 
     CANCEL(GoalTexts.CANCEL, InputIntent.Stop, resumes = false),
     ;
 
+    /** Whether the button stops the goal: Stop while it works, Cancel while it is held (design 6.4). */
+    val stops: Boolean get() = intent == InputIntent.Stop
+
     /** The action of the broadcast that the button sends. */
     val broadcast: String get() = "dev.kestrel.goal.$name"
 
@@ -2010,15 +2242,28 @@ internal enum class NoticeKind { WORKING, HELD, CLOSING }
 /** The progress bar: [done] of [total] checklist items. */
 internal data class NoticeProgress(val done: Int, val total: Int)
 
-/** The goal notification's words and buttons, apart from Android. toString prints no words: [text] may hold names. */
+/**
+ * The goal that a notice shows, by its [conversation] and its [record] number there: one name for the goal across its
+ * resumes and Kestrel's processes, which a command number is not (it belongs to one process and changes at every resume).
+ * The buttons' broadcasts carry it, so that a tap counts only for the goal that its notice showed (plan 7E).
+ */
+internal data class NoticeGoal(val conversation: ConversationId, val record: Int) {
+    override fun toString(): String = "NoticeGoal(record=$record)"
+}
+
+/**
+ * The goal notification's words and buttons, apart from Android, for the [goal] that it shows (none after the goal's end).
+ * toString prints no words: [text] may hold names.
+ */
 internal data class GoalNotice(
     val kind: NoticeKind,
     val title: String,
     val text: String?,
     val progress: NoticeProgress?,
     val actions: List<GoalAction>,
+    val goal: NoticeGoal? = null,
 ) {
-    override fun toString(): String = "GoalNotice(kind=$kind, text=${text?.length} chars, progress=$progress, actions=$actions)"
+    override fun toString(): String = "GoalNotice(kind=$kind, text=${text?.length} chars, progress=$progress, actions=$actions, goal=$goal)"
 }
 
 /**
@@ -2034,31 +2279,47 @@ internal object GoalNotices {
 
     fun of(view: ConversationView): GoalNotice? {
         val phase = view.goal ?: return null
+        val goal = view.id?.let { id -> view.goalRecord?.let { NoticeGoal(id, it) } }
         if (phase in GoalState.HELD) {
             val how = view.hold?.let(ConversationTexts::held)
-            return GoalNotice(NoticeKind.HELD, ConversationTexts.CONTINUE_GOAL, how, null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE))
+            return GoalNotice(NoticeKind.HELD, ConversationTexts.CONTINUE_GOAL, how, null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE), goal)
         }
         val checklist = view.checklist
         val progress = checklist?.takeIf { it.total > 0 }?.let { NoticeProgress(it.done, it.total) }
         val text = if (view.waitsBehindCommand) GoalTexts.BEHIND_COMMAND else checklist?.current
-        return GoalNotice(NoticeKind.WORKING, GoalTexts.WORKING, text, progress, listOf(GoalAction.STOP, GoalAction.OPEN))
+        return GoalNotice(NoticeKind.WORKING, GoalTexts.WORKING, text, progress, listOf(GoalAction.STOP, GoalAction.OPEN), goal)
     }
 }
 
 /**
- * A tap on a button of the goal notification as an input of the owner's (design 6.4 and 10.6 of sub-project 7; plan 7E):
- * only a button that [shown], the notice whose buttons count now, shows, and that sends a broadcast. The tap is the
- * owner's act of its moment, as a spoken or typed input is, so it takes the next number of his inputs from [next]
- * (`InputIds.next`), and only then: a Continue that resumes the goal lets the round have an instant command that he started
- * before the tap let go of the screen, and waits for one that he started after it (plan 7D's `ScreenTurns`). A tap carries
- * no words (D8), so the input keeps [channel], the channel of the owner's latest input, and Kestrel's replies stay as they
- * were (design 11).
+ * A tap on a button of the goal notification as an input of the owner's (design 6.4 and 10.6 of sub-project 7; plan 7E).
+ * The tap counts only for the [goal] that its notice showed, and only while the goal's notice [shown] offers what the
+ * button does: a button that stops while the notice offers any way to stop (his tap on Stop can arrive after a touch, his
+ * pull of the shade, held the goal and the notice offers Cancel instead), and Continue only while it offers Continue. A tap
+ * that counts is the owner's act of its moment, as a spoken or typed input is, so it takes the next number of his inputs
+ * from [next] (`InputIds.next`), and only then: a Continue that resumes the goal lets the round have an instant command
+ * that he started before the tap let go of the screen, and waits for one that he started after it (plan 7D's
+ * `ScreenTurns`). A tap carries no words (D8), so the input keeps [channel], the channel of the owner's latest input, and
+ * Kestrel's replies stay as they were (design 11).
  */
 internal object GoalButtons {
-    fun input(broadcast: String?, shown: GoalNotice?, channel: InputChannel, next: () -> Long, atMillis: Long): OwnerInput? {
-        val action = GoalAction.ofBroadcast(broadcast)?.takeIf { it in shown?.actions.orEmpty() } ?: return null
+    fun input(broadcast: String?, goal: NoticeGoal?, shown: GoalNotice?, channel: InputChannel, next: () -> Long, atMillis: Long): OwnerInput? {
+        val action = GoalAction.ofBroadcast(broadcast) ?: return null
         val intent = action.intent ?: return null
+        if (shown == null || goal == null || shown.goal != goal) return null
+        val offered = if (action.stops) shown.actions.any { it.stops } else action in shown.actions
+        if (!offered) return null
         return OwnerInput(next(), channel, intent, atMillis)
+    }
+
+    /**
+     * Decides a tap once the conversation is [restored] (`ConversationEngine.awaitRestored`, then its view), against the
+     * notice of the goal in that view: a tap on the held goal's notification that Kestrel posted without the service can
+     * start Kestrel's process, and is then judged against the restored goal, never lost against the empty view before it.
+     */
+    suspend fun press(broadcast: String?, goal: NoticeGoal?, restored: suspend () -> ConversationView, next: () -> Long, now: () -> Long): OwnerInput? {
+        val view = restored()
+        return input(broadcast, goal, GoalNotices.of(view), view.replyChannel, next, now())
     }
 }
 ```
@@ -2066,12 +2327,12 @@ internal object GoalButtons {
 - [ ] **Step 4: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.goal.GoalNoticesTest`
-Expected: PASS, 5 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Run `:app`'s JVM tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₀ + 6.
+Expected: BUILD SUCCESSFUL; `app` A₀ + 9.
 
 - [ ] **Step 6: Commit**
 
@@ -2094,7 +2355,7 @@ The goal service's logic, apart from Android (design 10.6 and D19 of sub-project
 - Consumes: Task 1's `ConversationView.goalEnding` and `ConversationView.hold`; Task 2's `GoalNotice`, `GoalNotices`, `NoticeKind`, `GoalAction`, `GoalTexts`; plan 7B's `ConversationView` (`goal`, `command`, `quiet`), `GoalPhase`, `GoalState.HELD`, `GoalEnding.STOPPING`, `QuietClock.Held`, `HoldReason.REPLYING`.
 - Produces (package `dev.kestrel.app.goal`, all `internal`): `enum class ForegroundType(val wire: String) { SPECIAL_USE("special-use"), MEDIA_PLAYBACK("media-playback") }`; `enum class ServiceState { STOPPED, STARTING, RUNNING }`; `data class Shown(val notice: GoalNotice, val types: Set<ForegroundType>)`; `data class GoalServiceState(goal: GoalPhase? = null, command: Int = 0, replying: Boolean = false, notice: GoalNotice? = null, speakers: Int = 0, service: ServiceState = ServiceState.STOPPED, startedFor: Int = 0, lost: Boolean = false, starts: Int = 0, refusals: Int = 0)` with `val wanted: Boolean`; `sealed interface GoalServiceEvent` (`Viewed(goal: GoalPhase?, stopping: Boolean, command: Int, replying: Boolean, notice: GoalNotice?)`, `Started`, `Refused`, `Destroyed`, `Speaking(active: Boolean)`); `sealed interface GoalServiceCommand` (`Start`, `HoldGoal(command: Int)`); `data class GoalServiceStep(state: GoalServiceState, commands: List<GoalServiceCommand> = emptyList())`; `object GoalServiceRules { const val TYPED_SDK = 34; fun next(state: GoalServiceState, event: GoalServiceEvent): GoalServiceStep; fun shown(state: GoalServiceState, sdk: Int): Shown?; fun posted(state: GoalServiceState): GoalNotice?; fun types(sdk: Int, speaking: Boolean): Set<ForegroundType> }`; `data class GoalServiceStatus(service: ServiceState, notice: GoalNotice?, posted: GoalNotice?, types: Set<ForegroundType>?, applied: Set<ForegroundType>?, starts: Int, refusals: Int)`; `class GoalForeground(start: () -> Unit, holdGoal: (command: Int) -> Unit, sdk: Int, report: (String, Throwable) -> Unit)` with `val shown: StateFlow<Shown?>`, `val posted: StateFlow<GoalNotice?>`, `fun notice(): GoalNotice?` (the service's notice, or else the posted one), `suspend fun follow(views: Flow<ConversationView>)`, `fun started(types: Set<ForegroundType>)`, `fun applied(types: Set<ForegroundType>)`, `fun failed(error: Exception)`, `fun destroyed()`, `suspend fun <T> whileSpeaking(block: suspend () -> T): T`, `fun status(): GoalServiceStatus` and `GoalForeground.APPLY_MILLIS = 1_000L`.
 
-Counts: `:app` JVM A₀ + 6 + 9 = A₀ + 15 (`GoalServiceRulesTest` 6, `GoalForegroundTest` 3).
+Counts: `:app` JVM A₀ + 9 + 9 = A₀ + 18 (`GoalServiceRulesTest` 6, `GoalForegroundTest` 3).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2669,12 +2930,12 @@ internal class GoalForeground(
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.goal.*`
-Expected: PASS, 14 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 6: Run `:app`'s JVM tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₀ + 15.
+Expected: BUILD SUCCESSFUL; `app` A₀ + 18.
 
 - [ ] **Step 7: Commit**
 
@@ -2698,7 +2959,7 @@ The owner's decision of 2026-11-25: a stop in Android's "Active apps" is the own
 - Consumes: plan 7B's `ProcessEnd` and `ConversationEngine.restore(previous: ProcessEnd)`; plan 7D's `AppGraph.conversations` and the restore in `KestrelApplication.onCreate`; sub-project 2's `ExitRecords`, `ExitRecord(reason, timestamp)`, `AndroidExitRecords(context)` and `Listening`'s `restoreAfter`.
 - Produces: `ExitReason.UNCLEAR_STOP`; `exitReasonOf(reason: Int, timestamp: Long, sdk: Int, updatedAt: Long): ExitReason` and `UPDATE_MARGIN_MILLIS = 60_000L` (package `dev.kestrel.app.listen`); `processEndOf(record: ExitRecord?): ProcessEnd` and `suspend fun readProcessEnd(exits: ExitRecords, report: (String, Throwable) -> Unit): ProcessEnd` (package `dev.kestrel.app.conversation`); `AppGraph.previousProcessEnd(): ProcessEnd` (`internal suspend`), over the graph's one `AndroidExitRecords`, which listening reads too; `KestrelApplication.onCreate` restores the conversation with it. All `internal`.
 
-Counts: `:app` JVM A₀ + 15 + 3 = A₀ + 18 (`ExitRecordsTest` + 1, `ListeningTest` + 1, `ProcessEndsTest` 1).
+Counts: `:app` JVM A₀ + 18 + 3 = A₀ + 21 (`ExitRecordsTest` + 1, `ListeningTest` + 1, `ProcessEndsTest` 1).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3047,7 +3308,7 @@ Expected: PASS: `ExitRecordsTest` 2, `ProcessEndsTest` 1, and every test of `Lis
 - [ ] **Step 7: Run `:app`'s JVM tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₀ + 18. Task 8 checks the owner's stop on kestrel-api37 with `adb shell cmd activity stop-app dev.kestrel`, which Android's documentation names for this test, and Task 9 on the A71.
+Expected: BUILD SUCCESSFUL; `app` A₀ + 21. Task 8 checks the owner's stop on kestrel-api37 with `adb shell cmd activity stop-app dev.kestrel`, which Android's documentation names for this test, and Task 9 on the A71.
 
 - [ ] **Step 8: Commit**
 
@@ -3060,7 +3321,7 @@ git commit -m "feat(app): one reader of Android's exit record for both restores,
 
 ### Task 5: The service, its notification, its buttons and the wiring
 
-The Android parts, kept thin (design 10.6 of sub-project 7): `GoalNotification` builds the goal notification (Cancel before Continue for a held goal, and Continue asking for the owner's unlock) and posts the held goal's notification without the service after a refusal; `GoalService` follows `GoalForeground.shown` with `startForeground()`, calls `startForeground()` at every start as Android requires after `startForegroundService()`, and reports to the coordinator; `GoalActionReceiver` gives the notification's Stop, Continue and Cancel to the conversation, only while the notification shows that button, each as the owner's input of that moment with the next number of his inputs (Task 2's `GoalButtons`); the manifest declares both and the permission `FOREGROUND_SERVICE_SPECIAL_USE`; and the app graph builds the coordinator and lets it follow the conversation beside plan 7D's `ConversationSignals`, so that the lock and call pauses with listening off now also show in the notification. The device tests run on kestrel-api37 in Task 8. They run in Kestrel's own instrumented process, where Android's rules for background starts and background audio do not apply as they do to Kestrel alone, so they check the wiring, and Task 8 checks Android's rules.
+The Android parts, kept thin (design 10.6 of sub-project 7): `GoalNotification` builds the goal notification (Cancel before Continue for a held goal, and Continue asking for the owner's unlock) and posts the held goal's notification without the service after a refusal; `GoalService` follows `GoalForeground.shown` with `startForeground()`, calls `startForeground()` at every start as Android requires after `startForegroundService()`, and reports to the coordinator; `GoalActionReceiver` gives the notification's Stop, Continue and Cancel to the conversation, only while the notification shows that button, each as the owner's input of that moment with the next number of his inputs, only for the goal that its notice showed, and decided after the conversation's restore when the tap started Kestrel's process (Task 2's `GoalButtons`); the manifest declares both and the permission `FOREGROUND_SERVICE_SPECIAL_USE`; and the app graph builds the coordinator and lets it follow the conversation beside plan 7D's `ConversationSignals`, so that the lock and call pauses with listening off now also show in the notification. The device tests run on kestrel-api37 in Task 8. They run in Kestrel's own instrumented process, where Android's rules for background starts and background audio do not apply as they do to Kestrel alone, so they check the wiring, and Task 8 checks Android's rules.
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/goal/GoalNotification.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalService.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalActionReceiver.kt`
@@ -3068,10 +3329,10 @@ The Android parts, kept thin (design 10.6 of sub-project 7): `GoalNotification` 
 - Test: `app/src/androidTest/kotlin/dev/kestrel/app/conversation/GoalServiceTest.kt` (device)
 
 **Interfaces:**
-- Consumes: Tasks 1 to 4 (Task 2's `GoalButtons` among them); plan 7D's `AppGraph.conversations`, `followConversation`, `InputIds.next()`, `AppGraph.screenTurns` (`roundHolds()`), `AgentTests` (`start()`, `stop()`, which ends the conversation's work through `ConversationTests.endWork()`, `turnOff()`, `run(request, model: ModelPort): Int`, which closes the open conversation first through `ConversationTests.close()`, `ended(command): CommandOutcome`), `HeldModel` (`calls`, `release()`), `ScreenServiceRule`; `ListeningService.openKestrel(context)`.
-- Produces: `internal object GoalNotification` with `SERVICE_ID = 7_102`, `POSTED_ID = 7_103`, `fun createChannel(context: Context)`, `fun build(context: Context, notice: GoalNotice): Notification`, `fun post(context: Context, notice: GoalNotice?)` and `fun intentOf(context: Context, action: GoalAction): PendingIntent`; `class GoalService : Service()` with `internal fun GoalService.Companion.start(context: Context)` (throws what `startForegroundService()` throws) and `internal fun GoalService.Companion.runningTypes(): Set<ForegroundType>?` (null while no instance is in the foreground); `class GoalActionReceiver : BroadcastReceiver()`; `AppGraph.goalForeground: GoalForeground` (`internal`, built on first use); the notification channel `goals`, named "Goals"; the manifest's `GoalService` (`exported="false"`, `foregroundServiceType="specialUse|mediaPlayback"`, with the property `android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE`) and `GoalActionReceiver` (`exported="false"`), and the permission `android.permission.FOREGROUND_SERVICE_SPECIAL_USE`.
+- Consumes: Tasks 1 to 4 (Task 1's `ConversationEngine.awaitRestored`, Task 2's `GoalButtons` and `NoticeGoal` among them); plan 7D's `AppGraph.conversations`, `followConversation`, `InputIds.next()`, `AppGraph.screenTurns` (`roundHolds()`), `AgentTests` (`start()`, `stop()`, which ends the conversation's work through `ConversationTests.endWork()`, `turnOff()`, `run(request, model: ModelPort): Int`, which closes the open conversation first through `ConversationTests.close()`, `ended(command): CommandOutcome`), `HeldModel` (`calls`, `release()`), `ScreenServiceRule`; `ListeningService.openKestrel(context)`.
+- Produces: `internal object GoalNotification` with `SERVICE_ID = 7_102`, `POSTED_ID = 7_103`, `fun createChannel(context: Context)`, `fun build(context: Context, notice: GoalNotice): Notification`, `fun post(context: Context, notice: GoalNotice?)`, `fun intentOf(context: Context, action: GoalAction, goal: NoticeGoal?): PendingIntent` and `fun goalOf(intent: Intent): NoticeGoal?`; `class GoalService : Service()` with `internal fun GoalService.Companion.start(context: Context)` (throws what `startForegroundService()` throws) and `internal fun GoalService.Companion.runningTypes(): Set<ForegroundType>?` (null while no instance is in the foreground); `class GoalActionReceiver : BroadcastReceiver()`; `AppGraph.goalForeground: GoalForeground` (`internal`, built on first use); the notification channel `goals`, named "Goals"; the manifest's `GoalService` (`exported="false"`, `foregroundServiceType="specialUse|mediaPlayback"`, with the property `android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE`) and `GoalActionReceiver` (`exported="false"`), and the permission `android.permission.FOREGROUND_SERVICE_SPECIAL_USE`.
 
-Counts: `:app` JVM A₀ + 18, unchanged. Device tests: AD₀ + 8 (`GoalServiceTest` 8, which Task 8 runs).
+Counts: `:app` JVM A₀ + 21, unchanged. Device tests: AD₀ + 8 (`GoalServiceTest` 8, which Task 8 runs).
 
 - [ ] **Step 1: Write the device test**
 
@@ -3410,14 +3671,15 @@ import android.content.Context
 import android.content.Intent
 import dev.kestrel.app.R
 import dev.kestrel.app.listen.ListeningService
+import dev.kestrel.conversation.model.ConversationId
 
 /**
  * The goal notification on Android (design 10.6 of sub-project 7; plan 7E): its channel "Goals", the notification that
  * [GoalService] shows in the foreground ([SERVICE_ID]), and the held goal's notification that Kestrel posts without the
  * service after a refusal ([POSTED_ID], an ID of its own, so that taking it away never touches the service's). A tap opens
  * Kestrel's screen; the lock screen shows only "Kestrel is working on a task", because the current item may hold names.
- * The buttons are broadcasts to [GoalActionReceiver], with no inline reply (D8); a button that resumes what Kestrel does
- * asks Android for the owner's unlock first (the owner's decision of 2026-11-25).
+ * The buttons are broadcasts to [GoalActionReceiver] that name the goal that the notice shows, with no inline reply (D8);
+ * a button that resumes what Kestrel does asks Android for the owner's unlock first (the owner's decision of 2026-11-25).
  */
 internal object GoalNotification {
     const val SERVICE_ID = 7_102
@@ -3447,7 +3709,7 @@ internal object GoalNotification {
         notice.progress?.let { builder.setProgress(it.total, it.done, false) }
         for (action in notice.actions) {
             builder.addAction(
-                Notification.Action.Builder(null, action.label, intentOf(context, action))
+                Notification.Action.Builder(null, action.label, intentOf(context, action, notice.goal))
                     .setAuthenticationRequired(action.resumes)
                     .build(),
             )
@@ -3466,18 +3728,31 @@ internal object GoalNotification {
         notifications.notify(POSTED_ID, build(context, notice))
     }
 
-    /** The PendingIntent of [action]'s button: Open opens Kestrel's screen, the others are broadcasts to [GoalActionReceiver]. */
-    fun intentOf(context: Context, action: GoalAction): PendingIntent =
+    /**
+     * The PendingIntent of [action]'s button for [goal], the goal that the notice shows: Open opens Kestrel's screen, the
+     * others are broadcasts to [GoalActionReceiver] that name the goal (plan 7E), so that a tap counts only for it.
+     */
+    fun intentOf(context: Context, action: GoalAction, goal: NoticeGoal?): PendingIntent =
         if (action.intent == null) {
             ListeningService.openKestrel(context)
         } else {
-            PendingIntent.getBroadcast(
-                context,
-                action.ordinal,
-                Intent(context, GoalActionReceiver::class.java).setAction(action.broadcast),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
+            val intent = Intent(context, GoalActionReceiver::class.java).setAction(action.broadcast)
+            goal?.let {
+                intent.putExtra(EXTRA_CONVERSATION, it.conversation.value)
+                intent.putExtra(EXTRA_RECORD, it.record)
+            }
+            PendingIntent.getBroadcast(context, action.ordinal, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }
+
+    /** The goal that a button's broadcast names; null when it names none, or one that is no conversation's. */
+    fun goalOf(intent: Intent): NoticeGoal? {
+        val conversation = intent.getStringExtra(EXTRA_CONVERSATION)?.let { runCatching { ConversationId(it) }.getOrNull() } ?: return null
+        val record = intent.getIntExtra(EXTRA_RECORD, 0).takeIf { it > 0 } ?: return null
+        return NoticeGoal(conversation, record)
+    }
+
+    private const val EXTRA_CONVERSATION = "dev.kestrel.goal.CONVERSATION"
+    private const val EXTRA_RECORD = "dev.kestrel.goal.RECORD"
 }
 ```
 
@@ -3615,21 +3890,34 @@ import android.content.Context
 import android.content.Intent
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.conversation.InputIds
+import kotlinx.coroutines.launch
 
 /**
  * Receives the goal notification's Stop, Continue and Cancel (design 10.6 of sub-project 7): each becomes an owner's input
- * of the conversation (design 6.4), with the next number of his inputs, but only while the notification shows that button,
- * so that a stale notification's Continue never ends a hand-over (`GoalButtons.input`). The input keeps the channel of the
- * owner's latest input (design 11). It is not exported, so only Kestrel's own PendingIntents reach it, as the listening
- * notification's receiver (spec 8.6). Android calls it on the main thread, and it only hands the input on.
+ * of the conversation (design 6.4), with the next number of his inputs, only for the goal that its notice showed and only
+ * while that goal's notice offers what the button does (`GoalButtons`). A tap on the held goal's notification that Kestrel
+ * posted without the service can start Kestrel's process; the receiver keeps the broadcast alive (`goAsync`) until the
+ * conversation is restored and decides against the restored goal (`GoalButtons.press`), so the tap is not lost. It is not
+ * exported, so only Kestrel's own PendingIntents reach it, as the listening notification's receiver (spec 8.6).
  */
 class GoalActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val graph = (context.applicationContext as KestrelApplication).graph
         val conversations = graph.conversations
-        val shown = graph.goalForeground.notice()
-        GoalButtons.input(intent.action, shown, conversations.view.value.replyChannel, InputIds::next, System.currentTimeMillis())
-            ?.let(conversations::submit)
+        val action = intent.action
+        val goal = GoalNotification.goalOf(intent)
+        val pending = goAsync()
+        graph.scope.launch {
+            try {
+                val restored = suspend {
+                    conversations.awaitRestored()
+                    conversations.view.value
+                }
+                GoalButtons.press(action, goal, restored, InputIds::next, System::currentTimeMillis)?.let(conversations::submit)
+            } finally {
+                pending.finish()
+            }
+        }
     }
 }
 ```
@@ -3743,7 +4031,7 @@ with:
 - [ ] **Step 6: Build, run the JVM tests and lint, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; lint reports no error (a warning `InlinedApi` for `FOREGROUND_SERVICE_TYPE_SPECIAL_USE`, which only Android 14 and later see, is expected); `app` A₀ + 18; `device` AD₀ + 8. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; lint reports no error (a warning `InlinedApi` for `FOREGROUND_SERVICE_TYPE_SPECIAL_USE`, which only Android 14 and later see, is expected); `app` A₀ + 21; `device` AD₀ + 8. Task 8 runs the device tests.
 
 - [ ] **Step 7: Commit**
 
@@ -3767,7 +4055,7 @@ The controller checks Android's own rules for the goal's starts and for backgrou
 - Consumes: Tasks 2 to 5 (`GoalForeground.status()`, `GoalForeground.notice()`, `GoalForeground.whileSpeaking`, `GoalService.runningTypes()`, `GoalAction`, `GoalNotice`, `NoticeKind`, `ForegroundType`, `ServiceState`); plan 7B's `ConversationEngine.touched()`; `AppGraph.scope`; `ScreenSession.actions` (`global`, `expand`, `tap(key, expected, policy, guard)`) and `ScreenSession.snapshots`; `PressPolicy.ONCE`; `ScreenSnapshot`, `ScreenElement` (`key`, `parent`, `packageName`, `text`, `contentDescription`, `clickable`, `actions`), `ElementAction`, `GlobalAction.NOTIFICATIONS` and `GlobalAction.DISMISS_SHADE`; `TestHooks`, `TestHooks.HookError`.
 - Produces (package `dev.kestrel.app.debug`, debug builds only): `data class FocusResult(val granted: Boolean, val speaking: Boolean, val types: Set<ForegroundType>?)` and `object FocusProbe { @Volatile var last: FocusResult?; suspend fun request(context: Context, foreground: GoalForeground, speaking: Boolean): FocusResult; DELAY_MILLIS = 1_000L }`; `object GoalServiceAnswers { fun state(status: GoalServiceStatus, android: Set<ForegroundType>?, focus: FocusResult?): String }`; `object NoticeButtons { fun button(snapshot: ScreenSnapshot, title: String, label: String): String?; fun isButton(element: ScreenElement, label: String): Boolean; fun collapsedRow(snapshot: ScreenSnapshot, title: String): String? }`; `class GoalServiceHooks(graph: AppGraph, context: Context)` with `COMMANDS = setOf("GOAL_SERVICE_STATE", "GOAL_CONTROL")`. The hooks: `dev.kestrel.hook.GOAL_SERVICE_STATE` answers `service=stopped|starting|running notice=working|held|closing|none posted=held|none actions=<a,b>|none progress=<done>/<total>|none types=<t+t>|none applied=<t+t>|none android=running|none androidTypes=<t+t>|none starts=<n> refusals=<n> focus=granted|failed|none focusBy=speak|focus|none focusTypes=<t+t>|none`, with the types `special-use` and `media-playback`; `dev.kestrel.hook.GOAL_CONTROL --es do tap --es action stop|open|continue|cancel` answers `tapped=<action>`, `--es do touch` answers `touch=sent`, and `--es do speak|focus` answers `speak=sent` or `focus=sent`, whose result `goal-service-state` shows about a second later.
 
-Counts: `:app` JVM A₀ + 18 + 3 = A₀ + 21 (`GoalServiceAnswersTest` 1, `NoticeButtonsTest` 2). Device tests: AD₀ + 8 + 2 = AD₀ + 10 (`GoalServiceHooksTest` 2).
+Counts: `:app` JVM A₀ + 21 + 3 = A₀ + 24 (`GoalServiceAnswersTest` 1, `NoticeButtonsTest` 2). Device tests: AD₀ + 8 + 2 = AD₀ + 10 (`GoalServiceHooksTest` 2).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4279,7 +4567,7 @@ Expected: PASS, 3 tests.
 - [ ] **Step 5: Run `:app`'s JVM tests and lint, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₀ + 21; `device` AD₀ + 10. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; `app` A₀ + 24; `device` AD₀ + 10. Task 8 runs the device tests.
 
 - [ ] **Step 6: Commit**
 
@@ -4306,7 +4594,7 @@ In each run the JSON, Deflate and AES code, Room and the key's handle are loaded
 - Consumes: plan 7B's `ArchivedConversationStore(archive, scope, noted)`, `ConversationStore.save`, `open()` and `list()`, `HistorySearch(store, retentionDays, clock)`, `HistorySearch.search(query, excluding)` with `HistoryResult.unavailable`, `ConversationSnapshot`, `CommandRecord`, `RecordLine`, `LineKind`, `DataNote(tool, step, text, items)`, `AppUse`, `ConversationId.random()`; plan 7A's `HistoryQuery` and `HistoryPort.MAX_MATCHES`; plan 7C's `RoomRecordArchive(table, deleteHistory)` (plan 7D's Task 7 added `deleteHistory`), `ConversationArchiveStore(dao, key)` with `deleteAll()`, `KeystoreErasableKey.of(alias)` with `erase()`, `KestrelDatabase.conversationDao()`, `AndroidConversationClock`.
 - Produces: the instrumentation argument `kestrelSearchSpeed=write|search|start`, the test database `test-search-speed.db` and the test key `kestrel.test.search-speed`, which the `write` run leaves for the two others and the `start` run deletes, the log tag `KestrelSearch` and its lines `wrote 300 conversations in <s> s`, `closed a conversation in <ms> ms`, `read the index in <ms> ms`, `searched 300 conversations in <ms> ms`, `restored the open conversation in <ms> ms` and `searched right after a start in <ms> ms`, which Tasks 8 and 9 read.
 
-Counts: `:app` JVM A₀ + 21, unchanged. Device tests: AD₀ + 10 + 1 = AD₀ + 11 (`ConversationSearchSpeedTest` 1, skipped without its argument).
+Counts: `:app` JVM A₀ + 24, unchanged. Device tests: AD₀ + 10 + 1 = AD₀ + 11 (`ConversationSearchSpeedTest` 1, skipped without its argument).
 
 - [ ] **Step 1: Write the measurement**
 
@@ -4541,20 +4829,21 @@ Each device command below starts with the emulator's check, and the steps that s
 **How the task runs.** kestrel-api37 holds the owner's own Google account and Kestrel's Copilot profile, which cannot be made again without the owner; losing them is the one failure that matters more than every result of this task. The controller gives the task to an agent with a strict brief, as for plan 7D's gate, and the agent follows these rules and the steps exactly:
 - Only kestrel-api37: every command names `-s emulator-5554` (or the serial that `scripts\start-emulator.ps1` printed, when the controller's brief gives another) and starts with the emulator's check. No command goes to the A71, the S23+, the AVD `zoran` or any other device, and no adb command runs without `-s`.
 - Only the commands of the steps: device work goes only through `scripts\install.ps1`, `scripts\connected-test.ps1`, `scripts\voice-test.ps1`, `scripts\hook.ps1` and the plain `adb -s emulator-5554` commands that the steps contain. Never `adb install`, `adb uninstall`, `pm clear`, `pm uninstall`, a Gradle task that installs or runs device tests directly, `scripts\hook.ps1 provider-delete`, `--live`, or anything that signs an account in or out or changes a profile.
-- **The data check**, before Step 2, after each of Steps 2 to 10, and at the end: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; . scripts\lib\DeviceGuard.ps1; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; "google accounts: $(Get-GoogleAccountCount (& $adb -s emulator-5554 shell dumpsys account))"; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command provider-standin`. Expected: the count of Google accounts of Step 1 and the `provider-standin` line of Step 1, with `profile=copilot`, the same `id=` and `credential=present`. `Get-GoogleAccountCount` (`scripts\lib\DeviceGuard.ps1`) counts the accounts from `dumpsys account`'s account lines; a raw `Select-String` on `type=com.google` counts each account more than once. Any other answer: stop at once, run no further command on the device, and report.
+- **The data check**, before Step 2, after each of Steps 2 to 10, and at the end: `. scripts\lib\Kestrel.ps1; . scripts\lib\Session.ps1; . scripts\lib\DeviceGuard.ps1; Use-KestrelToolchain; Assert-TestDevice -Serial emulator-5554; $adb = Get-Adb; if (\"$(& $adb -s emulator-5554 emu avd name)\" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; $before = Import-Clixml 'H:\Code\kestrel\.superpowers\sdd\plan-7e-owner-data.xml'; $changes = @(Compare-OwnerData -Serial emulator-5554 -Before $before -During 'plan 7E, Task 8'); if ($changes.Count) { $changes; Write-Error "The owner's data changed or could not be read: stop and report" -ErrorAction Stop }; "owner data: as before ($(Format-OwnerDataState $before 'emulator-5554'))"`. Expected: one line that starts with `owner data: as before`. It compares the state that Step 1 recorded with the state now, by machine, through `scripts\lib\DeviceGuard.ps1`'s `Get-OwnerDataState` and `Compare-OwnerData`, as `scripts\connected-test.ps1` does: the number of Google accounts (`Get-GoogleAccountCount`, which counts `dumpsys account`'s account lines; a raw `Select-String` on `type=com.google` counts one account more than once), and Kestrel's default profile, its kind, the number of Copilot profiles, its `id=` and whether its credential is stored. It unstops Kestrel's package first (`pm unstop`, which starts nothing), so it reads Kestrel also after Step 9's `stop-app`. Any other answer, or an error: stop at once, run no further command on the device, and report.
 - Stop at the first failure: a failing test, an exit code other than 0, an answer that differs from a step's Expected, a crash that the step does not expect, a frozen emulator, or anything that the steps do not describe. Then run the data check and report. Do not run anything again, cold-boot, retry or fix, except where a step says so (Step 3's known flaky class, and the one more `voice -Send toggle` of Steps 7 and 8).
 - Every command that runs Gradle (Steps 2 to 6) takes `H:\Code\kestrel\.superpowers\sdd\gradle.lock` as the controller's brief says, and runs `scripts\gradle.ps1 --stop` before it lets the lock go; the agent also holds the brief's emulator lock for the whole task.
-- The report holds no words that Kestrel heard or said, no screen text, contact, number or e-mail address: only test names, counts, exit codes and the hooks' answers of kinds and counts. The agent writes only its report.
+- No goal's round may reach a provider: kestrel-api37's default profile is the owner's Copilot profile, so every step sets plan 7D's stand-in round (`voice-task`) and checks by its answer that it is set, before each `heard` that may start a goal and before each Continue that resumes one (`StandIn`, which the steps define); a stand-in that is not set stops the command.
+- The report holds no words that Kestrel heard or said, no screen text, contact, number or e-mail address: only test names, counts, exit codes and the hooks' answers of kinds and counts. The agent writes only its report and the data check's state file `H:\Code\kestrel\.superpowers\sdd\plan-7e-owner-data.xml` (git-ignored there), which Step 1 writes and Step 10 deletes.
 
 - [ ] **Step 1: The base**
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; . scripts\lib\DeviceGuard.ps1; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; "google accounts: $(Get-GoogleAccountCount (& $adb -s emulator-5554 shell dumpsys account))"; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command provider-standin; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; "accessibility: $(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)"; git status --short; git rev-parse HEAD`
-Expected: the count of Google accounts (1 on kestrel-api37 at plan 7D's gate), the `provider-standin` line with `profile=copilot`, its `id=` and `credential=present`, the `voice-state` line's `mode=`, and the accessibility setting (note all four: the data check and Step 10 compare with them); no changed file in `app/` or `core/`; HEAD at Task 7's commit.
+Run: `. scripts\lib\Kestrel.ps1; . scripts\lib\Session.ps1; . scripts\lib\DeviceGuard.ps1; Use-KestrelToolchain; Assert-TestDevice -Serial emulator-5554; $adb = Get-Adb; if (\"$(& $adb -s emulator-5554 emu avd name)\" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; $state = Get-OwnerDataState -Serial emulator-5554; Format-OwnerDataState $state 'emulator-5554'; if (-not $state.Profiles -or $state.Profiles.Profile -ne 'copilot' -or $state.Profiles.Credential -ne 'present') { Write-Error "kestrel-api37 does not show the owner's Copilot profile with its credential: stop and report" -ErrorAction Stop }; $state | Export-Clixml 'H:\Code\kestrel\.superpowers\sdd\plan-7e-owner-data.xml'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; "accessibility: $(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)"; git status --short; git rev-parse HEAD`
+Expected: one line of `Format-OwnerDataState` with the number of Google accounts (1 at plan 7D's gate), the default profile `copilot` with its credential `present`, and the number of Copilot profiles; the `voice-state` line's `mode=` and the accessibility setting, which is not `null` (note both: Steps 9 and 10 use them); no changed file in `app/` or `core/`; HEAD at Task 7's commit. The state is now in `H:\Code\kestrel\.superpowers\sdd\plan-7e-owner-data.xml`, which every data check compares with.
 
 - [ ] **Step 2: Install this build on kestrel-api37**
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; . scripts\lib\DeviceGuard.ps1; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; & $adb -s emulator-5554 logcat -c; scripts\install.ps1 -Serial emulator-5554; scripts\gradle.ps1 --stop; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command state; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command provider-standin; Start-Sleep -Seconds 5; "google accounts: $(Get-GoogleAccountCount (& $adb -s emulator-5554 shell dumpsys account))"; $crashes = @(& $adb -s emulator-5554 logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"; $crashes | ForEach-Object { $_.Line; $_.Context.PostContext }`
-Expected: a `Success` line of `adb install`, `commit=<the HEAD of Step 1>` and `dirty=0` in the state, the `provider-standin` line of Step 1 with the same `id=` and `credential=present`, the count of Step 1, and `kestrel crashes: 0`. If the emulator froze at its first voice toggle after the install, as on 2026-11-23 and 2026-11-24, stop and report: the controller cold-boots it with `scripts\start-emulator.ps1`, checks its serial, the accounts and the profile again, and gives the rest of the task.
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; & $adb -s emulator-5554 logcat -c; scripts\install.ps1 -Serial emulator-5554; scripts\gradle.ps1 --stop; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command state; Start-Sleep -Seconds 5; $crashes = @(& $adb -s emulator-5554 logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"; $crashes | ForEach-Object { $_.Line; $_.Context.PostContext }`
+Expected: a `Success` line of `adb install`, `commit=<the HEAD of Step 1>` and `dirty=0` in the state, and `kestrel crashes: 0`; then the data check (an update keeps Kestrel's data). If the emulator froze at its first voice toggle after the install, as on 2026-11-23 and 2026-11-24, stop and report: the controller cold-boots it with `scripts\start-emulator.ps1`, checks its serial, the accounts and the profile again, and gives the rest of the task.
 
 - [ ] **Step 3: Every device test of `:app` but the voice's**
 
@@ -4584,8 +4873,8 @@ Expected: BUILD SUCCESSFUL three times, `exit write: 0`, `exit search: 0` and `e
 
 The connected tests stopped Kestrel, so it comes to the front first, which lets the hook start listening, and then goes to the back: the goal's start then comes from the voice path while `ListeningService` runs in the foreground. Each goal's round is plan 7D's stand-in, which acts on nothing and, after the given seconds, ends the goal with the given reply as its final words, unless the goal was stopped first. With the goal working, the step turns listening off (the goal goes on, decision 10 of plan 7B) and asks for the audio focus with the speech's types (`speak`) and without them (`focus`), and again after the goal's end with Kestrel in the background, which tells whether Android 17's hardening applies to Kestrel at all. For each start, the step prints the service's lines of `dumpsys activity services` that name the exemption that Android used.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s emulator-5554 logcat -c; "assistant: $("$(& $adb -s emulator-5554 shell cmd role get-role-holders android.app.role.ASSISTANT)".Trim())"; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds 120 -Reply 'stand-in'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the goal service'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; & $adb -s emulator-5554 shell dumpsys audio | Select-String 'AudioHardening|dev\.kestrel' | ForEach-Object { $_.Line.Trim() }; Hook 'GOAL_CONTROL --es do touch'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; Hook 'GOAL_CONTROL --es do tap --es action stop'; Start-Sleep -Seconds 8; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; & $adb -s emulator-5554 shell dumpsys audio | Select-String 'AudioHardening|dev\.kestrel' | ForEach-Object { $_.Line.Trim() }`
-Expected, in order:
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s emulator-5554 logcat -c; "assistant: $("$(& $adb -s emulator-5554 shell cmd role get-role-holders android.app.role.ASSISTANT)".Trim())"; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the goal service'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; & $adb -s emulator-5554 shell dumpsys audio | Select-String 'AudioHardening|dev\.kestrel' | ForEach-Object { $_.Line.Trim() }; Hook 'GOAL_CONTROL --es do touch'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; StandIn 120; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; Hook 'GOAL_CONTROL --es do tap --es action stop'; Start-Sleep -Seconds 8; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; & $adb -s emulator-5554 shell dumpsys audio | Select-String 'AudioHardening|dev\.kestrel' | ForEach-Object { $_.Line.Trim() }`
+Expected, in order (each `StandIn` prints `stand-in: <n> s`, or stops the command, so that no goal's round reaches the owner's Copilot profile):
 - `assistant:` and the holders of the assistant role, package names only (note them: Android's rules for background audio give an app that serves the assistant role through `VoiceInteractionService` a standing of its own, which would explain a `granted` control below);
 - a `voice-state` line that starts with `mode=listening` (if it says `mode=off`, run the command again once);
 - `goal=acting`; `service=running notice=working posted=none actions=stop,open progress=none types=special-use applied=special-use android=running androidTypes=special-use starts=1 refusals=0 …` (the spoken start), and the service's `allowStartForeground` and `allowWhileInUse` lines (note them: S9's exemption for the spoken start);
@@ -4594,30 +4883,30 @@ Expected, in order:
 - `focus=sent`, then `… focus=<granted|failed> focusBy=focus focusTypes=special-use`;
 - the audio service's lines that name Kestrel or `AudioHardening` (note them);
 - `touch=sent`; `goal=interrupted`; `service=running notice=held posted=none actions=cancel,continue … starts=1 refusals=0`;
-- `tapped=continue`; `goal=acting`; `notice=working … starts=2 refusals=0` (the start from the notification's broadcast), and the service's `allowStartForeground` and `allowWhileInUse` lines (note them);
+- `stand-in: 120 s`, `tapped=continue`; `goal=acting`; `notice=working … starts=2 refusals=0` (the start from the notification's broadcast), and the service's `allowStartForeground` and `allowWhileInUse` lines (note them);
 - `tapped=stop`; `goal=none`; `service=stopped notice=none posted=none … android=none androidTypes=none starts=2 refusals=0 …`;
 - `focus=sent`, then `… focus=failed focusBy=focus focusTypes=none`: without a service and with Kestrel in the background, Android 17's hardening refuses the focus, so the two requests above tell its rules apart. If it says `focus=granted`, the hardening did not apply to Kestrel here (note it: S9 then cannot tell the types apart on kestrel-api37), and the audio service's lines and the assistant role's holders show why.
 
-S9's audio finding is the pair of `speak` and `focus` while the goal worked: `granted` for both means that a foreground service with while-in-use is enough and the type does not matter; `granted` for `speak` only means that the type matters; `failed` for `speak` means that the service lacked while-in-use. A `refusals=1` is S9's finding that Android refused a start: then the goal is held as interrupted, the answer shows `service=stopped notice=none posted=held actions=cancel,continue`, Kestrel said "Android didn't let me start working in the background. … Tap Continue in Kestrel's notification.", and the step stops there; note the start that was refused, then press the posted notification's Continue with `Hook 'GOAL_CONTROL --es do tap --es action continue'` (its start comes from a notification) and expect `starts=` one higher, then end the goal with `Hook 'GOAL_CONTROL --es do tap --es action stop'`, and go on with Step 8. Any other answer: stop, run the data check, and report.
+S9's audio finding is the pair of `speak` and `focus` while the goal worked: `granted` for both means that a foreground service with while-in-use is enough and the type does not matter; `granted` for `speak` only means that the type matters; `failed` for `speak` means that the service lacked while-in-use. A `refusals=1` is S9's finding that Android refused a start: then the goal is held as interrupted, the answer shows `service=stopped notice=none posted=held actions=cancel,continue`, Kestrel said "Android didn't let me start working in the background. … Tap Continue in Kestrel's notification.", and the step stops there; note the start that was refused, then set the stand-in again and press the posted notification's Continue with `StandIn 120; Hook 'GOAL_CONTROL --es do tap --es action continue'` (its start comes from a notification) and expect `starts=` one higher, then end the goal with `Hook 'GOAL_CONTROL --es do tap --es action stop'`, and go on with Step 8. Any other answer: stop, run the data check, and report.
 
 - [ ] **Step 8: The start after a restart, "Continue the goal?" and its Continue**
 
 The hook `crash` ends Kestrel's process during a goal (spec 16.1). Android restarts the process when it binds Kestrel's accessibility service again; the conversation's restore holds the goal as interrupted and asks "Continue the goal?" (design 6.7), and the goal service starts for the held goal at the process's start. The step waits for the new process and the accessibility service's binding before it sends any broadcast, so that no broadcast of the check starts the process itself. The stand-in of `voice-task` ends with the process, so the step sets it again before the Continue. Before the Continue, with listening off, it asks for the audio focus with the speech's types, which tells whether a service started at the process's start has while-in-use.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds 120 -Reply 'stand-in'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the restart'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; $old = "$(& $adb -s emulator-5554 shell pidof dev.kestrel)".Trim(); pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command crash -Text 'goal service restart check'; $deadline = (Get-Date).AddSeconds(90); do { Start-Sleep -Seconds 2; $new = "$(& $adb -s emulator-5554 shell pidof dev.kestrel)".Trim(); $bound = "$(& $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord' } until (($new -and $new -ne $old -and $bound) -or (Get-Date) -gt $deadline); "process: $(if ($new -and $new -ne $old) { 'new' } else { 'none' }) bound: $bound"; Start-Sleep -Seconds 5; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds 5 -Reply 'stand-in'; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 20; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $crashes = @(& $adb -s emulator-5554 logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"`
-Expected, in order: `service=running notice=working … starts=3 refusals=0`; `crash` answers; `process: new bound: True`; `restored=goal-held`; `open=yes … goal=interrupted`; `service=running notice=held posted=none actions=cancel,continue … starts=1 refusals=0` (the start at the process's start, in a new process) and the service's `allowStartForeground` and `allowWhileInUse` lines (note them); `sent off`; `speak=sent`, then `… focus=<granted|failed> focusBy=speak focusTypes=special-use+media-playback` (note it: S9's audio finding for a service started at the process's start); `tapped=continue`; `goal=none` (the resumed round's stand-in answered after 5 s, and the goal ended with its reply); `service=stopped … starts=2 refusals=0`; `kestrel crashes: 1` (the hook's own). If `process: none` or `bound: False`, Android did not restart Kestrel by itself: note it, start Kestrel with `& $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity`, and note that this start came from an activity. If the restored goal's service shows `refusals=1` and `service=stopped`, that is S9's finding for the start at a restart: note it, press the posted notification's Continue as above, and expect `goal=none` and `starts=2 refusals=1` at the end. Any other answer: stop, run the data check, and report.
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the restart'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; $old = "$(& $adb -s emulator-5554 shell pidof dev.kestrel)".Trim(); pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command crash -Text 'goal service restart check'; $deadline = (Get-Date).AddSeconds(90); do { Start-Sleep -Seconds 2; $new = "$(& $adb -s emulator-5554 shell pidof dev.kestrel)".Trim(); $bound = "$(& $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord' } until (($new -and $new -ne $old -and $bound) -or (Get-Date) -gt $deadline); "process: $(if ($new -and $new -ne $old) { 'new' } else { 'none' }) bound: $bound"; Start-Sleep -Seconds 5; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; StandIn 5; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 20; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $crashes = @(& $adb -s emulator-5554 logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"`
+Expected, in order: `stand-in: 120 s` (each `StandIn` prints its line, or stops the command); `service=running notice=working … starts=3 refusals=0`; `crash` answers; `process: new bound: True`; `restored=goal-held`; `open=yes … goal=interrupted`; `service=running notice=held posted=none actions=cancel,continue … starts=1 refusals=0` (the start at the process's start, in a new process) and the service's `allowStartForeground` and `allowWhileInUse` lines (note them); `sent off`; `speak=sent`, then `… focus=<granted|failed> focusBy=speak focusTypes=special-use+media-playback` (note it: S9's audio finding for a service started at the process's start); `stand-in: 5 s`; `tapped=continue`; `goal=none` (the resumed round's stand-in answered after 5 s, and the goal ended with its reply); `service=stopped … starts=2 refusals=0`; `kestrel crashes: 1` (the hook's own). If `process: none` or `bound: False`, Android did not restart Kestrel by itself: note it, start Kestrel with `& $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity`, and note that this start came from an activity. If the restored goal's service shows `refusals=1` and `service=stopped`, that is S9's finding for the start at a restart: note it, set the stand-in again and press the posted notification's Continue as above, and expect `goal=none` and `starts=2 refusals=1` at the end. Any other answer: stop, run the data check, and report.
 
 - [ ] **Step 9: The owner's stop in "Active apps"**
 
 `adb shell cmd activity stop-app dev.kestrel` stops Kestrel as the Task Manager's Stop does (Android's documentation names it for this test). At the next start the restore must end the goal as "stop" does: no "Continue the goal?", no goal service, and listening stays off. Before its command, the step ends the quiet time of Step 8's conversation (`conversation-control do=expire`), so that the command opens a conversation of its own and the restored conversation's `commands=1` shows that it is this one. The step prints only the reason and the sub-reason that Android recorded for the stop, which S9 and the owner's decision of 2026-11-25 need. A stopped app's accessibility service does not come back by itself, so the step writes the accessibility setting of Step 1 again, which binds it.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; $services = "$(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)".Trim(); & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds 120 -Reply 'stand-in'; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the owner''s stop'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; & $adb -s emulator-5554 shell cmd activity stop-app dev.kestrel; Start-Sleep -Seconds 3; $exit = "$(& $adb -s emulator-5554 shell dumpsys activity exit-info dev.kestrel)"; "exit: $([regex]::Match($exit, 'reason=\d+ \([^)]*\)').Value) $([regex]::Match($exit, 'subreason=\d+ \([^)]*\)').Value)"; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 5; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; & $adb -s emulator-5554 shell settings put secure enabled_accessibility_services $services; Start-Sleep -Seconds 3; "bound: $("$(& $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord')"`
-Expected, in order: `expire=sent`; `goal=acting` and `commands=1`; `exit: reason=10 (USER REQUESTED)` and the sub-reason that Android 17 gives (note both: the documentation names only the reason); `restored=goal-ended`; `goal=none` and `commands=1`; `service=stopped notice=none posted=none … starts=0 refusals=0` (the restore started no service); a `voice-state` line with `mode=off` (listening stays off); `bound: True`. If the reason is another one, or `restored=goal-held`, the owner's stop was not read as his: stop, run the data check, and report the two lines.
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s emulator-5554 shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; $services = "$(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)".Trim(); if ($services -in '', 'null') { Write-Error 'The accessibility setting is empty, so the step could not write it back: stop and report' -ErrorAction Stop }; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send heard -Text 'Kestrel, check the owner''s stop'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; & $adb -s emulator-5554 shell cmd activity stop-app dev.kestrel; Start-Sleep -Seconds 3; $exit = "$(& $adb -s emulator-5554 shell dumpsys activity exit-info dev.kestrel)"; "exit: $([regex]::Match($exit, 'reason=\d+ \([^)]*\)').Value) $([regex]::Match($exit, 'subreason=\d+ \([^)]*\)').Value)"; & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 5; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; & $adb -s emulator-5554 shell settings put secure enabled_accessibility_services $services; Start-Sleep -Seconds 3; "bound: $("$(& $adb -s emulator-5554 shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord')"`
+Expected, in order: `stand-in: 120 s` (or the command stops); `expire=sent`; `goal=acting` and `commands=1`; `exit: reason=10 (USER REQUESTED)` and the sub-reason that Android 17 gives (note both: the documentation names only the reason); `restored=goal-ended`; `goal=none` and `commands=1`; `service=stopped notice=none posted=none … starts=0 refusals=0` (the restore started no service); a `voice-state` line with `mode=off` (listening stays off); `bound: True`. If the reason is another one, or `restored=goal-held`, the owner's stop was not read as his: stop, run the data check, and report the two lines.
 
 - [ ] **Step 10: Put kestrel-api37 back**
 
-Run, with the mode of Step 1: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; . scripts\lib\DeviceGuard.ps1; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; $mode = '<the mode of Step 1>'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Clear; $now = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state)"; if ($mode -ne 'off' -and $now -match 'mode=off') { & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10 }; if ($mode -eq 'paused') { pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send pause }; if ($mode -eq 'off') { pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off }; & $adb -s emulator-5554 shell cmd statusbar collapse; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; "accessibility: $(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)"; "google accounts: $(Get-GoogleAccountCount (& $adb -s emulator-5554 shell dumpsys account))"; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command provider-standin`
-Expected: a `voice-state` line whose `mode=` is the mode of Step 1; the accessibility setting of Step 1; the count of Step 1; the `provider-standin` line of Step 1, with the same `id=` and `credential=present`.
+Run, with the mode of Step 1: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if ("$(& $adb -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; $mode = '<the mode of Step 1>'; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-task -Clear; $now = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state)"; if ($mode -ne 'off' -and $now -match 'mode=off') { & $adb -s emulator-5554 shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send toggle; Start-Sleep -Seconds 10 }; if ($mode -eq 'paused') { pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send pause }; if ($mode -eq 'off') { pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice -Send off }; & $adb -s emulator-5554 shell cmd statusbar collapse; & $adb -s emulator-5554 shell input keyevent KEYCODE_HOME; pwsh -NoProfile -File scripts\hook.ps1 -Serial emulator-5554 -Command voice-state; "accessibility: $(& $adb -s emulator-5554 shell settings get secure enabled_accessibility_services)"`
+Expected: a `voice-state` line whose `mode=` is the mode of Step 1; the accessibility setting of Step 1. Then the data check, the last one of the task, and, when it says `owner data: as before`, `Remove-Item 'H:\Code\kestrel\.superpowers\sdd\plan-7e-owner-data.xml'`.
 
 - [ ] **Step 11: Note the results**
 
@@ -4665,19 +4954,19 @@ Expected: `scripts\connected-test.ps1` accepts the A71 as a test device; `exit w
 
 The connected test stopped Kestrel, so it comes to the front first and then goes to the back, as on kestrel-api37. The touch comes from the hook, because a real touch on the A71's screen could act in the owner's apps. Without `POST_NOTIFICATIONS` (Step 2), replace the two presses with `pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, continue'` (after turning listening on again) and `-Text 'cancel'`, and note that the notification's starts were not checked.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-state; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds 120 -Reply 'stand-in'; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the goal service'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do touch'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; Hook 'GOAL_CONTROL --es do tap --es action stop'; Start-Sleep -Seconds 8; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'`
-Expected, in order: `mode=listening` (if it says `mode=off`, run the command again once); `goal=acting`; `service=running notice=working posted=none actions=stop,open progress=none types=none applied=none android=running androidTypes=none starts=1 refusals=0 …` (Android 13: no type) and the service's `allowStartForeground` and `allowWhileInUse` lines (note them); `sent off`; `speak=sent`, then `focus=granted focusBy=speak focusTypes=none`; `focus=sent`, then `focus=granted focusBy=focus focusTypes=none` (Android 13 hardens no background audio; a `failed` is a finding); `touch=sent`; `goal=interrupted`; `notice=held posted=none actions=cancel,continue … starts=1 refusals=0`; `tapped=continue` (One UI's shade); `goal=acting`; `starts=2 refusals=0` and the service's lines (note them); `tapped=stop`; `goal=none`; `service=stopped … android=none … starts=2 refusals=0`. A `refusals=1` is S9's finding, handled as in Task 8, Step 7, with `-Serial R58N66RVD7Z`. When `goal-control` answers that the goal notification's button is not in the shade, One UI shows the row in another form: note it, end the goal with `pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'cancel'` after turning listening on again, and ask the controller, who decides whether `NoticeButtons` learns One UI's form.
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-state; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the goal service'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send off; Start-Sleep -Seconds 3; Hook 'GOAL_CONTROL --es do speak'; Start-Sleep -Seconds 4; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do focus'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; Hook 'GOAL_CONTROL --es do touch'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; StandIn 120; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; Hook 'GOAL_CONTROL --es do tap --es action stop'; Start-Sleep -Seconds 8; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'`
+Expected, in order (each `StandIn` prints `stand-in: <n> s`, or stops the command, so that no goal's round reaches the owner's Copilot profile on the A71): `mode=listening` (if it says `mode=off`, run the command again once); `goal=acting`; `service=running notice=working posted=none actions=stop,open progress=none types=none applied=none android=running androidTypes=none starts=1 refusals=0 …` (Android 13: no type) and the service's `allowStartForeground` and `allowWhileInUse` lines (note them); `sent off`; `speak=sent`, then `focus=granted focusBy=speak focusTypes=none`; `focus=sent`, then `focus=granted focusBy=focus focusTypes=none` (Android 13 hardens no background audio; a `failed` is a finding); `touch=sent`; `goal=interrupted`; `notice=held posted=none actions=cancel,continue … starts=1 refusals=0`; `tapped=continue` (One UI's shade); `goal=acting`; `starts=2 refusals=0` and the service's lines (note them); `tapped=stop`; `goal=none`; `service=stopped … android=none … starts=2 refusals=0`. A `refusals=1` is S9's finding, handled as in Task 8, Step 7, with `-Serial R58N66RVD7Z`. When `goal-control` answers that the goal notification's button is not in the shade, One UI shows the row in another form: note it, end the goal with `pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'cancel'` after turning listening on again, and ask the controller, who decides whether `NoticeButtons` learns One UI's form.
 
 - [ ] **Step 6: The start after a restart on Android 13**
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s R58N66RVD7Z logcat -c; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds 120 -Reply 'stand-in'; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the restart'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; $old = "$(& $adb -s R58N66RVD7Z shell pidof dev.kestrel)".Trim(); pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command crash -Text 'goal service restart check'; $deadline = (Get-Date).AddSeconds(90); do { Start-Sleep -Seconds 2; $new = "$(& $adb -s R58N66RVD7Z shell pidof dev.kestrel)".Trim(); $bound = "$(& $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord' } until (($new -and $new -ne $old -and $bound) -or (Get-Date) -gt $deadline); "process: $(if ($new -and $new -ne $old) { 'new' } else { 'none' }) bound: $bound"; Start-Sleep -Seconds 5; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds 5 -Reply 'stand-in'; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 20; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $crashes = @(& $adb -s R58N66RVD7Z logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"`
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; function Allowed { & $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.goal.GoalService | Select-String 'allowStartForeground|allowWhileInUse|foregroundServiceType|isForeground' | ForEach-Object { $_.Line.Trim() } }; & $adb -s R58N66RVD7Z logcat -c; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the restart'; Start-Sleep -Seconds 3; Hook 'GOAL_SERVICE_STATE'; $old = "$(& $adb -s R58N66RVD7Z shell pidof dev.kestrel)".Trim(); pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command crash -Text 'goal service restart check'; $deadline = (Get-Date).AddSeconds(90); do { Start-Sleep -Seconds 2; $new = "$(& $adb -s R58N66RVD7Z shell pidof dev.kestrel)".Trim(); $bound = "$(& $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord' } until (($new -and $new -ne $old -and $bound) -or (Get-Date) -gt $deadline); "process: $(if ($new -and $new -ne $old) { 'new' } else { 'none' }) bound: $bound"; Start-Sleep -Seconds 5; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; Allowed; StandIn 5; Hook 'GOAL_CONTROL --es do tap --es action continue'; Start-Sleep -Seconds 20; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; $crashes = @(& $adb -s R58N66RVD7Z logcat -d | Select-String 'FATAL EXCEPTION' -Context 0,1 | Where-Object { "$($_.Context.PostContext)" -match 'Process: dev\.kestrel,' }); "kestrel crashes: $($crashes.Count)"`
 Expected, in order: `service=running notice=working … starts=3 refusals=0`; `crash` answers; `process: new bound: True`; `restored=goal-held`; `open=yes … goal=interrupted`; `service=running notice=held posted=none actions=cancel,continue … types=none … starts=1 refusals=0` and the service's lines (note them); `tapped=continue`; `goal=none`; `service=stopped … starts=2 refusals=0`; `kestrel crashes: 1` (the hook's own). If Android shows its dialog for the crash, note it and close it with `& $adb -s R58N66RVD7Z shell input keyevent KEYCODE_BACK` only when the dialog's window is Android's (`& $adb -s R58N66RVD7Z shell dumpsys window | Select-String 'Application Error'`). `process: none`, `bound: False` or a refusal at the restart are handled as in Task 8, Step 8, with `-Serial R58N66RVD7Z`; without `POST_NOTIFICATIONS`, answer "Continue the goal?" with `voice -Send heard -Text 'Kestrel, continue'` instead of the press.
 
 - [ ] **Step 7: The owner's stop in "Active apps" on Android 13**
 
 As Task 8, Step 9: Kestrel is stopped as the Task Manager's Stop does, and the restore must end the goal. Kestrel was last installed by Step 4's connected tests (Gradle installs the app again), many minutes before the stop, so the stop is outside Android 13's minute around an update; the step prints Kestrel's `lastUpdateTime` beside the exit record's time, so that the note shows it. The step ends Step 6's conversation first, as Task 8, Step 9 does, and writes the accessibility setting of Step 2 again, which binds Kestrel's service.
 
-Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; $services = "$(& $adb -s R58N66RVD7Z shell settings get secure enabled_accessibility_services)".Trim(); & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds 120 -Reply 'stand-in'; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the owner''s stop'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; & $adb -s R58N66RVD7Z shell cmd activity stop-app dev.kestrel; Start-Sleep -Seconds 3; $exit = "$(& $adb -s R58N66RVD7Z shell dumpsys activity exit-info dev.kestrel)"; "exit: $([regex]::Match($exit, 'reason=\d+ \([^)]*\)').Value) $([regex]::Match($exit, 'subreason=\d+ \([^)]*\)').Value)"; "exit time: $([regex]::Match($exit, 'timestamp=\S+ \S+').Value)"; "updated: $("$(@(& $adb -s R58N66RVD7Z shell dumpsys package dev.kestrel | Select-String 'lastUpdateTime=') | Select-Object -First 1)".Trim())"; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 5; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-state; & $adb -s R58N66RVD7Z shell settings put secure enabled_accessibility_services $services; Start-Sleep -Seconds 3; "bound: $("$(& $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord')"`
+Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; function StandIn([int]$seconds) { $answer = "$(pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-task -Seconds $seconds -Reply 'stand-in')"; if ($answer -notmatch "each goal's round now takes $seconds s") { Write-Error "The stand-in round is not set: stop and report" -ErrorAction Stop }; "stand-in: $seconds s" }; function Hook([string]$command) { "$(& $adb -s R58N66RVD7Z shell "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command" | Select-String 'data=')" }; $services = "$(& $adb -s R58N66RVD7Z shell settings get secure enabled_accessibility_services)".Trim(); if ($services -in '', 'null') { Write-Error 'The accessibility setting is empty, so the step could not write it back: stop and ask the controller' -ErrorAction Stop }; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 3; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send toggle; Start-Sleep -Seconds 10; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Start-Sleep -Seconds 2; StandIn 120; Hook 'CONVERSATION_CONTROL --es do expire'; Start-Sleep -Seconds 2; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice -Send heard -Text 'Kestrel, check the owner''s stop'; Start-Sleep -Seconds 3; Hook 'CONVERSATION_STATE'; & $adb -s R58N66RVD7Z shell cmd activity stop-app dev.kestrel; Start-Sleep -Seconds 3; $exit = "$(& $adb -s R58N66RVD7Z shell dumpsys activity exit-info dev.kestrel)"; "exit: $([regex]::Match($exit, 'reason=\d+ \([^)]*\)').Value) $([regex]::Match($exit, 'subreason=\d+ \([^)]*\)').Value)"; "exit time: $([regex]::Match($exit, 'timestamp=\S+ \S+').Value)"; "updated: $("$(@(& $adb -s R58N66RVD7Z shell dumpsys package dev.kestrel | Select-String 'lastUpdateTime=') | Select-Object -First 1)".Trim())"; & $adb -s R58N66RVD7Z shell am start -W -n dev.kestrel/dev.kestrel.app.MainActivity; Start-Sleep -Seconds 5; & $adb -s R58N66RVD7Z shell input keyevent KEYCODE_HOME; Hook 'CONVERSATION_CONTROL --es do restore-check'; Hook 'CONVERSATION_STATE'; Hook 'GOAL_SERVICE_STATE'; pwsh -NoProfile -File scripts\hook.ps1 -Serial R58N66RVD7Z -Command voice-state; & $adb -s R58N66RVD7Z shell settings put secure enabled_accessibility_services $services; Start-Sleep -Seconds 3; "bound: $("$(& $adb -s R58N66RVD7Z shell dumpsys activity services dev.kestrel/.app.KestrelAccessibilityService)" -match 'app=ProcessRecord')"`
 Expected, in order: `expire=sent`; `goal=acting` and `commands=1`; `exit: reason=10 (USER REQUESTED)` and the sub-reason that Android 13 gives (note both); the exit record's time and `lastUpdateTime=`, more than a minute apart (note both); `restored=goal-ended`; `goal=none` and `commands=1`; `service=stopped notice=none posted=none … starts=0 refusals=0`; a `voice-state` line with `mode=off`; `bound: True`. When `cmd activity stop-app` is unknown on One UI 5.1, note it and skip the rest of the step. If the two times are within a minute of each other, the stop cannot be told from the update on Android 13: expect `restored=goal-held` and `mode=off` instead, note it, and end the goal with `Hook 'GOAL_CONTROL --es do tap --es action cancel'`. If the reason is another one, or `restored=goal-held` with the times more than a minute apart, stop and ask the controller with the lines.
 
 - [ ] **Step 8: Put the A71 back**
@@ -4693,9 +4982,9 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7E": the build's commit on
 
 ## Counts at the end of plan 7E
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 21 (Task 1c + 1, Task 2 + 5, Task 3 + 9, Task 4 + 3, Task 6 + 3); 680 with A₀ = 659.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 24 (Task 1c + 1, Task 2 + 8, Task 3 + 9, Task 4 + 3, Task 6 + 3); 683 with A₀ = 659.
 - `:app` device tests: AD₀ + 11 (`GoalServiceTest` 8, `GoalServiceHooksTest` 2, `ConversationSearchSpeedTest` 1, which skips itself without its argument); 466 with AD₀ = 455.
-- `:core:conversation`: C₀ + 7 (Task 1: `GoalRulesTest` + 1, `ConversationEngineTest` + 1; Task 1b: `ScreenTakingGoalTest` 2, `ConversationEngineTest` + 1; Task 1c: `GoalRunnerTest` + 1, `ConversationEngineTest` + 1); 288 with C₀ = 281, plan 7D's count at its end, which includes plan 7B's restore cases for the owner's stop. `:core:agent`: G₀ + 1 (Task 1b: `ScreenTurnTest` + 1); 314 with G₀ = 313. `:tools:eval` and the Pester tests: unchanged; this plan changes no script.
+- `:core:conversation`: C₀ + 9 (Task 1: `GoalRulesTest` + 1, `ConversationEngineTest` + 2; Task 1b: `ScreenTakingGoalTest` 2, `ConversationEngineTest` + 2; Task 1c: `GoalRunnerTest` + 1, `ConversationEngineTest` + 1); 290 with C₀ = 281, plan 7D's count at its end, which includes plan 7B's restore cases for the owner's stop. `:core:agent`: G₀ + 2 (Task 1b: `ScreenTurnTest` + 2); 315 with G₀ = 313. `:tools:eval` and the Pester tests: unchanged; this plan changes no script.
 
 ## Interfaces for 7F and 7G
 
@@ -4703,16 +4992,16 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 
 **The goal service (plans 7F and 7G)**
 - `AppGraph.goalForeground: GoalForeground` (package `dev.kestrel.app.goal`): `suspend fun <T> whileSpeaking(block: suspend () -> T): T` adds `mediaPlayback` to the goal's running service from Android 14 on and waits up to `GoalForeground.APPLY_MILLIS` (1 s) until Android applied it. Plan 7F's speech of a typed command's reply with listening off ("Speak replies to typed commands", design 11) runs inside it, and loads the voice engine for that only (design 10.6). The service runs for an open goal and until its final reply has been said, so a goal's spoken report keeps it; a local request's typed reply with listening off is spoken while `ConversationActivity` is in front, where Android allows audio without a service. Whether Android 17 asks for the type or only for a service with while-in-use is S9's finding of Task 8, which plan 7F reads before it relies on either.
-- `GoalForeground.status(): GoalServiceStatus` (`service`, `notice`, `posted`, `types`, `applied`, `starts`, `refusals`), `GoalForeground.shown: StateFlow<Shown?>`, `GoalForeground.posted: StateFlow<GoalNotice?>` and `GoalForeground.notice()`; `GoalService.runningTypes(): Set<ForegroundType>?`; `GoalNotification.SERVICE_ID = 7_102`, `GoalNotification.POSTED_ID = 7_103`, `GoalNotification.build`, `post` and `intentOf`.
+- `GoalForeground.status(): GoalServiceStatus` (`service`, `notice`, `posted`, `types`, `applied`, `starts`, `refusals`), `GoalForeground.shown: StateFlow<Shown?>`, `GoalForeground.posted: StateFlow<GoalNotice?>` and `GoalForeground.notice()`; `GoalService.runningTypes(): Set<ForegroundType>?`; `GoalNotification.SERVICE_ID = 7_102`, `GoalNotification.POSTED_ID = 7_103`, `GoalNotification.build`, `post`, `intentOf(context, action, goal)` and `goalOf(intent)`.
 - The goal notification's tap and its Open use `ListeningService.openKestrel(context)`: plan 7F points it at `ConversationActivity` when that becomes the launcher, for both notifications.
-- `GoalTexts` (`WORKING`, `BEHIND_COMMAND`, `FINISHED`, `PUBLIC`, `STOP`, `OPEN`, `CONTINUE`, `CANCEL`), `GoalAction` (`label`, `intent`, `resumes`, `broadcast`, `ofBroadcast`), `GoalNotice`, `GoalNotices.of(view)`, `NoticeKind`, `NoticeProgress`. A held goal's buttons are Cancel, then Continue, and Continue asks for the owner's unlock: plan 7F's question card and conversation screen follow the same order and the same rule for a button that resumes a goal. While the working goal's round waits behind the owner's instant command (`ConversationView.waitsBehindCommand`), the notice's text is `GoalTexts.BEHIND_COMMAND` in place of the current item.
-- `GoalButtons.input(broadcast, shown, channel, next, atMillis): OwnerInput?`: a tap on a shown button is the owner's input of its moment, with the next number of his inputs (`InputIds::next`), taken only for a button that counts; `GoalActionReceiver` submits it. Plan 7F's screen buttons that resume or stop a goal give their inputs the same way, so that plan 7D's `ScreenTurns` treats each tap as the owner's newest act.
+- `GoalTexts` (`WORKING`, `BEHIND_COMMAND`, `FINISHED`, `PUBLIC`, `STOP`, `OPEN`, `CONTINUE`, `CANCEL`), `GoalAction` (`label`, `intent`, `resumes`, `stops`, `broadcast`, `ofBroadcast`), `GoalNotice` (with `goal: NoticeGoal?`), `NoticeGoal(conversation, record)`, `GoalNotices.of(view)`, `NoticeKind`, `NoticeProgress`. A held goal's buttons are Cancel, then Continue, and Continue asks for the owner's unlock: plan 7F's question card and conversation screen follow the same order and the same rule for a button that resumes a goal. While the working goal's round waits behind the owner's instant command (`ConversationView.waitsBehindCommand`), the notice's text is `GoalTexts.BEHIND_COMMAND` in place of the current item.
+- `GoalButtons.input(broadcast, goal, shown, channel, next, atMillis): OwnerInput?` and `suspend fun GoalButtons.press(broadcast, goal, restored, next, now): OwnerInput?`: a tap counts only for the goal that its notice showed (`NoticeGoal`, the conversation's id and the goal's record, which outlive a resume and Kestrel's process), a button that stops while the goal's notice offers any way to stop, and Continue only while it offers Continue; a tap that counts is the owner's input of its moment, with the next number of his inputs (`InputIds::next`). `press` decides after `ConversationEngine.awaitRestored()`, against the restored view's notice, so a tap that started Kestrel's process is not lost; `GoalActionReceiver` runs it under `goAsync`. Plan 7F's screen buttons that resume or stop a goal give their inputs the same way (the next number, for the goal that the screen shows), so that plan 7D's `ScreenTurns` treats each tap as the owner's newest act.
 
 **The conversation (plan 7F)**
-- `ConversationEngine.backgroundRefused(command)`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`; `Interruption.BACKGROUND_REFUSED` (`:core:agent`) and `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, resumed as `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED` and `ConversationTexts.CONTINUE_IN_NOTIFICATION` ("Tap Continue in Kestrel's notification."), which plan 7F changes to design 10.6's "Open Kestrel and tap Continue." once its conversation screen has Continue. `GoalRules.backgroundRefused`, `GoalNotices` and the tests of `:core:conversation` read it through `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so plan 7F's change needs no edit to `GoalRules.kt`; only `GoalNoticesTest` (Task 2) names the constant.
-- `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?`: plan 7F's conversation screen shows a held goal's way to go on from the hold, as the notification does, beside its Cancel and Continue.
-- `ConversationView.waitsBehindCommand: Boolean` (the view's last field): true while the open goal works and its round waits behind the owner's instant command, which goes on, the owner's newest act; plan 7F's conversation screen may show it, as the notification does, because the bar belongs to the command then. It comes from plan 7D's screen turn: `ScreenTurn.take(after: Long?, waiting: () -> Unit): Boolean` (`waiting` hears each start of such a wait; a command that the round asked to let go is none), `ScreenTakingGoal`, which every turn of a round goes through, the first one too, and `GoalListener.waitsBehindCommand(waits: Boolean)`. `FakeScreenTurn.command` (`:core:conversation`'s fixtures) makes the next take wait behind a command in a JVM test.
-- `ScreenTakingGoal` (internal to `:core:conversation`), through which every screen turn of a round goes, is the one rule for a pause: from the run's take of the turn until its next model call (`GoalPort.stepStarted`) or its next wait for the owner (`GoalPort.releaseScreen`), a pause's release waits, so no instant command starts beside a step; during a model call a pause lets go at once. The engine reaches it through `GoalRunner.paused()` (with every `ConversationEffect.PauseGoal`) and `GoalRunner.resumed()` (with every `ResumePausedGoal`). `FrontCheck`'s Back on an app that crashed passes `TaskRun.gate()` first. The conversation-state hook's line is unchanged.
+- `ConversationEngine.backgroundRefused(command)` and `ConversationEvent.BackgroundRefused(command)` (the machine's rule is `:core:conversation`'s internal `GoalRules.backgroundRefused`, which no other module calls); `Interruption.BACKGROUND_REFUSED` (`:core:agent`) and `GoalHold.BACKGROUND_REFUSED` (`GoalPhase.INTERRUPTED`, resumed as `ResumeCause.INTERRUPTION`); `ConversationTexts.BACKGROUND_REFUSED` and `ConversationTexts.CONTINUE_IN_NOTIFICATION` ("Tap Continue in Kestrel's notification."), which plan 7F changes to design 10.6's "Open Kestrel and tap Continue." once its conversation screen has Continue. `GoalRules.backgroundRefused`, `GoalNotices` and the tests of `:core:conversation` read it through `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so plan 7F's change needs no edit elsewhere in `:core:conversation`; only `GoalNoticesTest` (Task 2) names the constant.
+- `ConversationView.hold: GoalHold?` and `ConversationView.goalEnding: GoalEnding?`: plan 7F's conversation screen shows a held goal's way to go on from the hold, as the notification does, beside its Cancel and Continue. `ConversationView.goalRecord: Int?`: with `id`, the goal's name across its resumes and Kestrel's processes, which plan 7F's screen buttons carry as the notification's do. `suspend fun ConversationEngine.awaitRestored()`: returns once `restore()` has run, for an input that may have started Kestrel's process.
+- `ConversationView.waitsBehindCommand: Boolean` (the view's last field): true while the open goal works and its round waits behind the owner's instant command, which goes on, the owner's newest act; plan 7F's conversation screen may show it, as the notification does, because the bar belongs to the command then. It comes from plan 7D's screen turn, through public API of `:core:conversation`: `ScreenTurn.take(after: Long?, waiting: () -> Unit): Boolean` (`waiting` hears each start of such a wait; a command that the round asked to let go is none), which `:app`'s `ScreenTurns` implements, and `GoalListener.waitsBehindCommand(waits: Boolean)`; plan 7F reads only the view's field. `FakeScreenTurn.command` (`:core:conversation`'s fixtures) makes the next take wait behind a command in a JVM test.
+- A pause lets go of the round's screen turn once no step that a gate let through can act (from the run's take of the turn until its next model call or its next wait for the owner), and at once during a model call; a resume before then keeps the turn. The engine does it through the public `GoalRunner.paused()` (with every `ConversationEffect.PauseGoal`) and `GoalRunner.resumed()` (with every `ResumePausedGoal`). The rule's class (`ScreenTakingGoal`) and the crashed app's gated Back (`FrontCheck`) are internal to `:core:conversation` and `:core:agent`, and plans 7F and 7G use neither: a typed or card resume goes through the machine's `ResumePausedGoal`, so it needs nothing of its own. The conversation-state hook's line is unchanged.
 - Plan 7B's `ProcessEnd` (`OwnerStopped(atWall)`, `Other`), `ConversationEngine.restore(previous: ProcessEnd)`; this plan's `ExitReason.UNCLEAR_STOP`, `exitReasonOf(reason, timestamp, sdk, updatedAt)`, `processEndOf(record)`, `readProcessEnd` and `AppGraph.previousProcessEnd()`, over the graph's one `AndroidExitRecords`.
 
 **The checks (plans 7F and 7G)**
@@ -4729,13 +5018,13 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 3. **Plan 7E measures the whole first search, a close and a search right after a start** (plan 7C's "Left open" and design R3), with R3's fixture of 30 heavy days, in three runs so that each timed part runs in a new process. Recommendation: yes, so that design 4.3's 1 s is judged on the whole search after a start, not only the archive's read; when either search takes more than 1 s on the A71 at 30 days, the controller takes it to the owner.
 4. **Every start or resume of a goal's work starts the service again, also while it runs.** This is how design 10.6's three starts come from the owner's own contexts, and how a running service may gain while-in-use from the owner's action, which Android 17 asks of background audio (main spec B5); Task 8 records the standing that Android gave each start. Recommendation: accept.
 5. **The service stays until the goal's final reply has been said**, showing "Kestrel finished the goal" without buttons, also for hours when the report waits for the owner's return while the phone is locked. Recommendation: accept; otherwise a typed goal's spoken report with listening off would lose its service on Android 17.
-6. **The notification's buttons keep the conversation's reply channel, and a button that the notification no longer shows does nothing.** Recommendation: accept.
+6. **The notification's buttons keep the conversation's reply channel, and count only for the goal that their notice showed**: Continue only while the goal's notice offers it, a stopping button while it offers any way to stop (the review's I2 and M2). Recommendation: accept.
 7. **The call pause test needs `READ_PHONE_STATE` for one run on kestrel-api37** (Task 8, Step 5 gives it when it is missing, takes it back and compares the permission's line with its flags). Recommendation: accept; without it the call pause with listening off would have only JVM tests.
 8. **Task 9 installs this build on the A71**, which moves the A71's database to version 3 when no earlier plan did, so that from then on only builds with plan 7C may be installed there. Recommendation: accept, and tell the owner at the sitting.
 9. **The debug hooks `goal-control do=touch|speak|focus`** give the conversation a touch without touching the A71's screen, and ask for the audio focus outside the instrumentation. Recommendation: accept; the device tests check the real touch watcher (the pull of the shade, and sub-project 5's tests).
 10. **`scripts\hook.ps1` learns this plan's hooks in plan 7G**, as plan 7D's. Recommendation: accept; until then Tasks 8 and 9 send them with `am broadcast`.
 11. **Spike S9's outcome in the main spec.** Recommendation: after Task 9, the controller writes S9's findings on both devices into the main spec's section 19 and B5, and into design 10.6 where they change its sentence on `mediaPlayback`, in a documentation commit; when a start was refused, the owner first decides what follows.
-12. **The goal notification that the owner swipes away comes back with the next change of the goal**, as the listening notification does, not at once. Recommendation: accept; posting it again at once would undo the owner's own swipe, and a held goal keeps "Kestrel, continue" and, from plan 7F, the conversation screen. The held goal's notification that Kestrel posts without the service also outlives Kestrel's process when Android ends it: the next start removes it (the posted notice is empty at every start), and until then its Continue does nothing, because the receiver finds no notice that shows it. That is harmless, and accepted.
+12. **The goal notification that the owner swipes away comes back with the next change of the goal**, as the listening notification does, not at once. Recommendation: accept; posting it again at once would undo the owner's own swipe, and a held goal keeps "Kestrel, continue" and, from plan 7F, the conversation screen. The held goal's notification that Kestrel posts without the service also outlives Kestrel's process when Android ends it: the next start removes it (the posted notice is empty at every start), and a tap on it before then starts Kestrel's process, whose receiver waits for the conversation's restore and counts the tap for the restored goal, which has the same conversation and record (the review's M3).
 
 13. **The wait behind the owner's command is a field of the conversation's view (amendment of 2026-11-25).** The round's screen turn reports it through `ScreenTurn.take`'s `waiting`, the goal's listener, and the engine, which carries it as it carries the round's step, so that the notification, plan 7F's screen and any later reader take it from the one view. The other form, a flow of `:app`'s `ScreenTurns` that the notification combines with the view, would put a goal's state beside the view and need each reader to combine it again. The notification says "Waiting for your command to finish" in place of the current item; `conversation-state` and `goal-service-state` keep their lines. Recommendation: accept.
 14. **A pause lets go of the screen's turn once no step can act (amendment of 2026-11-25; plan 7D's re-review, R5-1; settled by the controller).** The controller ruled out a release while an action that a gate guarded may still run. `ScreenTakingGoal` keeps the span from the run's take of the turn to its next model call or its next wait for the owner; a pause in that span lets go only at its end, and a pause during a model call lets go at once. It needs no change of `:core:agent`'s ports: the goal port's `stepStarted` already comes right before every model call, after the turn's gate, the observation and the steering, and `releaseScreen` as every wait for the owner starts. The span is wider than the action alone (it also covers the observation after it and the next turn's steering), which keeps the turn a little longer than needed, never shorter.
@@ -4750,4 +5039,4 @@ What plans 7F and 7G consume, as this plan leaves Kestrel. Every type of `:app` 
 - **Placeholders.** Each step has its code or its command; Task 8, Step 10 and Task 9, Step 8 take values that their Steps 1 and 2 printed, which the steps name.
 - **Type consistency.** `Interruption.BACKGROUND_REFUSED`, `GoalHold.BACKGROUND_REFUSED`, `ConversationEvent.BackgroundRefused(command)`, `GoalRules.backgroundRefused(state, command)`, `ConversationEngine.backgroundRefused(command)`, `ConversationView.hold` and `goalEnding`, `ConversationTexts.BACKGROUND_REFUSED` and `CONTINUE_IN_NOTIFICATION` (Task 1); `ProcessEnd` and `restore(previous)` (plan 7B) and `ExitReason.UNCLEAR_STOP`, `exitReasonOf`, `processEndOf`, `readProcessEnd` and `AppGraph.previousProcessEnd` (Task 4); `GoalNotice(kind, title, text, progress, actions)`, `NoticeKind`, `NoticeProgress(done, total)`, `GoalAction(label, intent, resumes)` with `broadcast` and `ofBroadcast`, `GoalNotices.CLOSING` and `of` (Task 2); `ForegroundType`, `ServiceState`, `Shown(notice, types)`, `GoalServiceEvent.Viewed(goal, stopping, command, replying, notice)`, `GoalServiceCommand.Start` and `HoldGoal(command)`, `GoalServiceRules.next/shown/posted/types`, `GoalServiceStatus(service, notice, posted, types, applied, starts, refusals)` and `GoalForeground(start, holdGoal, sdk, report)` with `follow`, `started`, `applied`, `failed`, `destroyed`, `whileSpeaking`, `status`, `notice`, `shown` and `posted` (Task 3) are the names of Tasks 5 and 6; `GoalNotification` and `GoalService.start` and `runningTypes` (Task 5) are the names of Task 6 and the tests; `FocusResult(granted, speaking, types)` and `FocusProbe` (Task 6).
 - **Safety.** No file of plan 6BF's safety work changes; the notification carries no words of the owner's off the phone, its lock-screen version hides the item, Continue needs the owner's unlock, its receiver is not exported and acts only on the buttons that it shows, and its buttons give only `Stop` and `Continue`, which carry no words (D8). The hooks answer kinds and counts only, and press only Kestrel's own button, by its key, checked again at the press.
-- **The amendment of 2026-11-25 (plans 7A to 7D as built, at `3d0a1921`).** Task 1's old texts follow plan 7D's `ownRequest`; Tasks 1b and 1c carry plan 7D's two items left to this plan (R5-1, with the controller's rule that a pause never lets go while a step may act, and the wait behind the owner's command), each test-first with its failing run; Tasks 2 and 5 make every notification button an owner's input with its own number; the device tests end their work through plan 7D's `ConversationTests`; Task 7 follows plan 7D's `RoomRecordArchive`; Task 8 follows plan 7D's gate (the data check with `Get-GoogleAccountCount`, a delegated agent's rules, the flaky class); the counts are measured at `3d0a1921`. The checker is clean from Tasks 1, 4, 5 and 6, and the two `Select-String` checks of "Before you start" give 17 and 12 matches there.
+- **The amendment of 2026-11-25 (plans 7A to 7D as built, at `3d0a1921`).** Task 1's old texts follow plan 7D's `ownRequest`; Tasks 1b and 1c carry plan 7D's two items left to this plan (R5-1, with the controller's rule that a pause never lets go while a step may act, and the wait behind the owner's command), each test-first with its failing run; Tasks 2 and 5 make every notification button an owner's input with its own number; the device tests end their work through plan 7D's `ConversationTests`; Task 7 follows plan 7D's `RoomRecordArchive`; Task 8 follows plan 7D's gate (the data check with `Get-GoogleAccountCount`, a delegated agent's rules, the flaky class); the counts are measured at `3d0a1921`. The plan review's I1 to I3, M1 to M5 and nits are fixed at their roots (see the amendment's entry). The checker is clean from Tasks 1, 4, 5 and 6, and the two `Select-String` checks of "Before you start" give 17 and 12 matches there.
