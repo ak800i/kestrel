@@ -23,6 +23,7 @@ import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.ScreenBuilder
@@ -94,6 +95,25 @@ class AgentGoalTest {
         assertFalse(data, data.contains("483920") || data.contains("[OTP_1]"))
         assertTrue(data, data.contains("a one-time code"))
         assertEquals(TraceEntry.Said("Your code is a one-time code."), harness.goal.traces.filterIsInstance<TraceEntry.Said>().single())
+    }
+
+    // Design 8.1 of sub-project 7: the record names every app that the run used, also one that a step only opened.
+    @Test
+    fun theRecordNamesTheAppsThatTheRunOnlyOpened() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("open_app", null, null, null, "name" to "Viber", "reason" to "open Viber"),
+            call("navigate", null, null, null, "to" to "Knez Mihailova 5", "app" to "waze"),
+            fail(),
+        ))
+        harness.screen.onOpen(Screens.app("com.viber.voip", "Chats"))
+        harness.data.answer(Tools.NAVIGATE, DataResult.Opens(IntentSpec(IntentSpec.VIEW, "waze://?q=Knez", "com.waze"), "Kestrel opened the route."))
+
+        harness.run("Open Viber, then show me the way to Knez Mihailova 5")
+
+        assertEquals(
+            listOf(TraceEntry.AppUsed("Viber", "com.viber.voip"), TraceEntry.AppUsed("Waze", "com.waze")),
+            harness.goal.traces.filterIsInstance<TraceEntry.AppUsed>(),
+        )
     }
 
     // Design 10.5 of sub-project 7: the goal learns each step's number when the step starts, before anything of it runs.

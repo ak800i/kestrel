@@ -1,8 +1,10 @@
 package dev.kestrel.agent.loop
 
 import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.CheckedLaunch
 import dev.kestrel.agent.port.IntentSpec
+import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.safety.ActionKind
 import dev.kestrel.safety.LinkCheck
@@ -11,7 +13,7 @@ import java.net.URI
 /**
  * The task's launch check (spec 12.1 and 12.5; plan 6B-basefix): every app, link, page or app screen that a tool opens
  * becomes a [CheckedLaunch] here, judged with the task's agent-free apps and LinkCheck's rules, or a refusal that the model
- * reads. [CheckedLaunch.Judge] does the judging, and nothing else can make a [CheckedLaunch].
+ * reads, and opens only through [open]. [CheckedLaunch.Judge] does the judging, and nothing else can make a [CheckedLaunch].
  */
 internal class Launches(private val run: TaskRun) {
     private val judge = CheckedLaunch.Judge(run.ports.screen, run.settings::closed) { link, kind, target ->
@@ -29,6 +31,16 @@ internal class Launches(private val run: TaskRun) {
 
     /** [spec] as it will be sent; a link in it is judged as a link of [linkKind]. */
     suspend fun intent(spec: IntentSpec, linkKind: ActionKind = ActionKind.OPEN_DEEP_LINK): Launch = launch(judge.intent(spec, linkKind))
+
+    /**
+     * Opens [launch], as every tool and the return to the task's app do. The app that opened is one that the run used,
+     * which the command's record names, also when no later step acts in it (design 8.1 of sub-project 7).
+     */
+    suspend fun open(launch: CheckedLaunch): ActionOutcome {
+        val outcome = run.ports.screen.act(ScreenAction.Launch(launch))
+        if (outcome.done) launch.target?.let { run.trace.acted(it) }
+        return outcome
+    }
 
     private suspend fun launch(judgement: CheckedLaunch.Judgement): Launch = when (judgement) {
         is CheckedLaunch.Judgement.Cleared -> Launch.Go(judgement.launch)

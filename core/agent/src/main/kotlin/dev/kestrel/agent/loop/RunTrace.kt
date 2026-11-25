@@ -11,9 +11,9 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * What a run tells the goal around it (plan 7A; design 8.1 of sub-project 7), as it happens: the request, the dialogue
- * (through [TracingOwner]), each data tool's result, each app that a step acted in, and each new ledger line. Every text is
- * in its record's form, redacted once and with each vault value as its kind's words, so that no record holds a placeholder
- * (design 7.1). A failure of the goal's store is logged by its class through [log] and never ends the task.
+ * (through [TracingOwner]), each data tool's result, each app that a step acted in or opened, and each new ledger line.
+ * Every text is in its record's form, redacted once and with each vault value as its kind's words, so that no record holds
+ * a placeholder (design 7.1). A failure of the goal's store is logged by its class through [log] and never ends the task.
  */
 internal class RunTrace(
     private val goal: GoalPort,
@@ -44,7 +44,7 @@ internal class RunTrace(
     /** A data tool's [result] of step [step] as the model saw it, already redacted and quoted. */
     suspend fun data(tool: String, step: Int, result: Redacted) = traced(TraceEntry.Data(tool, step, vault.spoken(result.text)))
 
-    /** An app that an executed step acted in, once per run, by its launcher label. */
+    /** An app that an executed step acted in or opened, once per run, by its launcher label. */
     suspend fun acted(packageName: String) {
         if (usedApps.add(packageName)) guarded { goal.traced(TraceEntry.AppUsed(apps.label(packageName) ?: packageName, packageName)) }
     }

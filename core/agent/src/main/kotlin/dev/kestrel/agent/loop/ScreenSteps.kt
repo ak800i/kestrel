@@ -460,7 +460,7 @@ internal class ScreenSteps(private val run: TaskRun) {
                     is Launches.Launch.Go -> checked.launch
                 }
                 if (again.target != firefox) return Done(call.tool, Outcome.Failed(Launches.NOT_RESOLVED), after = run.fresh())
-                run.ports.screen.act(ScreenAction.Launch(again))
+                run.launches.open(again)
             }
         }
         val now = run.fresh()
@@ -507,7 +507,7 @@ internal class ScreenSteps(private val run: TaskRun) {
                 Clearance.Again -> continue
                 is Clearance.Stop -> return clearance.done
                 is Clearance.Go -> {
-                    val outcome = run.ports.screen.act(ScreenAction.Launch(launch))
+                    val outcome = run.launches.open(launch)
                     if (!outcome.done) return Done(call.tool, Outcome.Failed(outcome.reason ?: ACTION_FAILED), after = run.fresh())
                     if (link != null) sentLink = true
                     run.ports.screen.waitForFront(launch.target, FRONT_WAIT_MILLIS, before = ScreenTree.frontWindow(before)?.packageName)

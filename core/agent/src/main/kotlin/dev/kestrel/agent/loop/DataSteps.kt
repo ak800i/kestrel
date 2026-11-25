@@ -8,7 +8,6 @@ import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
-import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.tools.ActionMapper
 import dev.kestrel.agent.tools.AgentCall
 import dev.kestrel.agent.tools.SharePackages
@@ -87,7 +86,7 @@ internal class DataSteps(private val run: TaskRun) {
                     is Launches.Launch.Stop -> return Done(call.tool, checked.outcome, detail = detail(call))
                     is Launches.Launch.Go -> checked.launch
                 }
-                if (!run.ports.screen.act(ScreenAction.Launch(launch)).done) return Done(call.tool, Outcome.Failed(NOT_OPENED), detail = detail(call))
+                if (!run.launches.open(launch).done) return Done(call.tool, Outcome.Failed(NOT_OPENED), detail = detail(call))
                 Opened(launch.target.takeIf { opens.front }, opens.done)
             }
             val ok = launched?.let { DataResult.Ok(listOf(DataLine(it.done, emptyList()))) } ?: result as DataResult.Ok
@@ -130,7 +129,7 @@ internal class DataSteps(private val run: TaskRun) {
         }
         // Back to the task's app before the tool runs again (D12, D15).
         if (front != null && !run.ports.screen.waitForFront(front, ScreenSteps.FRONT_WAIT_MILLIS)) {
-            (run.launches.app(front) as? Launches.Launch.Go)?.let { run.ports.screen.act(ScreenAction.Launch(it.launch)) }
+            (run.launches.app(front) as? Launches.Launch.Go)?.let { run.launches.open(it.launch) }
             run.ports.screen.waitForFront(front, ScreenSteps.FRONT_WAIT_MILLIS)
         }
         val again = ActionMapper.runData(call, run.ports.data, today, sharePackage, contactRef) ?: return DataResult.Failed(NOT_DATA)
