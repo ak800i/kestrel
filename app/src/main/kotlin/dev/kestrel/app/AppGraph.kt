@@ -86,7 +86,7 @@ import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.goal.GoalForeground
 import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalService
-import java.util.concurrent.atomic.AtomicBoolean
+import dev.kestrel.app.goal.GoalStartRefusal
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.forVoice
 import dev.kestrel.app.phone.AndroidScreenSource
@@ -532,7 +532,7 @@ class AppGraph(context: Context) {
     internal val goalForeground: GoalForeground by lazy {
         GoalForeground(
             start = {
-                if (goalStartRefusals.getAndSet(false)) throw ForegroundServiceStartNotAllowedException("goal-control do=refuse")
+                if (goalStartRefusal.take()) throw ForegroundServiceStartNotAllowedException("goal-control do=refuse")
                 GoalService.start(appContext)
             },
             holdGoal = { command -> conversations.backgroundRefused(command) },
@@ -542,11 +542,11 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * Debug builds only: the hook `goal-control do=refuse` sets it, and the goal service's next start then throws as
-     * Android's refusal does, so that Task 8 of plan 7E checks the held goal's notification that Kestrel posts without the
-     * service, and a tap on it that starts Kestrel's process. A release build never sets it.
+     * Debug builds only: when the hook `goal-control do=refuse` armed it, the goal service's next start throws as Android's
+     * refusal does, so that Task 8 of plan 7E checks the held goal's notification that Kestrel posts without the service,
+     * and a tap on it that starts Kestrel's process.
      */
-    internal val goalStartRefusals = AtomicBoolean(false)
+    internal val goalStartRefusal = GoalStartRefusal()
 
     // Android's records of how Kestrel's processes ended: one reader, which listening's restore and the conversation's
     // restore both read, so that one record has one reading (plan 7E).

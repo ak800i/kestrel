@@ -10,25 +10,35 @@ import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.goal.GoalAction
 import dev.kestrel.app.goal.GoalNotice
 import dev.kestrel.app.goal.GoalService
+import dev.kestrel.privacy.logs.describeWithoutMessages
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.PressPolicy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
- * The goal service's hooks (plan 7E; design 10.6 of sub-project 7). goal-service-state reads the service and the newest
- * audio-focus request. goal-control presses a button of the goal notification in SystemUI's shade by its key, so that
- * SystemUI sends the button's broadcast as it does for the owner's finger and Android's rules for a start from a
- * notification apply; gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen
- * is not safe, as on the A71; asks Android for the audio focus with and without the speech's types (spike S9); or has a
- * button's own PendingIntent sent a few seconds later, to a process that has ended meanwhile. The answers never contain
- * words.
+ * The goal service's hooks (plan 7E; design 10.6 of sub-project 7). goal-service-state reads the service, whether a
+ * refusal of its next start is armed, and the audio-focus requests. goal-control presses a button of the goal notification
+ * in SystemUI's shade by its key, so that SystemUI sends the button's broadcast as it does for the owner's finger and
+ * Android's rules for a start from a notification apply, and closes the shade again however the press ends; gives the
+ * conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
+ * asks Android for the audio focus with and without the speech's types (spike S9); arms or takes back a refusal of the
+ * service's next start; or has a button's own PendingIntent sent a few seconds later, to a process that has ended
+ * meanwhile. The answers never contain words.
  */
 internal class GoalServiceHooks(private val graph: AppGraph, private val context: Context) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
-        "GOAL_SERVICE_STATE" -> GoalServiceAnswers.state(graph.goalForeground.status(), GoalService.runningTypes(), FocusProbe.last)
+        "GOAL_SERVICE_STATE" -> GoalServiceAnswers.state(
+            graph.goalForeground.status(),
+            GoalService.runningTypes(),
+            FocusProbe.requests.now(),
+            graph.goalStartRefusal.armed,
+        )
         "GOAL_CONTROL" -> control(intent)
         else -> throw HookError("unknown command '$command'")
     }
@@ -40,20 +50,23 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             "touch=sent"
         }
         "speak", "focus" -> {
+            FocusProbe.requests.asked()
             // After the hook's broadcast has returned, so that its own standing does not count.
             graph.scope.launch {
                 delay(FocusProbe.DELAY_MILLIS)
-                FocusProbe.last = FocusProbe.request(context, graph.goalForeground, speaking = wanted == "speak")
+                FocusProbe.requests.answered(FocusProbe.request(context, graph.goalForeground, speaking = wanted == "speak"))
             }
             "$wanted=sent"
         }
-        // The next start of the goal service is refused as Android refuses it, once (plan 7E, Task 8, Step 8a).
+        // The next start of the goal service is refused as Android refuses it, once (plan 7E, Task 8, Step 8a); refuse-off
+        // takes an armed refusal back when a check stops before that start.
         "refuse" -> {
-            graph.goalStartRefusals.set(true)
+            graph.goalStartRefusal.arm()
             "refuse=armed"
         }
+        "refuse-off" -> GoalServiceAnswers.refuseOff(graph.goalStartRefusal.take())
         "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
-        else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse or send-later")
+        else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later")
     }
 
     private suspend fun tap(name: String?): String {
@@ -61,12 +74,26 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val notice = graph.goalForeground.notice() ?: throw HookError("the goal service shows no notification")
         if (action !in notice.actions) throw HookError("the goal notification has no ${action.name.lowercase()} now")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
-        session.actions.global(GlobalAction.NOTIFICATIONS)
-        val key = buttonInShade(session, notice, action)
-        if (key == null) {
-            session.actions.global(GlobalAction.DISMISS_SHADE)
-            throw HookError("the goal notification's ${action.name.lowercase()} is not in the shade")
+        // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
+        // is as the hook found it (AGENTS.md's limits on the A71). After Open, whose activity closes the shade, it is a no-op.
+        var shadeClosed = false
+        val failure = try {
+            session.actions.global(GlobalAction.NOTIFICATIONS)
+            pressInShade(session, notice, action)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            "the press failed: ${error.describeWithoutMessages()}"
+        } finally {
+            shadeClosed = withContext(NonCancellable) { session.actions.global(GlobalAction.DISMISS_SHADE) } !is ActionResult.Failed
         }
+        if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
+        return GoalServiceAnswers.tapped(action, shadeClosed)
+    }
+
+    // Null once the button was pressed, else why not.
+    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction): String? {
+        val key = buttonInShade(session, notice, action) ?: return "the goal notification's ${action.name.lowercase()} is not in the shade"
         // By the button's key, which the press checks again in every snapshot that it acts on: a row that a new notification
         // moved, or another app's button, is never pressed in its place (AGENTS.md's limits on the A71). Once only, so that a
         // Continue is never sent twice.
@@ -76,10 +103,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             policy = PressPolicy.ONCE,
             guard = { snapshot -> NoticeButtons.button(snapshot, notice.title, action.label) == key },
         )
-        if (pressed is ActionResult.Failed) throw HookError(pressed.reason)
-        // A broadcast's button leaves the shade open; Open's activity closes it.
-        if (action.intent != null) session.actions.global(GlobalAction.DISMISS_SHADE)
-        return "tapped=${action.name.lowercase()}"
+        return (pressed as? ActionResult.Failed)?.reason
     }
 
     /**
