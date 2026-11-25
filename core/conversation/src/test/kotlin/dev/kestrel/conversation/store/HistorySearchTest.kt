@@ -145,6 +145,34 @@ class HistorySearchTest {
     }
 
     @Test
+    fun aSearchThatRacesDeleteHistoryKeepsNoneOfItsWords() = runTest {
+        val racing = object : ConversationStore by store {
+            var onRead: (suspend () -> Unit)? = null
+
+            override suspend fun closedSince(sinceWall: Long): List<ConversationSnapshot> {
+                val read = store.closedSince(sinceWall)
+                onRead?.let { onRead = null; it() }
+                return read
+            }
+        }
+        val search = HistorySearch(racing, { retention }, clock)
+        val deleteHistory: suspend () -> Unit = {
+            store.deleteAll()
+            search.forgetAll()
+        }
+        save(1, record(1, "Ambar dinner", day))
+
+        racing.onRead = deleteHistory
+        assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
+        assertEquals(0, search.indexed)
+
+        save(2, record(1, "Ambar lunch", day))
+        racing.onRead = deleteHistory
+        assertNull(search.conversation("Ambar"))
+        assertEquals(0, search.indexed)
+    }
+
+    @Test
     fun theSearchsTypesPrintNoWords() = runTest {
         val marker = "Zorana"
         val record = record(1, "Call $marker", day, answer = marker)

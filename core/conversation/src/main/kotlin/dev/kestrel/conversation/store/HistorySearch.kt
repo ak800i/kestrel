@@ -23,7 +23,8 @@ data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val
  * of the closed conversations within retention and of the open one into [SearchEntry]s (never an observation or a
  * screenshot, which no record holds); [HistoryRanking], which matches and orders them; and the details of the best
  * matches, which their records give. The source keeps each record's entry in memory only, like the vault, until the record
- * changes or goes, or [forgetAll] drops them.
+ * changes or goes, or [forgetAll] drops them. A search that "delete history" overtook, which the store's
+ * [ConversationStore.generation] tells, keeps nothing that it read and finds nothing (design 9.7).
  */
 class HistorySearch(
     private val store: ConversationStore,
@@ -41,9 +42,10 @@ class HistorySearch(
     /** The commands that match [query], other than [excluding], which asks. */
     suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult = mutex.withLock {
         if (HistoryRanking.wanted(query.text).isEmpty()) return@withLock HistoryResult(emptyList())
+        val generation = store.generation
         val reach = store.closedSince(since()) + listOfNotNull(store.open())
-        val entries = entries(reach, prune = true).filter { it.ref != excluding }
-        val ranked = HistoryRanking.rank(entries, query, clock.zone())
+        val entries = entries(reach, generation, prune = true) ?: return@withLock HistoryResult(emptyList())
+        val ranked = HistoryRanking.rank(entries.filter { it.ref != excluding }, query, clock.zone())
         HistoryResult(details(ranked.take(HistoryPort.MAX_MATCHES)), more = ranked.size > HistoryPort.MAX_MATCHES)
     }
 
@@ -59,10 +61,14 @@ class HistorySearch(
      * (or with only words that hold none), the newest closed conversation. Null when none matches.
      */
     suspend fun conversation(topic: String?): ConversationMatch? = mutex.withLock {
+        val generation = store.generation
         // closedSince gives the newest change first.
         val closed = store.closedSince(since()).filter { it.records.isNotEmpty() }
-        if (topic == null || HistoryRanking.wanted(topic).isEmpty()) return@withLock closed.firstOrNull()?.let(::matchOf)
-        val best = HistoryRanking.rank(entries(closed, prune = false), HistoryQuery(topic), clock.zone()).firstOrNull()
+        if (topic == null || HistoryRanking.wanted(topic).isEmpty()) {
+            return@withLock closed.firstOrNull()?.takeIf { store.generation == generation }?.let(::matchOf)
+        }
+        val entries = entries(closed, generation, prune = false) ?: return@withLock null
+        val best = HistoryRanking.rank(entries, HistoryQuery(topic), clock.zone()).firstOrNull()
         best?.let { ranked -> closed.firstOrNull { it.id == ranked.entry.ref.conversation } }?.let(::matchOf)
     }
 
@@ -72,21 +78,25 @@ class HistorySearch(
     /**
      * The entries of [conversations]' records, each folded once while its record stays the same. When [conversations] are
      * all that the search reaches ([prune]), the entries of the records that went (deleted, purged or out of reach) go too.
+     * Null, and nothing kept, when "delete history" ran since the store's [generation] that [conversations] were read at: it
+     * raises the generation before it deletes, and [forgetAll] takes the same lock after it, so no deleted word stays.
      */
-    private fun entries(conversations: List<ConversationSnapshot>, prune: Boolean): List<SearchEntry> = synchronized(indexes) {
-        val entries = conversations.flatMap { snapshot ->
-            snapshot.records.map { record ->
-                val ref = RecordRef(snapshot.id, record.number)
-                indexes[ref]?.takeIf { it.record === record }?.entry
-                    ?: SearchEntry.of(snapshot.id, record).also { indexes[ref] = Indexed(record, it) }
+    private fun entries(conversations: List<ConversationSnapshot>, generation: Long, prune: Boolean): List<SearchEntry>? =
+        synchronized(indexes) {
+            if (store.generation != generation) return null
+            val entries = conversations.flatMap { snapshot ->
+                snapshot.records.map { record ->
+                    val ref = RecordRef(snapshot.id, record.number)
+                    indexes[ref]?.takeIf { it.record === record }?.entry
+                        ?: SearchEntry.of(snapshot.id, record).also { indexes[ref] = Indexed(record, it) }
+                }
             }
+            if (prune) {
+                val kept = entries.mapTo(HashSet()) { it.ref }
+                indexes.keys.retainAll(kept)
+            }
+            entries
         }
-        if (prune) {
-            val kept = entries.mapTo(HashSet()) { it.ref }
-            indexes.keys.retainAll(kept)
-        }
-        entries
-    }
 
     /** The details of [ranked], in its order, from their records. */
     private suspend fun details(ranked: List<RankedEntry>): List<HistoryMatch> {
