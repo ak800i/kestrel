@@ -32,8 +32,8 @@ data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = fa
 
 /**
  * One earlier command that matched (design 9.4), as its record stored it: when it was given ([atMillis], wall clock), its
- * number in its conversation, the owner's [request], Kestrel's final [answer], the [apps] that it acted in by their
- * labels, and its data notes, each the result that the model saw then.
+ * number in its conversation, the owner's [request], Kestrel's final [answer], the [apps] that it used (acted in or
+ * opened) by their labels, and its data notes, each the result that the model saw then.
  */
 data class HistoryMatch(
     val atMillis: Long,
