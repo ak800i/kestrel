@@ -11871,7 +11871,7 @@ with:
 
         assertNull(engine.view.value.id)
         assertTrue(archive.rows.isEmpty())
-        assertTrue(archive.keyDeleted)
+        assertTrue(archive.keyErased)
         // The page asked its own question, and shows the result itself.
         assertEquals(asked, text.asked.size + voice.asked.size)
         assertEquals(shown, text.shown.size + voice.shown.size)
