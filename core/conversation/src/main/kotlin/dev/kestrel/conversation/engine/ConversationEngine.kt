@@ -389,9 +389,15 @@ class ConversationEngine(
             is ConversationEffect.StartGoal -> startGoal(effect)
             is ConversationEffect.ResumeGoal -> resumeGoal(effect)
             is ConversationEffect.SteerGoal -> steering(effect)
-            ConversationEffect.PauseGoal -> owner.pause()
+            // The pause is a wait for the owner, which starts now; the round's turn goes once its step can act no more
+            // (design 6.5 of sub-project 7; plan 7E).
+            ConversationEffect.PauseGoal -> {
+                owner.pause()
+                goals.paused()
+            }
             is ConversationEffect.ResumePausedGoal -> {
                 effect.act?.let(::actedFor)
+                goals.resumed()
                 owner.resume()
             }
             is ConversationEffect.InterruptGoal -> running?.interrupt(effect.cause)

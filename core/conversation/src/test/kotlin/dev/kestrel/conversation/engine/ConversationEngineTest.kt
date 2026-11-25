@@ -916,6 +916,66 @@ class ConversationEngineTest {
         assertEquals(1, environment.starts.size)
     }
 
+    // Plan 7E: a lock pauses the goal while the step that its gate let through still runs, here while Kestrel speaks. The
+    // step may still act, so the round keeps the screen's turn and no instant command starts beside it; once the step has
+    // ended, the round's next gate is a wait for the owner, and the turn goes. The round takes it again before it acts.
+    @Test
+    fun aPauseDuringAStepLetsGoOfTheTurnOnceTheStepHasEndedAndTheRoundTakesItAgainBeforeItActs() = scope.runTest {
+        val speaking = CompletableDeferred<Unit>()
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
+        val screen = FakeScreenTurn()
+        val environment = environment(say("On it."), listSms, listSms, finish(3))
+        val engine = engine(environment, screen = screen)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertTrue(screen.holds)
+
+        engine.signal(PhoneSignal.LOCKED)
+        runCurrent()
+        assertEquals(GoalPhase.PAUSED, engine.view.value.goal)
+        assertTrue(screen.holds)
+        val takes = screen.takes
+        speaking.complete(Unit)
+        runCurrent()
+        assertFalse(screen.holds)
+        assertEquals(takes, screen.takes)
+        assertTrue(engine.view.value.records.single().data.isEmpty())
+
+        engine.signal(PhoneSignal.UNLOCKED)
+        runCurrent()
+        engine.submit(input(InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes)))
+        runCurrent()
+        assertTrue(screen.takes > takes)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+        assertFalse(screen.holds)
+    }
+
+    // Plan 7D's re-review, R5-1: a lock pauses the goal while its round waits inside a model call, with the screen's turn
+    // held. No step can act then, so the engine has the round let go of the turn at once, and the owner's instant commands
+    // work during the pause, before the model answers.
+    @Test
+    fun aPauseDuringAModelCallLetsGoOfTheTurnAtOnce() = scope.runTest {
+        val answering = CompletableDeferred<Unit>()
+        val screen = FakeScreenTurn()
+        val environment = environment(listSms, listSms, finish(2)).apply { beforeCall = { if (it == 1) answering.await() } }
+        val engine = engine(environment, screen = screen)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertTrue(screen.holds)
+
+        engine.signal(PhoneSignal.LOCKED)
+        runCurrent()
+
+        assertEquals(GoalPhase.PAUSED, engine.view.value.goal)
+        assertFalse(screen.holds)
+        answering.complete(Unit)
+        runCurrent()
+        assertFalse(screen.holds)
+        assertTrue(engine.view.value.records.single().data.isEmpty())
+    }
+
     // A save that fails is reported; the view still shows the step, and the next step saves the conversation again.
     @Test
     fun aFailedSaveStillShowsTheStepAndTheNextStepSavesAgain() = scope.runTest {

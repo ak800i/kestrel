@@ -29,8 +29,9 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * One phone for every round of a conversation, as the tests script it (design D27 of sub-project 5): the agent's fakes,
- * and one scripted model whose replies serve the conversation's rounds in order. [afterCall] runs after each model reply
- * with the number of requests so far: a test may steer or touch there. [sentenceOf] is the sentence of every report.
+ * and one scripted model whose replies serve the conversation's rounds in order. [beforeCall] runs before each model call
+ * with that call's number (1, 2, …), and may hold the round there; [afterCall] runs after each model reply with the number
+ * of requests so far: a test may steer or touch there. [sentenceOf] is the sentence of every report.
  */
 class FakeGoalEnvironment(
     replies: List<JsonObject>,
@@ -51,9 +52,10 @@ class FakeGoalEnvironment(
     var knownNames: Set<String> = emptySet()
     var offersRoutines = false
     var released = 0
+    var beforeCall: suspend (Int) -> Unit = {}
     var afterCall: (Int) -> Unit = {}
 
-    private val watched: ModelPort = Watched(model) { afterCall(it) }
+    private val watched: ModelPort = Watched(model, { beforeCall(it) }) { afterCall(it) }
 
     override suspend fun prepare(start: RoundStart): RoundSetup {
         starts += start
@@ -66,11 +68,17 @@ class FakeGoalEnvironment(
 
     override fun toString(): String = "FakeGoalEnvironment(starts=${starts.size})"
 
-    private class Watched(private val scripted: ScriptedModel, private val after: (Int) -> Unit) : ModelPort {
+    private class Watched(
+        private val scripted: ScriptedModel,
+        private val before: suspend (Int) -> Unit,
+        private val after: (Int) -> Unit,
+    ) : ModelPort {
         override val model: ModelInfo get() = scripted.model
 
-        override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse =
-            scripted.call(role, request, step).also { after(scripted.requests.size) }
+        override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse {
+            before(scripted.requests.size + 1)
+            return scripted.call(role, request, step).also { after(scripted.requests.size) }
+        }
     }
 
     companion object {

@@ -51,6 +51,45 @@ class ScreenTurnTest {
         assertEquals(2, harness.data.calls.size)
     }
 
+    // Plan 7E: the Back that closes an app that crashed is an action on the screen, so it passes the pause gate first, as
+    // every action does (D2), and with it the turn. Here the first observation finds the crashed app, before any gate.
+    @Test
+    fun aCrashedAppInTheFirstObservationIsClosedOnlyAfterTheGate() = runTest {
+        val crashed = ScreenBuilder.screen("android", "Viber keeps stopping") { button("Close app", 300) }
+        val harness = Harness(crashed, listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        var snapshots = 0
+        harness.screen.onSnapshot = { if (++snapshots == 2) harness.screen.current = Screens.chats() }
+        val given = CompletableDeferred<Unit>()
+        harness.goal.screenTurn = {
+            given.await()
+            false
+        }
+
+        launch { harness.run("Open Ana's chat") }
+        advanceUntilIdle()
+        assertTrue(harness.screen.actions.none { it is ScreenAction.Global })
+        assertEquals(1, harness.goal.screenTurns)
+        given.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(harness.screen.actions.any { it is ScreenAction.Global })
+    }
+
+    // Plan 7E: a gate that holds the run at the crashed app's Back is no check of the observation's own: however many
+    // pauses come there, the observation still closes the app once the run may act, and never ends the task as stuck.
+    @Test
+    fun pausesAtACrashedAppsBackUseUpNoneOfTheObservationsChecks() = runTest {
+        val crashed = ScreenBuilder.screen("android", "Viber keeps stopping") { button("Close app", 300) }
+        val harness = Harness(crashed, listOf(call("fail", null, null, null, "reason" to "Stop.")))
+        repeat(3) { harness.owner.gates += Gate.RESUMED }
+        harness.screen.onSnapshot = { if (harness.screen.actions.any { it is ScreenAction.Global }) harness.screen.current = Screens.chats() }
+
+        val report = harness.run("Open Ana's chat")
+
+        assertEquals(1, harness.screen.actions.count { it is ScreenAction.Global })
+        assertEquals(EndReason.FAILED_BY_MODEL, report.end)
+    }
+
     // The observation after a pause closes an app that crashed meanwhile with Back, which is an action on the screen; it
     // waits for the turn, because the owner's command may still act there.
     @Test

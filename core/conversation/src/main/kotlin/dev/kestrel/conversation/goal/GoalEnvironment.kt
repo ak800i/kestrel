@@ -75,8 +75,10 @@ sealed interface RoundSetup {
  * it, or while the round goes on by itself, is his newest act, so the round waits until its job has ended (D15; spec 7.3).
  * [take] is true when it waited, because the screen may have changed meanwhile. Each round takes the turn at its start and
  * as every wait for the owner ends, and lets go as each such wait starts, so that the instant commands work during its
- * hand-overs and pauses, and when it ends, on every path (`GoalRunner`, `TaskRun.waitForOwner`). `:app`'s `ScreenTurns`
- * (plan 7D) implements it.
+ * hand-overs and pauses, and when it ends, on every path (`GoalRunner`, `TaskRun.waitForOwner`); a pause that the
+ * conversation starts lets go of it as soon as no step that a gate let through can act any more, at once while the round
+ * waits for its model (`ScreenTakingGoal`; plan 7E).
+ * `:app`'s `ScreenTurns` (plan 7D) implements it.
  */
 interface ScreenTurn {
     suspend fun take(after: Long?): Boolean

@@ -37,22 +37,30 @@ internal class FrontCheck(private val run: TaskRun) {
     /**
      * Checks the app in front of [snapshot] before it is observed (D16, D24): Kestrel's own screen is waited for through
      * [pastKestrel]; another agent-free app ends the task; a Play services screen is handed over; a crashed app is closed
-     * with back. Returns the snapshot to observe.
+     * with back once the pause gate lets the run act, as every action does (plan 7E). Returns the snapshot to observe.
      */
     suspend fun checked(snapshot: ScreenSnapshot): ScreenSnapshot {
         var current = snapshot
-        repeat(CHECKS) {
+        var checks = 0
+        while (checks < CHECKS) {
             current = pastKestrel(current) { run.fresh() }
             val front = ScreenTree.frontWindow(current)?.packageName
             when {
                 run.settings.agentFree.isAgentFree(front) -> throw Ended(EndReason.AGENT_FREE, detail = run.label(front) ?: front)
                 PlayServices.handsOver(current) -> run.handOverOnly(HandOver.of(HandOverKind.PLAY_SERVICES))
                 crashed(current) -> {
+                    // Back acts on the screen, so it passes the pause gate first (D2; plan 7E). A gate that held the run
+                    // is no check: the screen, which may have changed meanwhile, is read again, and every check is kept.
+                    if (run.gate()) {
+                        current = run.fresh()
+                        continue
+                    }
                     run.ports.screen.act(ScreenAction.Global(GlobalKind.BACK))
                     appStopped = true
                 }
                 else -> return current
             }
+            checks++
             current = run.fresh()
         }
         // The screen after the last round is checked too: it is never observed while it shows one of these.
