@@ -94,6 +94,15 @@ class NoticeButtonsTest {
         assertEquals("kestrel-continue", NoticeButtons.button(open, "Continue the goal?", "Continue"))
     }
 
+    @Test
+    fun theShadeIsOpenWhileOneOfSystemUisWindowsIsActive() {
+        val statusBar = WindowSummary(id = 2, kind = WindowKind.SYSTEM, packageName = SYSTEM_UI, bounds = IntRect(0, 0, 1080, 132))
+        val app = WindowSummary(id = 3, kind = WindowKind.APPLICATION, packageName = "com.example", bounds = IntRect(0, 0, 1080, 2400), active = true)
+
+        assertTrue(NoticeButtons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = listOf(shade.copy(active = true)), elements = emptyList())))
+        assertFalse(NoticeButtons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = listOf(statusBar, app), elements = emptyList())))
+    }
+
     private companion object {
         const val SYSTEM_UI = "com.android.systemui"
     }

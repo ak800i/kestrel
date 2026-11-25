@@ -75,7 +75,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         if (action !in notice.actions) throw HookError("the goal notification has no ${action.name.lowercase()} now")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
-        // is as the hook found it (AGENTS.md's limits on the A71). After Open, whose activity closes the shade, it is a no-op.
+        // is as the hook found it (AGENTS.md's limits on the A71).
         var shadeClosed = false
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
@@ -85,10 +85,24 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
         } finally {
-            shadeClosed = withContext(NonCancellable) { session.actions.global(GlobalAction.DISMISS_SHADE) } !is ActionResult.Failed
+            shadeClosed = withContext(NonCancellable) { closeShade(session) }
         }
         if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
         return GoalServiceAnswers.tapped(action, shadeClosed)
+    }
+
+    /**
+     * Closes SystemUI's shade and says whether it closed, as the screen shows it. SystemUI offers its dismiss only while the
+     * shade is expanded, so Android refuses it once SystemUI closes the shade itself, as it does after Open and after a
+     * button that asks for the unlock; the refusal says nothing about the shade, and the screen decides.
+     */
+    private suspend fun closeShade(session: ScreenSession): Boolean {
+        session.actions.global(GlobalAction.DISMISS_SHADE)
+        repeat(CLOSE_TRIES) {
+            if (!NoticeButtons.shadeOpen(session.snapshots.current().snapshot)) return true
+            delay(SHADE_MILLIS)
+        }
+        return false
     }
 
     // Null once the button was pressed, else why not.
@@ -148,6 +162,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         private const val EXTRA_DO = "do"
         private const val EXTRA_ACTION = "action"
         private const val SHADE_TRIES = 5
+        private const val CLOSE_TRIES = 5
         private const val SHADE_MILLIS = 600L
 
         // Android sends no app's alarm sooner than 5 s after it was set (AlarmManager's minimum futurity).

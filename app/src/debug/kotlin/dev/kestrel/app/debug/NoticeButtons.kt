@@ -28,6 +28,12 @@ internal object NoticeButtons {
         element.packageName == SYSTEM_UI && element.clickable && named(element, label)
 
     /**
+     * Whether SystemUI's shade is open: one of SystemUI's windows is the active one, as the shade is while it shows, and
+     * never its status bar, which stays inactive under the app in front.
+     */
+    fun shadeOpen(snapshot: ScreenSnapshot): Boolean = snapshot.windows.any { it.packageName == SYSTEM_UI && it.active }
+
+    /**
      * The key of the next collapsed row around the title [title], so that it can be expanded to show the row's buttons; null
      * when none is collapsed. Android groups an app's notifications by itself (on Android 17 from the second one), and
      * while the group's row is collapsed each row in it shows one line and no buttons, even when it is expanded itself: so
