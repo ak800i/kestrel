@@ -1196,7 +1196,7 @@ import org.junit.Test
 class VoiceViewTest {
     @Test
     fun theVoiceHearsOfAViewOnlyWhenWhatItReadsChanged() = runTest {
-        val acting = ConversationView(id = ConversationId("c1"), command = 1, goal = GoalPhase.ACTING)
+        val acting = ConversationView(id = ConversationId.random(), command = 1, goal = GoalPhase.ACTING)
         val views = flowOf(
             acting,
             // A goal's step and its records are not the voice's.
@@ -1594,7 +1594,7 @@ class ConversationSignalsTest {
     private val signals = mutableListOf<PhoneSignal>()
     private val reports = mutableListOf<String>()
     private val views = MutableStateFlow(ConversationView())
-    private val open = ConversationView(id = ConversationId("c1"), command = 1)
+    private val open = ConversationView(id = ConversationId.random(), command = 1)
 
     @Test
     fun theLockAndTheUnlockReachTheConversationOnlyWhileItIsOpen() = runTest {
@@ -4529,6 +4529,25 @@ with:
 
 ```kotlin
         assertEquals(emptyList<OwnerInput>(), inputs)
+```
+
+The overlapping replies' test had its second reply from the old task path, whose stub said `ListeningTexts.TASK_FAILED` at once. A command now reaches the conversation, which answers later through `Listening.voicePath`, as the app graph's engine does, so the test's conversation says its reply there.
+
+In `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, replace:
+
+```kotlin
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        // A transcript that arrives while "Yes?" still plays is the task, and the stub's reply queues behind "Yes?".
+```
+
+with:
+
+```kotlin
+        listening.converse = { launch { listening.voicePath.say("Opened.") } }
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        // A transcript that arrives while "Yes?" still plays goes to the conversation, whose reply queues behind "Yes?".
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, replace:
@@ -11473,7 +11492,7 @@ class ConversationHookAnswersTest {
         val settings = ConversationSettings(quietSeconds = 60)
         val now = 1_000_000L
         val open = ConversationView(
-            id = ConversationId("c1"),
+            id = ConversationId.random(),
             command = 3,
             goal = GoalPhase.PAUSED_AT_LIMIT,
             replyChannel = InputChannel.TEXT,
@@ -12280,7 +12299,7 @@ git commit -m "feat(app, conversation): the settings page's Delete history delet
 
 ### Task 8: The regression gate on kestrel-api37 (the controller's steps)
 
-Design 14.3 of sub-project 7: after the voice path moved, the agent's and the instant commands' device tests pass on kestrel-api37, every other device test of `:app` passes, and `scripts\eval.ps1`'s dry suite gives the result of the dry suite before this plan. This task changes no file in git. It installs this build on kestrel-api37, whose database plan 7C left at version 3, which this build keeps.
+Design 14.3 of sub-project 7: after the voice path moved, the agent's and the instant commands' device tests pass on kestrel-api37, every other device test of `:app` passes, and `scripts\eval.ps1`'s dry suite gives the result of the dry suite before this plan. The voice and instant command device tests also cover on the device plan 7B Task 5a's change of `Normalizer` (a folded word folds to itself), which the voice matcher and the instant commands share. This task changes no file in git. It installs this build on kestrel-api37, whose database plan 7C left at version 3, which this build keeps.
 
 **Files:**
 - None in git; Step 7 writes `.superpowers\sdd\progress.md`.
