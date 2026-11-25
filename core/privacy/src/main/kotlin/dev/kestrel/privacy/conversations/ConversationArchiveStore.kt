@@ -39,7 +39,8 @@ sealed interface StoredConversation {
  * the conversation is open and its number of commands are plain, for sorting and retention.
  *
  * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
- * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process.
+ * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process; when
+ * [onUnknownFormat] throws, the read fails, and the next read of the conversation reports it again.
  *
  * Every function runs under the key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll] never
  * erases the key between the encryption of a write and its row, which would leave a row that no key opens. The functions are safe to call from the main thread, because they
@@ -53,8 +54,8 @@ class ConversationArchiveStore(
 ) {
     private val cipher = AesGcmFieldCipher { key.get() }
 
-    // The ids of the rows in an unknown format that were reported, so that each is reported once per process. Used only
-    // under the key's guard.
+    // The ids of the rows in an unknown format whose report was made, so that each is reported once per process; a report
+    // that failed or was cancelled is made again at the next read. Used only under the key's guard.
     private val reportedUnknown = mutableSetOf<String>()
 
     /** Every conversation's plain fields, the newest last change first. */
@@ -111,7 +112,10 @@ class ConversationArchiveStore(
         } catch (e: AEADBadTagException) {
             StoredConversation.FailedCheck(header)
         } catch (e: IllegalArgumentException) {
-            if (reportedUnknown.add(row.id)) onUnknownFormat()
+            if (row.id !in reportedUnknown) {
+                onUnknownFormat()
+                reportedUnknown += row.id
+            }
             StoredConversation.UnknownFormat(header)
         }
     }

@@ -762,7 +762,7 @@ The store of design 9.2: it encrypts each payload under the erasable key, bound 
 - Consumes: Task 1's `ConversationDao`, `ConversationRow` and `ConversationHeader`; Task 2's `ErasableKey` with its `guard`; `AesGcmFieldCipher`, whose `decrypt` throws `AEADBadTagException` for a payload that fails its check and `IllegalArgumentException` for an unknown format.
 - Produces: package `dev.kestrel.privacy.conversations`: `class PlainConversation(val header: ConversationHeader, val payload: ByteArray)`; `sealed interface StoredConversation { val header: ConversationHeader }` with `class Readable(header, val payload: ByteArray)`, `class FailedCheck(header)` and `class UnknownFormat(header)`; `class ConversationArchiveStore(dao: ConversationDao, key: ErasableKey, onUnknownFormat: suspend () -> Unit = {}, dispatcher: CoroutineDispatcher = Dispatchers.IO)` with `suspend fun headers(): List<ConversationHeader>`, `suspend fun read(id: String): StoredConversation?`, `suspend fun write(conversations: List<PlainConversation>)`, `suspend fun delete(id: String)`, `suspend fun deleteAll()` and `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int`. Task 4 builds it in `PrivacyStore`; Task 5 wraps it in `RoomRecordArchive`.
 
-Counts: `:core:privacy` JVM N + 9 (P₀ + 9). Device tests unchanged.
+Counts: `:core:privacy` JVM N + 10 (P₀ + 10). Device tests unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -790,6 +790,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
@@ -870,6 +871,19 @@ class ConversationArchiveStoreTest {
 
         assertTrue("later" in dao.rows)
         assertEquals(1, unknownFormats)
+    }
+
+    @Test
+    fun aReportOfAnUnknownFormatThatFailsIsMadeAgainAtTheNextRead() = runTest {
+        var reports = 0
+        val store = ConversationArchiveStore(dao, key, onUnknownFormat = { if (++reports == 1) throw IOException("the log is unavailable") }, dispatcher = Dispatchers.Unconfined)
+        dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
+
+        assertTrue(runCatching { store.read("later") }.exceptionOrNull() is IOException)
+        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+
+        assertEquals(2, reports)
     }
 
     // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read.
@@ -1042,7 +1056,8 @@ sealed interface StoredConversation {
  * the conversation is open and its number of commands are plain, for sorting and retention.
  *
  * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
- * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process.
+ * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process; when
+ * [onUnknownFormat] throws, the read fails, and the next read of the conversation reports it again.
  *
  * Every function runs under the key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll] never
  * erases the key between the encryption of a write and its row, which would leave a row that no key opens. The functions are safe to call from the main thread, because they
@@ -1056,8 +1071,8 @@ class ConversationArchiveStore(
 ) {
     private val cipher = AesGcmFieldCipher { key.get() }
 
-    // The ids of the rows in an unknown format that were reported, so that each is reported once per process. Used only
-    // under the key's guard.
+    // The ids of the rows in an unknown format whose report was made, so that each is reported once per process; a report
+    // that failed or was cancelled is made again at the next read. Used only under the key's guard.
     private val reportedUnknown = mutableSetOf<String>()
 
     /** Every conversation's plain fields, the newest last change first. */
@@ -1114,7 +1129,10 @@ class ConversationArchiveStore(
         } catch (e: AEADBadTagException) {
             StoredConversation.FailedCheck(header)
         } catch (e: IllegalArgumentException) {
-            if (reportedUnknown.add(row.id)) onUnknownFormat()
+            if (row.id !in reportedUnknown) {
+                onUnknownFormat()
+                reportedUnknown += row.id
+            }
             StoredConversation.UnknownFormat(header)
         }
     }
@@ -1128,10 +1146,10 @@ class ConversationArchiveStore(
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest --tests=dev.kestrel.privacy.conversations.ConversationArchiveStoreTest`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`
-Expected: BUILD SUCCESSFUL, P₀ + 9 tests.
+Expected: BUILD SUCCESSFUL, P₀ + 10 tests.
 
 Run: `scripts\gradle.ps1 --stop`
 
@@ -1415,7 +1433,7 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
 - [ ] **Step 4: Run the device tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:privacy:compileDebugAndroidTestKotlin :core:privacy:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL, P₀ + 9 tests.
+Expected: BUILD SUCCESSFUL, P₀ + 10 tests.
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.PrivacyStoreTest,dev.kestrel.privacy.ConversationArchiveSpeedTest'`
 Expected: BUILD SUCCESSFUL, 6 tests, none failed, 1 of them skipped (the speed test without its argument); the script ends with exit code 0.
@@ -2053,7 +2071,7 @@ Write both times into `.superpowers\sdd\progress.md`. This is the one rule that 
 
 ## Counts at the end of plan 7C
 
-- `:core:privacy` JVM: P₀ + 9.
+- `:core:privacy` JVM: P₀ + 10.
 - `:app` JVM: A₀ (unchanged).
 - `:core:privacy` device tests: D₀ + 8 (27 when D₀ is 19), one of them skipped without its instrumentation argument.
 - `:app` device tests: AD₀ + 5 (448 when AD₀ is 443).

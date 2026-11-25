@@ -19,6 +19,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import javax.crypto.KeyGenerator
@@ -99,6 +100,19 @@ class ConversationArchiveStoreTest {
 
         assertTrue("later" in dao.rows)
         assertEquals(1, unknownFormats)
+    }
+
+    @Test
+    fun aReportOfAnUnknownFormatThatFailsIsMadeAgainAtTheNextRead() = runTest {
+        var reports = 0
+        val store = ConversationArchiveStore(dao, key, onUnknownFormat = { if (++reports == 1) throw IOException("the log is unavailable") }, dispatcher = Dispatchers.Unconfined)
+        dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
+
+        assertTrue(runCatching { store.read("later") }.exceptionOrNull() is IOException)
+        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+        assertTrue(store.read("later") is StoredConversation.UnknownFormat)
+
+        assertEquals(2, reports)
     }
 
     // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read.
