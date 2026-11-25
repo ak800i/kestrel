@@ -9,7 +9,7 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.context.ContextBlock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.LineKind
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.safety.Category
 import java.time.ZoneId
 

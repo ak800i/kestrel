@@ -24,10 +24,10 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ArchivedConversationStore
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
-import dev.kestrel.conversation.store.RecordRef
 import dev.kestrel.conversation.store.Searchable
 import dev.kestrel.conversation.testing.FakeGoalEnvironment
 import dev.kestrel.conversation.testing.ManualConversationClock

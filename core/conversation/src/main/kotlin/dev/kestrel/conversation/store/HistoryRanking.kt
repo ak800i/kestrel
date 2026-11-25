@@ -8,9 +8,6 @@ import dev.kestrel.conversation.model.ConversationId
 import java.time.Instant
 import java.time.ZoneId
 
-/** A record of a conversation: its id and the record's number in it. */
-data class RecordRef(val conversation: ConversationId, val record: Int)
-
 /** A record that matched, with how many of the query's words it holds. */
 data class RankedEntry(val entry: IndexedRecord, val score: Int)
 

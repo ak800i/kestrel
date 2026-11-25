@@ -9,6 +9,7 @@ import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.RecordRef
 
 /** The past conversation that "continue the conversation about X" found (design 9.6 of sub-project 7). */
 data class ConversationMatch(val id: ConversationId, val openedAtWall: Long, val firstRequest: String) {

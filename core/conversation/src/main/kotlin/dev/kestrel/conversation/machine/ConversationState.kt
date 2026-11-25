@@ -7,7 +7,7 @@ import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.OwnerInput
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * The conversation's state (design 6.1 of sub-project 7). At most one conversation is open: [id] is null when none is, and

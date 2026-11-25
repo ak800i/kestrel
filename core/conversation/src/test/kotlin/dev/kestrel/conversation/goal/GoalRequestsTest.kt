@@ -17,7 +17,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.RecordLine
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.safety.Category
 import org.junit.Assert.assertEquals

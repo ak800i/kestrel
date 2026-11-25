@@ -7,6 +7,7 @@ import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import org.junit.Assert.assertEquals
 import org.junit.Test

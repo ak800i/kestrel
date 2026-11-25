@@ -65,9 +65,12 @@ sealed interface ConversationEvent {
 
     data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent
 
-    /** The store made [snapshot] the open conversation, or it was gone (null); [sentence] is the request's final reply. */
-    data class Switched(val snapshot: ConversationSnapshot?, val sentence: String) : ConversationEvent {
-        override fun toString(): String = "Switched(snapshot=$snapshot, sentence=${sentence.length})"
+    /**
+     * The store made [snapshot] the open conversation, or it was gone (null), or the switch [failed] in Kestrel, which ends
+     * the request as Kestrel's error; [sentence] is the request's final reply.
+     */
+    data class Switched(val snapshot: ConversationSnapshot?, val sentence: String, val failed: Boolean = false) : ConversationEvent {
+        override fun toString(): String = "Switched(snapshot=$snapshot, sentence=${sentence.length}, failed=$failed)"
     }
 
     /** The hook `conversation-control do=expire` ends the running quiet time at once (design 14.4). */

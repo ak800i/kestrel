@@ -11,6 +11,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CompletableDeferred

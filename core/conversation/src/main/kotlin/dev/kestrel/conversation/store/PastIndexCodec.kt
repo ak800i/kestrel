@@ -1,6 +1,7 @@
 package dev.kestrel.conversation.store
 
 import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.RecordRef
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream

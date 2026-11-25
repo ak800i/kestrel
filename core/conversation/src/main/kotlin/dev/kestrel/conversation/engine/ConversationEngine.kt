@@ -46,8 +46,8 @@ import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PendingSteer
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ConversationStore
-import dev.kestrel.conversation.store.RecordRef
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.TaskAllowance
 import kotlinx.coroutines.CancellationException
@@ -371,6 +371,7 @@ class ConversationEngine(
             is ConversationEffect.ResumeGoal -> couldNot(effect.command, EndReason.KESTREL_ERROR)
             is ConversationEffect.EndHeldGoal -> state.goal?.let { couldNot(it.command, effect.reason) }
             is ConversationEffect.RunLocal -> post(ConversationEvent.LocalEnded(effect.command, LocalOutcome.Reply(ConversationTexts.COULD_NOT)))
+            is ConversationEffect.SwitchTo -> post(ConversationEvent.Switched(null, ConversationTexts.COULD_NOT, failed = true))
             else -> Unit
         }
     }
@@ -504,7 +505,7 @@ class ConversationEngine(
             opened == null -> ConversationTexts.GONE
             else -> ConversationTexts.backIn(ConversationTexts.day(opened.openedAtWall, clock.zone()))
         }
-        process(ConversationEvent.Switched(opened, sentence))
+        process(ConversationEvent.Switched(opened, sentence, failed = message.failed))
     }
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {

@@ -718,6 +718,33 @@ class ConversationEngineTest {
         assertEquals(EndReason.CANCELLED, store.open()!!.records.single().end)
     }
 
+    // A switch that the store could not make ends as Kestrel's error with its words, also for the hooks' outcome, and the
+    // conversation stays closed.
+    @Test
+    fun aSwitchThatTheStoreCannotMakeEndsAsAnError() = scope.runTest {
+        val failing = object : ConversationStore by store {
+            override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? =
+                throw IOException("The disk is full")
+        }
+        val engine = engine(environment(listSms, finish(1)), failing, report = { _, error -> failures += error })
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.ContinueConversation(past)))
+        runCurrent()
+
+        val outcome = engine.outcome(engine.view.value.command)!!
+        assertEquals(EndReason.KESTREL_ERROR, outcome.report.end)
+        assertEquals(ConversationTexts.COULD_NOT, outcome.answer)
+        assertEquals(ChannelOutput.Report(engine.view.value.command, ConversationTexts.COULD_NOT), text.shown.last())
+        assertTrue(failures.single() is IOException)
+        assertNull(engine.view.value.id)
+    }
+
     // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null

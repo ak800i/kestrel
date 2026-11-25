@@ -4,6 +4,7 @@ import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * One command as the search sees it (design 9.4 of sub-project 7): where it is, when it was given (wall clock), and its

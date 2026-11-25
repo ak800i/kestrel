@@ -18,7 +18,7 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.ProcessEnd
-import dev.kestrel.conversation.store.RecordRef
+import dev.kestrel.conversation.model.RecordRef
 
 /**
  * The conversation's rules (design 6 of sub-project 7): one function from a state, an event and the wall clock's time
@@ -222,7 +222,8 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     // D23: the continued conversation is the open one now, with the current test mode; its reply is the request's final one.
     private fun switched(state: ConversationState, event: ConversationEvent.Switched, now: Long): MachineStep {
         val run = state.local ?: return MachineStep(state)
-        val done = MachineStep(state.copy(local = null), listOf(ConversationEffect.EndLocal(run.command, EndReason.FINISHED, event.sentence)))
+        val end = if (event.failed) EndReason.KESTREL_ERROR else EndReason.FINISHED
+        val done = MachineStep(state.copy(local = null), listOf(ConversationEffect.EndLocal(run.command, end, event.sentence)))
         val snapshot = event.snapshot ?: return done.then { reply(it, run.command, event.sentence) }.then(::closeIfAsked).then { runNext(it, now) }
         return done.then { current ->
             // A switch runs only without a goal (design 6.4), so the conversation that it leaves has none to end.
@@ -241,17 +242,21 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     }
 
     // Design 12.4: a change of test mode closes the open conversation, after its goal ended with its report, or after its
-    // local request ended by itself (a request does not act under the test mode, so it is not stopped). A changed quiet time
+    // local request ended by itself (a request does not act under the test mode, so it is not stopped). The close waits
+    // once: another change of a setting meanwhile changes nothing of it, and a test mode that comes back to the
+    // conversation's before the work ended closes nothing (a goal that the change stopped still ends). A changed quiet time
     // counts at once, also for the running clock.
     private fun settingsChanged(state: ConversationState, event: ConversationEvent.SettingsChanged, now: Long): MachineStep {
-        val updated = state.copy(settings = event.settings, safetyTestMode = event.testMode)
-        if (updated.id != null && event.testMode != updated.testMode) {
+        val changed = state.copy(settings = event.settings, safetyTestMode = event.testMode)
+        if (changed.id != null && event.testMode != changed.testMode) {
             return when {
-                updated.goal != null -> GoalRules.stop(updated.copy(closeAfterWork = true))
-                updated.local != null -> MachineStep(updated.copy(closeAfterWork = true))
-                else -> close(updated)
+                changed.closeAfterWork -> MachineStep(changed)
+                changed.goal != null -> GoalRules.stop(changed.copy(closeAfterWork = true))
+                changed.local != null -> MachineStep(changed.copy(closeAfterWork = true))
+                else -> close(changed)
             }
         }
+        val updated = changed.copy(closeAfterWork = false)
         val running = updated.quiet as? QuietClock.Running
         if (running == null || event.settings.quietMillis == state.settings.quietMillis) return MachineStep(updated)
         val left = event.settings.quietMillis - (now - running.sinceWall)

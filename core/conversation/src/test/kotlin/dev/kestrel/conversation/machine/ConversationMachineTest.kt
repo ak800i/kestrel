@@ -336,6 +336,31 @@ class ConversationMachineTest : MachineTesting() {
         assertTrue(done.state.testMode)
     }
 
+    // A test mode that changes back to the conversation's while its work runs closes nothing: the work ends as it would
+    // have, also a goal that the change stopped. A further change of a setting while the close waits keeps what waits.
+    @Test
+    fun aTestModeChangedBackWhileWorkRunsKeepsTheConversation() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val changed = step(remembering.state, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val back = step(changed, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = false)).state
+        assertFalse(back.closeAfterWork)
+        val done = step(back, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+        assertFalse(done.has<ConversationEffect.Close>())
+        assertEquals(id, done.state.id)
+
+        val stopping = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val ended = ended(step(stopping, ConversationEvent.SettingsChanged(ConversationSettings(), testMode = false)).state, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertFalse(ended.has<ConversationEffect.Close>())
+        assertEquals(id, ended.state.id)
+        assertEquals(listOf(ChannelOutput.Report(1, "Cancelled.")), ended.outputs())
+
+        val waiting = step(stopping, spoken("Turn on Bluetooth")).state
+        val quieter = step(waiting, ConversationEvent.SettingsChanged(ConversationSettings(quietSeconds = 120), testMode = true))
+        assertTrue(quieter.effects.isEmpty())
+        assertEquals(waiting.next, quieter.state.next)
+    }
+
     // A memory request's record names its own conversation, so that its end never needs an open one.
     @Test
     fun aMemoryRequestEndsAlsoWithoutAnOpenConversation() {

@@ -6,6 +6,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.RecordRef
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
