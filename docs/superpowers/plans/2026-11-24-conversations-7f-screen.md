@@ -3337,13 +3337,13 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
 ```
 
 with:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The deletion of the past conversation [id] (plan 7F); [done] gets how it ended. */
         class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Message
@@ -3415,16 +3415,16 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
+    private fun reopened(message: Message.Reopened) {
         switching = false
-        switchChosen = message.chosen
 ```
 
 with:
 
 ```kotlin
+    private fun reopened(message: Message.Reopened) {
         switching = false
         switchingTo = null
-        switchChosen = message.chosen
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3545,14 +3545,14 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, write.closing, failed = false))
             }
 ```
 
 with:
 
 ```kotlin
-                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, write.closing, failed = false))
             }
             is Write.DeletePast -> write.done.complete(
                 try {
