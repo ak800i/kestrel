@@ -275,8 +275,8 @@ class SafetyCheckTest {
         // The contacts apps stay guarded: every acting step there is a call, which is handed over.
         val contacts = TestScreen("com.google.android.contacts")
         assertEquals("handover:CALL", decide(tap(contacts.add(1800, "Save")), contacts))
-        assertEquals(listOf("12025550160"), task.ownerDigits)
-        assertEquals(listOf("12025550160", "0641234567"), task.withOwnerWords("064 123 4567").ownerDigits)
+        assertEquals(listOf("12025550160"), task.owner.digits)
+        assertEquals(listOf("12025550160", "0641234567"), task.withOwnerWords("064 123 4567").owner.digits)
     }
 
     @Test
@@ -326,11 +326,10 @@ class SafetyCheckTest {
     @Test
     fun linksAreCheckedBeforeTheyOpen() {
         val screen = TestScreen("org.mozilla.firefox")
-        fun link(url: String, kind: ActionKind = ActionKind.OPEN_URL, fromOwner: Boolean = false) =
-            Proposal("open_url", kind, link = url, linkFromOwner = fromOwner, linkTargetPackage = "org.mozilla.firefox")
+        fun link(url: String, kind: ActionKind = ActionKind.OPEN_URL) = Proposal("open_url", kind, link = url, linkTargetPackage = "org.mozilla.firefox")
 
         assertEquals("block", decide(link("http://example.com"), screen))
-        assertEquals("run", decide(link("https://en.wikipedia.org/wiki/Kestrel", fromOwner = true), screen))
+        assertEquals("run", decide(link("https://en.wikipedia.org/wiki/Kestrel"), screen))
         assertEquals(Category.SENDING, SafetyCheck.assess(link("https://evil.example/?d=483920"), screen.snapshot(), everything, standard).category)
         assertEquals("block", decide(link("tel:112", ActionKind.OPEN_DEEP_LINK), screen, everything, Mode.FULL_AUTO, SafetyEnvironment(emergency = { it == "112" })))
     }

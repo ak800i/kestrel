@@ -21,11 +21,10 @@ sealed interface LinkVerdict {
  * `open_deep_link` only spec 11.4's schemes, never `intent:`, `file:`, `content:`, `javascript:` or `android-app:`, and
  * never a link whose activity belongs to Kestrel, an agent-free app or Play services. A `tel:` link opens only in a phone
  * app of `phonePackages`, only the dial screen, and only for a number that Kestrel may dial ([EmergencyGuard.telAllowed]).
- * A link that came from the screen or
- * a data tool and carries a query or a fragment with data ("=", "&" or a digit; a section anchor is none) sends that data
- * off the phone, so it is `SENDING` (research r52, fixture 12; review 2 M5 and 2-2 New 5), unless it is a `geo:` or an https
- * search whose query values are only [check]'s `ownerWords` (fix-6b item 10, review 6b-links I1 and M1). Data in a link's
- * path is not recognised; spec 12.1 names that gap.
+ * A link that the owner did not name himself (see [fromOwner]) and that carries a query or a fragment with data ("=", "&"
+ * or a digit; a section anchor is none) sends that data off the phone, so it is `SENDING` (research r52, fixture 12;
+ * review 2 M5 and 2-2 New 5), unless it is a `geo:` or an https search whose query values are only the task's known words
+ * (fix-6b item 10, review 6b-links I1 and M1). Data in a link's path is not recognised; spec 12.1 names that gap.
  */
 object LinkCheck {
     val DEEP_LINK_SCHEMES: Set<String> = setOf("viber", "whatsapp", "tg", "waze", "google.navigation", "geo", "tel", "sms", "mailto")
@@ -48,14 +47,14 @@ object LinkCheck {
     /** The messengers' apps: a link that one of them opens can send by itself, whatever its host. */
     private val MESSENGER_PACKAGES = setOf(SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB, SelfChats.WHATSAPP, "com.whatsapp.w4b", SelfChats.VIBER)
 
+    /** Checks [link], which a tool opens as an action of [kind], with the [task]'s own words, in the app [targetPackage]. */
     fun check(
         link: String,
         kind: ActionKind,
-        fromOwner: Boolean,
+        task: TaskSafety,
         targetPackage: String?,
         isAgentFree: (String?) -> Boolean,
         emergency: EmergencyNumbers,
-        ownerWords: Set<String> = emptySet(),
         phonePackages: Set<String> = EmergencyGuard.PHONE_PACKAGES,
     ): LinkVerdict {
         val text = link.trim()
@@ -80,19 +79,28 @@ object LinkCheck {
         // Data in the query or the fragment of a link that the screen or a data tool gave leaves the phone with it. A
         // fragment counts only when it holds "=", "&" or a digit, because a section anchor ("#History") is a word.
         val data = text.substringAfter('?', "").substringBefore('#').isNotEmpty() || fragmentHoldsData(text)
-        val category = if (!fromOwner && data && !searchesOwnerWords(text, scheme, targetPackage, ownerWords)) Category.SENDING else Category.READING
-        return LinkVerdict.Allowed(category)
+        val reads = !data || fromOwner(text, scheme, task.owner) || searchesKnownWords(text, scheme, targetPackage, task.knownWords)
+        return LinkVerdict.Allowed(if (reads) Category.READING else Category.SENDING)
     }
 
     /**
+     * Whether the owner named [text] himself (D32 item 12; spec 12.3): its host, or for a link of another [scheme] the whole
+     * link, is in his own words, which never hold a text of the screen, a data tool or the model. Only an https link has a
+     * host that names a place: in `whatsapp://send?…`, `viber://forward?…` or `tg://share?…` the "host" is an action word
+     * that most messaging requests hold (D12).
+     */
+    private fun fromOwner(text: String, scheme: String, owner: OwnerText): Boolean =
+        owner.names((if (scheme == "https") hostOf(text) else null) ?: text)
+
+    /**
      * A `geo:` or https link that no messenger opens, whose every parameter is one of [SEARCH_KEYS] and whose every value,
-     * decoded, holds only letters that the fold keeps, ASCII digits and spaces, and folds to [ownerWords] alone (the owner's
+     * decoded, holds only letters that the fold keeps, ASCII digits and spaces, and folds to [known] alone (the owner's
      * words and the memory values that the task used): it types his request into a search, so it reads. A messenger's host
      * (letter case and a trailing dot aside) or app, another name, a parameter without a value, any other character (a sign,
      * a mark, a superscript or a letter outside the Basic Multilingual Plane, which the fold would drop), a fragment with
      * data, a placeholder or a value that cannot be decoded keeps the link's data rule.
      */
-    private fun searchesOwnerWords(text: String, scheme: String, targetPackage: String?, ownerWords: Set<String>): Boolean {
+    private fun searchesKnownWords(text: String, scheme: String, targetPackage: String?, known: Set<String>): Boolean {
         val keys = SEARCH_KEYS[scheme] ?: return false
         if (targetPackage in MESSENGER_PACKAGES) return false
         if (scheme == "https") {
@@ -106,7 +114,7 @@ object LinkCheck {
             val name = parameter.substringBefore('=', "")
             val value = decode(parameter.substringAfter('=', ""), plusIsSpace = true)
             val words = value?.let(Normalizer::words).orEmpty()
-            name in keys && value != null && searchable(value) && !Placeholders.holdsOne(value) && words.isNotEmpty() && words.all { it in ownerWords }
+            name in keys && value != null && searchable(value) && !Placeholders.holdsOne(value) && words.isNotEmpty() && words.all { it in known }
         }
     }
 

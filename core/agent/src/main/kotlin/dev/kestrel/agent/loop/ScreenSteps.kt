@@ -500,7 +500,6 @@ internal class ScreenSteps(private val run: TaskRun) {
             val proposal = ActionMapper.proposal(
                 call, run.observation.table, run.observation.appLabel,
                 receivingAppLabel = linkTarget?.let { run.label(it) },
-                linkFromOwner = link?.let(run.launches::fromOwner) ?: false,
                 linkTargetPackage = linkTarget,
             )
             when (val clearance = run.decide(proposal, before, call.tool, null)) {

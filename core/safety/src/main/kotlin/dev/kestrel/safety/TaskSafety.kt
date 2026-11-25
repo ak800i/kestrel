@@ -27,29 +27,29 @@ data class ProtectedTrail(val startTitle: String) {
 }
 
 /**
- * The task's own state that the safety check reads (design D13 of sub-project 5): its allowance, the folded words of the
- * owner's request and answers, the memory values that it used, what it typed, its share flow and its protected trail,
- * how many share flows it started, and the vault's values that it revealed ([secrets], each with the words for its kind,
- * such as "your one-time code"), which a question names by those words, never by the value (design D14; review 2 I3).
+ * The task's own state that the safety check reads (design D13 of sub-project 5): its allowance, the [owner]'s own words,
+ * the memory values that it used, what it typed, its share flow and its protected trail, how many share flows it started,
+ * and the vault's values that it revealed ([secrets], each with the words for its kind, such as "your one-time code"),
+ * which a question names by those words, never by the value (design D14; review 2 I3).
  */
 data class TaskSafety(
     val allowance: TaskAllowance,
-    val ownerWords: Set<String> = emptySet(),
+    val owner: OwnerText = OwnerText.NONE,
     val memoryValues: List<String> = emptyList(),
     val typed: List<TypedText> = emptyList(),
     val shareFlow: ShareFlow? = null,
     val trail: ProtectedTrail? = null,
     val flows: Int = 0,
     val secrets: Map<String, String> = emptyMap(),
-    /**
-     * The digits of the owner's request and answers, each text's in their order, so that `add_contact` can tell whether a
-     * number's digits occur in a row among them (design D19 of sub-project 6).
-     */
-    val ownerDigits: List<String> = emptyList(),
 ) {
-    /** Adds the words of an answer of the owner's, so that typing them is typing the request. */
-    fun withOwnerWords(text: String): TaskSafety =
-        copy(ownerWords = ownerWords + Normalizer.words(text), ownerDigits = ownerDigits + listOf(digitsOf(text)).filter { it.isNotEmpty() })
+    /**
+     * The words that the owner gave the task: his own, and those of the memory values that it used, which a typed text or
+     * a search may hold without coming from the screen.
+     */
+    val knownWords: Set<String> get() = owner.words + memoryValues.flatMap { Normalizer.words(it) }
+
+    /** Adds his [text], an answer or a steering message of his, so that typing its words is typing his request. */
+    fun withOwnerWords(text: String): TaskSafety = copy(owner = owner + text)
 
     /**
      * Remembers a vault's [value] that the task typed after the owner's yes, with the [words] that name its kind
@@ -74,13 +74,13 @@ data class TaskSafety(
     }
 
     override fun toString(): String =
-        "TaskSafety(allowance=$allowance, ownerWords=${ownerWords.size}, memoryValues=${memoryValues.size}, typed=${typed.size}, " +
+        "TaskSafety(allowance=$allowance, owner=$owner, memoryValues=${memoryValues.size}, typed=${typed.size}, " +
             "shareFlow=$shareFlow, trail=$trail, flows=$flows, secrets=${secrets.size})"
 
     companion object {
         /** The state at a task's start, from the owner's [request] and the [knownNames] of memory and the contacts. */
         fun start(request: String, knownNames: Set<String> = emptySet()): TaskSafety =
-            TaskSafety(TaskAllowance.from(request, knownNames), ownerWords = Normalizer.words(request).toSet(), ownerDigits = listOf(digitsOf(request)).filter { it.isNotEmpty() })
+            TaskSafety(TaskAllowance.from(request, knownNames), owner = OwnerText.NONE + request)
 
         /** The ASCII digits of [text] in their order, every other character left out. */
         fun digitsOf(text: String): String = text.filter { it in '0'..'9' }

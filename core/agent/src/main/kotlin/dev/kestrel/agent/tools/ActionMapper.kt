@@ -37,7 +37,6 @@ object ActionMapper {
         frontAppLabel: String?,
         receivingPackage: String? = null,
         receivingAppLabel: String? = null,
-        linkFromOwner: Boolean = false,
         linkTargetPackage: String? = null,
     ): Proposal {
         fun of(kind: ActionKind, declared: Category? = null, target: TableEntry? = null, text: String? = null) =
@@ -62,9 +61,9 @@ object ActionMapper {
             is AgentCall.LookCloser -> of(ActionKind.LOOK_CLOSER, target = call.target?.let(table::entry))
             is AgentCall.OpenApp -> of(ActionKind.OPEN_APP)
             is AgentCall.OpenUrl -> of(ActionKind.OPEN_URL)
-                .copy(link = call.url, linkFromOwner = linkFromOwner, linkTargetPackage = linkTargetPackage, receivingAppLabel = receivingAppLabel)
+                .copy(link = call.url, linkTargetPackage = linkTargetPackage, receivingAppLabel = receivingAppLabel)
             is AgentCall.OpenDeepLink -> of(ActionKind.OPEN_DEEP_LINK)
-                .copy(link = call.uri, linkFromOwner = linkFromOwner, linkTargetPackage = linkTargetPackage, receivingAppLabel = receivingAppLabel)
+                .copy(link = call.uri, linkTargetPackage = linkTargetPackage, receivingAppLabel = receivingAppLabel)
             is AgentCall.OpenSettings -> of(ActionKind.OPEN_SETTINGS)
             is AgentCall.FindContact, is AgentCall.FindMedia, is AgentCall.ListEvents, AgentCall.ListNotifications,
             is AgentCall.ListSms, is AgentCall.ListCalls, AgentCall.GetLocation -> of(ActionKind.READ_DATA)

@@ -246,6 +246,21 @@ class AgentGoalTest {
         assertEquals("The owner added (typed) at step 1: \"Also send it to Mila\"", lastMessage(harness, 1))
     }
 
+    // D8 of sub-project 7: a host that the owner named in his steering is his own, as one in his command is.
+    @Test
+    fun aLinkToAHostThatTheOwnerNamedInHisSteeringIsHis() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("open_url", null, null, null, "url" to "https://kestrel.example/page?id=7", "reason" to "open the page"),
+            fail(),
+        ))
+        harness.goal.steering += Steer("Also open kestrel.example", SteerChannel.TYPED)
+
+        assertEquals(EndReason.FAILED_BY_MODEL, harness.run("Read Ana's messages").end)
+
+        assertTrue(harness.owner.confirmations.isEmpty())
+        assertEquals(listOf("https://kestrel.example/page?id=7"), harness.screen.sent.map { it.data })
+    }
+
     // A typed command can hold a line break; his words stay on his own line, quoted and escaped.
     @Test
     fun aLineBreakInTheOwnersCommandCannotStartALineOfItsOwn() = runTest {

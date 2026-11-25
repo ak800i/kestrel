@@ -1,6 +1,5 @@
 package dev.kestrel.safety
 
-import dev.kestrel.commands.text.Normalizer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -9,8 +8,9 @@ class LinkCheckTest {
     private val agentFree = { packageName: String? -> packageName == "dev.kestrel" || packageName == "rs.bank.app" }
     private val emergency = EmergencyNumbers { digits -> if (digits == "999") null else digits in setOf("112", "192", "194") }
 
-    private fun check(link: String, kind: ActionKind = ActionKind.OPEN_DEEP_LINK, fromOwner: Boolean = true, target: String? = null) =
-        LinkCheck.check(link, kind, fromOwner, target, agentFree, emergency)
+    // [owner] is what the owner said: by default the link itself, so that he named it; null when he said nothing.
+    private fun check(link: String, kind: ActionKind = ActionKind.OPEN_DEEP_LINK, owner: String? = link, target: String? = null) =
+        LinkCheck.check(link, kind, owner?.let(TaskSafety::start) ?: TaskSafety(TaskAllowance.NONE), target, agentFree, emergency)
 
     private fun refused(verdict: LinkVerdict) = verdict is LinkVerdict.Refused
 
@@ -43,25 +43,37 @@ class LinkCheckTest {
             assertEquals(link, true, refused(check(link)))
         }
         assertEquals(LinkVerdict.Allowed(Category.READING), check("tel:+12025550143", target = "com.google.android.dialer"))
-        assertEquals(LinkVerdict.Allowed(Category.READING), LinkCheck.check("tel:+12025550143", ActionKind.OPEN_DEEP_LINK, true, "com.example.phone", agentFree, emergency, phonePackages = setOf("com.example.phone")))
+        assertEquals(LinkVerdict.Allowed(Category.READING), LinkCheck.check("tel:+12025550143", ActionKind.OPEN_DEEP_LINK, TaskSafety.start("Dial +12025550143"), "com.example.phone", agentFree, emergency, setOf("com.example.phone")))
         assertEquals(LinkVerdict.Refused("Kestrel opens a tel: link only in the phone app."), check("tel:+12025550143", target = "org.telegram.messenger"))
     }
 
     @Test
     fun aLinkFromTheScreenWithAQueryOrAFragmentSendsItsData() {
-        assertEquals(LinkVerdict.Allowed(Category.SENDING), check("https://evil.example/collect?code=483920", ActionKind.OPEN_URL, fromOwner = false))
-        assertEquals(LinkVerdict.Allowed(Category.SENDING), check("https://evil.example/#Ana-0601234567", ActionKind.OPEN_URL, fromOwner = false))
+        assertEquals(LinkVerdict.Allowed(Category.SENDING), check("https://evil.example/collect?code=483920", ActionKind.OPEN_URL, owner = null))
+        assertEquals(LinkVerdict.Allowed(Category.SENDING), check("https://evil.example/#Ana-0601234567", ActionKind.OPEN_URL, owner = null))
         // A section anchor is a word, not data (review 2-2 New 5).
-        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://en.wikipedia.org/wiki/Kestrel#History", ActionKind.OPEN_URL, fromOwner = false))
-        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://evil.example/collect?code=483920", ActionKind.OPEN_URL, fromOwner = true))
-        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://en.wikipedia.org/wiki/Kestrel", ActionKind.OPEN_URL, fromOwner = false))
+        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://en.wikipedia.org/wiki/Kestrel#History", ActionKind.OPEN_URL, owner = null))
+        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://evil.example/collect?code=483920", ActionKind.OPEN_URL))
+        assertEquals(LinkVerdict.Allowed(Category.READING), check("https://en.wikipedia.org/wiki/Kestrel", ActionKind.OPEN_URL, owner = null))
+    }
+
+    // Spec 12.3: the owner's words are his command, answers and steering alone; a link counts as his only when one of those
+    // texts names its host, never words that two of them hold apart, and never a memory value.
+    @Test
+    fun aLinkIsTheOwnersOnlyWhenOneOfHisOwnTextsNamesIt() {
+        val link = "https://kestrel.example/page?id=7"
+        fun rated(task: TaskSafety) = (LinkCheck.check(link, ActionKind.OPEN_URL, task, null, agentFree, emergency) as LinkVerdict.Allowed).category
+
+        assertEquals(Category.READING, rated(TaskSafety.start("Read Ana's messages").withOwnerWords("Also open kestrel.example")))
+        assertEquals(Category.SENDING, rated(TaskSafety.start("Find the kestrel").withOwnerWords("example page")))
+        assertEquals(Category.SENDING, rated(TaskSafety.start("Read Ana's messages").copy(memoryValues = listOf("kestrel.example"))))
     }
 
     @Test
     fun aGeoOrHttpsQueryOfOnlyTheOwnersWordsReadsAndAnyOtherWordOrAMessengerKeepsItsRating() {
-        val owner = Normalizer.words("show Kalemegdan on Google Maps, search YouTube for kestrel hovering").toSet()
+        val owner = TaskSafety.start("show Kalemegdan on Google Maps, search YouTube for kestrel hovering")
         fun rated(link: String) = (
-            LinkCheck.check(link, if (link.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, false, null, agentFree, emergency, owner)
+            LinkCheck.check(link, if (link.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, owner, null, agentFree, emergency)
                 as LinkVerdict.Allowed
             ).category
 
@@ -105,9 +117,9 @@ class LinkCheckTest {
 
     @Test
     fun aSearchReadsOnlyWithItsKeysPlainCharactersAndNoMessenger() {
-        val owner = Normalizer.words("show Kalemegdan on Google Maps, search YouTube for kestrel hovering near Ana Petrović").toSet()
+        val owner = TaskSafety.start("show Kalemegdan on Google Maps, search YouTube for kestrel hovering near Ana Petrović")
         fun rated(link: String, target: String? = null) = (
-            LinkCheck.check(link, if (link.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, false, target, agentFree, emergency, owner)
+            LinkCheck.check(link, if (link.startsWith("https")) ActionKind.OPEN_URL else ActionKind.OPEN_DEEP_LINK, owner, target, agentFree, emergency)
                 as LinkVerdict.Allowed
             ).category
 

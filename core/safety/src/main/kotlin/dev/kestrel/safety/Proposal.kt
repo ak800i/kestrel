@@ -79,9 +79,9 @@ data class ShareCount(val photos: Int, val videos: Int)
 /**
  * An action that the agent or a routine proposes (design D13 of sub-project 5). [targetKey] names an element of the
  * snapshot that is checked with it; [point] is a `TapAt` in screen pixels, with [pointText], its OCR line; [text] is
- * `type_text`'s text with placeholders, never a vault value; [link] is `open_url`'s or `open_deep_link`'s link, which came
- * from the owner's request or memory when [linkFromOwner] is true, and [linkTargetPackage] is the package of the activity
- * that `:app` resolved for it; [receivingPackage] is the app that `share_media` or `compose_sms` opens. The launcher
+ * `type_text`'s text with placeholders, never a vault value; [link] is `open_url`'s or `open_deep_link`'s link, which
+ * [LinkCheck] judges with the task's own words, and [linkTargetPackage] is the package of the activity that `:app`
+ * resolved for it; [receivingPackage] is the app that `share_media` or `compose_sms` opens. The launcher
  * labels come from `AppsPort`, because `:core:safety` cannot read them; null makes the question name the app by its
  * package's last part. Its text form prints only kinds and lengths.
  */
@@ -94,7 +94,6 @@ data class Proposal(
     val pointText: String? = null,
     val text: String? = null,
     val link: String? = null,
-    val linkFromOwner: Boolean = false,
     val linkTargetPackage: String? = null,
     val receivingPackage: String? = null,
     val shareCount: ShareCount? = null,
