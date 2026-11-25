@@ -82,6 +82,19 @@ class LimitsTest {
         assertTrue(asked[1], asked[1].startsWith("I've used 6 model replies on this. "))
     }
 
+    // The third interruption of "Continue?" in a row counts as no answer, which keeps a goal open (design 7.4 of sub-project 7).
+    @Test
+    fun threeInterruptionsOfTheLimitsQuestionPauseTheGoal() = runTest {
+        val harness = harness(goingOn(10))
+        harness.owner.answers += List(3) { Answer.Interrupted }
+
+        val report = harness.run(keepGoing(GoalLimits(replies = 2)))
+
+        assertEquals(EndReason.PAUSED_AT_LIMIT, report.end)
+        assertEquals(3, harness.owner.asked.size)
+        assertEquals(2, harness.model.requests.size)
+    }
+
     @Test
     fun workingTimeLeavesOutTheOwnersWaits() = runTest {
         val clock = FakeClock()

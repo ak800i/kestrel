@@ -2,6 +2,7 @@ package dev.kestrel.agent
 
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
+import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.goal.HistoryMatch
 import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.HistoryResult
@@ -29,6 +30,7 @@ import dev.kestrel.agent.tools.Tools
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.providers.profiles.ModelRole
+import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.Mode
@@ -202,6 +204,41 @@ class AgentGoalTest {
         assertEquals("I'm late", harness.screen.actions.filterIsInstance<ScreenAction.SetText>().single().text)
         val asked = harness.owner.confirmations.single().question
         assertFalse(asked, asked.contains("You didn't ask me to send anything."))
+    }
+
+    // Design 7.3 and 7.4 of sub-project 7: a steer that comes while "Continue?" is asked reaches the model in that same turn,
+    // after the yes and before the step starts.
+    @Test
+    fun aSteerThatComesDuringTheLimitsQuestionReachesTheModelInThatTurn() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("say", null, null, null, "text" to "Opening it."), fail()))
+        var stepsAtQuestion: List<Int>? = null
+        harness.owner.onAsk = {
+            stepsAtQuestion = harness.goal.steps.toList()
+            harness.goal.steering += Steer("Also send it to Mila", SteerChannel.TYPED)
+        }
+        harness.owner.answers += Answer.Yes
+
+        harness.run(TaskRequest(Harness.ID, "Send Ana a photo", limits = GoalLimits(replies = 1)))
+
+        assertEquals(listOf(1), stepsAtQuestion)
+        assertEquals(listOf(1, 2), harness.goal.steps)
+        assertEquals("The owner added (typed) at step 1: \"Also send it to Mila\"", lastMessage(harness, 1))
+    }
+
+    // Design 10.2 of sub-project 7: the wait for Kestrel's own screen to leave is no work.
+    @Test
+    fun theWaitForKestrelsOwnScreenIsNoWork() = runTest {
+        val harness = Harness(Screens.app(AgentFreeApps.KESTREL, "Safety"), listOf(fail()))
+        harness.owner.leaves += true
+        harness.owner.onLeave = {
+            harness.clock.elapsed += 120_000
+            harness.screen.current = Screens.chats()
+        }
+
+        val report = harness.run("Read Ana's messages")
+
+        assertEquals(EndReason.FAILED_BY_MODEL, report.end)
+        assertEquals(0L, report.workMillis)
     }
 
     // The owner's steering and his answers are his own words, which are never cut, as his command's are not.
