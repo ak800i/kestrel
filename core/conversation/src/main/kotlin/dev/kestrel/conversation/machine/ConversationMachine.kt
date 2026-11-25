@@ -55,7 +55,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     // Design 6.4: an open question takes the owner's answer first; a local request lets a command wait for it.
     private fun input(state: ConversationState, input: OwnerInput, now: Long): MachineStep {
         state.question?.let { open -> answer(state, open, input)?.let { return it } }
-        if (state.local != null) return whileLocal(state, input)
+        state.local?.let { run -> return whileLocal(state, run, input) }
         return when (val intent = input.intent) {
             is InputIntent.Command -> command(state, input, intent.text, now)
             is InputIntent.Answer -> MachineStep(state)
@@ -94,9 +94,9 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         }
     }
 
-    private fun whileLocal(state: ConversationState, input: OwnerInput): MachineStep = when (input.intent) {
+    private fun whileLocal(state: ConversationState, run: LocalRun, input: OwnerInput): MachineStep = when (input.intent) {
         is InputIntent.Command -> MachineStep(state.copy(next = input))
-        InputIntent.Stop -> MachineStep(state.copy(next = null), listOf(ConversationEffect.CancelLocal))
+        InputIntent.Stop -> MachineStep(state.copy(next = null, local = run.copy(cancelled = true)), listOf(ConversationEffect.CancelLocal))
         else -> MachineStep(state)
     }
 
@@ -176,7 +176,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             val counted = goal.copy(stepsBefore = goal.stepsBefore + event.report.steps)
             return GoalRules.held(state, counted, hold, event.reply, now).then { runNext(it, now) }
         }
-        val ended = state.copy(goal = null, question = null, asksContinue = false)
+        val ended = state.copy(goal = null, question = null, asksContinue = false, heldWords = null)
         val recorded = MachineStep(ended, listOf(ConversationEffect.EndRecord(goal.record, event.report.end, event.answer)))
         val sentence = event.reply
         return when {
@@ -193,12 +193,15 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         }
     }
 
+    // A request that "stop" cancelled before it ended by itself (its end says nothing then) ended as cancelled; one whose
+    // reply came first had finished.
     private fun localEnded(state: ConversationState, event: ConversationEvent.LocalEnded, now: Long): MachineStep {
         val run = state.local?.takeIf { it.command == event.command } ?: return MachineStep(state)
         val outcome = event.outcome
         if (outcome is LocalOutcome.Switch) return MachineStep(state, listOf(ConversationEffect.SwitchTo(run.command, outcome.id, run.input)))
         val done = state.copy(local = null)
-        val recorded = MachineStep(done, listOfNotNull(run.record?.let { ConversationEffect.EndRecord(it, EndReason.FINISHED, outcome.sentence) }))
+        val end = if (run.cancelled && outcome == LocalOutcome.Quiet) EndReason.CANCELLED else EndReason.FINISHED
+        val recorded = MachineStep(done, listOfNotNull(run.record?.let { ConversationEffect.EndRecord(it, end, outcome.sentence) }))
         val replied = when (outcome) {
             is LocalOutcome.Reply -> recorded.then { reply(it, run.command, outcome.sentence) }
             is LocalOutcome.Deleted -> recorded.then { close(it, keep = false) }.then { reply(it, run.command, outcome.sentence) }
@@ -241,9 +244,14 @@ class ConversationMachine(private val ids: () -> ConversationId) {
 
     // Design 6.7: without a goal the conversation is open while its quiet time has not passed, and its clock runs on for
     // the rest; with a goal in any phase the goal is held as interrupted, unless the owner stopped Kestrel after the
-    // snapshot was saved (plan 7E), which ends the goal as "stop" does.
+    // snapshot was saved (plan 7E), which ends the goal as "stop" does. A goal that worked until the process ended is held
+    // from the snapshot's `lastWall`, the last time that Kestrel saved it while it worked (the engine saves at every change
+    // of the conversation, its records' traces too); one that was held already, from when its hold began.
+    // Design 12.4: the engine gives the Safety page's test mode (`SettingsChanged`, kept as `safetyTestMode`) before it
+    // restores; when it differs from the conversation's, the conversation closes, after its goal has ended as "stop" ends it.
     private fun restored(state: ConversationState, snapshot: ConversationSnapshot?, previous: ProcessEnd, now: Long): MachineStep {
         if (snapshot == null || !snapshot.open) return MachineStep(state)
+        val otherMode = snapshot.testMode != state.safetyTestMode
         val base = state.copy(
             id = snapshot.id,
             openedAtWall = snapshot.openedAtWall,
@@ -255,10 +263,12 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val goal = snapshot.goal ?: run {
             val since = snapshot.quietSinceWall ?: snapshot.lastWall
             val left = state.settings.quietMillis - maxOf(0L, now - since)
-            return if (left <= 0) close(base) else QuietRules.start(MachineStep(base), since, left)
+            return if (left <= 0 || otherMode) close(base) else QuietRules.start(MachineStep(base), since, left)
         }
         val ownerStopped = previous is ProcessEnd.OwnerStopped && previous.atWall >= snapshot.lastWall
-        return GoalRules.restored(base, goal, now, ownerStopped)
+        val heldSince = if (goal.phase in GoalState.HELD) goal.changedAtWall else snapshot.lastWall
+        val end = EndReason.CANCELLED.takeIf { ownerStopped || otherMode }
+        return GoalRules.restored(base.copy(closeAfterGoal = otherMode), goal, heldSince, now, end)
     }
 
     private fun quietEnded(state: ConversationState, number: Int): MachineStep =
@@ -289,6 +299,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             commands = 0,
             goal = null,
             asksContinue = false,
+            heldWords = null,
             quiet = QuietClock.Off,
             closeAfterGoal = false,
         )

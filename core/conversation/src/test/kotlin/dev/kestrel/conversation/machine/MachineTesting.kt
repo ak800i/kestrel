@@ -18,8 +18,14 @@ abstract class MachineTesting {
     protected var now = 1_000_000L
     private var inputs = 0L
 
-    /** No conversation open; the Safety page's test mode is off, so that the tests can see it switch on. */
-    protected val idle = ConversationState(safetyTestMode = false)
+    /**
+     * No conversation open, and the phone unlocked as `PhoneSignals` reported it; the Safety page's test mode is off, so that
+     * the tests can see it switch on.
+     */
+    protected val idle = ConversationState(phone = PhoneState(known = true), safetyTestMode = false)
+
+    /** At process start: no conversation open, and `PhoneSignals` has not yet said whether the phone is locked. */
+    protected val starting = ConversationState(safetyTestMode = false)
 
     protected fun step(state: ConversationState, event: ConversationEvent): MachineStep = machine.next(state, event, now)
 

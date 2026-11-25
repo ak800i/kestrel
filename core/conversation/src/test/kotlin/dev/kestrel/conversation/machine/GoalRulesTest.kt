@@ -52,6 +52,23 @@ class GoalRulesTest : MachineTesting() {
     }
 
     @Test
+    fun aTouchWhileTheGoalAsksClosesItsQuestionAndATypedCommandThenSteersTheResumedGoal() {
+        val touched = step(asked(acting(), 3, QuestionKind.FREE), ConversationEvent.Touched)
+        assertNull(touched.state.question)
+
+        val also = typed("Send it to Mila instead")
+        val waiting = step(touched.state, also)
+        assertFalse(waiting.has<ConversationEffect.AnswerQuestion>())
+        assertTrue(step(waiting.state, ConversationEvent.Dialogue(DialogueEvent.Answered(3))).effects.isEmpty())
+
+        val resumed = ended(waiting.state, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "I stopped.")
+        assertEquals(
+            ConversationEffect.ResumeGoal(2, ResumeCause.INTERRUPTION, ConversationEffect.Steering("Send it to Mila instead", InputChannel.TEXT), also.input),
+            resumed.effect<ConversationEffect.ResumeGoal>(),
+        )
+    }
+
+    @Test
     fun touchesDuringAHandOverAReplyOrAHeldGoalInterruptNothing() {
         assertTrue(step(step(acting(), ConversationEvent.Dialogue(DialogueEvent.HandedOver(2))).state, ConversationEvent.Touched).effects.isEmpty())
 
@@ -123,6 +140,43 @@ class GoalRulesTest : MachineTesting() {
     }
 
     @Test
+    fun aYesThatALockOvertookLeavesTheGoalPausedAndTheUnlockAsksAgain() {
+        val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state
+        val answering = step(asked(back, 9, QuestionKind.CONTINUE_GOAL), spoken(InputIntent.Answer(ChannelAnswer.Yes))).state
+
+        // The owner said yes and pressed the power button: the lock comes before the answer's end.
+        val locked = signal(answering, PhoneSignal.LOCKED)
+        assertTrue(locked.has<ConversationEffect.CancelContinueQuestion>())
+        assertNull(locked.state.question)
+        val late = step(locked.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
+
+        assertFalse(late.has<ConversationEffect.ResumePausedGoal>())
+        assertEquals(GoalPhase.PAUSED, checkNotNull(late.state.goal).phase)
+        assertTrue(signal(late.state, PhoneSignal.UNLOCKED).has<ConversationEffect.AskContinueGoal>())
+    }
+
+    @Test
+    fun aHeldGoalsReportWaitsWhileTheOwnerIsAway() {
+        // A touch's interruption that a ringing call meets: the round ends held while the call rings.
+        val ringing = signal(step(acting(), ConversationEvent.Touched).state, PhoneSignal.RINGING).state
+        val held = ended(ringing, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "I stopped.")
+        val said = "I stopped. ${ConversationTexts.GO_ON}"
+        assertTrue(held.outputs().isEmpty())
+        assertEquals(ConversationEffect.AddLine(1, LineKind.KESTREL_SAID, said, null), held.effect<ConversationEffect.AddLine>())
+        assertEquals(ChannelOutput.Said(said), held.state.heldWords)
+
+        val back = signal(held.state, PhoneSignal.CALL_IDLE)
+        assertEquals(listOf(ChannelOutput.Said(said)), back.outputs())
+        assertNull(back.state.heldWords)
+
+        // When the hold's 30 minutes end while the owner is still away, only the goal's final reply waits for him.
+        val expired = step(held.state, ConversationEvent.TimerEnded(Timer.HOLD, held.state.timers.hold)).state
+        val final = ended(expired, TaskReport(EndReason.PAUSED_TOO_LONG), "Too long.")
+        assertNull(final.state.heldWords)
+        assertEquals(ChannelOutput.Report(1, "Too long."), final.state.heldReport)
+    }
+
+    @Test
     fun aTouchWhileContinueTheGoalIsAskedChangesNothing() {
         // Design 6.5 and D13 change today's rule on purpose: a touch no longer answers "Continue the task?".
         val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state
@@ -140,8 +194,9 @@ class GoalRulesTest : MachineTesting() {
 
         val handed = step(paused, ConversationEvent.Dialogue(DialogueEvent.HandedOver(5)))
 
-        assertEquals(GoalPhase.HANDED_OVER, handed.state.goal!!.phase)
-        assertNull(handed.state.goal!!.hold)
+        val goal = checkNotNull(handed.state.goal)
+        assertEquals(GoalPhase.HANDED_OVER, goal.phase)
+        assertNull(goal.hold)
         assertTrue(handed.has<ConversationEffect.ResumePausedGoal>())
         assertTrue(step(handed.state, ConversationEvent.TimerEnded(Timer.HOLD, paused.timers.hold)).effects.isEmpty())
         assertEquals(
@@ -260,7 +315,13 @@ class GoalRulesTest : MachineTesting() {
             ConversationEffect.RunLocal(1, null, LocalRequest.ContinuePast(marker), input),
             ConversationEffect.SwitchTo(1, other, input),
             ChannelQuestion(1, marker, QuestionKind.YES_NO, marker),
-            ConversationState(heldReport = ChannelOutput.Report(1, marker), continueAnswer = input, local = LocalRun(1, null, input), next = input),
+            ConversationState(
+                heldReport = ChannelOutput.Report(1, marker),
+                heldWords = ChannelOutput.Said(marker),
+                continueAnswer = input,
+                local = LocalRun(1, null, input),
+                next = input,
+            ),
         )
 
         for (value in values) assertFalse(value.javaClass.simpleName, value.toString().contains(marker))

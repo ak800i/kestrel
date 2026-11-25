@@ -25,6 +25,11 @@ import dev.kestrel.conversation.model.PhoneSignal
  * 30 minutes (D17) and then ends with its partial report. "Continue the goal?" is asked when the owner is back after a
  * pause and after a restart, never by itself; a yes resumes the goal, a no ends it, and no answer leaves it held. A
  * hand-over ends after 3 minutes; a typed question waits as D21 says, and 5 minutes from "Reply…".
+ *
+ * A question that the conversation withdraws (the goal's own when "stop", a touch, the call backstop or a lock reaches
+ * it, and "Continue the goal?" when it is withdrawn) leaves the state at once, so that the owner's next input is never
+ * taken as its answer, and its late `Answered` or answer changes nothing. What Kestrel says about a held goal waits while
+ * the owner is away, as a final reply does (design 6.4).
  */
 internal object GoalRules {
     const val HOLD_MILLIS = 30L * 60 * 1000
@@ -37,7 +42,7 @@ internal object GoalRules {
     fun stop(state: ConversationState): MachineStep {
         val goal = state.goal ?: return MachineStep(state.copy(next = null))
         if (goal.ending == GoalEnding.STOPPING) return MachineStep(state.copy(next = null))
-        val stopped = state.copy(goal = goal.copy(ending = GoalEnding.STOPPING), next = null)
+        val stopped = ending(state, goal, GoalEnding.STOPPING).copy(next = null)
         val effect = if (goal.hold != null && goal.phase != GoalPhase.PAUSED) {
             ConversationEffect.EndHeldGoal(EndReason.CANCELLED)
         } else {
@@ -48,7 +53,11 @@ internal object GoalRules {
 
     /** A paused round goes on: its gate opens and it looks at the screen afresh. */
     fun resumePaused(state: ConversationState, goal: GoalState, channel: InputChannel, now: Long): MachineStep = MachineStep(
-        state.copy(goal = goal.copy(phase = GoalPhase.ACTING, hold = null, changedAtWall = now), timers = state.timers.copy(hold = state.timers.hold + 1)),
+        state.copy(
+            goal = goal.copy(phase = GoalPhase.ACTING, hold = null, changedAtWall = now),
+            heldWords = null,
+            timers = state.timers.copy(hold = state.timers.hold + 1),
+        ),
         listOf(ConversationEffect.ResumePausedGoal, ConversationEffect.AddLine(goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel)),
     ).then(::withdrawContinue)
 
@@ -65,23 +74,28 @@ internal object GoalRules {
             ConversationEffect.AddLine(goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel).takeIf { steer == null },
             ConversationEffect.ResumeGoal(command, cause, steer?.let { ConversationEffect.Steering(it, channel) }, input),
         )
-        return MachineStep(state.copy(command = command, goal = resumed, timers = state.timers.copy(hold = state.timers.hold + 1)), effects)
+        return MachineStep(state.copy(command = command, goal = resumed, heldWords = null, timers = state.timers.copy(hold = state.timers.hold + 1)), effects)
             .then(::withdrawContinue)
     }
 
-    /** The goal's round ended and [hold] holds it: Kestrel says the round's [sentence] and how to go on. */
+    /**
+     * The goal's round ended and [hold] holds it: Kestrel says the round's [sentence] and how to go on, or keeps them for
+     * the owner's return while he is away; the record has them at once.
+     */
     fun held(state: ConversationState, goal: GoalState, hold: GoalHold, sentence: String?, now: Long): MachineStep {
         val number = state.timers.hold + 1
-        val text = listOfNotNull(sentence, ConversationTexts.held(hold)).joinToString(" ")
+        val words = ChannelOutput.Said(listOfNotNull(sentence, ConversationTexts.held(hold)).joinToString(" "))
+        val away = state.phone.away
         return MachineStep(
             state.copy(
                 goal = goal.copy(phase = hold.phase, hold = hold, changedAtWall = now, ending = null, handOver = null),
                 question = null,
+                heldWords = words.takeIf { away },
                 timers = state.timers.copy(hold = number),
             ),
-            listOf(
-                ConversationEffect.Output(ChannelOutput.Said(text)),
-                ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, text, null),
+            listOfNotNull(
+                ConversationEffect.Output(words).takeUnless { away },
+                ConversationEffect.AddLine(goal.record, LineKind.KESTREL_SAID, words.text, null),
                 ConversationEffect.StartTimer(Timer.HOLD, number, HOLD_MILLIS),
             ),
         )
@@ -100,14 +114,14 @@ internal object GoalRules {
         if (goal.ending != null) return MachineStep(state)
         val interrupts = goal.phase == GoalPhase.ACTING || (goal.phase == GoalPhase.ASKING && state.question?.replyOpen != true)
         if (!interrupts) return MachineStep(state)
-        return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.INTERRUPTING)), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
+        return MachineStep(ending(state, goal, GoalEnding.INTERRUPTING), listOf(ConversationEffect.InterruptGoal(Interruption.TOUCH)))
     }
 
     fun signal(state: ConversationState, signal: PhoneSignal, now: Long): MachineStep {
         val phone = state.phone
         return when (signal) {
-            PhoneSignal.LOCKED -> pause(state.copy(phone = phone.copy(locked = true)), GoalHold.LOCK, now)
-            PhoneSignal.UNLOCKED -> back(state.copy(phone = phone.copy(locked = false)))
+            PhoneSignal.LOCKED -> pause(state.copy(phone = phone.copy(locked = true, known = true)), GoalHold.LOCK, now)
+            PhoneSignal.UNLOCKED -> back(state.copy(phone = phone.copy(locked = false, known = true)))
             PhoneSignal.RINGING -> pause(state.copy(phone = phone.copy(ringing = true)), GoalHold.INCOMING_CALL, now)
             PhoneSignal.CALL_ACTIVE -> pause(
                 state.copy(phone = phone.copy(ringing = false, inCall = true)),
@@ -171,7 +185,10 @@ internal object GoalRules {
     }
 
     // The yes came from the owner's input (a spoken or typed yes, "Kestrel, continue") or from the card, which gives none.
+    // An answer that comes after a lock, a call or "stop" withdrew the question changes nothing: the goal stays as that
+    // left it, and the owner's return asks again.
     fun continueAnswered(state: ConversationState, answer: ChannelAnswer, now: Long): MachineStep {
+        if (!state.asksContinue) return MachineStep(state)
         val input = state.continueAnswer
         val asked = state.copy(asksContinue = false, continueAnswer = null)
         val goal = asked.goal
@@ -189,30 +206,35 @@ internal object GoalRules {
     }
 
     /**
-     * A goal that the end of Kestrel's process cut, in any phase (design 6.7): interrupted, held for 30 minutes from its
-     * last change, and "Continue the goal?" asked; when those 30 minutes have passed, it ends with its partial report.
-     * When the owner stopped Kestrel ([ownerStopped]: Stop in Android's "Active apps", a force stop or removing it from
-     * Recents, after the snapshot), the goal ends at once as "stop" ends a held goal, and nothing asks (plan 7E).
+     * A goal that the end of Kestrel's process cut, in any phase (design 6.7): interrupted and held for 30 minutes from
+     * [heldSince], when it stopped working, which its restored state keeps, so that a second restart counts from the same
+     * time; when those 30 minutes have passed, it ends with its partial report. "Continue the goal?" is asked once the
+     * owner is there (the phone known to be unlocked, with no call), else when he is back. [end] ends the goal at once, as
+     * "stop" ends a held goal, and nothing asks: after the owner stopped Kestrel (plan 7E) or a change of test mode.
      */
-    fun restored(state: ConversationState, stored: GoalState, now: Long, ownerStopped: Boolean = false): MachineStep {
-        val goal = GoalState(stored.record, GoalPhase.INTERRUPTED, stored.changedAtWall, GoalHold.RESTART, stored.rounds, stored.stepsBefore)
-        if (ownerStopped) {
-            return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(EndReason.CANCELLED)))
-        }
-        val left = HOLD_MILLIS - maxOf(0L, now - stored.changedAtWall)
-        if (left <= 0) {
-            return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG)))
+    fun restored(state: ConversationState, stored: GoalState, heldSince: Long, now: Long, end: EndReason? = null): MachineStep {
+        val goal = GoalState(stored.record, GoalPhase.INTERRUPTED, heldSince, GoalHold.RESTART, stored.rounds, stored.stepsBefore)
+        val left = HOLD_MILLIS - maxOf(0L, now - heldSince)
+        val ends = end ?: EndReason.PAUSED_TOO_LONG.takeIf { left <= 0 }
+        if (ends != null) {
+            return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(ends)))
         }
         val number = state.timers.hold + 1
-        return MachineStep(state.copy(goal = goal, timers = state.timers.copy(hold = number)), listOf(ConversationEffect.StartTimer(Timer.HOLD, number, left)))
-            .then(::askContinue)
+        val held = MachineStep(
+            state.copy(goal = goal, timers = state.timers.copy(hold = number)),
+            listOf(ConversationEffect.StartTimer(Timer.HOLD, number, left)),
+        )
+        return if (state.phone.present) held.then(::askContinue) else held
     }
 
     fun withdrawContinue(state: ConversationState): MachineStep =
         if (!state.asksContinue) {
             MachineStep(state)
         } else {
-            MachineStep(state.copy(asksContinue = false, continueAnswer = null), listOf(ConversationEffect.CancelContinueQuestion))
+            MachineStep(
+                state.copy(asksContinue = false, continueAnswer = null, question = state.question?.takeUnless { it.kind == QuestionKind.CONTINUE_GOAL }),
+                listOf(ConversationEffect.CancelContinueQuestion),
+            )
         }
 
     /**
@@ -236,24 +258,29 @@ internal object GoalRules {
         )
     }
 
-    // A lock or a call pauses a goal that acts or asks; a held goal's "Continue the goal?" waits for the owner's return.
+    // A lock or a call pauses a goal that acts or asks, and withdraws its question; a held goal's "Continue the goal?" waits
+    // for the owner's return.
     private fun pause(state: ConversationState, hold: GoalHold, now: Long): MachineStep {
         val goal = state.goal
         if (goal == null || goal.ending != null) return MachineStep(state)
         if (goal.phase != GoalPhase.ACTING && goal.phase != GoalPhase.ASKING) return withdrawContinue(state)
         val number = state.timers.hold + 1
         return MachineStep(
-            state.copy(goal = goal.copy(phase = GoalPhase.PAUSED, hold = hold, changedAtWall = now), timers = state.timers.copy(hold = number)),
+            state.copy(
+                goal = goal.copy(phase = GoalPhase.PAUSED, hold = hold, changedAtWall = now),
+                question = questionAfter(state, goal),
+                timers = state.timers.copy(hold = number),
+            ),
             listOf(ConversationEffect.PauseGoal, ConversationEffect.StartTimer(Timer.HOLD, number, HOLD_MILLIS)),
         )
     }
 
-    // The owner is back (the unlock, or the end of a call with the phone unlocked): a report kept for him is given now, and
-    // a paused or restored goal asks "Continue the goal?".
+    // The owner is back (the unlock, or the end of a call with the phone unlocked): what was kept for him is given now, an
+    // ended goal's final reply first, and a paused or restored goal asks "Continue the goal?".
     private fun back(state: ConversationState): MachineStep {
-        if (state.phone.away) return MachineStep(state)
-        val report = state.heldReport
-        val shown = if (report == null) MachineStep(state) else MachineStep(state.copy(heldReport = null), listOf(ConversationEffect.Output(report)))
+        if (!state.phone.present) return MachineStep(state)
+        val kept = listOfNotNull(state.heldReport, state.heldWords)
+        val shown = MachineStep(state.copy(heldReport = null, heldWords = null), kept.map { ConversationEffect.Output(it) })
         return shown.then { current ->
             val goal = current.goal
             val asks = goal != null && goal.ending == null && !current.asksContinue && (goal.phase == GoalPhase.PAUSED || goal.hold == GoalHold.RESTART)
@@ -266,7 +293,7 @@ internal object GoalRules {
         val goal = state.goal ?: return MachineStep(state)
         if (goal.ending != null || (goal.phase != GoalPhase.ACTING && goal.phase != GoalPhase.ASKING)) return MachineStep(state)
         return MachineStep(
-            state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)),
+            ending(state, goal, GoalEnding.STOPPING),
             listOf(ConversationEffect.CancelGoal(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)),
         )
     }
@@ -305,6 +332,15 @@ internal object GoalRules {
         } else {
             ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG)
         }
-        return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(effect)).then(::withdrawContinue)
+        return MachineStep(ending(state, goal, GoalEnding.STOPPING), listOf(effect)).then(::withdrawContinue)
     }
+
+    // The goal starts to end: it acts until its round has ended, and a question of its own goes with the round.
+    private fun ending(state: ConversationState, goal: GoalState, ending: GoalEnding): ConversationState = state.copy(
+        goal = goal.copy(phase = if (goal.phase == GoalPhase.ASKING) GoalPhase.ACTING else goal.phase, ending = ending),
+        question = questionAfter(state, goal),
+    )
+
+    // The open question once the goal's round ends or pauses: the goal's own (while it asks) is withdrawn with the round.
+    private fun questionAfter(state: ConversationState, goal: GoalState): OpenQuestion? = if (goal.phase == GoalPhase.ASKING) null else state.question
 }

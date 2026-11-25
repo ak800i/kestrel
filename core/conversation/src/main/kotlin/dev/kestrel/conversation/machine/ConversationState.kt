@@ -13,10 +13,11 @@ import dev.kestrel.conversation.model.OwnerInput
  * the next command opens one. [testMode] was fixed when it opened or was continued, from [safetyTestMode], the Safety
  * page's value now (design 12.4). [commands] counts its records; [command] numbers, in this process, each input that
  * started or resumed a goal or ran a local request. [question] waits for the owner; [asksContinue] is set while
- * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown, and
- * [heldReport] a goal's final reply that waits until the owner is back (design 6.4). [local] is a local request or a
- * switch that runs; [next] a command that waits for the goal that "stop" ended or for the local request; [closeAfterGoal]
- * closes the conversation once its goal has ended, after a change of test mode. [continueAnswer] is the owner's input
+ * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
+ * while the owner is away, [heldReport] is a goal's final reply and [heldWords] a held goal's round report with how to
+ * go on, each waiting until he is back (design 6.4). [local] is a local request or a switch that runs; [next] a command
+ * that waits for the goal that "stop" ended or for the local request; [closeAfterGoal] closes the conversation once its
+ * goal has ended, after a change of test mode. [continueAnswer] is the owner's input
  * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
  * mode is not `OFF`, so the voice can speak a question and hear its answer, also in the paused mode); while it is off, a
  * spoken conversation's questions wait as typed ones do (decision 10 of plan 7B). The engine sets it before it restores.
@@ -40,6 +41,7 @@ data class ConversationState(
     val awaiting: Boolean = false,
     val replying: Int? = null,
     val heldReport: ChannelOutput.Report? = null,
+    val heldWords: ChannelOutput.Said? = null,
     val local: LocalRun? = null,
     val next: OwnerInput? = null,
     val closeAfterGoal: Boolean = false,
@@ -52,12 +54,22 @@ data class ConversationState(
 /** The question that waits for the owner; [replyOpen] once he tapped the card's "Reply…" (design 10.3). */
 data class OpenQuestion(val number: Int, val kind: QuestionKind, val replyOpen: Boolean = false)
 
-/** A local request or a switch that runs as [command] for the owner's [input]; [record] is a memory request's record. */
-data class LocalRun(val command: Int, val record: Int?, val input: OwnerInput)
+/**
+ * A local request or a switch that runs as [command] for the owner's [input]; [record] is a memory request's record.
+ * [cancelled] once "stop" cancelled it.
+ */
+data class LocalRun(val command: Int, val record: Int?, val input: OwnerInput, val cancelled: Boolean = false)
 
-/** The phone as `PhoneSignals` reports it; the owner is [away] while it is locked or a call rings or lasts. */
-data class PhoneState(val locked: Boolean = false, val ringing: Boolean = false, val inCall: Boolean = false) {
+/**
+ * The phone as `PhoneSignals` reports it. [known] once a lock signal (`LOCKED` or `UNLOCKED`) has said whether the phone is
+ * locked: `PhoneSignals` gives the phone's state when it starts, so at process start the machine does not know it yet.
+ * The owner is [away] while the phone is locked or a call rings or lasts, and [present] once the phone is known to be
+ * neither.
+ */
+data class PhoneState(val locked: Boolean = false, val ringing: Boolean = false, val inCall: Boolean = false, val known: Boolean = false) {
     val away: Boolean get() = locked || ringing || inCall
+
+    val present: Boolean get() = known && !away
 }
 
 /** Each timer's newest number, so that the end of an older timer changes nothing, as the Orchestrator's timers do. */
