@@ -59,6 +59,8 @@ class RoomRecordArchiveTest {
         val read = archive.read(listOf(past.id, current.id, "gone")).associateBy { it.header.id }
         assertEquals(setOf(past, current), read.values.map { it.header }.toSet())
         assertEquals("""{"request":"Пошаљи Мили поруку 🙂"}""", (read.getValue(past.id) as ArchiveEntry.Readable).payload.decodeToString())
+        // The rows come in the order of the ids, which is neither the table's order of its keys nor the order of the writes.
+        assertEquals(listOf(current.id, past.id), archive.read(listOf(current.id, "gone", past.id)).map { it.header.id })
         assertEquals(current, archive.readOpen()!!.header)
         assertEquals("""{"request":"Turn on dark mode"}""", (archive.readOpen() as ArchiveEntry.Readable).payload.decodeToString())
         assertEquals(listOf(past.id), archive.closedIds())
@@ -141,6 +143,8 @@ class RoomRecordArchiveTest {
         val writing = ArchivedConversationStore(archive, this) {}
         writing.save(first)
         writing.save(second)
+        // The first store's index has settled, so that the restart reads it.
+        assertEquals(listOf(first.id), writing.list().map { it.id })
         val notes = mutableListOf<ArchiveNote>()
 
         val restarted = ArchivedConversationStore(archive, this) { notes += it }

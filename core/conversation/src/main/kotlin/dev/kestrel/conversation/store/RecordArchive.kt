@@ -19,7 +19,10 @@ interface RecordArchive {
     /** What the table holds of closed rows ([IndexStamp]), which an index that is in step counts too. */
     suspend fun readStamp(): IndexStamp
 
-    /** The rows [ids] in one call, each as its kind of entry; an id without a row is left out. */
+    /**
+     * The rows [ids], which name each row once, in one call, each as its kind of entry, in the order of [ids], so that a
+     * rebuild folds each page in the order of [closedIds]; an id without a row is left out.
+     */
     suspend fun read(ids: Collection<String>): List<ArchiveEntry>
 
     /** The ids of the closed rows, the oldest last change first, without their payloads: what a rebuild reads in pages. */

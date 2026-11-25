@@ -31,7 +31,11 @@ internal class RoomRecordArchive(private val table: ConversationArchiveStore) : 
 
     override suspend fun readStamp(): IndexStamp = table.stamp().archived()
 
-    override suspend fun read(ids: Collection<String>): List<ArchiveEntry> = table.read(ids).map { it.archived() }
+    // The table gives its rows in an order of its own; the port gives them in the order of [ids].
+    override suspend fun read(ids: Collection<String>): List<ArchiveEntry> {
+        val read = table.read(ids).associateBy { it.header.id }
+        return ids.mapNotNull { read[it]?.archived() }
+    }
 
     override suspend fun closedIds(): List<String> = table.closedIds()
 
