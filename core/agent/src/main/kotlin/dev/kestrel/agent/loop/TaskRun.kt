@@ -146,7 +146,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private val dataSteps = DataSteps(this)
     private val looks = LookCloser(this)
     private val dialogue = DialogueSteps(this)
-    private val checklists = ChecklistSteps(this, task.checklist)
+    private val checklists = ChecklistSteps(this)
     private val searches = HistorySteps(this)
 
     /** What the run says to the owner and asks him, whose questions share one count of interruptions (D2). */
@@ -215,6 +215,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     fun cancelled(reason: EndReason, interruption: Interruption? = null): TaskReport = report(reason, null, null, null, interruption)
 
     private suspend fun start() {
+        checklists.start(task.checklist)
         request = TaskText.request(task, redactor)
         log(TaskLog.Kind.START, "request: ${request.text}")
         // A resumed goal's request is in its record already (design 7.6 of sub-project 7).

@@ -14,13 +14,18 @@ import dev.kestrel.agent.tools.Tools
  * spoken form, each placeholder as its kind's words, as `say` speaks them. While an item is open, `finish` may not end
  * the run.
  */
-internal class ChecklistSteps(private val run: TaskRun, started: Checklist?) {
+internal class ChecklistSteps(private val run: TaskRun) {
     // With the checklist, the next new id and the step at which the run added each item; null before the first checklist.
-    private var state: ChecklistState? = started?.let(ChecklistState::atStart)
+    private var state: ChecklistState? = null
 
     val checklist: Checklist? get() = state?.checklist
     // Whether the newest step saved the checklist.
     private var savedLast = false
+
+    /** The run starts with [started], the checklist that a resumed goal brings, inside the run's own end and report. */
+    fun start(started: Checklist?) {
+        state = started?.let(ChecklistState::atStart)
+    }
 
     /** Why `finish` may not end the run yet: the items that are still to do or being done; null when none is. */
     fun finishRefusal(): String? {

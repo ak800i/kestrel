@@ -143,8 +143,20 @@ class ChecklistRulesTest {
         fun read(text: String) = Json.decodeFromString(Checklist.serializer(), text)
 
         assertEquals(listOf("c1", "c12"), read(stored("c1", "c12")).items.map { it.id })
-        for (ids in listOf(arrayOf("x1"), arrayOf("c0"), arrayOf("c01"), arrayOf("c"), arrayOf("c99999999999"), arrayOf("c1", "c1"))) {
+        for (ids in listOf(arrayOf("x1"), arrayOf("c0"), arrayOf("c01"), arrayOf("c"), arrayOf("c99999999999"), arrayOf("c2147483647"), arrayOf("c1", "c1"))) {
             assertThrows(ids.joinToString(), IllegalArgumentException::class.java) { read(stored(*ids)) }
         }
+    }
+
+    // The largest id leaves room for the next one, and a checklist that has used it gets no new item, which the model reads.
+    @Test
+    fun theLastIdLeavesRoomForTheNextAndAfterItNoNewItemComes() {
+        val last = ChecklistState.atStart(Checklist(listOf(ChecklistItem("c2147483646", "Open Viber", DONE, step = 1))))
+
+        assertEquals(Int.MAX_VALUE, last.nextId)
+        assertEquals(
+            "The checklist has no ids left for a new item; send only the items that it holds.",
+            refusal(ChecklistRules.check(listOf(draft("Reply to Mila", TODO)), last, emptySet(), step = 2)),
+        )
     }
 }

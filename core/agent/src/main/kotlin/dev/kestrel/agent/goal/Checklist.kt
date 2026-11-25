@@ -36,12 +36,17 @@ data class ChecklistItem(val id: String, val text: String, val state: ItemState,
     override fun toString(): String = "ChecklistItem(id=$id, text=${text.length} chars, state=$state, step=$step, why=${why?.length})"
 
     companion object {
-        // c and a positive number without leading zeros, with no upper limit but an Int's, because a long goal's checklist
-        // has none (design 7.2 of sub-project 7).
+        /**
+         * The largest number of an id. A goal's checklist has no other limit (design 7.2 of sub-project 7), but every id
+         * must leave room for the next one, which `ChecklistState.nextId` holds as an Int.
+         */
+        const val MAX_NUMBER = Int.MAX_VALUE - 1
+
+        // c and a positive number without leading zeros.
         private val ID = Regex("c[1-9][0-9]*")
 
-        /** Whether [id] has the form of Kestrel's ids. */
-        fun isId(id: String): Boolean = ID.matches(id) && id.substring(1).toIntOrNull() != null
+        /** Whether [id] has the form of Kestrel's ids, with a number of at most [MAX_NUMBER]. */
+        fun isId(id: String): Boolean = ID.matches(id) && id.substring(1).toIntOrNull()?.let { it <= MAX_NUMBER } == true
 
         /** The id with [number]. */
         fun id(number: Int): String = "c$number"

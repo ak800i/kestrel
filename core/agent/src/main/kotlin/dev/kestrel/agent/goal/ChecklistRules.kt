@@ -78,6 +78,10 @@ object ChecklistRules {
         }
         if (drafts.count { it.state == ItemState.DOING } > 1) return ChecklistCheck.Refused("At most one item may be doing.")
         var next = state?.nextId ?: 1
+        // The new items' ids must stay within ChecklistItem.MAX_NUMBER, so that the state's next id fits an Int.
+        if (drafts.count { it.id == null } > ChecklistItem.MAX_NUMBER - next + 1) {
+            return ChecklistCheck.Refused("The checklist has no ids left for a new item; send only the items that it holds.")
+        }
         val sent = drafts.map { draft ->
             val before = draft.id?.let(known::get)
             val id = draft.id ?: ChecklistItem.id(next++)
