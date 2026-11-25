@@ -17,7 +17,7 @@ data class ChecklistDraft(val id: String?, val text: String, val state: ItemStat
 data class ChecklistState(val checklist: Checklist, val nextId: Int, val added: Map<String, Int>) {
     init {
         // A new item whose id the checklist already held would replace that item.
-        require(checklist.items.all { number(it.id) < nextId }) { "nextId must come after every id of the checklist" }
+        require(checklist.items.all { ChecklistItem.number(it.id) < nextId }) { "nextId must come after every id of the checklist" }
     }
 
     override fun toString(): String = "ChecklistState(checklist=$checklist, nextId=$nextId, added=${added.size})"
@@ -25,10 +25,7 @@ data class ChecklistState(val checklist: Checklist, val nextId: Int, val added: 
     companion object {
         /** The state at a run's start, with the [checklist] that a resumed goal brings; its items came in before the run. */
         fun atStart(checklist: Checklist): ChecklistState =
-            ChecklistState(checklist, (checklist.items.maxOfOrNull { number(it.id) } ?: 0) + 1, emptyMap())
-
-        // Kestrel's ids are c and a positive number, as ToolArguments reads them.
-        private fun number(id: String): Int = id.removePrefix("c").toInt()
+            ChecklistState(checklist, (checklist.items.maxOfOrNull { ChecklistItem.number(it.id) } ?: 0) + 1, emptyMap())
     }
 }
 
@@ -81,7 +78,7 @@ object ChecklistRules {
         var next = state?.nextId ?: 1
         val sent = drafts.map { draft ->
             val before = draft.id?.let(known::get)
-            val id = draft.id ?: "c${next++}"
+            val id = draft.id ?: ChecklistItem.id(next++)
             if (before?.state == ItemState.DONE && draft.text != before.text) return ChecklistCheck.Refused("$id is done, so its text cannot change.")
             when (draft.state) {
                 ItemState.DONE -> {

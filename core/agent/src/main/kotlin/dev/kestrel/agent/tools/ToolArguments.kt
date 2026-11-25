@@ -1,6 +1,7 @@
 package dev.kestrel.agent.tools
 
 import dev.kestrel.agent.goal.ChecklistDraft
+import dev.kestrel.agent.goal.ChecklistItem
 import dev.kestrel.agent.goal.ChecklistRules
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.observe.ObservationTable
@@ -113,9 +114,6 @@ object ToolArguments {
     private val ITEM = Regex("m[0-9]+")
     private val ANY_DAY = LocalDate.of(2000, 1, 1)
     private val ITEM_STATES = ItemState.entries.associateBy { it.wire }
-    // Kestrel's ids: c and a positive number without leading zeros, with no upper limit, because a long goal's checklist
-    // has none (design 7.2 of sub-project 7).
-    private val ITEM_ID = Regex("c[1-9][0-9]*")
 
     fun parse(name: String, arguments: JsonObject, table: ObservationTable, vault: Vault): ParsedCall {
         if (Tools.spec(name) == null) return ParsedCall.Invalid("Kestrel has no such tool.")
@@ -260,7 +258,7 @@ object ToolArguments {
         return items.map { item ->
             val fields = Reader(item as? JsonObject ?: throw Bad("Each item of items must be an object."), r.table)
             val id = fields.optionalString("id")
-            if (id != null && !ITEM_ID.matches(id)) throw Bad("An item's id must be an id from the last checklist result, such as c3.")
+            if (id != null && !ChecklistItem.isId(id)) throw Bad("An item's id must be an id from the last checklist result, such as c3.")
             ChecklistDraft(
                 id = id,
                 text = fields.string("text", ChecklistRules.TEXT_LIMIT),

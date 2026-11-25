@@ -5,7 +5,12 @@ import dev.kestrel.agent.goal.ItemState.DONE
 import dev.kestrel.agent.goal.ItemState.FAILED
 import dev.kestrel.agent.goal.ItemState.SKIPPED
 import dev.kestrel.agent.goal.ItemState.TODO
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** Design 7.2 of sub-project 7: the rules of an `update_checklist` call, checked by code. */
@@ -127,5 +132,19 @@ class ChecklistRulesTest {
         val items = saved(check(listOf(draft("Archive it", FAILED, why = "No archive button"), draft("Reply", TODO, step = 3, why = "Not needed")))).state.checklist.items
 
         assertEquals(listOf(ChecklistItem("c1", "Archive it", FAILED, why = "No archive button"), ChecklistItem("c2", "Reply", TODO)), items)
+    }
+
+    // A stored checklist comes in through its decoder: an item whose id is not Kestrel's, or an id that two items share, is
+    // refused there, where the store handles a damaged payload, so that no run starts with it.
+    @Test
+    fun aStoredChecklistWithAnIdThatKestrelDidNotGiveIsRefusedAsItIsRead() {
+        fun stored(vararg ids: String) =
+            """{"items":${JsonArray(ids.map { id -> buildJsonObject { put("id", id); put("text", "Open Viber"); put("state", "TODO") } })}}"""
+        fun read(text: String) = Json.decodeFromString(Checklist.serializer(), text)
+
+        assertEquals(listOf("c1", "c12"), read(stored("c1", "c12")).items.map { it.id })
+        for (ids in listOf(arrayOf("x1"), arrayOf("c0"), arrayOf("c01"), arrayOf("c"), arrayOf("c99999999999"), arrayOf("c1", "c1"))) {
+            assertThrows(ids.joinToString(), IllegalArgumentException::class.java) { read(stored(*ids)) }
+        }
     }
 }

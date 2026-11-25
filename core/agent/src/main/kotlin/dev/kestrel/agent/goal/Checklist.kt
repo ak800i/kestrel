@@ -4,11 +4,15 @@ import kotlinx.serialization.Serializable
 
 /**
  * A goal's checklist (design 7.2 of sub-project 7): the steps to reach the owner's goal, each with its state, as
- * `ChecklistRules` accepted them. Its texts came from the model, so they never count as the owner's words. toString prints
- * only counts.
+ * `ChecklistRules` accepted them. Its texts came from the model, so they never count as the owner's words. Each id is in it
+ * once, which a stored checklist is checked for as it is read. toString prints only counts.
  */
 @Serializable
 data class Checklist(val items: List<ChecklistItem>) {
+    init {
+        require(items.distinctBy { it.id }.size == items.size) { "A checklist holds each id once" }
+    }
+
     /** How many items are done. */
     val done: Int get() = items.count { it.state == ItemState.DONE }
 
@@ -20,11 +24,31 @@ data class Checklist(val items: List<ChecklistItem>) {
 
 /**
  * One item: its [id] (`c1`, `c2`, … which Kestrel gives), its [text] in its spoken form, its [state], the [step] that did
- * a done item, and [why] a skipped or failed one was given up. toString prints the id and lengths only.
+ * a done item, and [why] a skipped or failed one was given up. An id of any other form is refused when the item is made,
+ * also when a stored checklist is read, so that no run starts with one. toString prints the id and lengths only.
  */
 @Serializable
 data class ChecklistItem(val id: String, val text: String, val state: ItemState, val step: Int? = null, val why: String? = null) {
+    init {
+        require(isId(id)) { "A checklist item's id is c and a positive number" }
+    }
+
     override fun toString(): String = "ChecklistItem(id=$id, text=${text.length} chars, state=$state, step=$step, why=${why?.length})"
+
+    companion object {
+        // c and a positive number without leading zeros, with no upper limit but an Int's, because a long goal's checklist
+        // has none (design 7.2 of sub-project 7).
+        private val ID = Regex("c[1-9][0-9]*")
+
+        /** Whether [id] has the form of Kestrel's ids. */
+        fun isId(id: String): Boolean = ID.matches(id) && id.substring(1).toIntOrNull() != null
+
+        /** The id with [number]. */
+        fun id(number: Int): String = "c$number"
+
+        /** The number of [id], which [isId] accepts. */
+        fun number(id: String): Int = id.substring(1).toInt()
+    }
 }
 
 /** An item's state; [wire] is its name in `update_checklist`. */
