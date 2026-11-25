@@ -99,6 +99,7 @@ The owner made these decisions on 24 November 2026, in brainstorming and in his 
 | The injection suite (spec 16.6), with the new fixture `records-injection` | No send, share, call or delete without the confirmation that Standard mode requires | kestrel-api37 |
 | Network egress (spec 13.3) | Unchanged: no connection outside the allowlist | kestrel-api37 and the A71 |
 | The first search over 30 days of conversations | At most 1 s | The A71 |
+| The archive's share of that search: the first read of the index of past conversations and the open conversation, and the bodies of the 5 best matches (R3) | At most 500 ms | The A71 |
 
 ## 5. Architecture
 
@@ -121,7 +122,7 @@ flowchart TD
 
 - `:core:conversation` is plain Kotlin, like `:core:agent`, so that the whole conversation runs in JVM tests with the fixtures' `ScriptedModel`. It depends on `:core:agent` (to run goals), `:core:safety` (the owner's words and the allowance that carry) and `:core:commands` (`Normalizer` and `LabelMatcher` for search). It never depends on `:app`, `:core:voice`, `:core:screen` or `:core:privacy`.
 - `:core:agent` learns nothing about conversations. It gets two ports, `GoalPort` and `HistoryPort`, two tools and a richer `TaskRequest`. Its loop stays one task run.
-- `:core:privacy` gets a table and a Keystore key for the archive. It knows only encrypted payloads and their metadata, as `LogStore` does.
+- `:core:privacy` gets the tables of the archive and of its index, and a Keystore key for them. It knows only encrypted payloads and their metadata, as `LogStore` does.
 - `:app` implements the ports: the two channels, the archive's adapter, the goal environment (today's `AgentRunner` and `AppAgentEnvironment`), the goal service and the conversation screen.
 - `settings.gradle.kts` gets `include(":core:conversation")` after `:core:commands`. Its build file uses the same plain-Kotlin convention plugin as `:core:agent`, with `kotlinx.serialization`, and the test fixtures of `:core:agent` (`ScriptedModel`, `FakeOwner`) for its tests.
 
@@ -134,7 +135,7 @@ flowchart TD
 | `engine` | `ConversationEngine`, `ConversationView` | Applies the machine to events one at a time, runs its timers, writes the store and starts goals; publishes a read-only view |
 | `goal` | `GoalRunner`, `RunningGoal`, `SteeringInbox` | Runs the agent's task loop for a goal, with the checklist, steering, limits, interruption and resume |
 | `context` | `RecordBuilder`, `ContextBlock`, `RecordCondenser` | Builds a command's record, and the bounded records block for the next command |
-| `store` | `ConversationStore`, `RecordArchive`, `ArchivedConversationStore`, `HistorySearch`, `Retention` | Persistence through an encrypted-payload port, retention, and the on-device search |
+| `store` | `ConversationStore`, `RecordArchive`, `ArchivedConversationStore`, `PastIndex`, `SearchIndex`, `PastIndexCodec`, `HistorySearch`, `Retention` | Persistence through an encrypted-payload port, the index of past conversations, retention, and the on-device search |
 | `channel` | `OwnerChannel`, `ChannelOutput`, `ChannelQuestion`, `ChannelAnswer`, `ConversationOwner` | The owner as a goal talks to him, over the channel of his latest input |
 | `local` | `LocalRequests` | Kestrel's own requests without a model: remember, forget, save that as, delete history, new conversation, continue a past conversation |
 
@@ -401,7 +402,7 @@ A resumed goal's request brings everything that the goal's earlier rounds learne
 ```kotlin
 // AppGraph (each by lazy, as today)
 internal val conversationArchive = RoomRecordArchive(store.conversations)
-internal val conversationStore = ArchivedConversationStore(conversationArchive, clock)
+internal val conversationStore = ArchivedConversationStore(conversationArchive, scope) { note -> /* the activity log, by its kind (9.2) */ }
 internal val phoneSignals = PhoneSignals(appContext, scope)
 internal val screenTurns = ScreenTurns(scope, report = reportFailure)
 internal val voiceChannel = VoiceChannel(listening, ownerSupport)
@@ -758,15 +759,16 @@ Every line that carries the owner's own words starts with one of five markers, w
 
 ## 9. Storage, retention, search and past conversations
 
-**In plain words.** Your conversations stay on the phone, encrypted, for 30 days unless you choose otherwise. You can open the list, read any of them and delete any of them. Kestrel can search them when you refer to something from before, and only what matches goes to the model. You can also continue an old conversation, from the list or by saying "continue the conversation about the trip"; Kestrel asks first which one it found.
+**In plain words.** Your conversations stay on the phone, encrypted, for 30 days unless you choose otherwise. You can open the list, read any of them and delete any of them. Kestrel can search them when you refer to something from before, and only what matches goes to the model. To show the list and to search quickly, Kestrel keeps a small encrypted index of them, and it opens a whole conversation only when it needs it. You can also continue an old conversation, from the list or by saying "continue the conversation about the trip"; Kestrel asks first which one it found.
 
 ### 9.1 Encryption
 
 - Conversations are stored in the Room database `kestrel.db`, like the logs, not in `SettingsStore`, because a conversation can grow to tens of kilobytes.
 - Each conversation is one row. Its payload is its `ConversationSnapshot` as JSON, encrypted with `AesGcmFieldCipher` under a new Keystore key, `kestrel.conversations`, with the associated data `conversations/<id>`, so that a payload cannot be moved to another row.
-- The separate key lets "delete history" delete the key too, so that no copy of the database file can be read afterwards. The logs keep the data key, as today.
-- Only these fields are plain, for sorting and retention: the conversation's random 128-bit id, its open and last-change times, whether it is open, and its number of commands.
-- The snapshot carries a `version` number from its first release, so that a later version of Kestrel can read it.
+- The index of past conversations (9.2) is one more row, in a table of its own, encrypted under the same key with the associated data `conversation_index/past`, so that neither it nor a conversation's payload opens in the other's place. The key never leaves the Keystore (spec 13.4): each payload and the index are encrypted and decrypted inside it, one Keystore operation for each.
+- The separate key lets "delete history" delete the key too, so that no copy of the database file can be read afterwards. The logs keep the data key, as today. The key is never made in StrongBox, whose slower operations would make the archive's reads slow (R3); the data key is not in StrongBox either.
+- Only these fields are plain, for sorting and retention: the conversation's random 128-bit id, its open and last-change times, whether it is open, and its number of commands. The index has no plain field.
+- The snapshot carries a `version` number from its first release, so that a later version of Kestrel can read it. The index starts with a format byte; an index in a format that this version cannot read is rebuilt from the conversations (9.2).
 
 ### 9.2 Schema
 
@@ -782,34 +784,67 @@ class ConversationRow(
     val payload: ByteArray,
 )
 
-@Dao interface ConversationDao {
-    @Upsert suspend fun put(row: ConversationRow)
-    @Query("SELECT * FROM conversations WHERE open = 1 LIMIT 1") suspend fun openOne(): ConversationRow?
-    @Query("SELECT id, opened_millis, last_millis, open, commands FROM conversations ORDER BY last_millis DESC")
-    suspend fun headers(): List<ConversationHeader>
-    @Query("SELECT * FROM conversations WHERE id = :id") suspend fun get(id: String): ConversationRow?
-    @Query("SELECT * FROM conversations WHERE open = 0 AND last_millis >= :since ORDER BY last_millis DESC")
-    suspend fun closedSince(since: Long): List<ConversationRow>
-    @Query("UPDATE conversations SET open = 0 WHERE open = 1") suspend fun closeAll(): Int
-    @Query("DELETE FROM conversations WHERE id = :id") suspend fun delete(id: String): Int
-    @Query("DELETE FROM conversations WHERE open = 0 AND (last_millis < :oldest OR last_millis > :newest)")
-    suspend fun deleteOutside(oldest: Long, newest: Long): Int
-    @Query("DELETE FROM conversations") suspend fun deleteAll(): Int
+// The index of past conversations: one row, named "past". A table of its own keeps every query of conversations plain.
+@Entity(tableName = "conversation_index")
+class ConversationIndexRow(@PrimaryKey val name: String, val payload: ByteArray)
+
+// Its functions block: ConversationArchiveStore calls them on its own dispatcher, so that a query and the decryption of its
+// rows run on one thread, with no hop between them (R3). It keeps at most one conversation open (6.1).
+@Dao abstract class ConversationDao {
+    // The store's first read, in one transaction: the index, the open row, and the stamp of the closed rows.
+    @Transaction open fun first(): FirstRows = FirstRows(index(PAST), openRow(), stamp())
+    @Query("SELECT * FROM conversations WHERE id IN (:ids)") abstract fun rows(ids: List<String>): List<ConversationRow>
+    @Query("SELECT * FROM conversations ORDER BY last_millis DESC") abstract fun all(): List<ConversationRow> // a rebuild
+    // One transaction: the deletions, the rows (an open row closes the other open rows first), and the index kept,
+    // replaced or deleted.
+    @Transaction open fun write(rows: List<ConversationRow>, deleted: List<String>, index: IndexRowUpdate) { /* … */ }
+    @Transaction open fun deleteAll() { deleteConversations(); deleteIndexes() }
+    @Query("SELECT COUNT(*) AS closed, COALESCE(MAX(last_millis), 0) AS newest, COALESCE(SUM(last_millis), 0) AS total FROM conversations WHERE open = 0")
+    protected abstract fun stamp(): ConversationStamp
+    // index, openRow, delete, upsert, closeOthers, upsertIndex, deleteIndex, deleteConversations and deleteIndexes are
+    // protected queries of the two tables.
 }
 ```
 
-`:core:privacy` offers it as `ConversationArchiveStore` (encrypt, decrypt, put, headers, get, delete, purge), which knows only bytes. `:app`'s `RoomRecordArchive` implements `:core:conversation`'s `RecordArchive` port with it, and `ArchivedConversationStore` does the JSON. A payload that fails its tag is deleted and reported to the activity log by its kind only, as `SettingsStore` does with a setting.
+`:core:privacy` offers both tables as `ConversationArchiveStore` (`first`, `read(ids)`, `readAll`, `write(change)`, `deleteAll`), which knows only bytes and keeps the encryption and the decryption inside. Each read decrypts its rows on the thread that ran its query. Writes and `deleteAll` take the key's lock, which is process-wide with the key, so that the key is never erased between the encryption of a write and its row. Reads take no lock, because they store nothing, so that a rebuild's long read never holds up a save. A payload that fails its check is `FailedCheck`; one in a format that this version cannot read is `UnknownFormat`, which is kept for a later version and reported to the activity log once per process by its kind only, as `SettingsStore` does with a setting; an index that fails its check or is in an unknown cipher format is `Unreadable`. `:app`'s `RoomRecordArchive` implements `:core:conversation`'s `RecordArchive` port with it (`load`, `read`, `readAll`, `write(ArchiveChange)`, `deleteAll`), and `ArchivedConversationStore` does the JSON and the index. The table's `open` column is the one truth about which conversation is open: the store takes `open` from a row's header, and the snapshot's JSON does not hold it.
+
+**The index of past conversations.** One row holds what the list and the search need of every closed conversation, so that Kestrel never decrypts every conversation to show the list or to search:
+
+- for each closed conversation that this version can read: its id, its open and last-change times, its number of commands, its first request cut at 80 characters, as the list shows it (9.5), and for each of its records the record's number, its time and its folded words, the words that the search matches (9.4). A near miss is worked out from those words, so they are kept whole;
+- the closed rows in a format that this version cannot read, each by its id and its last change, so that the index counts every closed row and retention can purge them;
+- never the open conversation, whose body the store keeps in memory.
+
+`PastIndexCodec` encodes it compactly: a format byte (1), and then, compressed with Deflate, every folded word once, in order; each conversation with its records; each record's words as their positions in that list, each written as its distance from the one before; and the kept rows. Every count and distance is a number of variable length. For 30 days of heavy use (300 conversations, 600 commands, each command with about 300 different words, and about 25,000 different words in all), that is about 250 KB of real text, and 366 KB for the test's fixture of random words, which compress worse. The A71 decrypts 300 KB in 61 ms and 1 MB in 171 ms (R3), and decoding it takes about as long as decrypting it.
+
+**What the store keeps in memory.** At its first use, `ArchivedConversationStore` reads, in one call, the index, the open conversation's row and the stamp of the closed rows: two Keystore operations. It decodes the index and keeps it and the open conversation's body in memory. A past conversation's body is read only when it is needed: for the details of a search's best matches (at most 5, in one call), for its transcript, and to continue it, which also brings its records into the records block. Each body costs about 28 ms on the A71 with its query. There is no cache of bodies: a cache would be one more copy of past conversations in memory, which every change would have to keep right, for a saving of 28 ms.
+
+**Every change in one transaction.** A save of the open conversation writes only its row. Every change of the closed conversations writes their rows and the new index in one transaction: a conversation that closes enters the index, also one that the table closes because a new conversation was written open; one that is continued leaves it; "Delete" and retention's purge delete rows and take them out of the index. "Delete history" deletes every row and the index, and then the key. The store changes its memory only after the archive's call completed; after a call that did not complete, cancelled too, it drops its memory, and the next call reads the archive again. A conversation that this process deleted is never written again, and "delete history" raises the store's `generation`, so that a search that it overtook gives nothing out (9.4).
+
+**The rebuild.** The store checks the index when it reads it. When the index is missing while closed rows exist, fails its check, is in an unknown format or does not decode, or when its stamp (how many closed rows it counts, their newest last change and the sum of their last changes) differs from the table's, the store rebuilds it from the bodies with `readAll`. On the A71 that takes about 5 s for 30 days, one Keystore operation per row, and about another second to decode and fold the conversations. It runs once, in the background, in the app's scope. While it runs:
+
+- the open conversation is read and saved as usual;
+- every other change writes its rows and deletes the old index in the same transaction, so that an old index can never match the table again, and is replayed onto the rebuilt index;
+- the search's step says "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute" (9.4), and "continue the conversation about X" answers "I'm still preparing your past conversations. Try again in a minute." (9.6);
+- the list and retention's purge wait for it; the list shows "Loading past conversations…" while it waits (9.5).
+
+When it ends, the rebuilt index goes into the archive with the deletion of the rows that failed their check, and the activity log gets the note "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations". "Delete history" during a rebuild stops it.
+
+**Why a table of its own.** Version 3 of the database is not on any real install yet: it exists only in the tests and in `:core:privacy`'s test app, whose database is deleted after each run. So its schema can still change, and the index gets the table `conversation_index` rather than a reserved row of `conversations`. A conversation's plain columns mean nothing for an index, and a reserved row would have to be left out of every query of the table: the stamp, the open row, the purge and the rule that closes the other open rows.
 
 ```kotlin
 interface ConversationStore {
+    val generation: Long                                       // raised by deleteAll before it deletes anything
     suspend fun open(): ConversationSnapshot?
     suspend fun save(snapshot: ConversationSnapshot)
-    suspend fun list(): List<ConversationSummary>            // date, first request, commands, newest first
-    suspend fun get(id: ConversationId): ConversationSnapshot?
-    suspend fun reopen(id: ConversationId): ConversationSnapshot?  // closes the open one and opens this one, in one transaction
+    suspend fun list(): List<ConversationSummary>            // from the index: date, first request, commands, newest first
+    suspend fun get(id: ConversationId): ConversationSnapshot? // a past conversation's body is read when it is asked for
+    suspend fun getAll(ids: Collection<ConversationId>): Map<ConversationId, ConversationSnapshot> // in one call
+    // Stores closing as closed and opens id with the current test mode, in one transaction (9.6)
+    suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?
     suspend fun delete(id: ConversationId)
     suspend fun deleteAll()
     suspend fun purge(retentionDays: Int, nowWall: Long): Int
+    suspend fun searchable(): Searchable                     // the index and the open conversation, or Rebuilding (9.4)
 }
 ```
 
@@ -818,6 +853,7 @@ interface ConversationStore {
 - A closed conversation is kept for the retention time after its last change: 30 days by default; the choices are 1, 7, 30, 90 and 365 days (D6). The open conversation is never purged. A continued conversation's last change is the time of its latest activity, so continuing it keeps it longer.
 - `Retention` purges at Kestrel's start and once a day while the process runs, as `LogStore.keepPurging` does, and deletes rows dated more than a day ahead (a wrong clock), as the logs do.
 - A shorter retention counts at once: its change runs a purge.
+- The purge reads the closed conversations' last changes from the index of past conversations (9.2), so it decrypts nothing, and deletes their rows and their index entries in one transaction. While the index is being rebuilt, it waits for it.
 
 ### 9.4 The search tool
 
@@ -836,7 +872,8 @@ to something from before that this conversation does not hold."
 - `HistorySearch` implements the agent's `HistoryPort`. It searches the records of closed conversations within retention, and the records of the open conversation that its records block left out. It never searches observations or screenshots, which records do not hold.
 - Matching happens on the phone. The query and each record's text are folded with `Normalizer.words`, so case, diacritics and the two Serbian scripts fold as the matcher folds them. A record scores by how many of the query's words it holds, with `LabelMatcher`'s near misses for names, and must hold at least half of them. Ties go to the newer record.
 - `HistoryPort` returns at most `HistoryPort.MAX_MATCHES` (5) matches, best match first, in the order of the rule above, and `HistoryResult.more` says that more commands matched. The result numbers the matches in that order, so "Match 1" is the best match, not always the newest.
-- The search decrypts each row once per process and keeps an in-memory index of folded words per record, which `save`, `reopen`, `delete`, `deleteAll` and `purge` update. The index holds the owner's words in memory only, like the vault, and "delete history" drops it.
+- The search reads the index of past conversations (9.2), which the store keeps in memory, and folds the open conversation's records at each search. For each word of the query it finds, once per index, the folded words that count for it (the word itself and its near misses, among the index's words with its first letter), and then compares only their positions. It reads the bodies of its best matches only, at most 5, in one call, for their details. The index's words are the owner's words and Kestrel's, folded: they are in memory only while Kestrel runs and encrypted in the archive, and "delete history" deletes them with the conversations. A search that "delete history" overtook, which the store's `generation` tells, gives nothing out.
+- While the index is being rebuilt (9.2), the step fails with "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute". This is no error: nothing goes into the log, and the task goes on. The port gives `HistoryResult.REBUILDING`, and `:core:agent`'s `HistorySteps` turns it into that sentence.
 - The result is data (section 12.1), quoted and redacted as stored, at most 1,500 tokens in all:
 
 ```text
@@ -855,14 +892,14 @@ No other match.
 
 ### 9.5 Browsing past conversations
 
-- The conversation screen's menu opens "Past conversations": a list, newest first, of the closed conversations within retention, each with its date, its first request (cut at 80 characters) and its number of commands, and a search field that filters the list with the same matching as 9.4.
-- Opening one shows its transcript read-only, drawn from its records: the owner's commands and answers, Kestrel's words and questions, the checklists and the final answers, with the time of each command. It has "Continue this conversation" and "Delete".
+- The conversation screen's menu opens "Past conversations": a list, newest first, of the closed conversations within retention, each with its date, its first request (cut at 80 characters) and its number of commands, and a search field that filters the list with the same matching as 9.4. The list comes from the index of past conversations (9.2), so opening it decrypts no conversation. While the index is being rebuilt, the list waits for it and shows "Loading past conversations…".
+- Opening one shows its transcript read-only, drawn from its records: the owner's commands and answers, Kestrel's words and questions, the checklists and the final answers, with the time of each command. Its body is read when it opens. It has "Continue this conversation" and "Delete".
 - Each conversation can be deleted, from the list or the open transcript. The Conversations settings page has "Delete all past conversations" with a question.
 
 ### 9.6 Continuing a past conversation
 
 - **From the list.** "Continue this conversation" sends `ContinueConversation(id)`.
-- **By voice or typed.** "Continue the conversation about X" (also "continue our conversation about X", "go back to the conversation about X"), with or without "Kestrel" when typed or inside the follow-up window, is a local request that `Requests` reads as `ContinuePast(topic)`. `LocalRequests` searches the closed conversations within retention with `HistorySearch`, by the topic's words, and takes the best match. It then asks, with the question kind `SWITCH`: "Continue the conversation from Thursday, 20 November, about 'Find the restaurant Mila sent me'?" (the day, and the conversation's first request cut at 60 characters). Yes switches; no or no answer changes nothing. Without a match it says "I didn't find a conversation about that." "Continue the conversation" without a topic means the newest closed conversation, with the same question. "Kestrel, continue" alone keeps its meaning for goals (section 6.4).
+- **By voice or typed.** "Continue the conversation about X" (also "continue our conversation about X", "go back to the conversation about X"), with or without "Kestrel" when typed or inside the follow-up window, is a local request that `Requests` reads as `ContinuePast(topic)`. `LocalRequests` searches the closed conversations within retention with `HistorySearch`, by the topic's words, and takes the best match. It then asks, with the question kind `SWITCH`: "Continue the conversation from Thursday, 20 November, about 'Find the restaurant Mila sent me'?" (the day, and the conversation's first request cut at 60 characters). Yes switches; no or no answer changes nothing. Without a match it says "I didn't find a conversation about that." While the index of past conversations is being rebuilt (9.2), it says "I'm still preparing your past conversations. Try again in a minute." and changes nothing. "Continue the conversation" without a topic means the newest closed conversation, with the same question. "Kestrel, continue" alone keeps its meaning for goals (section 6.4).
 - **While a goal is open** in the current conversation, both ways answer "Stop the goal first." and change nothing.
 - **The switch.** `ConversationStore.reopen` closes the open conversation, which joins the list, and opens the chosen one in one transaction (D23: one at a time). The chosen conversation keeps its id and its records; its records block is built from them (section 8.3), and condensed records stay condensed. It takes the **current** test-mode value; the stored one is not reused. Its records block then holds, right after its header, the note "This conversation was continued on <date>; test mode is <on | off> now." (8.4). The conversation screen shows its transcript with a line "Continued on <date>".
 - **After the switch** Kestrel says, by the channel's rules (section 11), "We're back in the conversation from Thursday, 20 November." This is the request's final reply: a spoken one opens the follow-up window (6.6), and its end starts the quiet clock from zero (6.2). The request to continue gets no record in either conversation.
@@ -871,7 +908,7 @@ No other match.
 ### 9.7 "Delete history"
 
 - "Kestrel, delete history", typed "delete history" and the settings' button now ask "Delete the activity log, the network log and past conversations?" (spoken with "Say yes or no.", or as a card with Yes and No).
-- Yes deletes both logs, every conversation row including the open one, the search index and the key `kestrel.conversations` (a new key is made at the next write), and closes the open conversation. While a goal is open, Kestrel ignores the request, as today (spec 13.5).
+- Yes deletes both logs, every conversation row including the open one, the index of past conversations and the key `kestrel.conversations` (a new key is made at the next write), and closes the open conversation. While a goal is open, Kestrel ignores the request, as today (spec 13.5).
 
 ## 10. The conversation screen and the text channel
 
@@ -1101,8 +1138,8 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 - `ChecklistRulesTest`: every rule of 7.2.
 - `TaskRun` with `ScriptedModel`: steering drained at the next turn, never inside a step; steering words as the owner's words and in the allowance; the limit question's text and its three answers; `nextRound()` giving the same again; `finish` refused with open items; `update_checklist` neutral for progress; an update right after a saved one invalid; an interruption's report with its cause; Kestrel's own screen waited for through `OwnerPort.leaveKestrel`, also before `finish`'s check.
 - `ContextBlockTest`: the caps, the open items and the line of counts of the newest record's checklist, the fill order, which never passes the budget, also with the largest records and in Cyrillic, condensing once and staying condensed after a continue, the left-out lines, the Ollama budget, no placeholder in any record, the context's order, the continued conversation's note, and a first command's request equal to today's except for the documented changes.
-- `ArchivedConversationStoreTest` with a fake archive: the round trip, a tag failure, retention with a future date, `reopen` as one transaction, delete and delete all.
-- `HistorySearchTest`: folding of both scripts, near-miss names, the half-of-words rule, ranking, the date range, the caps, and the index after deletes and a `reopen`.
+- `ArchivedConversationStoreTest` with a fake archive: the round trip, a tag failure, retention with a future date, `reopen` as one transaction, delete and delete all; the index written in the same transaction as every change of the closed conversations and never by a save of the open one; a body read only when it is asked for; the rebuild of a missing, unreadable, unknown or out-of-step index, with saves and changes while it runs and "delete history" during it.
+- `HistorySearchTest`: folding of both scripts, near-miss names, the half-of-words rule, ranking, the date range, the caps, deletes and a `reopen`, the search while the index is rebuilt, and only the best matches' bodies read. `SearchIndexTest` and `PastIndexTest`: the index's words and positions, its format, its round trip, damaged bytes, and its size for 30 heavy days.
 - `LocalRequestsTest`: "continue the conversation about X" with a match, without a match and without a topic; the question's text; yes, no and silence.
 - `ConversationOwnerTest`: the channel by the latest input, speech of typed replies with the setting, the conversation's own outputs in the record and none of the run's dialogue a second time, the `RESUMED` gate after a "Reply…" answer, the typed waits of D21.
 - Safety: `TaskSafety` seeded by `ownerHistory`; the allowance joined with `carried`, with Standard mode still confirming a carried send and still handing over a carried call; a search match typed asks in Standard mode; a new run starts without confirmations; test mode fixed for the conversation and taken anew by a continued one.
@@ -1111,7 +1148,7 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 
 - `dev.kestrel.app.conversation` (new, through `scripts\connected-test.ps1`), with a scripted model: a typed command leaves Kestrel's screen and acts on a `:testapp` fixture; a second typed command uses the first one's record; the card with Yes, No and "Reply…", and the fresh observation after "Reply…"; the waits of D21, shortened by an instrumentation argument; Stop; a touch that interrupts and Continue that resumes; "New conversation"; the list of past conversations, opening one, its transcript and "Continue this conversation"; `filterTouchesWhenObscured` under an overlay of `:testapp`; the goal service with listening off.
 - The restart: a goal is ended by the hook that ends the process; after the restart the conversation is open, the goal is interrupted and asks "Continue the goal?", and yes continues from the checklist with a fresh observation.
-- The store: the Room migration from version 2 to 3 with the real Keystore; "delete history" removes the rows and the key.
+- The store: the Room migration from version 2 to 3 with the real Keystore; "delete history" removes the rows, the index and the key; the index travels encrypted, and a store on the real archive rebuilds a lost index.
 - The existing `dev.kestrel.app.agent` and `dev.kestrel.app.commands` suites, as 14.3 says.
 - On the A71, within AGENTS.md's limits: the goal service's three starts (10.6), the first search over a filled archive (4.3), and a typed goal with listening off.
 
@@ -1142,8 +1179,8 @@ Each plan ends green on its own: its tests pass, the existing suites pass, and n
 |---|---|---|---|
 | **7.0 Spec** | The main spec's sections of Appendix A rewritten from this design | The owner's review | Documentation |
 | **7A Agent groundwork** (`:core:agent`) | `GoalPort`, `Steer` and owner-message entries in `Conversation`; `Checklist`, `ChecklistRules`, `update_checklist` and the finish rule; `GoalLimits`, `Limits.nextRound()`, the limit question and the new `EndReason`s; `HistoryPort` and `search_conversations` with its result format; `TaskRequest`'s new fields, `carried` joined into the allowance; the context's order; the wait for Kestrel's own screen through `OwnerPort.leaveKestrel`, before every look at the screen; the interruption's end with its cause; the system prompt's new sentences; the new `end=` values in the hook's answer (by their `EndReason` names, so the hook needs no change) and in `:tools:eval`'s reader. `AgentRunner` passes no-op ports and today's limits | JVM tests; the JVM suite and the eval dry suite unchanged | About 2,000 lines with tests |
-| **7B Conversation core** (`:core:conversation`) | The module; `model`, `ConversationMachine`, `QuietClock`, `ConversationEngine`, `GoalRunner`, `RunningGoal`, `SteeringInbox`, `RecordBuilder`, `ContextBlock`, `RecordCondenser`, `ConversationOwner`, `LocalRequests` (with continuing a past conversation), `ConversationStore`, `ArchivedConversationStore`, `HistorySearch`, `Retention` | JVM only, with `ScriptedModel`, fake channels and a fake archive | About 4,200 lines with tests |
-| **7C Encrypted archive** (`:core:privacy`, `:app` adapter) | Room version 3, `ConversationRow`, `ConversationDao`, the key `kestrel.conversations`, `ConversationArchiveStore`, `RoomRecordArchive`, the purge job | The migration test and a Keystore device test on kestrel-api37 | About 900 lines |
+| **7B Conversation core** (`:core:conversation`) | The module; `model`, `ConversationMachine`, `QuietClock`, `ConversationEngine`, `GoalRunner`, `RunningGoal`, `SteeringInbox`, `RecordBuilder`, `ContextBlock`, `RecordCondenser`, `ConversationOwner`, `LocalRequests` (with continuing a past conversation), `ConversationStore`, `ArchivedConversationStore` with the index of past conversations (`PastIndex`, `SearchIndex`, `PastIndexCodec`), `HistorySearch`, `Retention` | JVM only, with `ScriptedModel`, fake channels and a fake archive | About 4,200 lines with tests |
+| **7C Encrypted archive** (`:core:privacy`, `:app` adapter) | Room version 3, `ConversationRow`, `ConversationIndexRow`, `ConversationDao`, the key `kestrel.conversations`, `ConversationArchiveStore`, `RoomRecordArchive`, the purge job | The migration test and a Keystore device test on kestrel-api37 | About 900 lines |
 | **7D Voice path onto the conversation** (`:app`) | `Rules` without its task parts (5.5), `ConversationView` in its state, the follow-up window, `Requests`' new requests and typed reading, `VoiceChannel`, `ScreenTurns`, `PhoneSignals`, `AppGoalEnvironment`, `AndroidOwnerSupport`; `AgentRunner` and `AppOwnerPort` deleted; the app graph; the debug hooks and `CommandTags` moved; the hooks `conversation-state` and `conversation-control`; "delete history" extended; the owner's limits switched on | The regression gate of 14.3 on kestrel-api37; the new `RulesTest` and `RequestsTest` cases | About 3,000 lines changed and 1,500 deleted |
 | **7E Goal service and resilience** (`:app`) | `GoalService` (`specialUse`, the Android 13 path, `mediaPlayback` while speaking), its notification and actions, "Continue the goal?" after a restart, lock and call pauses with listening off, the start checks of 10.6 | Device tests on kestrel-api37; the A71 checks of 15.2 | About 1,200 lines |
 | **7F Conversation screen** (`:app`, `:core:screen`) | `ConversationActivity` as the launcher, the transcript, field, microphone, Stop, Continue, Cancel and New conversation; past conversations (list, search, transcript, continue, delete); `TextChannel` and leaving Kestrel's screen; `QuestionCard` and "Reply…" with the waits of D21; the typed-input boundary (12.2); the speech rules (11); the Conversations settings page; the hook `conversation-type` | Compose and device tests on kestrel-api37; the manifest test | About 3,200 lines |
@@ -1155,7 +1192,11 @@ The order is 7.0, 7A, 7B (7C can run beside 7B), 7D, 7E, 7F, 7G. Plan 7D is the 
 
 - **R1 The voice path's rewrite.** `Rules.kt` (1,484 lines), `AgentRunner` (360) and `AppOwnerPort` (374) hold many rules from sub-project 5's reviews, and moving them may lose one. The one-for-one move of the tests (14.3), the unchanged device suites and the eval dry suite are the gate.
 - **R2 The goal service and audio on Android 17.** `specialUse` with `mediaPlayback` added while speaking with listening off, and the service's start from a notification's broadcast and from the voice path, are not yet tried on kestrel-api37 or the A71. Plan 7E checks them; when a start is refused, the goal is held as interrupted with a sentence (10.6). Loading the voice only to speak typed replies costs about 64 MB for Piper and more for Kokoro.
-- **R3 Search speed on the A71.** Each conversation row is decrypted once per process through the Keystore; 30 days of daily use may be a few hundred rows. Plan 7C measures it against the target of 4.3; if it is too slow, the index is stored encrypted in a row of its own.
+- **R3 The archive's speed on the A71 (settled on 25 November 2026).** Plan 7C measured the first read of 300 conversations of 12 KB, encrypted under a Keystore key in the TEE (no StrongBox); each figure is the median of 3 runs on the A71, with kestrel-api37's in brackets.
+  - Plan 7B's first store read every row and decrypted each one, which took 13.8 s (3.1 s). One Keystore decryption costs about 17 ms on the A71, whatever its size, and about 37 ms right after a hop to another thread; each per-row Room query and the store's `withContext` made such a hop. Read in one query, with the decryptions in a row on one thread, the 300 rows still took 5.2 s (2.2 s), and decoding their JSON another 0.4 to 0.8 s.
+  - A software key for the payloads, wrapped by the Keystore key, read them in 0.1 s, but it would take the key that decrypts them out of the Keystore, which spec 13.4 rules out.
+  - So the index is stored encrypted in a row of its own, as this risk's fallback said (9.2). The first read decrypts the index (100 KB in 38 ms, 300 KB in 61 ms, 1 MB in 171 ms) and the open conversation (28 ms with its query; opening the database and its first query take about 44 ms), and a search reads at most 5 bodies more, in one call. The expected first search on the A71 is about 0.3 s, of which the archive's read is about 0.2 s, against 4.3's 1 s and 500 ms. Plan 7C's Task 8 measures the archive's reads again on the A71.
+  - What remains: a rebuild of the index costs about 6 s on the A71 for 30 days, and about a minute for 365 days, once, in the background (9.2); each change of the closed conversations encodes and encrypts the whole index again (57 ms to encrypt 300 KB), once per closed conversation and not at each save of the open one.
 - **R4 The cost of long goals.** 1,000 AI Credits are $10 per round, and each "Continue?" allows as much again (D22). A goal that makes slow progress, such as scrolling a long list, stops only at the limit. Stuck detection still ends a goal without progress.
 - **R5 Steering lands one step late.** A step that started before the message runs to its end, also a confirmed send. "Stop" and a touch still stop at once.
 - **R6 The allowance across commands in full-auto.** With D16, a command like "and to Mila too" may send in full-auto without the "You didn't ask me to …" question, also in a conversation continued days later (D23). Standard and Relaxed modes still confirm every send, and every call is still handed over.
@@ -1179,7 +1220,7 @@ The order is 7.0, 7A, 7B (7C can run beside 7B), 7D, 7E, 7F, 7G. Plan 7D is the 
 | 10.3 | The context's order and the records block |
 | 11.1, 11.2, 11.4, 11.7, 11.8, 11.10 | Entry through the conversation; the records; `update_checklist` and `search_conversations`; the limits and "Continue?"; the checklist rule of the completion check; steering while a goal runs |
 | 12.1, 12.3, 12.6, 12.7 | The typed-input boundary; the owner's words and the allowance across commands; the vault per run; test mode per conversation |
-| 13.4, 13.5, 13.6 | The archive and its key; "delete history" covers conversations; `FOREGROUND_SERVICE_SPECIAL_USE` |
+| 13.4, 13.5, 13.6 | The archive, its index of past conversations and its key; "delete history" covers conversations; `FOREGROUND_SERVICE_SPECIAL_USE` |
 | 14.1, 14.4 | A touch interrupts a goal; "Continue the goal?" after a restart |
 | 15 | The Conversations page, the conversation screen as the launcher, and past conversations |
 | 16.1, 16.2, 16.3, 16.5 | The new hooks, unit tests, device tests and multi-turn tasks |
