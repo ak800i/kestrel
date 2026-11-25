@@ -4696,7 +4696,7 @@ Design 9.1 to 9.4, 9.7 and R3 of sub-project 7, as amended on 2026-11-25 and 202
 
 When the index is missing while closed rows exist, unreadable, in another format or out of step with the table's stamp, the store rebuilds it in its scope. It reads the closed rows in pages and folds each body into the new index as soon as it is read, so that it never holds more than a page of bodies, and it encodes the new shards outside its lock. Meanwhile the open conversation is saved as usual; every other change deletes the old shards and is replayed onto the new index; `searchable()` says `Rebuilding`; `list()` waits; and `purge()` deletes by the table. When the index can be neither read nor rebuilt, the store notes `ArchiveNote.INDEX_FAILED` once, `list()` throws `PastUnavailableException`, `searchable()` says `Failed`, every change of the closed conversations deletes the old shards, and the store reads the index again after 1 minute, then after twice as long each time, up to 1 hour, never at each call. A change that fails meanwhile keeps the failure and its next try, so that a change that keeps failing, on a full disk, never makes the store read the index or rebuild it at each call.
 
-Task 4's lifecycle rules hold. The memory changes only after the archive's call completed and is dropped after a call that did not; only an index that has failed stays failed, with its next try, because it holds nothing of the archive. A conversation that this process deleted, by `delete` or by a `deleteAll` that completed, is never written again; when the store reads the archive again and finds one, after a `delete` that did not complete, it deletes it again before it shows anything. `deleteAll` works on the archive alone (every row and the index in one transaction, then the key), so that it has one outcome whatever the store holds (design 9.7): it raises the `generation` before it deletes, and marks the conversations that the process held as deleted only once it completed; when it fails, also before the index is ready, it marks nothing, and every conversation stays as the archive has it. The row's plain fields are the truth for whether a conversation is open and for its times, so that a rebuilt index is always in step with the rows that it read. A row's id is compared as text, so that a row whose id is not a conversation's, which only a write from outside Kestrel can make, fails as a row that does not decode, and is deleted and noted, also when it is in a format that this version cannot read, so that a kept row's id is always a conversation's.
+Task 4's lifecycle rules hold. The memory changes only after the archive's call completed and is dropped after a call that did not; only an index that has failed stays failed, with its next try, because it holds nothing of the archive. A conversation that this process deleted, by `delete` or by a `deleteAll` that completed, is never written again; when the store reads the archive again and finds one, after a `delete` that did not complete, it deletes it again before it shows anything. `deleteAll` works on the archive alone (every row and the index in one transaction, then the key), so that it has one outcome whatever the store holds (design 9.7): once the archive's deletion has started, it and the marking of the conversations that the process held as deleted, with the raise of the `generation` before the archive's call, run as one unit that cancellation cannot split (`withContext(NonCancellable)`), so that a "stop" that cancels it takes effect after it and the outcome is a completed deletion; when the archive's call fails, also before the index is ready, it marks nothing, and every conversation stays as the archive has it. The row's plain fields are the truth for whether a conversation is open and for its times, so that a rebuilt index is always in step with the rows that it read. A row's id is compared as text, so that a row whose id is not a conversation's, which only a write from outside Kestrel can make, fails as a row that does not decode, and is deleted and noted, also when it is in a format that this version cannot read, so that a kept row's id is always a conversation's.
 
 The tests also take the load of the index through each of its failures, with the archive's gates: "delete history" while the index is read, a change that fails then, the load's own write that fails, a stamp that cannot be read, and a scope that ends while the index is read, after which no call waits for ever.
 
@@ -4912,6 +4912,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -5206,24 +5207,46 @@ class ArchivedConversationStoreTest {
         assertEquals(before + 1, watched.generation)
     }
 
-    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back. The
-    // store marks nothing, as after any "delete history" that did not complete, and shows what the archive holds.
+    // Design 9.7: a "stop" can cancel "delete history" while the archive deletes. Once the archive's deletion has started,
+    // it and the store's marking of the deleted conversations run as one unit that the cancellation cannot split; the
+    // cancellation takes effect after it. So the outcome is a completed deletion, and a later save of the open conversation
+    // writes nothing back.
     @Test
-    fun aDeleteAllCancelledAfterTheArchiveDeletedMarksNothingAndShowsWhatTheArchiveHolds() = test {
-        store.save(conversation(1, now - 2_000))
+    fun deleteHistoryCancelledWhileTheArchiveDeletesCompletesAndNothingComesBack() = test {
+        val deleting = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val gated = ArchivedConversationStore(
+            object : RecordArchive by archive {
+                override suspend fun deleteAll() {
+                    deleting.complete(Unit)
+                    gate.await()
+                    archive.deleteAll()
+                }
+            },
+            backgroundScope,
+        ) { notes += it }
+        gated.save(conversation(1, now - 2_000))
         val open = conversation(2, now - 1_000, open = true)
-        store.save(open)
-        archive.interruptions["deleteAll"] = CancellationException("stop")
+        gated.save(open)
+        val before = gated.generation
+        val deletion = launch { gated.deleteAll() }
+        deleting.await()
 
-        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is CancellationException)
+        deletion.cancel()
+        gate.complete(Unit)
+        deletion.join()
 
-        assertTrue(store.list().isEmpty())
-        assertNull(store.open())
-        assertNull(store.reopen(id(1), null, now, testMode = true))
-        // The owner was told that the history was not deleted, so the conversation that he goes on with is saved again.
-        store.save(open.copy(lastWall = now))
-        assertEquals(setOf(id(2).value), archive.rows.keys)
-        assertEquals(id(2), fresh().open()!!.id)
+        assertTrue(deletion.isCancelled)
+        assertEquals(before + 1, gated.generation)
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(archive.shards.isEmpty())
+        assertTrue(archive.keyErased)
+        assertNull(gated.open())
+        assertTrue(gated.list().isEmpty())
+        gated.save(open.copy(lastWall = now))
+        assertNull(gated.reopen(id(1), open, now, testMode = true))
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(notes.isEmpty())
     }
 
     // Design 9.7: "delete history" works on the archive alone. One that fails before the index is ready, while the store
@@ -6703,8 +6726,9 @@ interface ConversationStore {
     suspend fun delete(id: ConversationId)
 
     /**
-     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). When
-     * it throws, it has marked nothing, and every conversation stays as the archive has it.
+     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). Once
+     * the archive's deletion has started, a cancellation takes effect only after it, and the outcome is a completed
+     * deletion. When the archive's call fails, it has marked nothing, and every conversation stays as the archive has it.
      */
     suspend fun deleteAll()
 
@@ -6768,10 +6792,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.util.IdentityHashMap
 
@@ -6821,8 +6847,9 @@ enum class ArchiveNote {
  * older snapshot that a holder saves, or closes in [reopen], after a deletion of the conversation is left out, and when the
  * store reads the archive again and finds such a conversation, it deletes it again before it shows anything. "Delete
  * history" ([deleteAll]) works on the archive alone, every row and the index in one transaction and then the key, so it has
- * one outcome whatever the store holds: after it completed, no snapshot of a conversation that this process held is written
- * again; when it did not complete, it marks nothing, and every conversation stays as the archive has it.
+ * one outcome whatever the store holds: once the archive's deletion has started, a cancellation cannot split it from the
+ * marking of the deleted conversations, so that after it no snapshot of a conversation that this process held is written
+ * again; when the archive's call fails, it marks nothing, and every conversation stays as the archive has it.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -6917,20 +6944,27 @@ class ArchivedConversationStore(
         }
     }
 
+    /**
+     * Deletes every conversation in the archive alone (design 9.7). Once it has the lock, the archive's deletion and the
+     * marking of the deleted conversations run as one unit that cancellation cannot split, the generation's raise first; a
+     * caller's cancellation takes effect after it. When the archive's call fails, it marks nothing.
+     */
     override suspend fun deleteAll() = mutex.withLock {
-        generation++
-        stopWork()
-        try {
-            archive.deleteAll()
-        } catch (e: Throwable) {
-            forget()
-            throw e
+        withContext(NonCancellable) {
+            generation++
+            stopWork()
+            try {
+                archive.deleteAll()
+            } catch (e: Throwable) {
+                forget()
+                throw e
+            }
+            // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
+            deleted += held
+            (past as? Past.Failed)?.retry?.cancel()
+            opened = Opened(null, null)
+            past = ready(PastIndex.EMPTY)
         }
-        // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
-        deleted += held
-        (past as? Past.Failed)?.retry?.cancel()
-        opened = Opened(null, null)
-        past = ready(PastIndex.EMPTY)
     }
 
     override suspend fun purge(retentionDays: Int, nowWall: Long): Int = mutex.withLock {
