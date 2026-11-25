@@ -294,8 +294,8 @@ sealed interface TraceEntry {
     data class Said(val text: String) : TraceEntry                               // a say, a hand-over's sentence, a permission's reason
     data class Asked(val text: String) : TraceEntry                              // a question or a confirmation
     data class Answered(val text: String) : TraceEntry                           // the owner's words, a number, yes or no
-    data class Data(val tool: String, val step: Int, val text: String) : TraceEntry // a data tool's result, as the model saw it
-    data class AppUsed(val label: String, val packageName: String) : TraceEntry  // an app that a step acted in or opened, once per run
+    data class Data(val tool: String, val step: Int, val text: String, val items: Int) : TraceEntry // a data tool's result, as the model saw it, and its items' count
+    data class AppUsed(val label: String, val packageName: String) : TraceEntry  // an app that a step acted in or opened, each time the run comes to it from another app
     data class Did(val line: String) : TraceEntry                                // a new line of the ledger
 }
 
@@ -965,7 +965,7 @@ Spoken conversations keep today's waits: 15 s to start an answer and 35 s once s
 
 | Thing | Carries? | How |
 |---|---|---|
-| The owner's words of every earlier command, answer and steering message of the conversation, spoken or typed in Kestrel's own screen | Yes, as his own text (D8) | `TaskRequest.ownerHistory` seeds `TaskSafety.ownerWords` and `ownerDigits`, so typing them is "typing the request" (spec 12.3), `add_contact` counts them as his, and `LinkCheck` takes them as his words for a search link |
+| The owner's words of every earlier command, answer and steering message of the conversation, spoken or typed in Kestrel's own screen | Yes, as his own text (D8) | `TaskRequest.ownerHistory` joins the run's `TaskSafety.owner` (`OwnerText`), the one record of his words, so typing them is "typing the request" (spec 12.3), `add_contact` counts them and their digits as his, and `LinkCheck` takes them as his words for a search link and for a link that he named, each within one of his texts |
 | The allowance: sending, calls and deleting that an earlier command or its steering asked for | Yes (D16) | Each record stores its `allowance`; `TaskRequest.carried` joins them, and the run's `TaskAllowance` is the current command's categories joined with the carried ones. So "And to Mila too" does not get "You didn't ask me to send anything." Standard mode still confirms every send, share and delete, and every call is still handed over in every mode (spec 12.3) |
 | Data from earlier results: data notes, search matches, and Kestrel's and the model's lines (ledger, said lines, checklist texts) | No: they stay data (D8) | Typing them is "typing screen text", which asks in Standard mode, as today |
 | Confirmations, including a share flow's yes | Never (D8) | `TaskRun`'s `confirmedSerial` and `confirmedRecipients` belong to one run; a resumed goal and a new command ask again |

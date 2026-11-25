@@ -7784,9 +7784,8 @@ internal class AndroidOwnerSupport(
         session()?.startTouchWatcher()
     }
 
-    // The front window is an app's; Kestrel's overlays (the bar, the card, the touch watcher) are never in front.
-    override suspend fun kestrelInFront(): Boolean =
-        session()?.let { ScreenTree.frontWindow(it.snapshots.current().snapshot)?.packageName == AgentFreeApps.KESTREL } ?: false
+    // Kestrel's own app in front, by the agent's one rule; its overlays (the bar, the card, the touch watcher) never are.
+    override suspend fun kestrelInFront(): Boolean = session()?.let { AgentFreeApps.kestrelInFront(it.snapshots.current().snapshot) } ?: false
 
     override fun playing(): Boolean = audio.activePlaybackConfigurations.any { it.audioAttributes.usage in OTHER_USAGES }
 
