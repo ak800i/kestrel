@@ -82,6 +82,7 @@ class ModelTest {
         assertEquals(60_000L, ConversationSettings().quietMillis)
         assertEquals(8_000L, ConversationSettings().followUpMillis)
         assertEquals(30_000L, ConversationSettings(quietSeconds = 30, followUpSeconds = 45).followUpMillis)
+        assertEquals(30_000L, ConversationSettings(quietSeconds = 600, followUpSeconds = 600).followUpMillis)
         assertEquals(30_000L, ConversationSettings(quietSeconds = 5).quietMillis)
         assertEquals(0L, ConversationSettings(followUpSeconds = 0).followUpMillis)
     }

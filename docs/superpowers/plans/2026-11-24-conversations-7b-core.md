@@ -244,6 +244,7 @@ class ModelTest {
         assertEquals(60_000L, ConversationSettings().quietMillis)
         assertEquals(8_000L, ConversationSettings().followUpMillis)
         assertEquals(30_000L, ConversationSettings(quietSeconds = 30, followUpSeconds = 45).followUpMillis)
+        assertEquals(30_000L, ConversationSettings(quietSeconds = 600, followUpSeconds = 600).followUpMillis)
         assertEquals(30_000L, ConversationSettings(quietSeconds = 5).quietMillis)
         assertEquals(0L, ConversationSettings(followUpSeconds = 0).followUpMillis)
     }
@@ -652,8 +653,9 @@ data class ConversationSettings(
     /** The quiet time between two commands. */
     val quietMillis: Long get() = quietSeconds.coerceIn(QUIET_CHOICES.first(), QUIET_CHOICES.last()) * 1_000L
 
-    /** The follow-up window after a spoken final reply, never longer than the quiet time; 0 is off. */
-    val followUpMillis: Long get() = minOf(followUpSeconds.coerceAtLeast(0) * 1_000L, quietMillis)
+    /** The follow-up window after a spoken final reply, within the page's choices and never longer than the quiet time; 0 is off. */
+    val followUpMillis: Long
+        get() = minOf(followUpSeconds.coerceIn(FOLLOW_UP_CHOICES.first(), FOLLOW_UP_CHOICES.last()) * 1_000L, quietMillis)
 
     /** How many days past conversations are kept. */
     val keptDays: Int get() = retentionDays.coerceIn(RETENTION_CHOICES.first(), RETENTION_CHOICES.last())
