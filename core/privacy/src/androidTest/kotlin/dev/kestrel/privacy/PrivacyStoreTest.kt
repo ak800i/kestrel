@@ -6,6 +6,10 @@ import android.security.keystore.KeyProperties
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.crypto.KeystoreKeys
+import dev.kestrel.privacy.conversations.PlainConversation
+import dev.kestrel.privacy.conversations.StoredConversation
+import dev.kestrel.privacy.db.ConversationHeader
+import dev.kestrel.privacy.db.ConversationRow
 import dev.kestrel.privacy.db.CredentialRow
 import dev.kestrel.privacy.db.KestrelDatabase
 import dev.kestrel.privacy.logs.ActivityKind
@@ -15,9 +19,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.builtins.serializer
+import org.junit.AfterClass
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.security.KeyStore
@@ -88,6 +95,63 @@ class PrivacyStoreTest {
         } finally {
             store.credentials.delete(id)
             store.credentials.delete(copy)
+        }
+    }
+
+    // Design 9.1 and 9.7 of sub-project 7, in this library's own test app, whose Keystore and database are not Kestrel's.
+    @Test
+    fun conversationsUseTheirOwnKeyWhichDeleteAllErasesWithTheRows() = runBlocking {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val header = ConversationHeader("test-conversation-${System.nanoTime()}", 1, 2, open = false, commands = 1)
+        try {
+            store.conversations.write(listOf(PlainConversation(header, "first".encodeToByteArray())))
+            assertTrue(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
+
+            store.conversations.deleteAll()
+
+            assertEquals(emptyList<ConversationHeader>(), store.conversations.headers())
+            assertFalse(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
+            store.conversations.write(listOf(PlainConversation(header, "second".encodeToByteArray())))
+            val read = store.conversations.read(header.id) as StoredConversation.Readable
+            assertEquals("second", read.payload.decodeToString())
+        } finally {
+            store.conversations.deleteAll()
+        }
+    }
+
+    // Design 9.2 of sub-project 7: the activity log names the kind, never the conversation's id or words.
+    @Test
+    fun aConversationInAnUnknownFormatIsKeptAndRecordedInTheActivityLogByItsKindOnly() = runBlocking {
+        val id = "test-conversation-${System.nanoTime()}"
+        store.logs.deleteHistory()
+        val dao = KestrelDatabase.get(context).conversationDao()
+        try {
+            // A later version's ciphertext: its first byte names a format that this version does not know.
+            dao.write(listOf(ConversationRow(id, 1, 2, open = false, commands = 1, payload = byteArrayOf(2) + ByteArray(40))))
+
+            assertTrue(store.conversations.read(id) is StoredConversation.UnknownFormat)
+
+            assertEquals(id, dao.get(id)?.id)
+            val entry = store.logs.activity().single()
+            assertEquals(ActivityKind.ERROR, entry.event.kind)
+            assertEquals("A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it", entry.event.text)
+        } finally {
+            store.conversations.delete(id)
+        }
+    }
+
+    companion object {
+        /**
+         * The tests open this test app's own database file, as PrivacyStore does, and it is deleted after them, so that a
+         * later run of these tests from a build whose database has an older version does not find a newer one. The
+         * process's database is closed first, because SQLite cannot write to a file that was deleted while it was open.
+         */
+        @JvmStatic
+        @AfterClass
+        fun deleteTheTestAppsDatabase() {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            KestrelDatabase.get(context).close()
+            context.deleteDatabase(KestrelDatabase.FILE_NAME)
         }
     }
 }
