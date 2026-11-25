@@ -52,8 +52,7 @@ class LocalRequestsTest {
     private val memory = FakeMemory()
     private val owner = FakeOwner()
     private val dialogue = FakeDialogue()
-    private var logsDeleted = 0
-    private val local = LocalRequests(memory, store, search, { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
+    private val local = LocalRequests(memory, store, search, { _, _ -> null }, clock) { _, error -> throw error }
 
     private fun id(n: Int) = ConversationId(n.toString().padStart(32, '0'))
 
@@ -127,18 +126,20 @@ class LocalRequestsTest {
         assertTrue(dialogue.asked.single().first.endsWith("about 'Read my latest SMS'?"))
     }
 
+    // Design 9.7 of sub-project 7: the archive's deleteAll is the whole of "delete history", the logs with the
+    // conversations in one transaction (plan 7C's archive), so a no deletes nothing and a yes deletes it all through
+    // the store.
     @Test
-    fun deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes() = scope.runTest {
+    fun deleteHistoryAsksAndDeletesTheConversationsAndTheWordsAfterYes() = scope.runTest {
         closed(1, "Ambar dinner", day)
         assertEquals(1, search.search(HistoryQuery("Ambar")).matches.size)
         dialogue.answers += listOf(ChannelAnswer.No, ChannelAnswer.Yes)
 
         assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.DeleteHistory, owner, dialogue))
-        assertEquals(0, logsDeleted)
         assertEquals(1, store.list().size)
+        assertFalse(archive.keyErased)
 
         assertEquals(LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
-        assertEquals(1, logsDeleted)
         assertTrue(store.list().isEmpty())
         assertTrue(archive.keyErased)
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
@@ -146,22 +147,22 @@ class LocalRequestsTest {
         assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
-    // Design 9.7 of sub-project 7: when the archive's transaction does not commit, the logs are already gone, every
-    // conversation stays, Kestrel says that it couldn't delete the history, and the failure is reported once.
+    // Design 9.7 of sub-project 7: when the archive's transaction does not commit, nothing is deleted (the logs go in
+    // the same transaction), every conversation stays, Kestrel says that it couldn't delete the history, and the
+    // failure is reported once.
     @Test
     fun deleteHistoryThatTheArchiveCannotCommitKeepsEveryConversationSaysSoAndReportsOnce() = scope.runTest {
         closed(1, "Ambar dinner", day)
         val failure = IOException("the disk failed")
         archive.failures["deleteAll"] = failure
         val reported = mutableListOf<Throwable>()
-        val local = LocalRequests(memory, store, search, { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> reported += error }
+        val local = LocalRequests(memory, store, search, { _, _ -> null }, clock) { _, error -> reported += error }
         dialogue.answers += ChannelAnswer.Yes
 
         assertEquals(LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
         assertEquals(1, reported.size)
         assertTrue(reported.single() is IOException)
         assertEquals(failure.message, reported.single().message)
-        assertEquals(1, logsDeleted)
         assertEquals(1, store.list().size)
         assertFalse(archive.keyErased)
     }
@@ -179,7 +180,7 @@ class LocalRequestsTest {
         for ((failure, sentence) in sentences) {
             failure?.let { archive.failures["readShards"] = it }
             val restarted = ArchivedConversationStore(archive, backgroundScope) {}
-            val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { logsDeleted++ }, { _, _ -> null }, clock) { _, error -> throw error }
+            val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { _, _ -> null }, clock) { _, error -> throw error }
 
             assertEquals(LocalOutcome.Reply(sentence), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
         }

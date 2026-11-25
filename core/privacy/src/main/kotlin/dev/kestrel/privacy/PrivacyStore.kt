@@ -6,6 +6,7 @@ import android.util.Log
 import dev.kestrel.privacy.conversations.ConversationArchiveStore
 import dev.kestrel.privacy.credentials.CredentialStore
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
+import dev.kestrel.privacy.crypto.KeyErasure
 import dev.kestrel.privacy.crypto.KeystoreErasableKey
 import dev.kestrel.privacy.crypto.KeystoreKeys
 import dev.kestrel.privacy.db.KestrelDatabase
@@ -26,7 +27,7 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
     private val credentialsKey by lazy { KeystoreKeys.getOrCreate(KeystoreKeys.CREDENTIALS_KEY, strongBox) }
     private val database = KestrelDatabase.get(context)
 
-    val logs = LogStore(database.logDao(), cipher, clock)
+    val logs = LogStore(database.logDao(), cipher, clock, order = database.historyOrder)
     val settings = SettingsStore(
         database.settingsDao(),
         cipher,
@@ -59,6 +60,16 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
             logs.append(ActivityEvent(ActivityKind.ERROR, "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it"))
         },
     )
+
+    /**
+     * "Delete history" (design spec, section 13.5; design 9.7 of sub-project 7): deletes both logs, every conversation,
+     * the open one too, and the index of past conversations in one transaction of the one database, and then erases the
+     * conversations' key. It takes its turn among the logs' appends ([LogStore.inOrder]), so that an entry whose append
+     * asked before it is deleted with the history and one that asks later stays. It throws only when the transaction
+     * did not commit, which deletes nothing; once it has committed, it returns whether the key went ([KeyErasure.KEPT]
+     * when it could not be erased, which the archive's next change erases before it stores anything).
+     */
+    suspend fun deleteHistory(): KeyErasure = logs.inOrder { conversations.deleteAll(alsoDeleting = database.logDao()::deleteEveryEntry) }
 
     private companion object {
         const val TAG = "Kestrel"

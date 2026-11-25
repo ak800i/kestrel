@@ -7,14 +7,17 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.crypto.KeystoreKeys
 import dev.kestrel.privacy.conversations.ConversationChange
+import dev.kestrel.privacy.conversations.ConversationHeader
 import dev.kestrel.privacy.conversations.IndexUpdate
 import dev.kestrel.privacy.conversations.PlainConversation
 import dev.kestrel.privacy.conversations.StoredConversation
-import dev.kestrel.privacy.db.ConversationHeader
+import dev.kestrel.privacy.conversations.StoredShard
+import dev.kestrel.privacy.crypto.KeyErasure
 import dev.kestrel.privacy.db.ConversationRow
 import dev.kestrel.privacy.db.IndexRowUpdate
 import dev.kestrel.privacy.db.CredentialRow
 import dev.kestrel.privacy.db.KestrelDatabase
+import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.settings.SettingKey
 import kotlinx.coroutines.channels.Channel
@@ -23,6 +26,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.builtins.serializer
 import org.junit.AfterClass
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -101,17 +105,21 @@ class PrivacyStoreTest {
         }
     }
 
-    // Design 9.1 and 9.7 of sub-project 7, in this library's own test app, whose Keystore and database are not Kestrel's.
+    // Design 9.1 and 9.7 of sub-project 7, in this library's own test app, whose Keystore and database are not
+    // Kestrel's: "delete history" deletes both logs, the conversations and the index, and then erases the
+    // conversations' own key.
     @Test
-    fun conversationsUseTheirOwnKeyWhichDeleteAllErasesWithTheRows() = runBlocking {
+    fun deleteHistoryDeletesTheLogsTheConversationsAndTheIndexAndThenErasesTheirKey() = runBlocking {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val header = ConversationHeader("test-conversation-${System.nanoTime()}", 1, 2, open = false, commands = 1)
         try {
+            store.logs.append(ActivityEvent(ActivityKind.NOTE, "a test note"))
             store.conversations.write(ConversationChange(listOf(PlainConversation(header, "first".encodeToByteArray())), emptyList(), IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet())))
             assertTrue(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
 
-            store.conversations.deleteAll()
+            assertEquals(KeyErasure.ERASED, store.deleteHistory())
 
+            assertTrue(store.logs.activity().isEmpty())
             assertTrue(store.conversations.read(listOf(header.id)).isEmpty())
             assertTrue(store.conversations.shards().isEmpty())
             assertFalse(keyStore.containsAlias(KeystoreKeys.CONVERSATIONS_KEY))
@@ -119,7 +127,24 @@ class PrivacyStoreTest {
             val read = store.conversations.read(listOf(header.id)).single() as StoredConversation.Readable
             assertEquals("second", read.payload.decodeToString())
         } finally {
-            store.conversations.deleteAll()
+            store.deleteHistory()
+        }
+    }
+
+    // A conversation or a shard larger than Android's cursor window (2 MB) is read in pieces and decrypts whole.
+    @Test
+    fun aConversationAndAShardLargerThanTheCursorWindowReadBack() = runBlocking {
+        val header = ConversationHeader("test-conversation-${System.nanoTime()}", 1, 2, open = true, commands = 1)
+        val payload = ByteArray(5 * 1024 * 1024) { ('a'.code + it % 26).toByte() }
+        val shard = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
+        try {
+            store.conversations.write(ConversationChange(listOf(PlainConversation(header, payload)), emptyList(), IndexUpdate.Update(mapOf("0" to shard), emptySet())))
+
+            assertArrayEquals(payload, (store.conversations.open() as StoredConversation.Readable).payload)
+            assertArrayEquals(payload, (store.conversations.read(listOf(header.id)).single() as StoredConversation.Readable).payload)
+            assertArrayEquals(shard, (store.conversations.shards().single() as StoredShard.Readable).payload)
+        } finally {
+            store.deleteHistory()
         }
     }
 

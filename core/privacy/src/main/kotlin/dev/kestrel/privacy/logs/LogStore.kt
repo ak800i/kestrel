@@ -5,8 +5,14 @@ import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.serializer
@@ -21,14 +27,20 @@ import javax.crypto.AEADBadTagException
 data class LogEntry<T>(val id: Long, val timestampMillis: Long, val event: T)
 
 /**
- * The encrypted activity log and network log, which keep entries for 7 days (design spec, section 13.5).
- * Its functions are safe to call from the main thread, because they encrypt, decrypt and query on [dispatcher].
+ * The encrypted activity log and network log, which keep entries for 7 days (design spec, section 13.5). Its functions
+ * are safe to call from the main thread, because they encrypt, decrypt and query on [dispatcher].
+ *
+ * Every append and every deletion of the history take their turns under [order], in the order in which they asked
+ * (design 9.7 of sub-project 7): an entry whose append asked before "delete history" is deleted with the history, and
+ * one that asked after it stays. [order] is the database's ([dev.kestrel.privacy.db.KestrelDatabase.historyOrder]), so
+ * every store of the logs on it shares it.
  */
 class LogStore(
     private val dao: LogDao,
     private val cipher: FieldCipher,
     private val clock: () -> Long,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val order: Mutex = Mutex(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -36,10 +48,22 @@ class LogStore(
     private var lastPurgeMillis: Long? = null
 
     suspend fun append(event: ActivityEvent) =
-        withContext(dispatcher) { append(ACTIVITY, ActivityEvent.serializer(), event) }
+        order.withLock { withContext(dispatcher) { append(ACTIVITY, ActivityEvent.serializer(), event) } }
 
     suspend fun append(event: NetworkEvent) =
-        withContext(dispatcher) { append(NETWORK, NetworkEvent.serializer(), event) }
+        order.withLock { withContext(dispatcher) { append(NETWORK, NetworkEvent.serializer(), event) } }
+
+    /**
+     * Appends [event] in [scope], for a caller that cannot wait: it takes its turn under [order] before this returns,
+     * so that it is written in the order of the calls, before a deletion of the history that is asked for later.
+     */
+    fun post(event: ActivityEvent, scope: CoroutineScope): Job = scope.launch(start = CoroutineStart.UNDISPATCHED) { append(event) }
+
+    /**
+     * Runs [block] in its turn under [order], as "delete history" does (design 9.7 of sub-project 7): after every
+     * append that asked before it, and before every append that asks while it runs.
+     */
+    suspend fun <T> inOrder(block: suspend () -> T): T = order.withLock { block() }
 
     suspend fun activity(limit: Int = DEFAULT_LIMIT): List<LogEntry<ActivityEvent>> =
         withContext(dispatcher) { read(ACTIVITY, ActivityEvent.serializer(), limit) }
@@ -149,8 +173,8 @@ class LogStore(
 
     private fun isoTime(millis: Long) = Instant.ofEpochMilli(millis).toString()
 
-    /** "Delete history" wipes both logs (design spec, section 13.5). */
-    suspend fun deleteHistory(): Int = withContext(dispatcher) { dao.deleteAll() }
+    /** "Delete history" wipes both logs (design spec, section 13.5), in its turn under [order]. */
+    suspend fun deleteHistory(): Int = order.withLock { withContext(dispatcher) { dao.deleteAll() } }
 
     private suspend fun <T> append(log: String, serializer: KSerializer<T>, event: T) {
         val now = clock()
@@ -185,7 +209,7 @@ class LogStore(
     /** The activity log says how many unreadable entries of [log] were deleted. */
     private suspend fun noteUnreadable(log: String, unreadable: Int) {
         if (unreadable > 0) {
-            append(ACTIVITY, ActivityEvent.serializer(), ActivityEvent(ActivityKind.ERROR, "Deleted $unreadable unreadable $log log entries"))
+            order.withLock { append(ACTIVITY, ActivityEvent.serializer(), ActivityEvent(ActivityKind.ERROR, "Deleted $unreadable unreadable $log log entries")) }
         }
     }
 

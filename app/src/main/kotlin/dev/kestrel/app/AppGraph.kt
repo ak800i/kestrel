@@ -293,7 +293,7 @@ class AppGraph(context: Context) {
      * rebuilds a lost index in [scope]. What it notes goes into the activity log by its kind only (design 9.2).
      */
     internal val conversationStore: ArchivedConversationStore by lazy {
-        ArchivedConversationStore(RoomRecordArchive(store.conversations), scope) { note -> scope.launch { logs.append(archiveEntry(note)) } }
+        ArchivedConversationStore(RoomRecordArchive(store.conversations, store::deleteHistory), scope) { note -> logs.post(archiveEntry(note), scope) }
     }
 
     private val conversationRetention: Retention by lazy { Retention(conversationStore, AndroidConversationClock, reportFailure) }

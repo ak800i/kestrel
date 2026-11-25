@@ -3,6 +3,7 @@ package dev.kestrel.privacy.logs
 import dev.kestrel.privacy.crypto.AesGcmFieldCipher
 import dev.kestrel.privacy.db.LogDao
 import dev.kestrel.privacy.db.LogEntryRow
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -115,6 +116,26 @@ class LogStoreTest {
         store.deleteHistory()
 
         assertEquals(0, dao.rows.size)
+    }
+
+    // Design 9.7 of sub-project 7: "delete history" and the appends take their turns in the order of their calls, so
+    // that an entry posted before the deletion, whose write had started, never outlives it, and one posted after it
+    // stays.
+    @Test
+    fun anEntryPostedBeforeTheHistoryIsDeletedDoesNotOutliveItAndOnePostedAfterItStays() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        dao.beforeInsert = { gate.await() }
+        store.post(ActivityEvent(ActivityKind.NOTE, "before"), backgroundScope)
+        val deletion = launch { store.inOrder { dao.deleteAll() } }
+        runCurrent()
+        store.post(ActivityEvent(ActivityKind.NOTE, "after"), backgroundScope)
+
+        dao.beforeInsert = {}
+        gate.complete(Unit)
+        deletion.join()
+        runCurrent()
+
+        assertEquals(listOf("after"), store.activity().map { it.event.text })
     }
 
     @Test
@@ -283,8 +304,10 @@ private class FakeLogDao : LogDao {
     private var nextId = 1L
     var purges = 0
     var failNextPurge = false
+    var beforeInsert: suspend () -> Unit = {}
 
     override suspend fun insert(row: LogEntryRow): Long {
+        beforeInsert()
         val id = nextId++
         rows += LogEntryRow(id, row.log, row.timestampMillis, row.payload)
         return id
@@ -322,7 +345,9 @@ private class FakeLogDao : LogDao {
 
     override suspend fun delete(id: Long): Int = if (rows.removeIf { it.id == id }) 1 else 0
 
-    override suspend fun deleteAll(): Int {
+    override suspend fun deleteAll(): Int = deleteEveryEntry()
+
+    override fun deleteEveryEntry(): Int {
         val count = rows.size
         rows.clear()
         return count

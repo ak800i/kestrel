@@ -19,18 +19,18 @@ import dev.kestrel.conversation.store.HistorySearch
 import kotlinx.coroutines.CancellationException
 
 /**
- * Kestrel's own requests, answered without a goal (design 5.2 of sub-project 7). "Remember", "forget" and "save that as"
- * ask through [OwnerPort] and change nothing without the owner's yes (design D22 and D23 of sub-project 5); "save that
- * as" is [routines], the goal runner's. "Delete history" (design 9.7) asks first and deletes the logs ([deleteLogs]),
- * every conversation with the index of past conversations and the archive's key. "Continue the conversation about X"
- * (design 9.6) finds the best closed conversation within retention, asks whether to switch to it, and gives the switch
- * after a yes; no or no answer changes nothing, and while the index is being rebuilt it says so and asks nothing.
+ * Kestrel's own requests, answered without a goal (design 5.2 of sub-project 7). "Remember", "forget" and "save that
+ * as" ask through [OwnerPort] and change nothing without the owner's yes (design D22 and D23 of sub-project 5); "save
+ * that as" is [routines], the goal runner's. "Delete history" (design 9.7) asks first and then deletes, through the
+ * store, the logs, every conversation and the index of past conversations in the archive's one transaction, and the
+ * archive's key. "Continue the conversation about X" (design 9.6) finds the best closed conversation within retention,
+ * asks whether to switch to it, and gives the switch after a yes; no or no answer changes nothing, and while the index
+ * is being rebuilt it says so and asks nothing.
  */
 class LocalRequests(
     private val memory: MemoryStore,
     private val store: ConversationStore,
     private val search: HistorySearch,
-    private val deleteLogs: suspend () -> Unit,
     private val routines: suspend (name: String, owner: OwnerPort) -> String?,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
@@ -67,7 +67,6 @@ class LocalRequests(
         if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
         return try {
             stored()
-            deleteLogs()
             store.deleteAll()
             LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)
         } catch (e: CancellationException) {

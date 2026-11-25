@@ -42,7 +42,8 @@ class RoomRecordArchiveTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val alias = "kestrel.test.conversations.${System.nanoTime()}"
     private val database = Room.inMemoryDatabaseBuilder(context, KestrelDatabase::class.java).build()
-    private val archive = RoomRecordArchive(ConversationArchiveStore(database.conversationDao(), KeystoreErasableKey.of(alias)))
+    private val table = ConversationArchiveStore(database.conversationDao(), KeystoreErasableKey.of(alias))
+    private val archive = RoomRecordArchive(table) { table.deleteAll() }
 
     private val past = ArchiveHeader("0123456789abcdef0123456789abcdef", openedMillis = 10, lastMillis = 20, open = false, commands = 2)
     private val current = ArchiveHeader("fedcba9876543210fedcba9876543210", openedMillis = 30, lastMillis = 40, open = true, commands = 1)
@@ -65,7 +66,7 @@ class RoomRecordArchiveTest {
         assertEquals(current, archive.readOpen()!!.header)
         assertEquals("""{"request":"Turn on dark mode"}""", (archive.readOpen() as ArchiveEntry.Readable).payload.decodeToString())
         assertEquals(listOf(past.id), archive.closedIds())
-        assertFalse(database.conversationDao().rows(listOf(past.id)).single().payload.decodeToString(throwOnInvalidSequence = false).contains("Мили"))
+        assertFalse(database.conversationDao().rows(listOf(past.id)).single().payload!!.decodeToString(throwOnInvalidSequence = false).contains("Мили"))
 
         // A switch (design 9.6): the open conversation closes and the past one opens, in one write.
         archive.write(ArchiveChange(rows = listOf(row(current.copy(open = false, lastMillis = 50), "{}"), row(past.copy(open = true, lastMillis = 50), "{}"))))
@@ -88,7 +89,7 @@ class RoomRecordArchiveTest {
 
         assertEquals(mapOf("0" to "Мила Ambar", "1" to "Viber"), archive.readShards().associate { it.name to (it as ShardRead.Readable).bytes.decodeToString() })
         assertEquals(IndexStamp(closed = 1, newest = 20, total = 20), archive.readStamp())
-        assertFalse(database.conversationDao().shards().any { it.payload.decodeToString(throwOnInvalidSequence = false).contains("Ambar") })
+        assertFalse(database.conversationDao().shards().any { it.payload!!.decodeToString(throwOnInvalidSequence = false).contains("Ambar") })
 
         archive.write(ArchiveChange(index = IndexWrite.Update(mapOf("1" to "Signal".encodeToByteArray()), setOf("0"))))
         assertEquals(mapOf("1" to "Signal"), archive.readShards().associate { it.name to (it as ShardRead.Readable).bytes.decodeToString() })
@@ -101,7 +102,7 @@ class RoomRecordArchiveTest {
     fun eachKindOfUnreadableRowBecomesItsKindOfEntry() = runBlocking {
         archive.write(ArchiveChange(rows = listOf(row(past, "{}")), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(1)))))
         val dao = database.conversationDao()
-        val sealed = dao.rows(listOf(past.id)).single().payload
+        val sealed = dao.rows(listOf(past.id)).single().payload!!
         // A later version's ciphertext: its first byte names a format that this version does not know.
         val later = byteArrayOf(2) + ByteArray(40)
         dao.write(

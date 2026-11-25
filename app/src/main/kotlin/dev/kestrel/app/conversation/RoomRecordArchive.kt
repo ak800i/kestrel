@@ -10,23 +10,28 @@ import dev.kestrel.conversation.store.RecordArchive
 import dev.kestrel.conversation.store.ShardRead
 import dev.kestrel.privacy.conversations.ConversationArchiveStore
 import dev.kestrel.privacy.conversations.ConversationChange
+import dev.kestrel.privacy.conversations.ConversationHeader
 import dev.kestrel.privacy.conversations.IndexUpdate
-import dev.kestrel.privacy.conversations.KeyErasure
 import dev.kestrel.privacy.conversations.PlainConversation
 import dev.kestrel.privacy.conversations.StoredConversation
 import dev.kestrel.privacy.conversations.StoredShard
-import dev.kestrel.privacy.db.ConversationHeader
+import dev.kestrel.privacy.crypto.KeyErasure
 import dev.kestrel.privacy.db.ConversationStamp
 
 /**
  * :core:conversation's archive on :core:privacy's encrypted tables (design 9.2 of sub-project 7). The payload, the
  * snapshot's JSON, and the shards of the index of past conversations travel as the bytes that the conversation's store
  * gives, and the tables encrypt them under the key kestrel.conversations; the plain fields stay plain, for sorting and
- * retention. A payload that fails its check becomes [ArchiveEntry.Unreadable], which the conversation's store deletes and
- * reports; one in a format that this version cannot read becomes [ArchiveEntry.Unknown], which it leaves out and the table
- * keeps; a shard that cannot be read becomes [ShardRead.Unreadable], and the store rebuilds the index.
+ * retention. A payload that fails its check becomes [ArchiveEntry.Unreadable], which the conversation's store deletes
+ * and reports; one in a format that this version cannot read becomes [ArchiveEntry.Unknown], which it leaves out and
+ * the table keeps; a shard that cannot be read becomes [ShardRead.Unreadable], and the store rebuilds the index.
+ * [deleteHistory] is the whole of "delete history" (design 9.7): the app gives PrivacyStore's, which deletes both logs
+ * with the conversations and the index in one transaction and then erases the key.
  */
-internal class RoomRecordArchive(private val table: ConversationArchiveStore) : RecordArchive {
+internal class RoomRecordArchive(
+    private val table: ConversationArchiveStore,
+    private val deleteHistory: suspend () -> KeyErasure,
+) : RecordArchive {
     override suspend fun readOpen(): ArchiveEntry? = table.open()?.archived()
 
     override suspend fun readShards(): List<ShardRead> = table.shards().map { it.archived() }
@@ -47,9 +52,9 @@ internal class RoomRecordArchive(private val table: ConversationArchiveStore) : 
 
     override suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int = table.purge(oldest, newest, index.plain())
 
-    // The table throws only when its transaction did not commit; once it has, it says whether the key went.
+    // The deletion throws only when its transaction did not commit; once it has, it says whether the key went.
     override suspend fun deleteAll(): ArchiveErasure =
-        when (table.deleteAll()) {
+        when (deleteHistory()) {
             KeyErasure.ERASED -> ArchiveErasure.KEY_ERASED
             KeyErasure.KEPT -> ArchiveErasure.KEY_KEPT
         }

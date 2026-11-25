@@ -167,11 +167,11 @@ class ArchivedConversationStore(
     }
 
     /**
-     * Deletes every conversation in the archive alone (design 9.7). Once it has the lock, the archive's deletion and the
-     * marking of the deleted conversations run as one unit that cancellation cannot split, the generation's raise first; a
-     * caller's cancellation takes effect after it. When the archive's transaction did not commit, it marks nothing. Once it
-     * has committed, the deletion is complete; a key that could not be erased after it is noted as its own failure
-     * ([ArchiveNote.KEY_NOT_ERASED]).
+     * Deletes every conversation in the archive's one call, which is the whole of "delete history" (design 9.7). Once
+     * it has the lock, the archive's deletion and the marking of the deleted conversations run as one unit that
+     * cancellation cannot split, the generation's raise first; a caller's cancellation takes effect after it. When the
+     * archive's transaction did not commit, it marks nothing. Once it has committed, the deletion is complete; a key
+     * that could not be erased after it is noted as its own failure ([ArchiveNote.KEY_NOT_ERASED]).
      */
     override suspend fun deleteAll() = mutex.withLock {
         withContext(NonCancellable) {

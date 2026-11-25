@@ -44,4 +44,11 @@ interface LogDao {
 
     @Query("DELETE FROM log_entries")
     suspend fun deleteAll(): Int
+
+    /**
+     * Deletes both logs on the calling thread, in the caller's transaction: what "delete history" deletes with the
+     * conversations.
+     */
+    @Query("DELETE FROM log_entries")
+    fun deleteEveryEntry(): Int
 }

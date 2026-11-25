@@ -42,11 +42,13 @@ interface RecordArchive {
     suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int
 
     /**
-     * "Delete history" (design 9.7): deletes every row, the open one too, and the index, in one transaction, and then erases
-     * the archive's key, so that not even a copy of what was stored can be decrypted any more; a new key is made at the
-     * next write. It throws only when the transaction did not commit, which leaves every row as it was. Once the transaction
-     * has committed, the deletion is complete, and it returns whether the key went: [ArchiveErasure.KEY_KEPT] when it could
-     * not be erased, which the archive's next change erases before it stores anything.
+     * "Delete history" (design 9.7), the whole of it: deletes every row, the open one too, and the index, in one
+     * transaction with whatever else the history holds (plan 7C's archive deletes both logs in it, because they share
+     * its database), and then erases the archive's key, so that not even a copy of what was stored can be decrypted any
+     * more; a new key is made at the next write. It throws only when the transaction did not commit, which leaves every
+     * row as it was. Once the transaction has committed, the deletion is complete, and it returns whether the key went:
+     * [ArchiveErasure.KEY_KEPT] when it could not be erased, which the archive's next change erases before it stores
+     * anything.
      */
     suspend fun deleteAll(): ArchiveErasure
 }

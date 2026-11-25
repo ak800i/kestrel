@@ -7,12 +7,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.privacy.conversations.ConversationArchiveStore
 import dev.kestrel.privacy.conversations.ConversationChange
+import dev.kestrel.privacy.conversations.ConversationHeader
 import dev.kestrel.privacy.conversations.IndexUpdate
 import dev.kestrel.privacy.conversations.PlainConversation
 import dev.kestrel.privacy.conversations.StoredConversation
 import dev.kestrel.privacy.conversations.StoredShard
 import dev.kestrel.privacy.crypto.KeystoreErasableKey
-import dev.kestrel.privacy.db.ConversationHeader
 import dev.kestrel.privacy.db.KestrelDatabase
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -78,11 +78,15 @@ class ConversationArchiveSpeedTest {
         assertEquals(CONVERSATIONS, rebuilt)
     }
 
-    /** [block]'s result and its time in ms, on a new database instance and a new store, as after a start of Kestrel. */
+    /**
+     * [block]'s result and its time in ms, on a new database instance and a new store, as after a start of Kestrel,
+     * whose first use of the key looks it up in Keystore: the key object forgets the key that an earlier block left.
+     */
     private suspend fun <T> timed(block: suspend (ConversationArchiveStore) -> T): Pair<T, Long> {
-        val database = Room.databaseBuilder(context, KestrelDatabase::class.java, FILE).build()
+        val database = KestrelDatabase.build(Room.databaseBuilder(context, KestrelDatabase::class.java, FILE))
         try {
-            val store = ConversationArchiveStore(database.conversationDao(), KeystoreErasableKey.of(alias))
+            val key = KeystoreErasableKey.of(alias).apply { forgetCachedKey() }
+            val store = ConversationArchiveStore(database.conversationDao(), key)
             val started = SystemClock.elapsedRealtime()
             val result = block(store)
             return result to SystemClock.elapsedRealtime() - started
