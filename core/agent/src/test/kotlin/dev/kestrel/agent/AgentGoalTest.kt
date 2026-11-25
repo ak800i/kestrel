@@ -26,6 +26,7 @@ import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.ScreenAction
 import dev.kestrel.agent.port.TaskLog
+import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.agent.tools.Tools
@@ -133,6 +134,45 @@ class AgentGoalTest {
         )
     }
 
+    // Design 8.1 of sub-project 7: an app chooses its own launcher label, so the trace redacts it and cuts it as a label on
+    // the screen is, as it does every other text that enters the run.
+    @Test
+    fun anAppsLabelIsTracedRedactedAndCutAsALabelOnTheScreenIs() = runTest {
+        for ((label, traced) in listOf("The code is 482913" to "The code is a one-time code", "L".repeat(100) to "L".repeat(80) + "…")) {
+            val launcher = FakeApps.DEFAULT.map { if (it.packageName == Screens.MESSENGER) it.copy(label = label) else it }
+            val harness = Harness(Screens.chats(), listOf(
+                call("tap", "Ana Petrović", null, null, "reason" to "open the chat", "category" to "reading"),
+                fail(),
+            ), launcher = launcher)
+            harness.screen.onTap("Ana Petrović", Screens.chat("Ana Petrović", "Hi"))
+
+            harness.run("Read Ana's messages")
+
+            assertEquals(listOf(TraceEntry.AppUsed(traced, Screens.MESSENGER)), harness.goal.traces.filterIsInstance<TraceEntry.AppUsed>())
+        }
+    }
+
+    // Design 8.3 of sub-project 7: the record shows the apps last used, so the run traces an app again whenever it comes back
+    // to it from another app.
+    @Test
+    fun theRunTracesAnAppAgainWhenItComesBackToIt() = runTest {
+        val harness = Harness(Screens.chats(), listOf(
+            call("open_app", null, null, null, "name" to "Viber", "reason" to "open Viber"),
+            call("open_app", null, null, null, "name" to "Viber", "reason" to "open Viber again"),
+            call("navigate", null, null, null, "to" to "Knez Mihailova 5", "app" to "waze"),
+            call("open_app", null, null, null, "name" to "Viber", "reason" to "back to Viber"),
+            fail(),
+        ))
+        harness.screen.onOpen(Screens.app("com.viber.voip", "Chats"))
+        harness.data.answer(Tools.NAVIGATE, DataResult.Opens(IntentSpec(IntentSpec.VIEW, "waze://?q=Knez", "com.waze"), "Kestrel opened the route."))
+
+        harness.run("Open Viber, show me the way to Knez Mihailova 5, then go back to Viber")
+
+        assertEquals(
+            listOf("com.viber.voip", "com.waze", "com.viber.voip"),
+            harness.goal.traces.filterIsInstance<TraceEntry.AppUsed>().map { it.packageName },
+        )
+    }
     // Design 10.5 of sub-project 7: the goal learns each step's number when the step starts, before anything of it runs.
     @Test
     fun theGoalLearnsEachStepAsItStarts() = runTest {
@@ -497,7 +537,19 @@ class AgentGoalTest {
         val result = harness.requestText(1)
         assertTrue(result, result.contains("Result (step 1): searched past conversations for restaurant Mila → ok (1 item)."))
         assertTrue(result, result.contains("  The owner said: \"Find the restaurant Mila sent me\""))
-        assertEquals(Tools.SEARCH_CONVERSATIONS, harness.goal.traces.filterIsInstance<TraceEntry.Data>().single().tool)
+        val data = harness.goal.traces.filterIsInstance<TraceEntry.Data>().single()
+        assertEquals(Tools.SEARCH_CONVERSATIONS, data.tool)
+        assertEquals(1, data.items)
+    }
+
+    // Design 8.3 of sub-project 7: a search without a match is a data note of no items.
+    @Test
+    fun aSearchWithoutAMatchIsADataNoteOfNoItems() = runTest {
+        val harness = Harness(Screens.chats(), listOf(call("search_conversations", null, null, null, "query" to "restaurant Mila"), fail()))
+
+        harness.run("Which restaurant did Mila send me?")
+
+        assertEquals(0, harness.goal.traces.filterIsInstance<TraceEntry.Data>().single().items)
     }
 
     @Test

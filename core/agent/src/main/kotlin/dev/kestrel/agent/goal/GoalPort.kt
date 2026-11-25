@@ -69,7 +69,7 @@ sealed interface TraceEntry {
         override fun toString(): String = "Data(tool=$tool, step=$step, items=$items, text=${text.length} chars)"
     }
 
-    /** An app that an executed step acted in or opened, by its launcher [label]. */
+    /** An app that an executed step acted in or opened, by its launcher [label], redacted and cut as a label on the screen is. */
     data class AppUsed(val label: String, val packageName: String) : TraceEntry {
         override fun toString(): String = "AppUsed(label=${label.length} chars, package=${packageName.length} chars)"
     }

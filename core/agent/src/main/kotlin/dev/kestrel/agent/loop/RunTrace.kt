@@ -3,6 +3,7 @@ package dev.kestrel.agent.loop
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.GoalPort
 import dev.kestrel.agent.goal.TraceEntry
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.AppsPort
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.safety.Redactor
@@ -11,7 +12,8 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * What a run tells the goal around it (plan 7A; design 8.1 of sub-project 7), as it happens: the request, the dialogue
- * (through [TracingOwner]), each data tool's result, each app that a step acted in or opened, and each new ledger line.
+ * (through [TracingOwner]), each data tool's result, each app that a step acted in or opened whenever the run comes to it
+ * from another app, and each new ledger line.
  * Every text is in its record's form, redacted once and with each vault value as its kind's words, so that no record holds
  * a placeholder (design 7.1). A failure of the goal's store is logged by its class through [log] and never ends the task.
  */
@@ -22,8 +24,8 @@ internal class RunTrace(
     private val redactor: Redactor,
     private val log: suspend (TaskLog.Kind, String) -> Unit,
 ) {
-    // The apps whose use the record holds, and how many of the ledger's lines it holds.
-    private val usedApps = mutableSetOf<String>()
+    // The app that the record names last, and how many of the ledger's lines it holds.
+    private var lastApp: String? = null
     private var tracedLines = 0
 
     /** Step [step] starts (design 10.5 of sub-project 7). */
@@ -44,9 +46,15 @@ internal class RunTrace(
     /** A data tool's [result] of step [step] with its [items], as the model saw it, already redacted and quoted. */
     suspend fun data(tool: String, step: Int, result: Redacted, items: Int) = traced(TraceEntry.Data(tool, step, vault.spoken(result.text), items))
 
-    /** An app that an executed step acted in or opened, once per run, by its launcher label. */
+    /**
+     * An app that an executed step acted in or opened, traced each time that the run comes to it from another app, so that
+     * the record knows the order in which the apps were last used (design 8.3 of sub-project 7). Its launcher label, which
+     * the app chose, is redacted and cut as a label on the screen is.
+     */
     suspend fun acted(packageName: String) {
-        if (usedApps.add(packageName)) guarded { goal.traced(TraceEntry.AppUsed(apps.label(packageName) ?: packageName, packageName)) }
+        if (packageName == lastApp) return
+        lastApp = packageName
+        guarded { goal.traced(TraceEntry.AppUsed(ScreenText.cut(recordText(apps.label(packageName) ?: packageName), ScreenText.LABEL_LIMIT), packageName)) }
     }
 
     /** The run's [checklist] after an update that the rules accepted (design 7.2 of sub-project 7). */
@@ -74,5 +82,5 @@ internal class RunTrace(
         }
     }
 
-    override fun toString(): String = "RunTrace(apps=${usedApps.size}, lines=$tracedLines)"
+    override fun toString(): String = "RunTrace(lastApp=${lastApp != null}, lines=$tracedLines)"
 }

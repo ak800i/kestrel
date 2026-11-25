@@ -80,14 +80,15 @@ class RoutineReplayTest {
         val read = RoutineStep(Tools.LIST_SMS, arguments = buildJsonObject {})
         val harness = harness().apply {
             memory.routines[0] = routine.copy(steps = listOf(routine.steps[0], read) + routine.steps.drop(1))
-            data.answer(Tools.LIST_SMS, DataResult.Ok(listOf(DataLine("", listOf(DataField("from", "John"), DataField("body", "Hello"))))))
+            data.answer(Tools.LIST_SMS, DataResult.Ok(listOf("Hello", "Bye").map { DataLine("", listOf(DataField("from", "John"), DataField("body", it))) }, note = "Only the newest 2 messages."))
         }
 
         val report = harness.run("Send John a fixtures message that I'm on my way", knownNames = setOf("Ana Petrović", "John Smith"))
 
         assertEquals(EndReason.FINISHED, report.end)
         assertTrue(harness.model.requests.isEmpty())
-        assertEquals(listOf(2), harness.goal.traces.filterIsInstance<TraceEntry.Data>().map { it.step })
+        // Its step is the routine's own, and it counts the result's two items, not its note.
+        assertEquals(listOf(2 to 2), harness.goal.traces.filterIsInstance<TraceEntry.Data>().map { it.step to it.items })
         assertEquals(listOf(TraceEntry.AppUsed("Kestrel fixtures", Screens.MESSENGER)), harness.goal.traces.filterIsInstance<TraceEntry.AppUsed>())
     }
 

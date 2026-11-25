@@ -14,13 +14,13 @@ import dev.kestrel.safety.Category
 
 /**
  * Builds a command's record as its goal works (design 8.1 of sub-project 7): from the run's traces (plan 7A's
- * `TraceEntry`), which arrive in their record's form except an app's launcher label, which the app chose and which
- * [RecordText.label] redacts and cuts here, and from the conversation's own lines. A question is a line each
+ * `TraceEntry`), which arrive in their record's form, and from the conversation's own lines. A question is a line each
  * time that the run put it to the owner, so one that an interruption cut and the run asked again is there twice, and an
  * interruption, a timeout or silence adds no answer line (plan 7A's `TracingOwner`). The ledger's traces are the live
  * view while a round runs; at its end, its report's ledger replaces them ([roundEnded]). A record keeps at most
  * [MAX_LINES] lines and [MAX_DATA] data notes of at most [TEXT_LIMIT] characters each; past that, the oldest go and are
- * counted. These bounds only protect the store; `ContextBlock` decides what reaches a model.
+ * counted. A data note keeps whole lines ([note]), because its lines are quoted already. These bounds only protect the
+ * store; `ContextBlock` decides what reaches a model.
  */
 object RecordBuilder {
     const val MAX_LINES = 200
@@ -42,8 +42,8 @@ object RecordBuilder {
         is TraceEntry.Asked -> line(record, LineKind.KESTREL_ASKED, entry.text, null)
         is TraceEntry.Answered -> line(record, LineKind.OWNER_ANSWERED, entry.text, channel)
         is TraceEntry.Data ->
-            data(record, DataNote(entry.tool, if (routine) entry.step else stepsBefore + entry.step, cut(entry.text), entry.items, routine))
-        is TraceEntry.AppUsed -> used(record, AppUse(RecordText.label(entry.label), entry.packageName))
+            data(record, DataNote(entry.tool, if (routine) entry.step else stepsBefore + entry.step, note(entry.text), entry.items, routine))
+        is TraceEntry.AppUsed -> used(record, AppUse(cut(entry.label), entry.packageName))
         is TraceEntry.Did -> record.copy(ledger = record.ledger + cut(entry.line))
     }
 
@@ -86,4 +86,25 @@ object RecordBuilder {
     }
 
     private fun cut(text: String): String = ScreenText.cut(text, TEXT_LIMIT)
+
+    /**
+     * A data note within [TEXT_LIMIT]: its leading lines that fit, whole, and one line of Kestrel's own that counts the rest.
+     * Its lines are quoted and escaped already (plan 7A's `DataResultText`), so a cut inside one could leave its quote open.
+     */
+    private fun note(text: String): String {
+        if (text.length <= TEXT_LIMIT) return text
+        val lines = text.split('\n')
+        // Room for the count line in its longest form, which counts every line.
+        val room = TEXT_LIMIT - leftOut(lines.size).length - 1
+        val kept = mutableListOf<String>()
+        var length = -1
+        for (line in lines) {
+            if (length + 1 + line.length > room) break
+            kept += line
+            length += 1 + line.length
+        }
+        return (kept + leftOut(lines.size - kept.size)).joinToString("\n")
+    }
+
+    private fun leftOut(count: Int): String = "($count more ${if (count == 1) "line" else "lines"} left out.)"
 }

@@ -14,8 +14,9 @@ import java.util.Locale
  * The result of `search_conversations` as the model reads it (design 9.4 of sub-project 7): at most
  * [HistoryPort.MAX_MATCHES] earlier commands in the port's order, best match first, in at most [TOKEN_BUDGET] tokens. Each
  * match names its day, its time and its command's number; what the owner said then and what Kestrel answered, in quotes,
- * the owner's words on a line of [OwnerLines.SAID]; the apps that it used; and its data notes as the model saw them then,
- * so that everything in it stays data (design 12.1).
+ * the owner's words on a line of [OwnerLines.SAID]; the apps that it used; and its data notes as the model saw them then.
+ * Every text is cut at its limit and only then escaped in quotes (`ScreenText.quote`), as a records block writes it, so that
+ * everything in it stays data and none can start a line of its own (design 12.1).
  * Every text was redacted once, when it entered its run, so nothing is redacted here. A data note that would pass the
  * budget is left out with a line that says so; a note whose line would pass it too, and a match that would pass it, are
  * left out whole, and the result's last line counts them, so that nothing leaves the result without a word.
@@ -25,6 +26,9 @@ internal object HistoryText {
     const val NO_MATCH = "No match."
     const val NO_OTHER = "No other match."
     const val MORE = "More earlier commands match; search with other words or a date range."
+
+    /** A data note's length in a match: the bound of a stored note (plan 7B's `RecordBuilder.TEXT_LIMIT`). */
+    const val NOTE_LIMIT = 2_000
 
     /** The result's [text] and how many matches it shows ([count]). */
     class Shown(val text: Redacted, val count: Int) {
@@ -48,7 +52,7 @@ internal object HistoryText {
             var block = head(index + 1, match, zone)
             if (!fits(block)) break
             for (note in match.data) {
-                val full = "  Data: ${note.tool}: " + note.text.replace("\n", "\n    ")
+                val full = "  Data: ${note.tool}: " + ScreenText.quote(note.text, NOTE_LIMIT)
                 val short = "  Data: ${note.tool}: left out, because the result would be too long."
                 val line = listOf(full, short).firstOrNull { fits(block + "\n" + it) }
                 if (line == null) droppedNotes++ else block += "\n" + line
@@ -70,7 +74,7 @@ internal object HistoryText {
         val lines = mutableListOf("Match $number · $time · command ${match.command} of that conversation")
         lines += "  " + OwnerLines.said(match.request, ScreenText.VALUE_LIMIT)
         match.answer?.let { lines += "  Kestrel answered: " + ScreenText.quote(it, ScreenText.VALUE_LIMIT) }
-        if (match.apps.isNotEmpty()) lines += "  Apps: " + match.apps.joinToString(", ") { ScreenText.escape(ScreenText.cut(it, ScreenText.LABEL_LIMIT)) }
+        if (match.apps.isNotEmpty()) lines += "  Apps: " + match.apps.joinToString(", ") { ScreenText.quote(it, ScreenText.LABEL_LIMIT) }
         return lines.joinToString("\n")
     }
 

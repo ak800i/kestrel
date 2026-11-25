@@ -39,7 +39,9 @@ internal class DataSteps(private val run: TaskRun) {
     // The newest find_contact's contacts, by their number there, with Kestrel's handles (design D19 of sub-project 6).
     private var found: List<FoundContact> = emptyList()
 
-    private class FoundContact(val ref: String?, val name: String, val number: String?) {
+    // [name] is the phone's, which the owner's confirmation shows; [redacted] is the name as the model saw it (redacted with
+    // its line's other values as its neighbours, as `DataResultText` does), which the ledger and so the record name.
+    private class FoundContact(val ref: String?, val name: String, val redacted: String, val number: String?) {
         override fun toString(): String = "FoundContact(ref=${ref != null}, name=${name.length} chars)"
     }
 
@@ -165,9 +167,11 @@ internal class DataSteps(private val run: TaskRun) {
         if (call is AgentCall.FindContact) {
             run.remembering { run.memory.foundContacts(ok.lines.flatMap { line -> line.fields.filter { it.name == NAME_FIELD }.map { it.value } }) }
             found = ok.lines.map { line ->
+                val name = line.fields.firstOrNull { it.name == NAME_FIELD }
                 FoundContact(
                     line.ref,
-                    line.fields.firstOrNull { it.name == NAME_FIELD }?.value.orEmpty(),
+                    name?.value.orEmpty(),
+                    name?.let { field -> run.redactor.redact(field.value, line.fields.filter { it !== field }.map { it.value }) }.orEmpty(),
                     line.fields.firstOrNull { it.name == PHONE_FIELD }?.value?.substringBefore(" ("),
                 )
             }
@@ -190,7 +194,7 @@ internal class DataSteps(private val run: TaskRun) {
             return
         }
         if (go.category == Category.DELETING) run.unconfirmed++
-        run.ledger.add("deleted ${contact.name}")
+        run.ledger.add("deleted ${contact.redacted}")
     }
 
     private fun count(items: List<String>): ShareCount {

@@ -4,12 +4,14 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataPort
+import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.safety.Mode
 import dev.kestrel.safety.SafetySettings
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -101,5 +103,25 @@ class ContactToolsTest {
         assertTrue(harness.owner.confirmations.isEmpty())
         assertEquals(1, report.unconfirmed)
         assertTrue(report.ledger.toString(), report.ledger.contains("deleted Ana Test"))
+    }
+
+    // Design 8.1 of sub-project 7: a contact's name comes from the phone, so it enters the ledger and the record redacted, as
+    // every other text from outside does.
+    @Test
+    fun aDeletedContactsNameEntersTheLedgerRedacted() = runTest {
+        val coded = DataResult.Ok(listOf(DataLine("contact 1", listOf(DataField("name", "Ana, code 482913"), DataField("phone", "+1 202 555 0143 (mobile)")), ref = "41")))
+        val harness = Harness(
+            Screens.chats(),
+            listOf(call("find_contact", null, null, null, "name" to "Ana"), call("delete_contact", null, null, null, "contact" to 1), finish(2)),
+            settings = AgentSettings(safety = SafetySettings(testMode = false, mode = Mode.FULL_AUTO)),
+        )
+        harness.data.answer("find_contact", coded)
+        harness.data.answer("delete_contact", DataResult.Ok(listOf(DataLine("deleted the contact", emptyList()))))
+
+        harness.run("delete the contact Ana")
+
+        val did = harness.goal.traces.filterIsInstance<TraceEntry.Did>().single { it.line.startsWith("deleted ") }.line
+        assertFalse(did, did.contains("482913"))
+        assertTrue(did, did.contains("a one-time code"))
     }
 }

@@ -47,7 +47,10 @@ data class HistoryMatch(
         "HistoryMatch(command=$command, request=${request.length} chars, answer=${answer?.length}, apps=${apps.size}, data=${data.size})"
 }
 
-/** One data note of a matched command: its tool and its result's text, quoted and escaped as the model saw it then. */
+/**
+ * One data note of a matched command: its tool and its result's text, quoted and escaped as the model saw it then, kept by
+ * whole lines within the store's bound, the rest counted on a last line of Kestrel's own.
+ */
 data class HistoryData(val tool: String, val text: String) {
     override fun toString(): String = "HistoryData(tool=$tool, text=${text.length} chars)"
 }
