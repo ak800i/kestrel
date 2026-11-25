@@ -734,9 +734,36 @@ object Rules {
         if (request == Request.Name && state.goal == null) return askForTask(state, shown)
         if (!state.voiceAnswers) return Step(state, listOf(shown))
         if (question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task) return converse(state, InputIntent.Command(request.text), event, shown)
-        val answer = VoiceAnswers.read(question.kind, event.text, event.named, request) ?: return Step(state, listOf(shown))
+        val answer = spokenAnswer(state, question, request, event) ?: return Step(state, listOf(shown))
         return answer(state, question, answer, event, shown)
     }
+
+    // The one answer rule (design 11 of sub-project 7): the answer to [question] in a transcript, as VoiceAnswers reads it
+    // for the question's kind, or null when the words are no answer: while only the card may answer, and for a command
+    // after the name, which answers "Continue the goal?" as steering. Idle and while an instant command runs alike.
+    private fun spokenAnswer(state: State, question: VoiceQuestion, request: Request, event: Event.Heard): ChannelAnswer? = when {
+        !state.voiceAnswers -> null
+        question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task -> null
+        else -> VoiceAnswers.read(question.kind, event.text, event.named, request)
+    }
+
+    // The controller's decision of 2026-11-25 (design 11 of sub-project 7): while an instant command runs without a
+    // question of its own, the owner's answer to the conversation's open question reaches it with its number, and the
+    // command goes on, because an answer needs no screen. A yes to "Continue the goal?" resumes the goal's round, which
+    // may not act beside a command (ScreenTurns), so it cancels the command first. "Stop", "stop listening", "turn off"
+    // and "Kestrel" keep their own meaning, and while the command asks, its own question takes the words; null then, and
+    // for words that are no answer.
+    private fun answerDuringCommand(state: State, request: Request, event: Event.Heard, shown: Effect): Step? {
+        val question = state.openQuestion ?: return null
+        if (state.asking || keepsItsMeaning(request)) return null
+        val answer = spokenAnswer(state, question, request, event) ?: return null
+        if (question.kind != QuestionKind.CONTINUE_GOAL || answer != ChannelAnswer.Yes) return answer(state, question, answer, event, shown)
+        return leaveCommand(state).then { answer(it, question, answer, event, shown) }.stopSayingOnce()
+    }
+
+    // Kestrel's requests that keep their meaning while a question is open (design D2 of sub-project 5).
+    private fun keepsItsMeaning(request: Request): Boolean =
+        request is Request.Stop || request == Request.PauseListening || request == Request.TurnOff || request == Request.Name
 
     // The voice's answer to [question], or the end of its wait ([ChannelAnswer.Silence], without a transcript). It names
     // the question, so that an answer that comes after that question ended answers no newer one (design 11 of sub-project
@@ -974,8 +1001,9 @@ object Rules {
 
     // Section 7.3 and design D2 of sub-project 3: a transcript while a command runs. "Stop", "cancel", and a transcript
     // that starts with either, cancel it; so does "no" during a countdown. During a countdown, only those and the changes
-    // of mode count, and anything else lets it go on. Kestrel's own requests cancel the command and then run. While the
-    // command asks, the transcript is the answer; otherwise the new command is dropped.
+    // of mode count, and anything else lets it go on. The owner's answer to the conversation's open question reaches it
+    // while the command asks nothing (answerDuringCommand). Kestrel's own requests cancel the command and then run. While
+    // the command asks, the transcript is the answer; otherwise the new command is dropped.
     private fun heardDuringCommand(state: State, event: Event.Heard): Step {
         if (state.inCall) return callCommand(state, event)
         val request = Requests.read(event.text, event.named, stopSpotted = event.stopSpotted)
@@ -989,6 +1017,7 @@ object Rules {
         if (state.counting && request != Request.PauseListening && request != Request.TurnOff) {
             return Step(counted, listOf(shown, Effect.HoldCommand(state.command, hold = false)))
         }
+        answerDuringCommand(counted, request, event, shown)?.let { return it }
         if (request !is Request.Other) return leaveCommand(counted).then { idle(it, request, event, shown) }.stopSayingOnce()
         if (state.asking) {
             return Step(counted.copy(asking = false), listOf(shown, Effect.AnswerCommand(state.command, request.text)))

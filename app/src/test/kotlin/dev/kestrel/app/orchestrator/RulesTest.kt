@@ -1619,6 +1619,47 @@ class RulesTest {
         assertTrue(ended.state.questionEnded)
     }
 
+    // The controller's decision of 2026-11-25: an answer needs no screen, so while an instant command runs without a
+    // question of its own, the owner's answer to the conversation's open question reaches it with its number, and the
+    // command goes on. Only a yes to "Continue the goal?" resumes a round, which may not act beside the command, so it
+    // cancels the command first. While the command asks, its own question takes the words.
+    @Test
+    fun anAnswerToTheConversationsQuestionWhileAnInstantCommandRunsLeavesTheCommandRunning() {
+        fun asking(kind: QuestionKind, from: State = runningCommand, voice: Boolean = true): State {
+            val view = from.conversation.copy(open = true, asking = kind, question = 4)
+            val asked = Rules.next(from.copy(conversation = view), Event.ChannelAsks(4, "Remember that?", kind, voice)).state
+            return Rules.next(asked, Event.SpeechEnded(spoken = true)).state
+        }
+        val question = asking(QuestionKind.YES_NO)
+
+        for ((words, answer) in listOf("Yes." to ChannelAnswer.Yes, "No, thanks." to ChannelAnswer.No)) {
+            val step = heard(question, words)
+            assertEquals(
+                words,
+                listOf(Effect.Show(Feedback.Heard(words)), Effect.Converse(InputIntent.Answer(answer, question = 4), Event.Heard(words, named = false))),
+                step.effects,
+            )
+            assertEquals(Work.RUNNING_COMMAND, step.state.work)
+            assertEquals(null, step.state.openQuestion)
+        }
+        // Words that are no answer keep today's path, and so do the answers that only the card may give.
+        assertTrue(heard(question, "Scroll up").effects.none { it is Effect.Converse || it == Effect.CancelCommand })
+        assertTrue(heard(asking(QuestionKind.YES_NO, voice = false), "Yes.").effects.none { it is Effect.Converse })
+        // While the command asks, its own question takes the words.
+        val both = Rules.next(question, Event.CommandAsks(1, "Which one?")).state.copy(speeches = 0)
+        assertTrue(heard(both, "Yes.").effects.last() is Effect.AnswerCommand)
+
+        // A paused goal's "Continue the goal?": no keeps the command, and yes cancels it before the goal resumes.
+        val paused = asking(QuestionKind.CONTINUE_GOAL, runningCommand.copy(conversation = VoiceView(open = true, goal = GoalPhase.PAUSED)))
+        assertEquals(Work.RUNNING_COMMAND, heard(paused, "No.").state.work)
+        val resumed = heard(paused, "Yes.")
+        assertEquals(Work.IDLE, resumed.state.work)
+        assertEquals(
+            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Yes.")), Effect.Converse(InputIntent.Answer(ChannelAnswer.Yes, question = 4), Event.Heard("Yes.", named = false))),
+            resumed.effects,
+        )
+    }
+
     @Test
     fun aStopBeforeKestrelsOwnRequestsGivesTheStopFirst() {
         val forget = Event.Heard("Stop. Kestrel, forget the gate code.", named = true)
