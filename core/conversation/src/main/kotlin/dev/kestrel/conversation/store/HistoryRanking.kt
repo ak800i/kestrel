@@ -22,15 +22,8 @@ data class SearchEntry(val ref: RecordRef, val atWall: Long, val words: Set<Stri
 
     companion object {
         /** The entry of [record] of the conversation [conversation]: the words of every text that its record holds. */
-        fun of(conversation: ConversationId, record: CommandRecord): SearchEntry {
-            val texts = listOfNotNull(record.request, record.answer) +
-                record.apps.map { it.label } +
-                record.data.map { it.text } +
-                record.lines.map { it.text } +
-                record.ledger +
-                record.checklist?.items?.map { it.text }.orEmpty()
-            return SearchEntry(RecordRef(conversation, record.number), record.atWall, HistoryRanking.words(texts))
-        }
+        fun of(conversation: ConversationId, record: CommandRecord): SearchEntry =
+            SearchEntry(RecordRef(conversation, record.number), record.atWall, SearchIndex.folded(record))
     }
 }
 
@@ -53,9 +46,6 @@ object HistoryRanking {
         "the", "a", "an", "about", "of", "to", "and", "or", "in", "on", "at", "for", "with", "from", "my", "our", "me",
         "it", "that", "this", "i", "u", "na", "o", "sa", "za", "od", "do", "je", "da", "se", "mi", "moj", "moja",
     )
-
-    /** The folded words of [texts], which an entry holds. */
-    fun words(texts: List<String>): Set<String> = texts.flatMapTo(HashSet()) { Normalizer.words(it) }
 
     /** The query's words that count, folded, each once; empty when [text] holds no topic. */
     fun wanted(text: String): List<String> = Normalizer.words(text).filter { it !in IGNORED }.distinct()
