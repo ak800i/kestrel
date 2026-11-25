@@ -14452,7 +14452,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 30 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 10, Task 5 + 6, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 33 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 4 − D, Task 4 + 10, Task 5 + 6, Task 6 + 3, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
 - `:core:conversation`: C₀ + 6 (`ConversationMachineTest` + 1 and `ConversationEngineTest` + 1, Task 3's review fix M1; `ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: + 1 (`AgentChecks.Tests.ps1`, Task 3's review fix M2); otherwise Task 3 changes only comments of two scripts.
 
