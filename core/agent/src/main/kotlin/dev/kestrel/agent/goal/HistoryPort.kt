@@ -4,8 +4,9 @@ import java.time.LocalDate
 
 /**
  * The on-device search over past conversations, behind the tool `search_conversations` (design 5.4 and 9.4 of
- * sub-project 7): `:core:conversation`'s `HistorySearch` implements it, and today's `AgentRunner` passes [NoHistory]. Its
- * [HistoryResult] holds the best matches first, the order that the tool's description promises the model.
+ * sub-project 7): `:core:conversation`'s `HistorySearch` implements it for each goal's round, and `GoalRunner`'s "save that
+ * as" round passes [NoHistory]. Its [HistoryResult] holds the best matches first, the order that the tool's description
+ * promises the model.
  */
 interface HistoryPort {
     suspend fun search(query: HistoryQuery): HistoryResult
@@ -75,7 +76,7 @@ data class HistoryData(val tool: String, val text: String) {
     override fun toString(): String = "HistoryData(tool=$tool, text=${text.length} chars)"
 }
 
-/** The history of today's `AgentRunner` (plan 7A): no conversations are kept yet, so nothing matches. */
+/** The history of a round that searches no conversations, as "save that as" (plan 7D): nothing matches. */
 object NoHistory : HistoryPort {
     override suspend fun search(query: HistoryQuery): HistoryResult = HistoryResult(emptyList())
 }

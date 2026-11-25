@@ -28,8 +28,9 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * The owner as a goal and the conversation talk to him (design 5.3, 10.3 and 11 of sub-project 7). It takes over the
- * parts of `:app`'s `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, and the pause gate.
+ * The owner as a goal and the conversation talk to him (design 5.3, 10.3 and 11 of sub-project 7): the parts that are not
+ * Android, one question at a time, the waits and wakes, and the pause gate. The channels (`:app`'s `VoiceChannel`) and
+ * `:app`'s `GoalOwner`, which decorates it for a goal's round, hold the Android parts.
  *
  * Kestrel's words go to the channel of the owner's latest input ([routing]); with "Speak replies to typed commands" on, a
  * typed conversation's words and questions are spoken too, and a typed final reply reaches the voice as words only, so

@@ -2,10 +2,10 @@ package dev.kestrel.agent.goal
 
 /**
  * What a task run needs from the goal around it (design 5.4 of sub-project 7): `:core:conversation`'s `RunningGoal`
- * implements it, and today's `AgentRunner` passes [NoGoal]. The run drains the owner's steering before each model call
- * (design 7.3), says when each step starts (design 10.5), reports each checklist that the rules accepted (design 7.2),
- * and traces what the command's record needs as it happens, so that the record survives the end of Kestrel's process
- * (design 8.1).
+ * implements it for each goal's round, and `GoalRunner`'s "save that as" round passes [NoGoal]. The run drains the
+ * owner's steering before each model call (design 7.3), says when each step starts (design 10.5), reports each checklist
+ * that the rules accepted (design 7.2), and traces what the command's record needs as it happens, so that the record
+ * survives the end of Kestrel's process (design 8.1).
  */
 interface GoalPort {
     /** The owner's steering since the last call, oldest first; the loop drains it before each model call. */
@@ -80,7 +80,7 @@ sealed interface TraceEntry {
     }
 }
 
-/** The goal of today's `AgentRunner` (plan 7A): no steering, and nothing kept or shown. */
+/** The goal of a round that serves no goal, as "save that as" (plan 7D): no steering, and nothing kept or shown. */
 object NoGoal : GoalPort {
     override fun takeSteering(): List<Steer> = emptyList()
 

@@ -4,8 +4,9 @@ import dev.kestrel.safety.Confirmation
 import dev.kestrel.safety.HandOver
 
 /**
- * The owner, as the agent talks to him (design D1, D2 of sub-project 5). `:app`'s `AppOwnerPort` (plan 5B) implements it
- * through the Orchestrator; the tests use the fixtures' `FakeOwner`. Questions are asked one at a time.
+ * The owner, as the agent talks to him (design D1, D2 of sub-project 5). `:core:conversation`'s `ConversationOwner`
+ * implements it over the owner's channels (design 5.3 and 11 of sub-project 7), and `:app`'s `GoalOwner` decorates it for a
+ * goal's round; the tests use the fixtures' `FakeOwner`. Questions are asked one at a time.
  */
 interface OwnerPort {
     suspend fun say(text: String)

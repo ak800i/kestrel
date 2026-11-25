@@ -11,9 +11,9 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * What a goal's round needs from Kestrel's phone (design 5.5 and 7.1 of sub-project 7). `:app`'s `AppGoalEnvironment`
- * (plan 7D) implements it with what `AppAgentEnvironment` and `AgentRunner`'s model choice do today: the model or the
- * debug build's scripted model and live session, the screen and the touch watcher, the data tools, the self-chat aliases
- * and the call backstop. The JVM tests use the fixtures' `FakeGoalEnvironment`.
+ * (plan 7D) implements it, with `RoundModels` for the model choice: the model or the debug build's scripted model and
+ * live session, the screen and the touch watcher, the data tools, the self-chat aliases and the call backstop. The JVM
+ * tests use the fixtures' `FakeGoalEnvironment`.
  */
 interface GoalEnvironment {
     /** The ports and settings of one round of [start], or why it cannot start. */
