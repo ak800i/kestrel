@@ -15,6 +15,9 @@ object KeystoreKeys {
     /** Encrypts the providers' credentials (design spec, section 10.7). */
     const val CREDENTIALS_KEY = "kestrel.credentials"
 
+    /** Encrypts the past conversations; "delete history" erases it (design 9.1 and 9.7 of sub-project 7). */
+    const val CONVERSATIONS_KEY = "kestrel.conversations"
+
     private const val PROVIDER = "AndroidKeyStore"
 
     /**
@@ -33,6 +36,15 @@ object KeystoreKeys {
             }
         }
         return generate(alias, strongBox = false)
+    }
+
+    /**
+     * Deletes the key [alias] when it exists, so that nothing that it encrypted can be read again (crypto-shredding, design
+     * 9.7 of sub-project 7). The next [getOrCreate] makes a new key.
+     */
+    @Synchronized
+    fun delete(alias: String) {
+        KeyStore.getInstance(PROVIDER).apply { load(null) }.deleteEntry(alias)
     }
 
     private fun generate(alias: String, strongBox: Boolean): SecretKey {
