@@ -8,6 +8,7 @@ import dev.kestrel.agent.goal.ChecklistItem
 import dev.kestrel.agent.goal.GoalLimits
 import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.ItemState
+import dev.kestrel.agent.port.AccessKind
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
@@ -16,6 +17,7 @@ import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
+import dev.kestrel.conversation.channel.DialogueEvent
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.goal.GoalRunner
@@ -53,6 +55,7 @@ import dev.kestrel.conversation.testing.MemoryArchive
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
+import dev.kestrel.safety.HandOverKind
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -360,6 +363,59 @@ class ConversationEngineTest {
         runCurrent()
         assertNull(engine.view.value.goal)
         assertNull(engine.view.value.hold)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // Plan 7E: a refusal is the only input that interrupts a handed-over goal. The round that waits in the hand-over is
+    // cancelled, the hand-over closes, and the goal is held as refused, not working; Continue resumes it under a new number.
+    @Test
+    fun androidsRefusalDuringAHandOverClosesItAndHoldsTheGoalUntilContinue() = scope.runTest {
+        val environment = FakeGoalEnvironment(listOf(listSms, listSms, finish(1))).apply {
+            data.answer("list_sms", DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), sms)
+        }
+        val dialogue = mutableListOf<DialogueEvent>()
+        var machine: ConversationState? = null
+        val engine = engine(environment, onStep = { event, _, step ->
+            if (event is ConversationEvent.Dialogue) dialogue += event.event
+            machine = step.state
+        })
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.HANDED_OVER, engine.view.value.goal)
+        assertEquals(HandOverKind.ACCESS, engine.owner.handOverKind)
+        val handedOver = dialogue.filterIsInstance<DialogueEvent.HandedOver>().single().number
+        val refused = checkNotNull(engine.view.value.goalCommand)
+
+        engine.backgroundRefused(refused)
+        runCurrent()
+
+        assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
+        assertEquals(GoalHold.BACKGROUND_REFUSED, engine.view.value.hold)
+        assertEquals(Interruption.BACKGROUND_REFUSED, engine.outcome(refused)!!.report.interruption)
+        assertNull(engine.owner.handOverKind)
+        assertEquals(DialogueEvent.HandOverDone(handedOver), dialogue.last { it is DialogueEvent.HandOverDone })
+        assertNull(machine!!.goal!!.handOver)
+        assertEquals(1, text.handOvers.size)
+
+        // The resumed round waits before its last model call, so that a late refusal of the old number meets a working goal.
+        val waiting = CompletableDeferred<Unit>()
+        environment.beforeCall = { call -> if (call == 3) waiting.await() }
+        engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
+        runCurrent()
+        assertEquals(GoalPhase.ACTING, engine.view.value.goal)
+        val resumed = checkNotNull(engine.view.value.goalCommand)
+        assertNotEquals(refused, resumed)
+
+        engine.backgroundRefused(refused)
+        runCurrent()
+        assertEquals(GoalPhase.ACTING, engine.view.value.goal)
+        assertNull(engine.view.value.hold)
+        assertEquals(resumed, engine.view.value.goalCommand)
+
+        waiting.complete(Unit)
+        runCurrent()
+        assertNull(engine.view.value.goal)
         assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
     }
 
