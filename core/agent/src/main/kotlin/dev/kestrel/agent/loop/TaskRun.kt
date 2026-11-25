@@ -152,8 +152,8 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private val checklists = ChecklistSteps(this, task.checklist)
     private val searches = HistorySteps(this)
 
-    /** The run's questions to the owner, which share one count of interruptions (D2). */
-    val questions = Questions(this)
+    /** What the run says to the owner and asks him, whose questions share one count of interruptions (D2). */
+    val talk = OwnerTalk(this)
     val memory = TaskMemory(ports.memory, ports.apps, ports.clock, redactor) { settings.closed(it) }
     private val recorded = mutableListOf<RoutineStep>()
     private var typedSecret = false
@@ -464,7 +464,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         val limit = limits.reached(replies) ?: return
         val question = LimitQuestion.text(limit, replies, limits.workMillis, limits.credits, checklists.checklist, ledger.lines.map(vault::spoken))
         // The third interruption in a row counts as no answer, which keeps a goal open.
-        when (questions.ask(question, AnswerKind.LIMIT)) {
+        when (talk.ask(question, AnswerKind.LIMIT)) {
             Answer.Yes -> limits.nextRound(replies)
             Answer.Silence -> throw Ended(EndReason.PAUSED_AT_LIMIT)
             else -> throw Ended(EndReason.STOPPED_AT_LIMIT)
@@ -475,7 +475,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         when (escalate) {
             Escalate.NOTHING -> Unit
             Escalate.SWITCHED -> log(TaskLog.Kind.ACTION, "switched to the versatile model")
-            Escalate.ASK_STUCK -> if (questions.yes(Limits.STUCK_QUESTION)) escalation.keepTrying(progress) else throw Ended(EndReason.STUCK)
+            Escalate.ASK_STUCK -> if (talk.yes(Limits.STUCK_QUESTION)) escalation.keepTrying(progress) else throw Ended(EndReason.STUCK)
             Escalate.END_INVALID -> throw Ended(EndReason.INVALID_CALLS)
             Escalate.END_STUCK -> throw Ended(EndReason.STUCK, detail = ports.model.model.versatile.unusable)
         }
@@ -540,15 +540,13 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private suspend fun <S : ScreenSnapshot?> pastKestrel(snapshot: S, read: suspend () -> S): S {
         var current = snapshot
         repeat(FRONT_CHECKS) {
-            if (current?.let(::kestrelInFront) != true) return current
+            if (current?.let(AgentFreeApps::kestrelInFront) != true) return current
             if (!limits.waiting { ports.owner.leaveKestrel() }) throw kestrelStayed()
             current = read()
         }
-        if (current?.let(::kestrelInFront) == true) throw kestrelStayed()
+        if (current?.let(AgentFreeApps::kestrelInFront) == true) throw kestrelStayed()
         return current
     }
-
-    private fun kestrelInFront(snapshot: ScreenSnapshot): Boolean = ScreenTree.frontWindow(snapshot)?.packageName == AgentFreeApps.KESTREL
 
     private fun kestrelStayed(): Ended = Ended(EndReason.INTERRUPTED, interruption = Interruption.KESTREL_SCREEN)
 
@@ -593,7 +591,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
      */
     suspend fun gate(): Boolean = (limits.waiting { ports.owner.gate() } == Gate.RESUMED).also {
         if (it) {
-            questions.countAgain()
+            talk.countAgain()
             resumePending = true
         }
     }
@@ -678,11 +676,11 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
                 }
                 if (gate()) return Clearance.Again
                 if (confirm(decision.confirmation) != ConfirmEnd.YES) {
-                    if (!questions.interrupted()) return Clearance.Again
+                    if (!talk.interrupted()) return Clearance.Again
                     declined = true
                     throw Ended(EndReason.DECLINED)
                 }
-                questions.countAgain()
+                talk.countAgain()
                 confirmed++
                 confirmedSerial = flow?.serial?.takeIf { shareTap }
                 confirmedRecipients = if (shareTap) chats else emptySet()

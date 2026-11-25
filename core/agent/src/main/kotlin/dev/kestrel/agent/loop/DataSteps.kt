@@ -58,10 +58,9 @@ internal class DataSteps(private val run: TaskRun) {
             receivingLabel = run.label(sharePackage)
             mediaNote?.let { note ->
                 mediaNote = null
-                run.gate()
-                run.limits.waiting { run.ports.owner.say(note) }
+                run.talk.say(note)
             }
-            if (call.items.size > MAX_SILENT_SHARE && !run.questions.yes("Share ${call.items.size} items?")) throw Ended(EndReason.DECLINED)
+            if (call.items.size > MAX_SILENT_SHARE && !run.talk.yes("Share ${call.items.size} items?")) throw Ended(EndReason.DECLINED)
         }
         // delete_contact names a contact of the newest find_contact by its number there; its ID stays on the phone.
         val contact = (call as? AgentCall.DeleteContact)?.let { delete ->

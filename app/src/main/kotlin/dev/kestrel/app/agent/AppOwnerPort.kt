@@ -45,7 +45,7 @@ internal interface OwnerScreen {
     /** Starts the touch watcher again: an instant command during a hand-over or a pause stops it when it ends (D19). */
     suspend fun watch()
 
-    /** Whether a window of Kestrel's own app, not one of its overlays, is in front (design 10.2 of sub-project 7). */
+    /** Whether Kestrel's own screen is in front, by the agent's own rule, `AgentFreeApps.kestrelInFront` (design 10.2 of sub-project 7). */
     suspend fun kestrelInFront(): Boolean
 }
 

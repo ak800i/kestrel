@@ -1,5 +1,7 @@
 package dev.kestrel.agent.goal
 
+import dev.kestrel.agent.SpokenList
+
 /**
  * One item of an `update_checklist` call as `ToolArguments` read it, with its texts in their spoken form (design 7.2 of
  * sub-project 7). toString prints the id and lengths only.
@@ -110,5 +112,5 @@ object ChecklistRules {
     }
 
     /** Item ids as a sentence names them: "c4", "c4 and c5", "c4, c5 and c6". */
-    fun listed(ids: List<String>): String = if (ids.size == 1) ids.single() else ids.dropLast(1).joinToString(", ") + " and " + ids.last()
+    fun listed(ids: List<String>): String = SpokenList.of(ids)
 }

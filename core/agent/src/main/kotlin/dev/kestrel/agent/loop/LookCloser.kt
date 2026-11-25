@@ -20,7 +20,8 @@ import kotlinx.coroutines.delay
  * `look_closer`'s three steps (design D20; spec 11.6), one per call on the same screen: OCR where the tree has no text,
  * then a screenshot for the model after the owner's yes, then the numbers for the owner to pick from. A call with a
  * target limits OCR and the screenshot to that element. When a step cannot run here (no OCR files, a model without
- * images, the owner's no), the next one runs in the same call. Captures stay in memory and are closed at once.
+ * images, the owner's no or no answer), the next one runs in the same call. Both questions go through the run's
+ * [OwnerTalk], so an interrupted one is asked again. Captures stay in memory and are closed at once.
  */
 internal class LookCloser(private val run: TaskRun) {
     private val calls = mutableMapOf<Signature, Int>()
@@ -74,8 +75,7 @@ internal class LookCloser(private val run: TaskRun) {
         if (!run.recalled(false) { run.ports.memory.screenshotApproved(front, provider.providerId) }) {
             val app = run.label(front) ?: front.substringAfterLast('.')
             val warning = if (ocrMissing) " I can't hide numbers that only the picture shows." else ""
-            run.gate()
-            val answer = run.limits.waiting { run.ports.owner.ask("May I send a screenshot of $app to ${provider.providerName}?$warning", AnswerKind.SCREENSHOT) }
+            val answer = run.talk.ask("May I send a screenshot of $app to ${provider.providerName}?$warning", AnswerKind.SCREENSHOT)
             when (approval(answer)) {
                 Approval.ALWAYS -> run.remembering { run.ports.memory.approveScreenshots(front, provider.providerId) }
                 Approval.ONCE -> Unit
@@ -131,8 +131,7 @@ internal class LookCloser(private val run: TaskRun) {
     private suspend fun numbers(call: AgentCall.LookCloser): Done {
         run.ports.screen.showBadges(badges())
         try {
-            run.gate()
-            val answer = run.limits.waiting { run.ports.owner.ask(WHICH, AnswerKind.PICK_NUMBER) }
+            val answer = run.talk.ask(WHICH, AnswerKind.PICK_NUMBER)
             val picked = (answer as? Answer.Number)?.n?.takeIf { run.observation.table.entry(it) != null }
                 ?: return Done(call.tool, Outcome.NoAnswer)
             return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner picked [$picked]."))

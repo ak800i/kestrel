@@ -10,12 +10,12 @@ import dev.kestrel.commands.text.Normalizer
 
 /**
  * The tools that talk with the owner (design D2, D17 and D22 of sub-project 5): `ask_user` and `say`, and the memory tools
- * `remember` and `forget`, which always ask him first (spec 11.4). Their questions go through the run's [Questions]. Plan
- * 7A moved them out of `TaskRun`.
+ * `remember` and `forget`, which always ask him first (spec 11.4). They talk through the run's [OwnerTalk]. Plan 7A moved
+ * them out of `TaskRun`.
  */
 internal class DialogueSteps(private val run: TaskRun) {
     suspend fun askUser(call: AgentCall.AskUser): Done {
-        val text = when (val answer = run.questions.ask(run.spoken(call.question), AnswerKind.FREE)) {
+        val text = when (val answer = run.talk.ask(run.spoken(call.question), AnswerKind.FREE)) {
             is Answer.Text -> answer.text
             is Answer.Number -> answer.n.toString()
             Answer.Yes -> "yes"
@@ -29,14 +29,13 @@ internal class DialogueSteps(private val run: TaskRun) {
     }
 
     suspend fun say(call: AgentCall.Say): Done {
-        run.gate()
-        run.limits.waiting { run.ports.owner.say(run.spoken(call.text)) }
+        run.talk.say(run.spoken(call.text))
         return Done(call.tool, text = "Result: said.", summary = "Step ${run.replies}: said something to the owner.", last = "said", progress = false)
     }
 
     // A store that fails changes nothing (D22).
     suspend fun remember(call: AgentCall.Remember): Done {
-        val stored = run.questions.yes("Remember that ${run.spoken(call.key)} is ${run.spoken(call.value)}?")
+        val stored = run.talk.yes("Remember that ${run.spoken(call.key)} is ${run.spoken(call.value)}?")
         val saved = stored && run.recalled(false) {
             run.ports.memory.saveFact(Fact(call.key.trim(), call.value.trim(), FactKind.FACT, run.ports.clock.now().toInstant().toEpochMilli()))
             true
@@ -53,7 +52,7 @@ internal class DialogueSteps(private val run: TaskRun) {
         val fact = run.recalled(emptyList()) { run.ports.memory.facts() }.firstOrNull { Normalizer.normalize(it.key) == Normalizer.normalize(call.key) }
         val words = when {
             fact == null -> "no such fact"
-            run.questions.yes("Forget ${run.spoken(fact.key)}?") -> if (run.recalled(false) { run.ports.memory.deleteFact(fact.key) }) "deleted" else "no such fact"
+            run.talk.yes("Forget ${run.spoken(fact.key)}?") -> if (run.recalled(false) { run.ports.memory.deleteFact(fact.key) }) "deleted" else "no such fact"
             else -> "the owner said no"
         }
         return Done(call.tool, text = "Result: $words.", summary = "Step ${run.replies}: forget → $words.", last = "forget → $words", progress = words == "deleted")

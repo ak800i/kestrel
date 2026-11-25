@@ -4,7 +4,6 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.TaskReport
-import dev.kestrel.agent.goal.ChecklistText
 import dev.kestrel.app.providers.ProviderTexts
 
 /**
@@ -53,7 +52,7 @@ internal object AgentTexts {
     // A round's limit says what is done and left from the checklist when the model kept one (plan 7A; design 7.4 of
     // sub-project 7); any other end says what the task did.
     private fun done(report: TaskReport): String =
-        report.checklist?.takeIf { report.end in ROUND_LIMITS }?.let(ChecklistText::progress) ?: ledger(report)
+        Ledger.soFar(report.checklist?.takeIf { report.end in ROUND_LIMITS }, report.ledger) ?: NOTHING_CHANGED
 
     private val ROUND_LIMITS = setOf(EndReason.STOPPED_AT_LIMIT, EndReason.PAUSED_AT_LIMIT)
 

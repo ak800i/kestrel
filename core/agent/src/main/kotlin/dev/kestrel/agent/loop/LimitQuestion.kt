@@ -2,7 +2,6 @@ package dev.kestrel.agent.loop
 
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.goal.Checklist
-import dev.kestrel.agent.goal.ChecklistText
 import java.util.Locale
 
 /**
@@ -12,6 +11,7 @@ import java.util.Locale
  */
 internal object LimitQuestion {
     const val LEDGER_LINES = 3
+    const val NOTHING_YET = "I haven't changed anything yet."
 
     fun text(limit: Limit, replies: Int, workMillis: Long, credits: Double, checklist: Checklist?, ledger: List<String>): String {
         val used = when (limit) {
@@ -22,12 +22,7 @@ internal object LimitQuestion {
             }
             Limit.CREDITS -> "This has used ${number(credits.toLong())} AI Credits."
         }
-        return "$used ${checklist?.let(ChecklistText::progress) ?: done(ledger)} Continue?"
-    }
-
-    private fun done(ledger: List<String>): String {
-        val newest = Ledger.sentence(ledger.takeLast(LEDGER_LINES)) ?: return "I haven't changed anything yet."
-        return if (ledger.size > LEDGER_LINES) "Most recently, $newest" else newest
+        return "$used ${Ledger.soFar(checklist, ledger, LEDGER_LINES) ?: NOTHING_YET} Continue?"
     }
 
     private fun number(value: Long): String = String.format(Locale.ENGLISH, "%,d", value)

@@ -4,6 +4,7 @@ import dev.kestrel.agent.loop.Launches
 import dev.kestrel.agent.loop.ScreenSteps
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
+import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
@@ -118,6 +119,21 @@ class AgentToolsTest {
         assertTrue(harness.lastRequestText().contains("The owner picked [1]."))
         assertTrue(harness.screen.badges.isNotEmpty())
         assertEquals(2, harness.eyes.closed)
+    }
+
+    // Plan 7A: look_closer's questions follow the run's one rule for interruptions: an interrupted question is asked again.
+    @Test
+    fun lookClosersQuestionsAreAskedAgainAfterAnInterruption() = runTest {
+        val screen = ScreenBuilder.screen("com.example.map") { button(null, 900, viewId = "pay", suggestedName = "pay") }
+        val harness = Harness(screen, listOf(look, look, call("fail", null, null, null, "reason" to "Stop.")), model = withImages)
+        harness.eyes.lines = null
+        harness.owner.answers += listOf(Answer.Interrupted, Answer.Text("Yes."), Answer.No, Answer.Interrupted, Answer.Number(1))
+
+        harness.run("Pay the bill")
+
+        assertEquals(List(3) { AnswerKind.SCREENSHOT } + List(2) { AnswerKind.PICK_NUMBER }, harness.owner.asked.map { it.second })
+        assertTrue(harness.model.requests[1].messages.last().let { it is ChatMessage.User && it.parts.single() is Part.Image })
+        assertTrue(harness.lastRequestText().contains("The owner picked [1]."))
     }
 
     @Test

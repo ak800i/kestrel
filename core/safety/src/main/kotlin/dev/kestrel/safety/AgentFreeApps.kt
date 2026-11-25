@@ -2,6 +2,7 @@ package dev.kestrel.safety
 
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.ScreenTree
 import kotlinx.serialization.Serializable
 
 /** The owner's changes to the shipped list of agent-free apps, stored apart from it (design D16 of sub-project 5). */
@@ -76,6 +77,13 @@ class AgentFreeApps(val added: Set<String> = emptySet(), val removed: Set<String
         }
 
         fun from(changes: AgentFreeChanges): AgentFreeApps = AgentFreeApps(changes.added.toSet(), changes.removed.toSet())
+
+        /**
+         * Whether Kestrel's own screen is in front of [snapshot] (design 10.2 of sub-project 7): the front window is Kestrel's.
+         * Kestrel's overlays (the bar, the card, the touch watcher) are never the front window. The agent waits until it
+         * leaves before it looks at the screen, and the owner port's wait ends when it has left, by this one rule.
+         */
+        fun kestrelInFront(snapshot: ScreenSnapshot): Boolean = ScreenTree.frontWindow(snapshot)?.packageName == KESTREL
     }
 }
 
