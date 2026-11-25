@@ -130,8 +130,9 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
     private fun actionOf(name: String?): GoalAction = GoalAction.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
         ?: throw HookError("add --es action with one of stop, open, continue or cancel")
 
-    // The shade opens with an animation, and a collapsed row shows its buttons only once it is expanded: the key of the
-    // button in Kestrel's own row, or null, after it asked to expand that row.
+    // The shade opens with an animation, and a notification shows its buttons only once its row, and the row of the group
+    // that Android put it in, are expanded: the key of the button in Kestrel's own row, or null, after it asked to expand
+    // those rows, one in each snapshot, the group's first.
     private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction): String? {
         repeat(SHADE_TRIES) {
             delay(SHADE_MILLIS)

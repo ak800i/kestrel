@@ -67,6 +67,33 @@ class NoticeButtonsTest {
         assertEquals("row-kestrel", NoticeButtons.collapsedRow(snapshot, "Kestrel is working"))
     }
 
+    @Test
+    fun aCollapsedGroupOfKestrelsNotificationsIsExpandedBeforeTheNotificationsOwnRow() {
+        // Android groups an app's notifications by itself (on Android 17 from the second one): while the group is collapsed,
+        // its rows show one line each, and an expanded row in it still shows no buttons.
+        fun shade(group: ElementAction, kestrel: ElementAction, buttons: Boolean) = ScreenSnapshot(
+            takenAtMillis = 0,
+            windows = listOf(shade),
+            elements = listOfNotNull(
+                element("group", null, actions = setOf(group)),
+                element("row-kestrel", 0, actions = setOf(kestrel)),
+                element("kestrel-title", 1, text = "Continue the goal?"),
+                element("row-listening", 0, actions = setOf(ElementAction.EXPAND)),
+                element("listening-title", 3, text = "Kestrel is listening"),
+                element("kestrel-continue", 1, text = "Continue", clickable = true).takeIf { buttons },
+            ),
+        )
+
+        val closed = shade(ElementAction.EXPAND, ElementAction.EXPAND, buttons = false)
+        assertNull(NoticeButtons.button(closed, "Continue the goal?", "Continue"))
+        assertEquals("group", NoticeButtons.collapsedRow(closed, "Continue the goal?"))
+        assertEquals("group", NoticeButtons.collapsedRow(shade(ElementAction.EXPAND, ElementAction.COLLAPSE, buttons = false), "Continue the goal?"))
+        assertEquals("row-kestrel", NoticeButtons.collapsedRow(shade(ElementAction.COLLAPSE, ElementAction.EXPAND, buttons = false), "Continue the goal?"))
+        val open = shade(ElementAction.COLLAPSE, ElementAction.COLLAPSE, buttons = true)
+        assertNull(NoticeButtons.collapsedRow(open, "Continue the goal?"))
+        assertEquals("kestrel-continue", NoticeButtons.button(open, "Continue the goal?", "Continue"))
+    }
+
     private companion object {
         const val SYSTEM_UI = "com.android.systemui"
     }
