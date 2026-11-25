@@ -201,6 +201,9 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     private var cacheWrite = 0L
     private var pendingPrompt = ""
 
+    // The owner's words of the request, redacted once (design 8.2 of sub-project 7).
+    private lateinit var request: Redacted
+
     suspend fun run(): TaskReport = try {
         start()
         while (true) turn()
@@ -218,9 +221,10 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     fun cancelled(reason: EndReason, interruption: Interruption? = null): TaskReport = report(reason, null, null, null, interruption)
 
     private suspend fun start() {
-        log(TaskLog.Kind.START, "request: ${redactor.redact(task.text)}")
+        request = TaskText.request(task, redactor)
+        log(TaskLog.Kind.START, "request: ${request.text}")
         // A resumed goal's request is in its record already (design 7.6 of sub-project 7).
-        if (task.resume == null) trace.requested(task.text)
+        if (task.resume == null) trace.requested(request)
         val first = checkFront(fresh())
         remembering { memory.load() }
         val context = recalled(null) { memory.context(task.text) }
@@ -240,7 +244,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
             system = SystemPrompt.TEXT,
             tools = Tools.ALL,
             context = TaskText.context(task, settings.safety.testMode, context, redactor),
-            task = TaskText.message(task, today(), safety.allowance, routineNote, redactor),
+            task = TaskText.message(task, request, today(), safety.allowance, routineNote),
             first = observation,
             taskId = task.id,
             signedThinking = model.lightweight.signedThinking || model.versatile.signedThinking,
@@ -842,7 +846,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     /** The task's steps for "Kestrel, save that as <name>", or null when it typed a vault value or did nothing (D23). */
     private fun recording(signature: String?): Recording? =
         if (typedSecret || recorded.isEmpty()) null
-        else Recording(redactor.redact(task.text), recorded.toList(), signature, ports.clock.elapsedMillis())
+        else Recording(request.text, recorded.toList(), signature, ports.clock.elapsedMillis())
 
     /** Model text that Kestrel speaks (D24): placeholders as their kind's words, at most 600 characters. */
     fun spoken(text: String): String = vault.spoken(text).let { if (it.length > SPOKEN_LIMIT) it.take(SPOKEN_LIMIT - 1) + "…" else it }

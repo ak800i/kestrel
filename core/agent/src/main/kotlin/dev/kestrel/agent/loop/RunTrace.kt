@@ -29,8 +29,8 @@ internal class RunTrace(
     /** Step [step] starts (design 10.5 of sub-project 7). */
     suspend fun stepStarted(step: Int) = guarded { goal.stepStarted(step) }
 
-    /** The owner's request of a run that is no resume, which the run has not redacted yet. */
-    suspend fun requested(text: String) = traced(TraceEntry.Requested(recordText(text)))
+    /** The owner's request of a run that is no resume, as the task message carries it, redacted once. */
+    suspend fun requested(request: Redacted) = traced(TraceEntry.Requested(vault.spoken(request.text)))
 
     /** What Kestrel said: a `say`, a hand-over's sentence or a permission request's reason. */
     suspend fun said(text: String) = traced(TraceEntry.Said(recordText(text)))

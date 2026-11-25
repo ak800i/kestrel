@@ -1,8 +1,8 @@
 package dev.kestrel.agent.loop
 
+import dev.kestrel.agent.OwnerLines
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
-import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.tools.AgentCall
@@ -23,9 +23,8 @@ internal class DialogueSteps(private val run: TaskRun) {
         }
         if (text == null) return Done(call.tool, Outcome.NoAnswer)
         run.safety = run.safety.withOwnerWords(text)
-        val said = Redacted.of(run.redactor, text)
         // His answer is his own words, never cut (design 7.3 of sub-project 7).
-        return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel("The owner said: " + ScreenText.quoteWhole(said.text)))
+        return Done(call.tool, Outcome.Answered, extra = Redacted.kestrel(OwnerLines.said(Redacted.of(run.redactor, text).text)))
     }
 
     suspend fun say(call: AgentCall.Say): Done {

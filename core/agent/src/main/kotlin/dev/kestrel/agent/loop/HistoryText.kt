@@ -1,5 +1,6 @@
 package dev.kestrel.agent.loop
 
+import dev.kestrel.agent.OwnerLines
 import dev.kestrel.agent.goal.HistoryMatch
 import dev.kestrel.agent.goal.HistoryPort
 import dev.kestrel.agent.goal.HistoryResult
@@ -66,7 +67,7 @@ internal object HistoryText {
     private fun head(number: Int, match: HistoryMatch, zone: ZoneId): String {
         val time = FORMAT.format(Instant.ofEpochMilli(match.atMillis).atZone(zone))
         val lines = mutableListOf("Match $number · $time · command ${match.command} of that conversation")
-        lines += "  The owner said: " + ScreenText.quote(match.request, ScreenText.VALUE_LIMIT)
+        lines += "  " + OwnerLines.said(match.request, ScreenText.VALUE_LIMIT)
         match.answer?.let { lines += "  Kestrel answered: " + ScreenText.quote(it, ScreenText.VALUE_LIMIT) }
         if (match.apps.isNotEmpty()) lines += "  Apps: " + match.apps.joinToString(", ") { ScreenText.escape(ScreenText.cut(it, ScreenText.LABEL_LIMIT)) }
         return lines.joinToString("\n")

@@ -24,5 +24,11 @@ class Redacted private constructor(val text: String) {
          * `shownLabel`, a result line). It is never passed to the redactor.
          */
         fun kestrel(text: String): Redacted = Redacted(text)
+
+        /**
+         * A text in its record's form (design 7.1 and 8.1 of sub-project 7): redacted once, when it entered its own run,
+         * with each vault value as its kind's words. It is never passed to the redactor again.
+         */
+        fun recorded(text: String): Redacted = Redacted(text)
     }
 }
