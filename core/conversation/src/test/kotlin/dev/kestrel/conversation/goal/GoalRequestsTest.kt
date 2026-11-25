@@ -48,7 +48,7 @@ class GoalRequestsTest {
     private fun plan(record: CommandRecord, earlier: List<CommandRecord>, resume: ResumeCause? = null, continuedAtWall: Long? = null, text: String = record.request, waiting: Int = 0) =
         RoundPlan(
             record, earlier, text, resume, testMode = true, continuedAtWall = continuedAtWall, limits = limits, options = emptyMap(),
-            self = RecordRef(id, record.number), zone = ManualConversationClock.BELGRADE, waiting = waiting,
+            self = RecordRef(id, record.number), zone = ManualConversationClock.BELGRADE, waiting = waiting, stored = {},
         )
 
     @Test

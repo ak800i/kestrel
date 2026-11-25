@@ -9,6 +9,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
+import dev.kestrel.conversation.model.RoundEnd
 
 /** The machine's tests' common parts: one conversation id, a clock that a test moves, and inputs and states. */
 abstract class MachineTesting {
@@ -45,7 +46,7 @@ abstract class MachineTesting {
 
     /** [state]'s goal ends with [report] and [sentence], which is still to say. */
     protected fun ended(state: ConversationState, report: TaskReport = TaskReport(EndReason.FINISHED), sentence: String? = "Done."): MachineStep =
-        step(state, ConversationEvent.GoalEnded(state.goal!!.command, report, answer = sentence, reply = sentence))
+        step(state, ConversationEvent.GoalEnded(RoundEnd(state.goal!!.command, report, answer = sentence, reply = sentence)))
 
     protected fun asked(state: ConversationState, number: Int, kind: QuestionKind): ConversationState =
         step(state, ConversationEvent.Dialogue(DialogueEvent.Asked(number, kind))).state

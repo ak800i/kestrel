@@ -1,7 +1,15 @@
 package dev.kestrel.conversation.model
 
+import dev.kestrel.agent.goal.SteerChannel
+
 /** How an input came in, and so how Kestrel answers it (design 3 and 11 of sub-project 7). */
 enum class InputChannel { VOICE, TEXT }
+
+/** The agent's name for an input's channel: a spoken message or a typed one. */
+fun InputChannel.toSteer(): SteerChannel = if (this == InputChannel.VOICE) SteerChannel.SPOKEN else SteerChannel.TYPED
+
+/** The input's channel for the agent's name of it. */
+fun SteerChannel.toInput(): InputChannel = if (this == SteerChannel.SPOKEN) InputChannel.VOICE else InputChannel.TEXT
 
 /**
  * One input of the owner's (design 5.3 of sub-project 7). [id] is unique per process; [atMillis] is when it came, on the

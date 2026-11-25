@@ -1,6 +1,5 @@
 package dev.kestrel.conversation.machine
 
-import dev.kestrel.agent.TaskReport
 import dev.kestrel.conversation.channel.DialogueEvent
 import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.model.ChannelAnswer
@@ -9,6 +8,7 @@ import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RoundEnd
 
 /** What happens to the conversation (design 6.3 of sub-project 7). toString prints no words. */
 sealed interface ConversationEvent {
@@ -18,13 +18,8 @@ sealed interface ConversationEvent {
     /** A question or a hand-over of the owner's opened or closed. */
     data class Dialogue(val event: DialogueEvent) : ConversationEvent
 
-    /**
-     * The round of the goal of [command] ended with [report]. [answer] is its final words, which its record keeps, and
-     * [reply] what is still to say of them: null when nothing is, as after a routine offer that said the report first.
-     */
-    data class GoalEnded(val command: Int, val report: TaskReport, val answer: String?, val reply: String?) : ConversationEvent {
-        override fun toString(): String = "GoalEnded(command=$command, report=$report, answer=${answer?.length}, reply=${reply?.length})"
-    }
+    /** A round of a goal ended, as [end] says: its command, its report, its final words and what is still to say of them. */
+    data class GoalEnded(val end: RoundEnd) : ConversationEvent
 
     /** The touch watcher saw the owner's touch while a goal ran (D13). */
     data object Touched : ConversationEvent

@@ -21,10 +21,12 @@ import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.conversation.ConversationTexts
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.RecordRef
+import dev.kestrel.conversation.model.RoundEnd
 import dev.kestrel.conversation.store.ArchivedConversationStore
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
@@ -104,7 +106,7 @@ class GoalRunnerTest {
 
     private fun plan(record: CommandRecord, testMode: Boolean = false, stored: suspend () -> Unit = {}) = RoundPlan(
         record, emptyList(), record.request, null, testMode, null, GoalLimits(), emptyMap(), RecordRef(id, record.number), ManualConversationClock.BELGRADE,
-        stored = stored,
+        waiting = 0, stored = stored,
     )
 
     private fun TestScope.runner(
@@ -222,7 +224,7 @@ class GoalRunnerTest {
     fun steeringReachesTheModelAtTheNextTurn() = runTest {
         val environment = environment(listSms, finish(1))
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
-        goal.steer("Also check Ana's", InputChannel.TEXT)
+        goal.steer(SteeringMessage.of("Also check Ana's", InputChannel.TEXT))
 
         runner(environment).run(this, goal, plan(record()), FakeOwner())
         advanceUntilIdle()
@@ -236,7 +238,7 @@ class GoalRunnerTest {
     fun steeringThatCameTooLateIsNamedInTheFinalReply() = runTest {
         val environment = environment(listSms, finish(1))
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
-        environment.afterCall = { calls -> if (calls == 2) goal.steer("Make it 7:30", InputChannel.VOICE) }
+        environment.afterCall = { calls -> if (calls == 2) goal.steer(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)) }
 
         runner(environment).run(this, goal, plan(record()), FakeOwner())
         advanceUntilIdle()
@@ -253,7 +255,7 @@ class GoalRunnerTest {
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
         val owner = FakeOwner()
         owner.onSay = {
-            goal.steer("Also Ana", InputChannel.TEXT)
+            goal.steer(SteeringMessage.of("Also Ana", InputChannel.TEXT))
             goal.interrupt(Interruption.TOUCH)
             yield()
         }
@@ -265,7 +267,7 @@ class GoalRunnerTest {
         assertEquals(EndReason.INTERRUPTED, end.report.end)
         assertEquals(Interruption.TOUCH, end.report.interruption)
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.reply)
-        assertEquals(listOf("Also Ana"), goal.inbox.pending().map { it.text })
+        assertEquals(listOf("Also Ana"), goal.inbox.pending().map { it.recorded })
         assertTrue(environment.data.calls.isEmpty())
         assertEquals(1, environment.released)
     }
@@ -289,13 +291,13 @@ class GoalRunnerTest {
         val checklist = Checklist(listOf(ChecklistItem("c1", "Open Viber", ItemState.DONE, step = 1)))
         val held = record().copy(ledger = listOf("opened Viber"), checklist = checklist)
 
-        val end = runner(environment()).endHeld(3, held, listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), EndReason.PAUSED_TOO_LONG)
+        val end = runner(environment()).endHeld(3, held, listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)), EndReason.PAUSED_TOO_LONG)
 
         assertEquals(3, end.command)
         assertEquals(EndReason.PAUSED_TOO_LONG, end.report.end)
         assertEquals(listOf("opened Viber"), end.report.ledger)
         assertEquals(checklist, end.report.checklist)
-        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE))), end.answer)
     }
 
     // A goal that ended for good has given its final words, which named what waited: its inbox takes no later message, so
@@ -308,7 +310,7 @@ class GoalRunnerTest {
         advanceUntilIdle()
 
         assertEquals(EndReason.FINISHED, listener.ends.single().report.end)
-        assertFalse(goal.steer("Also check Ana's", InputChannel.TEXT))
+        assertFalse(goal.steer(SteeringMessage.of("Also check Ana's", InputChannel.TEXT)))
         assertTrue(goal.inbox.pending().isEmpty())
     }
 
@@ -336,6 +338,22 @@ class GoalRunnerTest {
         stored.complete(Unit)
         search.await()
         assertTrue(read)
+    }
+
+    // A steer that came in the round's last step is named in the final words in its record's form (review of plan 7B: C1):
+    // no vault value reaches the record, the archive or a later model.
+    @Test
+    fun aSteerThatCameTooLateIsNamedInItsRecordsForm() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        environment.afterCall = { calls -> if (calls == 2) goal.steer(SteeringMessage.of("The code is 482913", InputChannel.TEXT)) }
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val answer = listener.ends.single().answer!!
+        assertTrue(answer, answer.contains("a one-time code"))
+        assertFalse(answer.contains("482913"))
     }
 
     @Test
@@ -429,7 +447,7 @@ class GoalRunnerTest {
     @Test
     fun aRoundStoppedBeforeItRunsStillEndsOnceAndNamesItsSteering() = runTest {
         val environment = environment(listSms, finish(1))
-        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)), listener)
 
         runner(environment).run(this, goal, plan(record()), FakeOwner())
         goal.cancel(EndReason.CANCELLED)
@@ -437,7 +455,7 @@ class GoalRunnerTest {
 
         val end = listener.ends.single()
         assertEquals(EndReason.CANCELLED, end.report.end)
-        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE))), end.answer)
         assertTrue(goal.inbox.pending().isEmpty())
         assertTrue(environment.starts.isEmpty())
         assertTrue(environment.model.requests.isEmpty())
@@ -501,14 +519,14 @@ class GoalRunnerTest {
     fun aRefusedStartNamesTheSteeringThatWaited() = runTest {
         val environment = environment(listSms)
         environment.refusal = RoundSetup.Refused("Set up a model in Settings first.", EndReason.NO_PROFILE)
-        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE)), listener)
 
         runner(environment).run(this, goal, plan(record()), FakeOwner())
         advanceUntilIdle()
 
         val end = listener.ends.single()
         assertEquals(EndReason.NO_PROFILE, end.report.end)
-        assertEquals("Set up a model in Settings first." + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertEquals("Set up a model in Settings first." + ConversationTexts.tooLate(listOf(SteeringMessage.of("Make it 7:30", InputChannel.VOICE))), end.answer)
         assertEquals(end.answer, end.reply)
         assertTrue(goal.inbox.pending().isEmpty())
     }
@@ -555,12 +573,12 @@ class GoalRunnerTest {
     @Test
     fun theSteeringInboxDrainsInOrderAndTellsTheGoal() {
         var changes = 0
-        val inbox = SteeringInbox(listOf(Steer("first", SteerChannel.TYPED))) { changes++ }
+        val inbox = SteeringInbox(listOf(SteeringMessage.of("first", InputChannel.TEXT))) { changes++ }
 
-        inbox.add(Steer("second", SteerChannel.SPOKEN))
+        inbox.add(SteeringMessage.of("second", InputChannel.VOICE))
 
-        assertEquals(listOf("first", "second"), inbox.pending().map { it.text })
-        assertEquals(listOf("first", "second"), inbox.drain().map { it.text })
+        assertEquals(listOf("first", "second"), inbox.pending().map { it.recorded })
+        assertEquals(listOf(Steer("first", SteerChannel.TYPED), Steer("second", SteerChannel.SPOKEN)), inbox.drain().map { it.steer })
         assertTrue(inbox.drain().isEmpty())
         assertEquals(2, changes)
         assertNull(inbox.pending().firstOrNull())

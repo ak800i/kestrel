@@ -10,6 +10,7 @@ import dev.kestrel.conversation.context.ContextBlock
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.RecordRef
+import dev.kestrel.conversation.model.toSteer
 import dev.kestrel.safety.Category
 import java.time.ZoneId
 
@@ -33,8 +34,8 @@ class RoundPlan(
     val options: Map<String, String>,
     val self: RecordRef,
     val zone: ZoneId,
-    val waiting: Int = 0,
-    val stored: suspend () -> Unit = {},
+    val waiting: Int,
+    val stored: suspend () -> Unit,
 ) {
     override fun toString(): String = "RoundPlan(record=${record.number}, earlier=${earlier.size}, resume=$resume, testMode=$testMode, waiting=$waiting)"
 }

@@ -10,9 +10,11 @@ import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.DialogueEvent
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.GoalEnding
 import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.GoalPhase
@@ -21,6 +23,7 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PhoneSignal
+import dev.kestrel.conversation.model.RoundEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -29,6 +32,29 @@ import org.junit.Test
 
 /** A goal's phases (design 6.4 and 6.5 of sub-project 7): touches, locks, calls, holds, hand-overs and the typed waits. */
 class GoalRulesTest : MachineTesting() {
+    // "Stop" or a change of test mode that overtakes a touch or a limit's pause ends the goal as a held goal that "stop"
+    // ends: its partial report, and the steering that waited, come from EndHeldGoal (review of plan 7B: I1).
+    @Test
+    fun aStopThatOvertakesAHoldEndsTheGoalAsCancelled() {
+        val stopped = step(step(acting(), ConversationEvent.Touched).state, typed(InputIntent.Stop)).state
+        val interrupted = ended(stopped, TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), interrupted.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(interrupted.has<ConversationEffect.EndRecord>())
+        assertTrue(interrupted.outputs().isEmpty())
+        assertEquals(GoalEnding.STOPPING, interrupted.state.goal!!.ending)
+        val final = ended(interrupted.state, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.CANCELLED, "Cancelled."), final.effect<ConversationEffect.EndRecord>())
+
+        val limited = ended(step(acting(), typed(InputIntent.Stop)).state, TaskReport(EndReason.PAUSED_AT_LIMIT), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), limited.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(limited.has<ConversationEffect.EndRecord>())
+
+        val changed = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val paused = ended(changed, TaskReport(EndReason.PAUSED_AT_LIMIT), null)
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), paused.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(paused.has<ConversationEffect.EndRecord>())
+    }
+
     private fun signal(state: ConversationState, signal: PhoneSignal): MachineStep = step(state, ConversationEvent.Signal(signal))
 
     @Test
@@ -173,7 +199,7 @@ class GoalRulesTest : MachineTesting() {
         val expired = step(held.state, ConversationEvent.TimerEnded(Timer.HOLD, held.state.timers.hold)).state
         val final = ended(expired, TaskReport(EndReason.PAUSED_TOO_LONG), "Too long.")
         assertNull(final.state.heldWords)
-        assertEquals(ChannelOutput.Report(1, "Too long."), final.state.heldReport)
+        assertEquals(listOf(ChannelOutput.Report(1, "Too long.")), final.state.heldReports)
     }
 
     @Test
@@ -229,12 +255,12 @@ class GoalRulesTest : MachineTesting() {
         val report = "I stopped the task because it was paused for a long time. I opened Viber."
         val waiting = ended(expired.state, TaskReport(EndReason.PAUSED_TOO_LONG), report)
         assertTrue(waiting.outputs().isEmpty())
-        assertEquals(ChannelOutput.Report(1, report), waiting.state.heldReport)
+        assertEquals(listOf(ChannelOutput.Report(1, report)), waiting.state.heldReports)
         assertEquals(QuietClock.Held(HoldReason.REPLYING), waiting.state.quiet)
 
         val back = signal(waiting.state, PhoneSignal.UNLOCKED)
         assertEquals(listOf(ChannelOutput.Report(1, report)), back.outputs())
-        assertNull(back.state.heldReport)
+        assertTrue(back.state.heldReports.isEmpty())
 
         val limited = ended(acting(), TaskReport(EndReason.PAUSED_AT_LIMIT), "Limit.").state
         assertEquals(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG), step(limited, ConversationEvent.TimerEnded(Timer.HOLD, 1)).effect<ConversationEffect.EndHeldGoal>())
@@ -301,7 +327,7 @@ class GoalRulesTest : MachineTesting() {
         assertEquals(listOf(ChannelOutput.Report(1, "Wi-Fi is on.")), final.outputs())
 
         // After the routine offer, the report was said before it, and its record keeps it.
-        val offered = step(acting(), ConversationEvent.GoalEnded(1, TaskReport(EndReason.FINISHED), answer = "Wi-Fi is on.", reply = null))
+        val offered = step(acting(), ConversationEvent.GoalEnded(RoundEnd(1, TaskReport(EndReason.FINISHED), answer = "Wi-Fi is on.", reply = null)))
         assertEquals(ConversationEffect.EndRecord(id, 1, EndReason.FINISHED, "Wi-Fi is on."), offered.effect<ConversationEffect.EndRecord>())
         assertTrue(offered.outputs().isEmpty())
         assertTrue(offered.state.quiet is QuietClock.Running)
@@ -312,7 +338,7 @@ class GoalRulesTest : MachineTesting() {
         val marker = "Mila-7Q"
         val input = OwnerInput(1, InputChannel.TEXT, InputIntent.Command(marker), 0)
         val values = listOf(
-            ConversationEvent.GoalEnded(1, TaskReport(EndReason.FINISHED, summary = marker), marker, marker),
+            ConversationEvent.GoalEnded(RoundEnd(1, TaskReport(EndReason.FINISHED, summary = marker), marker, marker)),
             ConversationEvent.Switched(null, marker),
             ConversationEvent.LocalEnded(1, LocalOutcome.Reply(marker)),
             ConversationEvent.LocalEnded(1, LocalOutcome.Deleted(marker)),
@@ -331,12 +357,14 @@ class GoalRulesTest : MachineTesting() {
             ConversationEffect.SwitchTo(1, other, input),
             ChannelQuestion(1, marker, QuestionKind.YES_NO, marker),
             ConversationState(
-                heldReport = ChannelOutput.Report(1, marker),
+                heldReports = listOf(ChannelOutput.Report(1, marker)),
                 heldWords = ChannelOutput.Said(marker),
                 continueAnswer = input,
                 local = LocalRun(1, null, input),
-                next = input,
+                waiting = listOf(input),
             ),
+            ConversationEffect.EndLocal(1, EndReason.FINISHED, marker, input),
+            SteeringMessage.of(marker, InputChannel.TEXT),
         )
 
         for (value in values) assertFalse(value.javaClass.simpleName, value.toString().contains(marker))

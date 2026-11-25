@@ -40,7 +40,7 @@ class LocalRequests(
      * returns once the store holds every write of the conversation queued before the call (the engine's writer): the search
      * and the deletion call it first, so that they see each of those writes.
      */
-    suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue, stored: suspend () -> Unit = {}): LocalOutcome = when (request) {
+    suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome = when (request) {
         is LocalRequest.Remember -> remember(request, owner)
         is LocalRequest.Forget -> forget(request, owner)
         is LocalRequest.SaveRoutine -> routines(request.name, owner)?.let { LocalOutcome.Reply(it) } ?: LocalOutcome.Quiet
@@ -49,7 +49,7 @@ class LocalRequests(
     }
 
     private suspend fun remember(request: LocalRequest.Remember, owner: OwnerPort): LocalOutcome {
-        if (owner.ask(ConversationTexts.remember(request.key, request.value), AnswerKind.YES_NO) != Answer.Yes) return LocalOutcome.Reply(ConversationTexts.NOT_SAVED)
+        if (owner.ask(ConversationTexts.remember(request.key, request.value), AnswerKind.YES_NO) != Answer.Yes) return LocalOutcome.Reply(ConversationTexts.NOTHING_CHANGED)
         memory.saveFact(Fact(request.key, request.value, FactKind.FACT, clock.wallMillis()))
         return LocalOutcome.Reply(ConversationTexts.REMEMBERED)
     }
@@ -57,7 +57,7 @@ class LocalRequests(
     private suspend fun forget(request: LocalRequest.Forget, owner: OwnerPort): LocalOutcome {
         val wanted = Normalizer.normalize(request.key)
         val fact = memory.facts().firstOrNull { Normalizer.normalize(it.key) == wanted } ?: return LocalOutcome.Reply(ConversationTexts.noFact(request.key))
-        if (owner.ask(ConversationTexts.forget(fact.key), AnswerKind.YES_NO) != Answer.Yes) return LocalOutcome.Reply(ConversationTexts.NOT_SAVED)
+        if (owner.ask(ConversationTexts.forget(fact.key), AnswerKind.YES_NO) != Answer.Yes) return LocalOutcome.Reply(ConversationTexts.NOTHING_CHANGED)
         memory.deleteFact(fact.key)
         return LocalOutcome.Reply(ConversationTexts.FORGOTTEN)
     }

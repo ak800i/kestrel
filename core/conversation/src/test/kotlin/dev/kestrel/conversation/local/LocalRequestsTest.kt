@@ -61,15 +61,25 @@ class LocalRequestsTest {
         store.save(ConversationSnapshot(id(n), at, at, open = false, testMode = true, records = listOf(CommandRecord(1, at, InputChannel.TEXT, request))))
     }
 
+    // The answer to forgetting a fact that does not exist is the record's answer: the owner's key is in its record's form
+    // (review of plan 7B: C1).
+    @Test
+    fun forgettingAFactThatDoesNotExistNamesItsKeyInItsRecordsForm() = scope.runTest {
+        val outcome = local.run(LocalRequest.Forget("the code 482913"), owner, dialogue) {}
+
+        assertFalse(outcome.sentence!!.contains("482913"))
+        assertTrue(outcome.sentence!!.contains("a one-time code"))
+    }
+
     @Test
     fun rememberAsksAndSavesOnlyAfterYes() = scope.runTest {
         owner.answers += Answer.Yes
-        assertEquals(LocalOutcome.Reply(ConversationTexts.REMEMBERED), local.run(LocalRequest.Remember("the gate code", "4321"), owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.REMEMBERED), local.run(LocalRequest.Remember("the gate code", "4321"), owner, dialogue) {})
         assertEquals("Remember that the gate code is 4321?", owner.asked.single().first)
         assertEquals(listOf(Fact("the gate code", "4321", FactKind.FACT, clock.wallMillis())), memory.facts)
 
         owner.answers += Answer.No
-        assertEquals(LocalOutcome.Reply(ConversationTexts.NOT_SAVED), local.run(LocalRequest.Remember("the door", "blue"), owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.NOTHING_CHANGED), local.run(LocalRequest.Remember("the door", "blue"), owner, dialogue) {})
         assertEquals(1, memory.facts.size)
     }
 
@@ -78,10 +88,10 @@ class LocalRequestsTest {
         memory.facts += Fact("Đorđe birthday", "May 5", FactKind.FACT, 0)
         owner.answers += Answer.Yes
 
-        assertEquals(LocalOutcome.Reply(ConversationTexts.FORGOTTEN), local.run(LocalRequest.Forget("djordje BIRTHDAY"), owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.FORGOTTEN), local.run(LocalRequest.Forget("djordje BIRTHDAY"), owner, dialogue) {})
         assertEquals("Forget Đorđe birthday?", owner.asked.single().first)
         assertTrue(memory.facts.isEmpty())
-        assertEquals(LocalOutcome.Reply(ConversationTexts.noFact("the gate")), local.run(LocalRequest.Forget("the gate"), owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.noFact("the gate")), local.run(LocalRequest.Forget("the gate"), owner, dialogue) {})
     }
 
     @Test
@@ -90,7 +100,7 @@ class LocalRequestsTest {
         closed(1, request, day)
         dialogue.answers += ChannelAnswer.Yes
 
-        assertEquals(LocalOutcome.Switch(id(1)), local.run(LocalRequest.ContinuePast("the trip"), owner, dialogue))
+        assertEquals(LocalOutcome.Switch(id(1)), local.run(LocalRequest.ContinuePast("the trip"), owner, dialogue) {})
 
         val (text, kind) = dialogue.asked.single()
         assertEquals(QuestionKind.SWITCH, kind)
@@ -103,8 +113,8 @@ class LocalRequestsTest {
         closed(1, "Plan the trip to Novi Sad", day)
         dialogue.answers += ChannelAnswer.No
 
-        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
-        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
+        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.ContinuePast("trip"), owner, dialogue) {})
+        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.ContinuePast("trip"), owner, dialogue) {})
         assertEquals(2, dialogue.asked.size)
     }
 
@@ -112,7 +122,7 @@ class LocalRequestsTest {
     fun withoutAMatchKestrelSaysSo() = scope.runTest {
         closed(1, "Plan the trip to Novi Sad", day)
 
-        assertEquals(LocalOutcome.Reply(ConversationTexts.NOT_FOUND), local.run(LocalRequest.ContinuePast("the zoo"), owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.NOT_FOUND), local.run(LocalRequest.ContinuePast("the zoo"), owner, dialogue) {})
         assertTrue(dialogue.asked.isEmpty())
     }
 
@@ -122,7 +132,7 @@ class LocalRequestsTest {
         closed(2, "Read my latest SMS", day)
         dialogue.answers += ChannelAnswer.Yes
 
-        assertEquals(LocalOutcome.Switch(id(2)), local.run(LocalRequest.ContinuePast(null), owner, dialogue))
+        assertEquals(LocalOutcome.Switch(id(2)), local.run(LocalRequest.ContinuePast(null), owner, dialogue) {})
         assertTrue(dialogue.asked.single().first.endsWith("about 'Read my latest SMS'?"))
     }
 
@@ -135,11 +145,11 @@ class LocalRequestsTest {
         assertEquals(1, search.search(HistoryQuery("Ambar")).matches.size)
         dialogue.answers += listOf(ChannelAnswer.No, ChannelAnswer.Yes)
 
-        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.DeleteHistory, owner, dialogue))
+        assertEquals(LocalOutcome.Quiet, local.run(LocalRequest.DeleteHistory, owner, dialogue) {})
         assertEquals(1, store.list().size)
         assertFalse(archive.keyErased)
 
-        assertEquals(LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
+        assertEquals(LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue) {})
         assertTrue(store.list().isEmpty())
         assertTrue(archive.keyErased)
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
@@ -159,7 +169,7 @@ class LocalRequestsTest {
         val local = LocalRequests(memory, store, search, { _, _ -> null }, clock) { _, error -> reported += error }
         dialogue.answers += ChannelAnswer.Yes
 
-        assertEquals(LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue))
+        assertEquals(LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED), local.run(LocalRequest.DeleteHistory, owner, dialogue) {})
         assertEquals(1, reported.size)
         assertTrue(reported.single() is IOException)
         assertEquals(failure.message, reported.single().message)
@@ -182,7 +192,7 @@ class LocalRequestsTest {
             val restarted = ArchivedConversationStore(archive, backgroundScope) {}
             val local = LocalRequests(memory, restarted, HistorySearch(restarted, { 30 }, clock), { _, _ -> null }, clock) { _, error -> throw error }
 
-            assertEquals(LocalOutcome.Reply(sentence), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue))
+            assertEquals(LocalOutcome.Reply(sentence), local.run(LocalRequest.ContinuePast("trip"), owner, dialogue) {})
         }
         assertTrue(dialogue.asked.isEmpty())
     }
@@ -192,7 +202,7 @@ class LocalRequestsTest {
         val traces = mutableListOf<TraceEntry>()
         owner.answers += Answer.Yes
 
-        local.run(LocalRequest.Remember("the gate code", "482913"), RecordedOwner(owner) { traces += it }, dialogue)
+        local.run(LocalRequest.Remember("the gate code", "482913"), RecordedOwner(owner) { traces += it }, dialogue) {}
 
         assertEquals(listOf(TraceEntry.Asked(RecordText.of("Remember that the gate code is 482913?")), TraceEntry.Answered("yes")), traces)
         assertFalse((traces.first() as TraceEntry.Asked).text.contains("482913"))

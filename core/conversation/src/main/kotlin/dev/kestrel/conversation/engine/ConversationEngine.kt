@@ -4,7 +4,6 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ResumeCause
-import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.TraceEntry
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
@@ -16,13 +15,11 @@ import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.RecordBuilder
 import dev.kestrel.conversation.context.RecordCondenser
 import dev.kestrel.conversation.context.RecordText
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.goal.GoalListener
 import dev.kestrel.conversation.goal.GoalRunner
-import dev.kestrel.conversation.goal.RoundEnd
 import dev.kestrel.conversation.goal.RoundPlan
 import dev.kestrel.conversation.goal.RunningGoal
-import dev.kestrel.conversation.goal.toInput
-import dev.kestrel.conversation.goal.toSteer
 import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.local.LocalRequests
 import dev.kestrel.conversation.local.RecordedOwner
@@ -43,9 +40,9 @@ import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
-import dev.kestrel.conversation.model.PendingSteer
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RoundEnd
 import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.safety.Category
@@ -83,7 +80,8 @@ import kotlinx.coroutines.launch
  * of a final reply's `show` is the machine's `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
  * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class;
  * [onStep] sees every step, for the hooks' tags (plan 7D): every effect that starts work under a new command number
- * (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`) carries the owner's input that asked for it.
+ * (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`, and `EndLocal` for "new conversation", which has no work) carries
+ * the owner's input that asked for it.
  */
 class ConversationEngine(
     private val scope: CoroutineScope,
@@ -122,8 +120,11 @@ class ConversationEngine(
         /** The writer could not save the open conversation: the next step saves it again. */
         data object SaveFailed : Message
 
-        /** The switch's transaction ended: [snapshot] is the open conversation now, or it was gone (null), or the store [failed]. */
-        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+        /**
+         * The switch's transaction ended: [snapshot] is the open conversation now, or it was gone (null), or the store
+         * [failed]. [chosen] is the conversation that it opened as it was before, for a "stop" that came meanwhile.
+         */
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
     }
 
     // What the writer does with the store, in the loop's order, beside the loop.
@@ -166,8 +167,11 @@ class ConversationEngine(
     private val unsaved = mutableListOf<CompletableDeferred<Unit>>()
 
     // While the writer switches to a past conversation, the conversation that the switch closes is not saved again: a later
-    // save of it would open it again.
+    // save of it would open it again. [switchClosing] is that conversation as the switch stored it closed, and
+    // [switchChosen] the one that it opened as it was before, for a "stop" that came meanwhile.
     private var switching = false
+    private var switchClosing: ConversationSnapshot? = null
+    private var switchChosen: ConversationSnapshot? = null
 
     // The running round's newest step, which the view and the snapshot add to the goal's earlier steps (design 10.5).
     private var roundStep: Int? = null
@@ -189,7 +193,7 @@ class ConversationEngine(
 
     /** What [restore] found, for the hook `conversation-control do=restore-check`; null before it ran. */
     @Volatile
-    var restored: Restored? = null
+    var restored: RestoreResult? = null
         private set
 
     init {
@@ -220,7 +224,7 @@ class ConversationEngine(
      * At process start, before any input: reads the open conversation and applies design 6.7's rules to it, with how the
      * previous process ended ([previous], which `:app` reads from Android's exit records; plan 7E).
      */
-    suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored {
+    suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): RestoreResult {
         check(!started.isCompleted) { "restore() runs once, before any input" }
         try {
             process(ConversationEvent.SettingsChanged(settings.first(), testMode.first()))
@@ -238,11 +242,11 @@ class ConversationEngine(
             if (snapshot != null) load(snapshot)
             process(ConversationEvent.Restored(snapshot, previous))
             val found = when {
-                snapshot == null -> Restored.NOTHING
-                state.id == null -> Restored.CLOSED
-                state.goal == null -> Restored.OPEN
-                state.goal?.ending != null -> Restored.GOAL_ENDED
-                else -> Restored.GOAL_HELD
+                snapshot == null -> RestoreResult.NOTHING
+                state.id == null -> RestoreResult.CLOSED
+                state.goal == null -> RestoreResult.OPEN
+                state.goal?.ending != null -> RestoreResult.GOAL_ENDED
+                else -> RestoreResult.GOAL_HELD
             }
             restored = found
             return found
@@ -356,6 +360,8 @@ class ConversationEngine(
             ConversationEffect.CancelLocal -> localJob?.cancel()
             is ConversationEffect.EndLocal -> remember(CommandOutcome(effect.command, TaskReport(effect.end), effect.answer))
             is ConversationEffect.SwitchTo -> switchTo(effect.id, before)
+            is ConversationEffect.OpenSwitched -> load(effect.snapshot)
+            ConversationEffect.UndoSwitch -> undoSwitch()
             is ConversationEffect.StartTimer -> startTimer(effect)
             is ConversationEffect.Close -> close(effect, before)
             ConversationEffect.Persist -> dirty = true
@@ -400,7 +406,7 @@ class ConversationEngine(
         goal.command = effect.command
         effect.input?.let { goal.options = it.options }
         val plan = plan(id, goal, record.request, effect.cause)
-        effect.steer?.let { steer(id, goal, it.text, it.channel) }
+        effect.steer?.let { steer(id, goal, SteeringMessage.of(it.text, it.channel)) }
         roundStep = null
         roundLedgerFrom = record.ledger.size
         owner.startWork()
@@ -408,25 +414,27 @@ class ConversationEngine(
     }
 
     // Design 7.3: the message waits for the goal's next turn, and "Got it." says so. A goal that has given its final words
-    // takes no more: Kestrel says at once that the message came too late, and the record keeps it as such.
+    // takes no more: Kestrel says at once that the message came too late, and the record keeps it as such. The message's
+    // record form is made once, here, where it arrives (review of plan 7B: C1).
     private fun steering(effect: ConversationEffect.SteerGoal) {
         val id = checkNotNull(state.id) { "Steering reaches a goal of the open conversation" }
+        val message = SteeringMessage.of(effect.text, effect.channel)
         val goal = running
-        if (goal != null && steer(id, goal, effect.text, effect.channel)) {
+        if (goal != null && steer(id, goal, message)) {
             outputs.trySend(ChannelOutput.Shown(ConversationTexts.GOT_IT))
             return
         }
-        state.goal?.let { open -> edit(id, open.record) { RecordBuilder.line(it, LineKind.OWNER_TOO_LATE, RecordText.of(effect.text), effect.channel) } }
-        outputs.trySend(ChannelOutput.Said(ConversationTexts.cameTooLate(effect.text)))
+        state.goal?.let { open -> edit(id, open.record) { RecordBuilder.line(it, LineKind.OWNER_TOO_LATE, message.recorded, message.channel) } }
+        outputs.trySend(ChannelOutput.Said(ConversationTexts.cameTooLate(message)))
     }
 
-    // The record holds a message that the goal's inbox took, and its verbs join the allowance (D16); false when the inbox
-    // took none, because the goal has given its final words.
-    private fun steer(id: ConversationId, goal: RunningGoal, text: String, channel: InputChannel): Boolean {
-        if (!goal.steer(text, channel)) return false
+    // The record holds a message that the goal's inbox took, in its record's form, and its verbs join the allowance (D16);
+    // false when the inbox took none, because the goal has given its final words.
+    private fun steer(id: ConversationId, goal: RunningGoal, message: SteeringMessage): Boolean {
+        if (!goal.steer(message)) return false
         edit(id, goal.record) { record ->
-            val steered = RecordBuilder.line(record, LineKind.OWNER_STEERED, RecordText.of(text), channel)
-            RecordBuilder.allowed(steered, TaskAllowance.from(text, goal.knownNames).categories)
+            val steered = RecordBuilder.line(record, LineKind.OWNER_STEERED, message.recorded, message.channel)
+            RecordBuilder.allowed(steered, TaskAllowance.from(message.steer.text, goal.knownNames).categories)
         }
         return true
     }
@@ -443,7 +451,7 @@ class ConversationEngine(
 
     private fun ended(end: RoundEnd) {
         remember(CommandOutcome(end.command, end.report, end.answer))
-        post(ConversationEvent.GoalEnded(end.command, end.report, end.answer, end.reply))
+        post(ConversationEvent.GoalEnded(end))
     }
 
     private fun askContinue() {
@@ -493,19 +501,32 @@ class ConversationEngine(
     private fun switchTo(id: ConversationId, before: ConversationState) {
         val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
         switching = true
+        switchClosing = closing
+        switchChosen = null
         writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
     }
 
+    // The machine decides what the switch's end means (a "stop" may have cancelled it); the records of the conversation
+    // that it opened become the open ones only by its effect (OpenSwitched).
     private fun reopened(message: Message.Reopened) {
         switching = false
+        switchChosen = message.chosen
         val opened = message.snapshot
-        if (opened != null) load(opened)
         val sentence = when {
             message.failed -> ConversationTexts.COULD_NOT
             opened == null -> ConversationTexts.GONE
             else -> ConversationTexts.backIn(ConversationTexts.day(opened.openedAtWall, clock.zone()))
         }
         process(ConversationEvent.Switched(opened, sentence, failed = message.failed))
+    }
+
+    // A "stop" came while the store switched: the conversation that the switch opened is stored closed as it was, and the
+    // one that was open, whose records the engine kept, open again.
+    private fun undoSwitch() {
+        switchChosen?.let { writes.trySend(Write.Save(it, emptyList())) }
+        switchClosing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
+        switchChosen = null
+        switchClosing = null
     }
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
@@ -615,7 +636,7 @@ class ConversationEngine(
         recordsOf = snapshot.id
         dirty = false
         running = snapshot.goal?.let { goal ->
-            RunningGoal(goal.record, 0, emptyMap(), snapshot.steering.map { Steer(it.text, it.channel.toSteer()) }, listener(snapshot.id, goal.record))
+            RunningGoal(goal.record, 0, emptyMap(), snapshot.steering.map(SteeringMessage::restored), listener(snapshot.id, goal.record))
         }
     }
 
@@ -690,17 +711,20 @@ class ConversationEngine(
                 report("Closing the conversation", e)
             }
             is Write.Barrier -> write.done.complete(Unit)
+            // The chosen conversation is read as it was first, so that a "stop" that comes while the store switches can put
+            // it back.
             is Write.Reopen -> {
-                val opened = try {
-                    store.reopen(write.id, write.closing, write.nowWall, write.testMode)
+                val (chosen, opened) = try {
+                    val chosen = store.get(write.id)
+                    chosen to store.reopen(write.id, write.closing, write.nowWall, write.testMode)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     report("Continuing a conversation", e)
-                    inbox.trySend(Message.Reopened(null, failed = true))
+                    inbox.trySend(Message.Reopened(null, null, failed = true))
                     return
                 }
-                inbox.trySend(Message.Reopened(opened, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
             }
         }
     }
@@ -724,7 +748,7 @@ class ConversationEngine(
         records = records.toList(),
         continuedAtWall = state.continuedAtWall,
         goal = state.goal.takeIf { open }?.let { it.copy(stepsBefore = steps(it)) },
-        steering = if (!open || state.goal == null) emptyList() else running?.inbox?.pending()?.map { PendingSteer(RecordText.of(it.text), it.channel.toInput()) }.orEmpty(),
+        steering = if (!open || state.goal == null) emptyList() else running?.inbox?.pending()?.map(SteeringMessage::pending).orEmpty(),
         quietSinceWall = (state.quiet as? QuietClock.Running)?.sinceWall,
         replyChannel = state.replyChannel,
     )
@@ -763,7 +787,7 @@ class ConversationEngine(
             continuedAtWall = current.continuedAtWall,
             testMode = if (current.id != null) current.testMode else current.safetyTestMode,
             quiet = current.quiet,
-            keptForOwner = current.heldReport != null || current.heldWords != null,
+            keptForOwner = current.heldReports.isNotEmpty() || current.heldWords != null,
         )
     }
 

@@ -175,17 +175,6 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
         // Whether a shard with [positions] and [plainBytes] takes no more conversations or kept rows.
         private fun full(positions: Int, plainBytes: Long, shardPositions: Int): Boolean = positions >= shardPositions || plainBytes >= SHARD_BYTES
 
-        /** An index without conversations whose shards are full at [shardPositions]. */
-        fun empty(shardPositions: Int): PastIndex = PastIndex(emptyList(), shardPositions)
-
-        /** The index of the closed conversations [snapshots], the oldest first, and the rows [kept]. */
-        fun of(snapshots: List<ConversationSnapshot>, kept: List<KeptRow>, shardPositions: Int = SHARD_POSITIONS): PastIndex {
-            val builder = Builder(shardPositions)
-            snapshots.forEach(builder::add)
-            kept.forEach(builder::keep)
-            return builder.build()
-        }
-
         /**
          * An index read back from the archive, shard by shard: each number once, and each conversation and kept row in one
          * shard only; otherwise it throws [IllegalArgumentException].

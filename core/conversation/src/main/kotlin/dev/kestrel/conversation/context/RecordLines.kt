@@ -12,6 +12,7 @@ import dev.kestrel.conversation.model.DataNote
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.RecordLine
+import dev.kestrel.conversation.model.toSteer
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -90,5 +91,6 @@ internal object RecordLines {
 
     private fun spokenOrTyped(channel: InputChannel?): String = steerChannel(channel).wire
 
-    private fun steerChannel(channel: InputChannel?): SteerChannel = if (channel == InputChannel.VOICE) SteerChannel.SPOKEN else SteerChannel.TYPED
+    // A line without its channel was typed, as Kestrel's own lines have none.
+    private fun steerChannel(channel: InputChannel?): SteerChannel = channel?.toSteer() ?: SteerChannel.TYPED
 }

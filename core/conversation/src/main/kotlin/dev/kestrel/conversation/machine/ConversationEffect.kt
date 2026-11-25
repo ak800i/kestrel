@@ -8,6 +8,7 @@ import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
@@ -85,15 +86,24 @@ sealed interface ConversationEffect {
     data object CancelLocal : ConversationEffect
 
     /**
-     * Kestrel's own request [command] (a local request or a switch) ended with [end] and its final words [answer], for the
-     * hooks' outcome (design 14.4).
+     * Kestrel's own request [command] for the owner's [input] (a local request, a switch or "new conversation") ended with
+     * [end] and its final words [answer], for the hooks' outcome (design 14.4).
      */
-    data class EndLocal(val command: Int, val end: EndReason, val answer: String?) : ConversationEffect {
-        override fun toString(): String = "EndLocal(command=$command, end=$end, answer=${answer?.length})"
+    data class EndLocal(val command: Int, val end: EndReason, val answer: String?, val input: OwnerInput) : ConversationEffect {
+        override fun toString(): String = "EndLocal(command=$command, end=$end, answer=${answer?.length}, input=$input)"
     }
 
     /** Makes the closed conversation [id] the open one as [command] for the owner's [input], closing the open one (D23). */
     data class SwitchTo(val command: Int, val id: ConversationId, val input: OwnerInput) : ConversationEffect
+
+    /** The switch made [snapshot] the open conversation: its records are the open conversation's now. */
+    data class OpenSwitched(val snapshot: ConversationSnapshot) : ConversationEffect
+
+    /**
+     * A "stop" came while the store switched: the store puts back what the switch changed, the conversation that it opened
+     * closed as it was and the one that was open open again, so that the stop leaves both as they were.
+     */
+    data object UndoSwitch : ConversationEffect
 
     data class StartTimer(val timer: Timer, val number: Int, val millis: Long) : ConversationEffect
 

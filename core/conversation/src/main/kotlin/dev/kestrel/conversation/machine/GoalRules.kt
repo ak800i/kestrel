@@ -2,7 +2,6 @@ package dev.kestrel.conversation.machine
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Interruption
-import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
@@ -40,9 +39,9 @@ internal object GoalRules {
 
     /** "Stop" ends the goal in every phase with its report, and drops a command that waited for it. */
     fun stop(state: ConversationState): MachineStep {
-        val goal = state.goal ?: return MachineStep(state.copy(next = null))
-        if (goal.ending == GoalEnding.STOPPING) return MachineStep(state.copy(next = null))
-        val stopped = ending(state, goal, GoalEnding.STOPPING).copy(next = null)
+        val goal = state.goal ?: return MachineStep(state.copy(waiting = emptyList()))
+        if (goal.ending == GoalEnding.STOPPING) return MachineStep(state.copy(waiting = emptyList()))
+        val stopped = ending(state, goal, GoalEnding.STOPPING).copy(waiting = emptyList())
         val effect = if (goal.hold != null && goal.phase != GoalPhase.PAUSED) {
             ConversationEffect.EndHeldGoal(EndReason.CANCELLED)
         } else {
@@ -99,13 +98,6 @@ internal object GoalRules {
                 ConversationEffect.StartTimer(Timer.HOLD, number, HOLD_MILLIS),
             ),
         )
-    }
-
-    /** What holds a goal whose round ended with [report]; null when the goal ended for good. */
-    fun holdFor(report: TaskReport): GoalHold? = when (report.end) {
-        EndReason.PAUSED_AT_LIMIT -> GoalHold.LIMIT
-        EndReason.INTERRUPTED -> if (report.interruption == Interruption.KESTREL_SCREEN) GoalHold.KESTREL_SCREEN else GoalHold.TOUCH
-        else -> null
     }
 
     /** D13: a touch interrupts a goal that acts or asks, except while the owner answers on Kestrel's screen. */
@@ -281,8 +273,8 @@ internal object GoalRules {
     // ended goal's final reply first, and a paused or restored goal asks "Continue the goal?".
     private fun back(state: ConversationState): MachineStep {
         if (!state.phone.present) return MachineStep(state)
-        val kept = listOfNotNull(state.heldReport, state.heldWords)
-        val shown = MachineStep(state.copy(heldReport = null, heldWords = null), kept.map { ConversationEffect.Output(it) })
+        val kept = state.heldReports + listOfNotNull(state.heldWords)
+        val shown = MachineStep(state.copy(heldReports = emptyList(), heldWords = null), kept.map { ConversationEffect.Output(it) })
         return shown.then { current ->
             val goal = current.goal
             val asks = goal != null && goal.ending == null && !current.asksContinue && (goal.phase == GoalPhase.PAUSED || goal.hold == GoalHold.RESTART)

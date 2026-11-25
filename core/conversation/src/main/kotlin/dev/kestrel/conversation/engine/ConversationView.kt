@@ -62,4 +62,4 @@ data class CommandOutcome(val command: Int, val report: TaskReport, val answer: 
 }
 
 /** What `restore()` found, for the hook `conversation-control do=restore-check` (design 14.4). */
-enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }
+enum class RestoreResult { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }

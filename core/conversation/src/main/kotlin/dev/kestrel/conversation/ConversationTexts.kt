@@ -1,5 +1,7 @@
 package dev.kestrel.conversation
 
+import dev.kestrel.conversation.context.RecordText
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.InputChannel
 import java.time.Instant
@@ -38,7 +40,6 @@ object ConversationTexts {
     const val HISTORY_NOT_DELETED = "I couldn't delete the history."
     const val REMEMBERED = "I'll remember that."
     const val FORGOTTEN = "I've forgotten it."
-    const val NOT_SAVED = "I didn't change anything."
     const val NOTHING_TO_SAVE = "There's nothing to save: no task finished in the last 10 minutes."
     const val COULD_NOT = "Something went wrong in Kestrel, so I stopped."
 
@@ -53,22 +54,24 @@ object ConversationTexts {
 
     /**
      * The end of a final reply that names the steering that came too late for the goal (plan 7A's "Interfaces for 7B"),
-     * with a space before it; empty when none did.
+     * with a space before it; empty when none did. It names each message in its record's form, because the final words
+     * are the record's answer (review of plan 7B: C1).
      */
-    fun tooLate(texts: List<String>): String {
-        if (texts.isEmpty()) return ""
-        val them = if (texts.size == 1) "it" else "them"
-        return " I got ${texts.joinToString(" and ") { "'$it'" }} too late to act on $them; say $them again as a new command."
+    fun tooLate(messages: List<SteeringMessage>): String {
+        if (messages.isEmpty()) return ""
+        val them = if (messages.size == 1) "it" else "them"
+        return " I got ${messages.joinToString(" and ") { "'${it.recorded}'" }} too late to act on $them; say $them again as a new command."
     }
 
     /** What Kestrel says at once to a steering message that came after the goal had given its final words. */
-    fun cameTooLate(text: String): String = tooLate(listOf(text)).trimStart()
+    fun cameTooLate(message: SteeringMessage): String = tooLate(listOf(message)).trimStart()
 
     fun remember(key: String, value: String): String = "Remember that $key is $value?"
 
     fun forget(key: String): String = "Forget $key?"
 
-    fun noFact(key: String): String = "There's no fact named $key."
+    /** The answer to "forget" a fact that does not exist, which its record keeps: the owner's [key] in its record's form. */
+    fun noFact(key: String): String = "There's no fact named ${RecordText.of(key)}."
 
     /** "Friday, 20 November". */
     fun day(wall: Long, zone: ZoneId): String = DAY.format(Instant.ofEpochMilli(wall).atZone(zone))

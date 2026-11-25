@@ -9,6 +9,7 @@ import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.testing.ManualConversationClock
+import dev.kestrel.conversation.testing.wordsOf
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import kotlin.random.Random

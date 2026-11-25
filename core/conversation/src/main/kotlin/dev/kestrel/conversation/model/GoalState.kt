@@ -1,5 +1,8 @@
 package dev.kestrel.conversation.model
 
+import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
+import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.ResumeCause
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -20,6 +23,20 @@ enum class GoalHold(val phase: GoalPhase, val resume: ResumeCause?) {
     TOUCH(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
     KESTREL_SCREEN(GoalPhase.INTERRUPTED, ResumeCause.INTERRUPTION),
     RESTART(GoalPhase.INTERRUPTED, ResumeCause.RESTART),
+    ;
+
+    companion object {
+        /**
+         * What holds a goal whose round ended with [report]: a pause at a limit or an interruption (design 7.4 and D13 of
+         * sub-project 7); null when the round's end ends the goal. The one rule, which the goal runner reads for the round's
+         * final words and the machine for the goal's phase; the machine alone decides whether the goal stays held.
+         */
+        fun of(report: TaskReport): GoalHold? = when (report.end) {
+            EndReason.PAUSED_AT_LIMIT -> LIMIT
+            EndReason.INTERRUPTED -> if (report.interruption == Interruption.KESTREL_SCREEN) KESTREL_SCREEN else TOUCH
+            else -> null
+        }
+    }
 }
 
 /** How a goal whose round still runs is ending: "stop" ends it for good, a touch interrupts it (D13). */

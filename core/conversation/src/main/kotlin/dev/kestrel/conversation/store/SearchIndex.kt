@@ -35,9 +35,6 @@ class SearchIndex private constructor(val words: List<String>, val records: List
         return first until end
     }
 
-    /** The folded words of [record], one of this index's records. */
-    fun wordsOf(record: IndexedRecord): List<String> = record.words.map { words[it] }
-
     /** The most plain bytes that this index's words and records take in a shard (`PastIndexCodec`). */
     val plainBytes: Long by lazy { words.sumOf(PastIndexCodec::wordBytes) + records.sumOf { PastIndexCodec.recordBytes(it.words.size) } }
 

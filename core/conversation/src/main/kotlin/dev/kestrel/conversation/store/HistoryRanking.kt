@@ -4,7 +4,6 @@ import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.commands.text.LabelMatcher
 import dev.kestrel.commands.text.MatchRules
 import dev.kestrel.commands.text.Normalizer
-import dev.kestrel.conversation.model.ConversationId
 import java.time.Instant
 import java.time.ZoneId
 

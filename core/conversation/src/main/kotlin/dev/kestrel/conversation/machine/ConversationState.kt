@@ -15,9 +15,10 @@ import dev.kestrel.conversation.model.RecordRef
  * page's value now (design 12.4). [commands] counts its records; [command] numbers, in this process, each input that
  * started or resumed a goal or ran a local request. [question] waits for the owner; [asksContinue] is set while
  * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
- * until the owner is there ([PhoneState.present]), [heldReport] is a goal's final reply and [heldWords] a held goal's
- * round report with how to go on, each waiting for him (design 6.4). [local] is a local request or a switch that runs; [next] a command
- * that waits for the goal that "stop" ended or for the local request; [closeAfterWork] closes the conversation once its
+ * until the owner is there ([PhoneState.present]), [heldReports] are the goals' final replies, oldest first, and
+ * [heldWords] a held goal's round report with how to go on, each waiting for him (design 6.4). [local] is a local request
+ * or a switch that runs; [waiting] are the commands, oldest first, that wait for the goal that "stop" ended or for the
+ * local request, and each runs in its turn; [closeAfterWork] closes the conversation once its
  * goal or its local request has ended and its record holds the end, after a change of test mode. [continueAnswer] is the owner's input
  * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
  * mode is not `OFF`, so the voice can speak a question and hear its answer, also in the paused mode); while it is off, a
@@ -41,10 +42,10 @@ data class ConversationState(
     val composing: Boolean = false,
     val awaiting: Boolean = false,
     val replying: Int? = null,
-    val heldReport: ChannelOutput.Report? = null,
+    val heldReports: List<ChannelOutput.Report> = emptyList(),
     val heldWords: ChannelOutput.Said? = null,
     val local: LocalRun? = null,
-    val next: OwnerInput? = null,
+    val waiting: List<OwnerInput> = emptyList(),
     val closeAfterWork: Boolean = false,
     val phone: PhoneState = PhoneState(),
     val timers: Timers = Timers(),

@@ -10,15 +10,17 @@ import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.HistoryResult
 import dev.kestrel.agent.goal.NoGoal
 import dev.kestrel.agent.goal.NoHistory
-import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.memory.Recording
 import dev.kestrel.agent.memory.RoutineMaker
 import dev.kestrel.agent.memory.SaveResult
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.context.ContextBlock
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.CommandRecord
+import dev.kestrel.conversation.model.GoalHold
+import dev.kestrel.conversation.model.RoundEnd
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.safety.Redactor
 import dev.kestrel.safety.TaskAllowance
@@ -39,8 +41,9 @@ import kotlinx.coroutines.withContext
  * [environment], builds its request with [GoalRequests], runs `Agent.run` with the conversation's test mode in its
  * settings (design 12.4), and gives its end to the goal's listener exactly once on every path, with Kestrel's sentence: the
  * environment's refusal, the call backstop's when it stopped the goal, or the environment's sentence. A goal that ended
- * for good names the steering that came too late; a held goal (a pause at a limit, an interruption) keeps it for its next
- * round. A finished goal's recording is kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design
+ * for good names the steering that came too late, in its record's form; a round whose end holds the goal (`GoalHold.of`)
+ * keeps it for the next round, and when the conversation ends such a goal instead ("stop" overtook the hold), [endHeld]
+ * names it. A finished goal's recording is kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design
  * D23 of sub-project 5 is made after its report was said, when the environment allows it and the round was not stopped.
  * [run] and the goal's `interrupt` and `cancel` are called from one coroutine, the conversation engine's. [report] gets a
  * failure by its class.
@@ -72,9 +75,9 @@ class GoalRunner(
      * The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). The
      * caller closes the goal's inbox and gives what waited in it as [pending], which the answer names as too late.
      */
-    fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd {
+    fun endHeld(command: Int, record: CommandRecord, pending: List<SteeringMessage>, reason: EndReason): RoundEnd {
         val result = TaskReport(end = reason, ledger = record.ledger, checklist = record.checklist)
-        val answer = environment.sentence(result) + ConversationTexts.tooLate(pending.map { it.text })
+        val answer = environment.sentence(result) + ConversationTexts.tooLate(pending)
         return RoundEnd(command, result, answer, answer)
     }
 
@@ -172,7 +175,7 @@ class GoalRunner(
                 ready?.let { release(it) }
             }
             val recording = result.recording
-            if (result.end in HELD || recording == null) return
+            if (GoalHold.of(result) != null || recording == null) return
             kept = recording to clock.wallMillis()
             if (stopped || ready == null || !ready.offersRoutines || !result.offerRoutine) return
             // The offer follows the report, so the report is said first and is not said again; the record keeps it as the
@@ -200,7 +203,7 @@ class GoalRunner(
             stop != null -> "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
             else -> environment.sentence(result)
         }
-        return if (result.end in HELD) sentence else sentence + ConversationTexts.tooLate(goal.inbox.close().map { it.text })
+        return if (GoalHold.of(result) != null) sentence else sentence + ConversationTexts.tooLate(goal.inbox.close())
     }
 
     // The routine offer of design D23 of sub-project 5, after the report was said: the sentence that it ends with, if any.
@@ -239,8 +242,5 @@ class GoalRunner(
     companion object {
         /** How long a finished goal's steps stay for "save that as" (design D23 of sub-project 5). */
         const val RECORDING_MILLIS = 10L * 60 * 1000
-
-        // The ends after which the goal stays open and held (design 7.4 and D13 of sub-project 7).
-        private val HELD = setOf(EndReason.PAUSED_AT_LIMIT, EndReason.INTERRUPTED)
     }
 }

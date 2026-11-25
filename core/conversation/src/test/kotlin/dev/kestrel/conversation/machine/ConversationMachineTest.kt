@@ -23,6 +23,7 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.ProcessEnd
+import dev.kestrel.conversation.model.RoundEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -196,7 +197,7 @@ class ConversationMachineTest : MachineTesting() {
         val command = spoken("Turn on Bluetooth")
         val waiting = step(stopped.state, command)
         assertFalse(waiting.has<ConversationEffect.AnswerQuestion>())
-        assertEquals(command.input, waiting.state.next)
+        assertEquals(listOf(command.input), waiting.state.waiting)
 
         val late = step(waiting.state, ConversationEvent.Dialogue(DialogueEvent.Answered(4)))
         assertTrue(late.effects.isEmpty())
@@ -226,7 +227,7 @@ class ConversationMachineTest : MachineTesting() {
         val second = step(idleOpen(), typed("Turn on Bluetooth")).state
         assertEquals(2, second.goal!!.command)
 
-        val late = step(second, ConversationEvent.GoalEnded(1, TaskReport(EndReason.CANCELLED), "Cancelled.", "Cancelled."))
+        val late = step(second, ConversationEvent.GoalEnded(RoundEnd(1, TaskReport(EndReason.CANCELLED), "Cancelled.", "Cancelled.")))
 
         assertTrue(late.effects.isEmpty())
         assertEquals(second, late.state)
@@ -358,7 +359,77 @@ class ConversationMachineTest : MachineTesting() {
         val waiting = step(stopping, spoken("Turn on Bluetooth")).state
         val quieter = step(waiting, ConversationEvent.SettingsChanged(ConversationSettings(quietSeconds = 120), testMode = true))
         assertTrue(quieter.effects.isEmpty())
-        assertEquals(waiting.next, quieter.state.next)
+        assertEquals(waiting.waiting, quieter.state.waiting)
+    }
+
+    // "New conversation" numbers a command, and its end names the input, for the hooks' outcome (review of plan 7B: M2).
+    @Test
+    fun aNewConversationEndsItsCommandWithItsInput() {
+        val asked = typed(InputIntent.NewConversation)
+
+        val renewed = step(idleOpen(), asked)
+
+        assertEquals(
+            ConversationEffect.EndLocal(renewed.state.command, EndReason.FINISHED, ConversationTexts.NEW_CONVERSATION, asked.input),
+            renewed.effect<ConversationEffect.EndLocal>(),
+        )
+    }
+
+    // A "stop" after the owner's yes to a switch, or while the store switches, cancels the switch: the conversation that was
+    // open stays as it was, and a switch that the store made is undone (review of plan 7B: M3).
+    @Test
+    fun aStopCancelsASwitchAfterTheYesAndWhileItRuns() {
+        val open = idleOpen()
+        val asking = step(open, spoken(InputIntent.ContinuePast("the trip")))
+        val run = asking.effect<ConversationEffect.RunLocal>()
+        val stopped = step(asking.state, spoken(InputIntent.Stop)).state
+
+        val afterYes = step(stopped, ConversationEvent.LocalEnded(run.command, LocalOutcome.Switch(other)))
+
+        assertFalse(afterYes.has<ConversationEffect.SwitchTo>())
+        assertEquals(EndReason.CANCELLED, afterYes.effect<ConversationEffect.EndLocal>().end)
+        assertEquals(id, afterYes.state.id)
+        assertNull(afterYes.state.local)
+
+        val switching = step(open, typed(InputIntent.ContinueConversation(other)))
+        val during = step(switching.state, typed(InputIntent.Stop))
+        assertTrue(during.has<ConversationEffect.CancelLocal>())
+        val past = ConversationSnapshot(other, 5_000, now, open = true, testMode = false)
+        val switched = step(during.state, ConversationEvent.Switched(past, "We're back in the conversation from Friday, 20 November."))
+
+        assertTrue(switched.has<ConversationEffect.UndoSwitch>())
+        assertFalse(switched.has<ConversationEffect.OpenSwitched>())
+        assertEquals(EndReason.CANCELLED, switched.effect<ConversationEffect.EndLocal>().end)
+        assertEquals(id, switched.state.id)
+        assertTrue(switched.outputs().isEmpty())
+    }
+
+    // Commands that wait are kept in order, and each runs in its turn (review of plan 7B: M4).
+    @Test
+    fun everyCommandThatWaitsRunsInOrder() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val two = step(step(remembering.state, spoken("Turn on Wi-Fi")).state, spoken("Make it the guest network")).state
+        assertEquals(2, two.waiting.size)
+
+        val done = step(two, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+
+        assertEquals("Turn on Wi-Fi", done.effect<ConversationEffect.StartGoal>().text)
+        assertEquals(ConversationEffect.SteerGoal("Make it the guest network", InputChannel.VOICE), done.effect<ConversationEffect.SteerGoal>())
+        assertTrue(done.state.waiting.isEmpty())
+    }
+
+    // Final replies that wait for the owner are all given when he is back, oldest first.
+    @Test
+    fun everyFinalReplyThatWaitsIsGivenInOrder() {
+        val first = ended(step(acting(), ConversationEvent.Signal(PhoneSignal.LOCKED)).state).state
+        val second = ended(step(first, typed("Turn on Bluetooth")).state, sentence = "Bluetooth is on.").state
+        assertEquals(2, second.heldReports.size)
+
+        val back = step(second, ConversationEvent.Signal(PhoneSignal.UNLOCKED))
+
+        assertEquals(listOf(ChannelOutput.Report(1, "Done."), ChannelOutput.Report(2, "Bluetooth is on.")), back.outputs())
+        assertTrue(back.state.heldReports.isEmpty())
     }
 
     // A memory request's record names its own conversation, so that its end never needs an open one.
@@ -441,7 +512,7 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals("Turn on Bluetooth", start.text)
         assertEquals(1, start.record)
         assertTrue(next.state.testMode)
-        assertNull(next.state.next)
+        assertTrue(next.state.waiting.isEmpty())
     }
 
     @Test

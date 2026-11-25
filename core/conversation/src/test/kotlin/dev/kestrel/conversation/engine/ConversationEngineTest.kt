@@ -5,6 +5,7 @@ import dev.kestrel.agent.TaskRequest
 import dev.kestrel.agent.goal.Checklist
 import dev.kestrel.agent.goal.ChecklistItem
 import dev.kestrel.agent.goal.GoalLimits
+import dev.kestrel.agent.goal.HistoryQuery
 import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
@@ -15,6 +16,7 @@ import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.goal.GoalRunner
 import dev.kestrel.conversation.goal.ScreenTurn
 import dev.kestrel.conversation.local.LocalRequests
@@ -127,7 +129,7 @@ class ConversationEngineTest {
     @Test
     fun aTypedCommandRunsAGoalAndItsReplyEndsTheCommand() = scope.runTest {
         val engine = engine(environment(listSms, finish(1)))
-        assertEquals(Restored.NOTHING, engine.restore())
+        assertEquals(RestoreResult.NOTHING, engine.restore())
 
         engine.submit(typed("Read my latest SMS"))
         runCurrent()
@@ -202,7 +204,7 @@ class ConversationEngineTest {
         advanceTimeBy(20_000)
 
         val second = engine(environment(), ArchivedConversationStore(archive, backgroundScope) {})
-        assertEquals(Restored.OPEN, second.restore())
+        assertEquals(RestoreResult.OPEN, second.restore())
         runCurrent()
         assertEquals(id, second.view.value.id)
         assertEquals(1, second.view.value.records.size)
@@ -224,7 +226,7 @@ class ConversationEngineTest {
         val environment = environment(fail)
         val engine = engine(environment, ArchivedConversationStore(archive, backgroundScope) {})
 
-        assertEquals(Restored.GOAL_HELD, engine.restore())
+        assertEquals(RestoreResult.GOAL_HELD, engine.restore())
         runCurrent()
         assertEquals(GoalPhase.INTERRUPTED, engine.view.value.goal)
         assertEquals(QuestionKind.CONTINUE_GOAL, voice.asked.single().kind)
@@ -252,7 +254,7 @@ class ConversationEngineTest {
         val environment = environment()
         val engine = engine(environment, ArchivedConversationStore(archive, backgroundScope) {})
 
-        assertEquals(Restored.GOAL_ENDED, engine.restore(ProcessEnd.OwnerStopped(now - 10_000)))
+        assertEquals(RestoreResult.GOAL_ENDED, engine.restore(ProcessEnd.OwnerStopped(now - 10_000)))
         runCurrent()
 
         // Plan 7E: no round runs, nothing asks "Continue the goal?", and the record ends as "stop" ends it.
@@ -542,7 +544,7 @@ class ConversationEngineTest {
         runCurrent()
 
         assertTrue(steered)
-        assertTrue(text.shown.contains(ChannelOutput.Said(ConversationTexts.cameTooLate("Now send it to Ana"))))
+        assertTrue(text.shown.contains(ChannelOutput.Said(ConversationTexts.cameTooLate(SteeringMessage.of("Now send it to Ana", InputChannel.TEXT)))))
         assertFalse(text.shown.contains(ChannelOutput.Shown(ConversationTexts.GOT_IT)))
         val record = engine.view.value.records.single()
         assertEquals(RecordLine(LineKind.OWNER_TOO_LATE, "Now send it to Ana", InputChannel.TEXT), record.lines.single { it.kind.owners })
@@ -671,7 +673,7 @@ class ConversationEngineTest {
         ))
         val environment = environment()
         val engine = engine(environment, ArchivedConversationStore(archive, backgroundScope) {}, report = { _, error -> failures += error })
-        assertEquals(Restored.GOAL_HELD, engine.restore())
+        assertEquals(RestoreResult.GOAL_HELD, engine.restore())
         runCurrent()
 
         engine.submit(input(InputChannel.VOICE, InputIntent.Answer(ChannelAnswer.Yes)))
@@ -748,7 +750,13 @@ class ConversationEngineTest {
     // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
+        var reopenGate: CompletableDeferred<Unit>? = null
         val calls = mutableListOf<String>()
+
+        override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? {
+            reopenGate?.await()
+            return inner.reopen(id, closing, nowWall, testMode)
+        }
 
         override suspend fun save(snapshot: ConversationSnapshot) {
             gate?.await()
@@ -760,6 +768,88 @@ class ConversationEngineTest {
             inner.deleteAll()
             calls += "deleteAll"
         }
+    }
+
+    // A steer with a one-time code that comes in the goal's last step is named in the final words in its record's form only:
+    // neither the record, the archive's payload nor the search of past conversations holds the code (review of plan 7B:
+    // C1).
+    @Test
+    fun aLateSteerWithAOneTimeCodeLeavesTheCodeNowhere() = scope.runTest {
+        val environment = environment(listSms, finish(1))
+        val engine = engine(environment)
+        environment.afterCall = { calls -> if (calls == 2) engine.submit(typed("The code is 482913")) }
+        engine.restore()
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        val id = engine.view.value.id!!
+        val record = engine.view.value.records.single()
+        assertTrue(record.answer!!.contains("a one-time code"))
+        assertFalse(record.answer!!.contains("482913"))
+        assertTrue(record.lines.none { "482913" in it.text })
+        assertFalse("482913" in archive.payload(id.value))
+        val found = HistorySearch(store, { 30 }, clock).search(HistoryQuery("latest SMS")).matches.single()
+        assertFalse(found.answer!!.contains("482913"))
+        assertFalse("482913" in engine.outcome(1)!!.answer!!)
+    }
+
+    // "Stop" that overtakes a touch ends the goal as cancelled, and the steering that waited is named in the final words, in
+    // its record's form (review of plan 7B: I1 and C1).
+    @Test
+    fun aStopThatOvertakesATouchEndsTheGoalAsCancelledAndNamesTheWaitingSteer() = scope.runTest {
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) awaitCancellation() }
+        val engine = engine(environment(say("On it."), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        engine.submit(typed("The code is 482913"))
+        runCurrent()
+        val id = engine.view.value.id!!
+
+        engine.touched()
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+
+        assertNull(engine.view.value.goal)
+        val record = engine.view.value.records.single()
+        assertEquals(EndReason.CANCELLED, record.end)
+        assertTrue(record.answer!!.contains("a one-time code"))
+        assertFalse("482913" in archive.payload(id.value))
+        assertEquals(EndReason.CANCELLED, engine.outcome(1)!!.report.end)
+    }
+
+    // A "stop" while the store switches to a past conversation cancels the switch: the conversation that was open stays
+    // open, and the past one is kept as it was (review of plan 7B: M3).
+    @Test
+    fun aStopWhileTheStoreSwitchesKeepsTheOpenConversation() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        val current = engine.view.value.id!!
+        val gate = CompletableDeferred<Unit>()
+        gated.reopenGate = gate
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.ContinueConversation(past)))
+        runCurrent()
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(current, engine.view.value.id)
+        assertEquals(current, store.open()!!.id)
+        val kept = store.get(past)!!
+        assertFalse(kept.open)
+        assertNull(kept.continuedAtWall)
+        assertEquals(EndReason.CANCELLED, engine.outcome(engine.view.value.command)!!.report.end)
     }
 
     // A change of test mode while "Remember that …" asks waits for the request: the conversation closes with the record's
