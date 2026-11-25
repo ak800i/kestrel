@@ -54,8 +54,6 @@ internal object RecordLines {
 
     fun item(item: ChecklistItem): String = "    ${item.id} [${item.state.wire}] ${quoted(item.text, ChecklistRules.TEXT_LIMIT)}"
 
-    fun moreItems(count: Int): String = "    (and $count more open ${if (count == 1) "item" else "items"})"
-
     /**
      * A data note as one line: the result's text as the model saw it, with its own quotes, cut at [cap] and only then quoted
      * and escaped, so that a cut inside one of its values never leaves the line's quote open.
