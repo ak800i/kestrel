@@ -11,12 +11,12 @@ import java.util.Locale
 
 /**
  * The result of `search_conversations` as the model reads it (design 9.4 of sub-project 7): at most
- * [HistoryPort.MAX_MATCHES] earlier commands, newest first, in at most [TOKEN_BUDGET] tokens. Each match names its day,
- * its time and its command's number; what the owner said then and what Kestrel answered, in quotes; the apps that it acted
- * in; and its data notes as the model saw them then, so that everything in it stays data (design 12.1). Every text was
- * redacted once, when it entered its run, so nothing is redacted here. A data note that would pass the budget is left out
- * with a line that says so; a note whose line would pass it too, and a match that would pass it, are left out whole, and
- * the result's last line counts them, so that nothing leaves the result without a word.
+ * [HistoryPort.MAX_MATCHES] earlier commands in the port's order, best match first, in at most [TOKEN_BUDGET] tokens. Each
+ * match names its day, its time and its command's number; what the owner said then and what Kestrel answered, in quotes; the
+ * apps that it acted in; and its data notes as the model saw them then, so that everything in it stays data (design 12.1).
+ * Every text was redacted once, when it entered its run, so nothing is redacted here. A data note that would pass the
+ * budget is left out with a line that says so; a note whose line would pass it too, and a match that would pass it, are
+ * left out whole, and the result's last line counts them, so that nothing leaves the result without a word.
  */
 internal object HistoryText {
     const val TOKEN_BUDGET = 1_500

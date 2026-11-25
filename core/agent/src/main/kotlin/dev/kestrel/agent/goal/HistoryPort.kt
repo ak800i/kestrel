@@ -4,7 +4,8 @@ import java.time.LocalDate
 
 /**
  * The on-device search over past conversations, behind the tool `search_conversations` (design 5.4 and 9.4 of
- * sub-project 7): `:core:conversation`'s `HistorySearch` implements it, and today's `AgentRunner` passes [NoHistory].
+ * sub-project 7): `:core:conversation`'s `HistorySearch` implements it, and today's `AgentRunner` passes [NoHistory]. Its
+ * [HistoryResult] holds the best matches first, the order that the tool's description promises the model.
  */
 interface HistoryPort {
     suspend fun search(query: HistoryQuery): HistoryResult
@@ -21,8 +22,9 @@ data class HistoryQuery(val text: String, val from: LocalDate? = null, val to: L
 }
 
 /**
- * The earlier commands that match, newest first, at most [HistoryPort.MAX_MATCHES]; [more] says that more commands
- * matched than [matches] holds.
+ * The earlier commands that match, at most [HistoryPort.MAX_MATCHES], best match first (design 9.4 of sub-project 7): a
+ * record scores by how many of the query's words it holds, and of two that score alike the newer comes first. [more] says
+ * that more commands matched than [matches] holds.
  */
 data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = false) {
     override fun toString(): String = "HistoryResult(matches=${matches.size}, more=$more)"

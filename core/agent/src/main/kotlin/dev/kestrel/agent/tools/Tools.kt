@@ -361,7 +361,7 @@ object Tools {
         tool(
             SEARCH_CONVERSATIONS,
             "Search the owner's earlier conversations with Kestrel on this phone. Returns at most ${HistoryPort.MAX_MATCHES} earlier commands that match, " +
-                "newest first. Use it when the owner refers to something from before that this conversation does not hold.",
+                "the best match first; of two that match alike, the newer comes first. Use it when the owner refers to something from before that this conversation does not hold.",
             listOf(
                 "query" to string("Words to look for: a name, an app, a topic; at most $QUERY_LIMIT characters."),
                 "from" to string("The first day to search: YYYY-MM-DD."),

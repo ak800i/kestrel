@@ -38,6 +38,18 @@ class HistoryTextTest {
         )
     }
 
+    // Design 9.4 of sub-project 7: the port gives the best match first, the newer on a tie, and the result keeps its order.
+    @Test
+    fun theMatchesKeepThePortsOrderBestMatchFirst() {
+        val older = HistoryMatch(thursday - 86_400_000L, 1, "Find the restaurant Mila sent me", null, emptyList(), emptyList())
+        val newer = HistoryMatch(thursday, 2, "Call Mila", null, emptyList(), emptyList())
+
+        val lines = HistoryText.of(HistoryResult(listOf(older, newer)), zone).text.text.lines()
+
+        assertTrue(lines[0], lines[0].startsWith("Match 1 · Wednesday, 18 November 2026, 18:04 · command 1 "))
+        assertTrue(lines[2], lines[2].startsWith("Match 2 · Thursday, 19 November 2026, 18:04 · command 2 "))
+    }
+
     @Test
     fun noMatchAndMoreMatchesThanItShowsSaySo() {
         assertEquals(HistoryText.NO_MATCH, HistoryText.of(HistoryResult(emptyList()), zone).text.text)

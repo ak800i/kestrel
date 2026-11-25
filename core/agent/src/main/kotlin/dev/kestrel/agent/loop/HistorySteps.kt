@@ -7,9 +7,10 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * `search_conversations` (design 9.4 of sub-project 7): it acts on nothing and needs no safety check, because its result
- * is data that only this run's model reads. As a data tool's, a result that differs from the tool's earlier results in
- * the run is progress, and a result with matches is a data step that `finish` may cite. A failure of the archive is the
- * step's result, never the end of the task; it is logged by its class.
+ * is data. This run's model reads it, and the run traces it as the command's data note, which later commands read as data
+ * too, in their records block and their own searches. As a data tool's, a result that differs from the tool's earlier
+ * results in the run is progress, and a result with matches is a data step that `finish` may cite. A failure of the
+ * archive is the step's result, never the end of the task; it is logged by its class.
  */
 internal class HistorySteps(private val run: TaskRun) {
     suspend fun search(call: AgentCall.SearchConversations): Done {
