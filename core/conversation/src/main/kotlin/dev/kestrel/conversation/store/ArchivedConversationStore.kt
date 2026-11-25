@@ -9,8 +9,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * The conversations as JSON behind [archive] (design 9.1 and 9.2 of sub-project 7): one row per conversation, whose
- * payload is its snapshot. Each row is read and decoded once per process and kept in memory, which every change updates,
- * so the list and the search never read a row twice. A row whose payload fails its tag, or does not decode, is deleted and
+ * payload is its snapshot. Every row is read in one call to the archive and decoded once per process, at the store's first
+ * use, and kept in memory, which every change updates, so the list and the search never read a row twice. A row whose payload fails its tag, or does not decode, is deleted and
  * reported to [unreadable] by its kind only, as `SettingsStore` does with a setting. A row in a format that this version
  * cannot read ([ArchiveEntry.Unknown]) is left out and kept for a later version; the archive has reported it. Whether a
  * conversation is open is its row's [ArchiveHeader.open], never its payload's, so that the archive's table is the one
@@ -84,13 +84,13 @@ class ArchivedConversationStore(
     private suspend fun all(): MutableMap<ConversationId, ConversationSnapshot> {
         known?.let { return it }
         val loaded = LinkedHashMap<ConversationId, ConversationSnapshot>()
-        for (header in archive.headers()) decoded(archive.read(header.id))?.let { loaded[it.id] = it }
+        for (entry in archive.readAll()) decoded(entry)?.let { loaded[it.id] = it }
         known = loaded
         return loaded
     }
 
-    private suspend fun decoded(entry: ArchiveEntry?): ConversationSnapshot? = when (entry) {
-        null, is ArchiveEntry.Unknown -> null
+    private suspend fun decoded(entry: ArchiveEntry): ConversationSnapshot? = when (entry) {
+        is ArchiveEntry.Unknown -> null
         is ArchiveEntry.Unreadable -> dropped(entry.header.id)
         is ArchiveEntry.Readable -> try {
             json.decodeFromString(ConversationSnapshot.serializer(), entry.payload.decodeToString()).copy(open = entry.header.open)

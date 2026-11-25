@@ -68,7 +68,7 @@ These are this plan's readings of the design where the design leaves a choice op
 - **The records' bounds count.** A record keeps `droppedLines` and `droppedData`, which the block and the transcript show as one line, instead of a note line (design 8.1's "with a note").
 - **Condensing.** At the start of each new command, every earlier record but the newest is marked `condensed`, once, and keeps the mark (design 8.3). A condensed record keeps all its parts, so the search and the transcript still read them; only its form in the block is the condensed one, which depends on its own fields only and so never changes.
 - **The search.** `HistorySearch` searches the closed conversations within retention and the open conversation's records except the command that asks; a fixed list of words that hold no topic ("the", "about", "i", "u" …) is not counted; a name's near miss is a word of at least 4 letters with the same first letter whose `LabelMatcher.score` reaches `MatchRules.ACCEPT`.
-- **The store's port.** `RecordArchive` knows only plain header fields and payload bytes (7C encrypts them): `headers`, `read`, `write(rows)` in one transaction, `delete`, `deleteAll` (every row and the archive's key) and `deleteOutside`. `ConversationStore` gains `closedSince` for the search and the list, and `reopen(id, closing, nowWall, testMode)`, which writes the closing snapshot and the chosen one in one transaction.
+- **The store's port.** `RecordArchive` knows only plain header fields and payload bytes (7C encrypts them): `readAll` (every row in one call, so that the store's first use is one query, not one per row), `write(rows)` in one transaction, `delete`, `deleteAll` (every row and the archive's key) and `deleteOutside`. `ConversationStore` gains `closedSince` for the search and the list, and `reopen(id, closing, nowWall, testMode)`, which writes the closing snapshot and the chosen one in one transaction.
 - **Steering survives the end of the process.** The snapshot keeps the inbox's messages that no round has taken yet (`steering`, redacted as a record is), so that a restored goal's next round takes them.
 - **The call backstop.** `PhoneSignal.AGENT_CALL` is the backstop's verdict (D13 of sub-project 5), which `:app`'s `PhoneSignals` sends instead of `CALL_ACTIVE`; it ends an acting goal with "I stopped the task because a call started right after my last action." and what it did.
 - **The goal's environment and the screen's turn.** `GoalEnvironment` (`prepare(RoundStart)` once per round, and `sentence(report)`) and `ScreenTurn` (`take()`, which returns when no instant command or settings page holds the screen; a goal never holds it, so the instant commands still work during its hand-overs and pauses) are this plan's ports, which plan 7D implements.
@@ -1696,7 +1696,7 @@ git commit -m "feat(conversation): the records block of a later command, filled 
 
 ### Task 4: The store and retention
 
-The conversations' store (design 9.1 to 9.3): `RecordArchive` is the bytes-level port that plan 7C implements with Room and the key `kestrel.conversations`; `ArchivedConversationStore` keeps each conversation as one row whose payload is its snapshot's JSON, decodes each row once per process, deletes a row whose payload fails and reports it by its kind only, switches the open conversation in one transaction, and purges; a row in a format that this version cannot read stays for a later version (plan 7C's request). `Retention` purges at once, at every change of the retention, and once a day by the wall clock, which it checks every hour.
+The conversations' store (design 9.1 to 9.3): `RecordArchive` is the bytes-level port that plan 7C implements with Room and the key `kestrel.conversations`; `ArchivedConversationStore` keeps each conversation as one row whose payload is its snapshot's JSON, reads every row in one call at its first use and decodes each once per process, deletes a row whose payload fails and reports it by its kind only, switches the open conversation in one transaction, and purges; a row in a format that this version cannot read stays for a later version (plan 7C's request). `Retention` purges at once, at every change of the retention, and once a day by the wall clock, which it checks every hour.
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationClock.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/Retention.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/ManualConversationClock.kt`
@@ -1704,7 +1704,7 @@ The conversations' store (design 9.1 to 9.3): `RecordArchive` is the bytes-level
 
 **Interfaces:**
 - Consumes: Task 1's `ConversationSnapshot`, `ConversationId`, `CommandRecord`.
-- Produces: `interface dev.kestrel.conversation.engine.ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`. Package `dev.kestrel.conversation.store`: `interface RecordArchive { suspend fun headers(): List<ArchiveHeader>; suspend fun read(id: String): ArchiveEntry?; suspend fun write(rows: List<ArchiveRow>); suspend fun delete(id: String); suspend fun deleteAll(); suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int }`; `data class ArchiveHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `class ArchiveRow(val header: ArchiveHeader, val payload: ByteArray)`; `sealed interface ArchiveEntry { val header: ArchiveHeader; class Readable(header, val payload: ByteArray); class Unreadable(header); class Unknown(header) }`; `interface ConversationStore { suspend fun open(): ConversationSnapshot?; suspend fun save(snapshot: ConversationSnapshot); suspend fun list(): List<ConversationSummary>; suspend fun get(id: ConversationId): ConversationSnapshot?; suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?; suspend fun delete(id: ConversationId); suspend fun deleteAll(); suspend fun purge(retentionDays: Int, nowWall: Long): Int; suspend fun closedSince(sinceWall: Long): List<ConversationSnapshot> }`; `data class ConversationSummary(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?)`; `class ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore` with `ArchivedConversationStore.KIND = "conversation"` and `DAY_MILLIS`; `class Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which checks the wall clock every hour. Fixtures (`dev.kestrel.conversation.testing`): `class MemoryArchive : RecordArchive` (`rows`, `unreadable`, `unknown`, `transactions`, `reads`, `keyDeleted`, `payload(id)`); `class ManualConversationClock(elapsed: () -> Long = { 0L }, var base: Long = BASE, var zone: ZoneId = BELGRADE) : ConversationClock` with `BASE` (20 November 2026, 10:20 in Belgrade) and `BELGRADE`.
+- Produces: `interface dev.kestrel.conversation.engine.ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`. Package `dev.kestrel.conversation.store`: `interface RecordArchive { suspend fun readAll(): List<ArchiveEntry>; suspend fun write(rows: List<ArchiveRow>); suspend fun delete(id: String); suspend fun deleteAll(); suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int }`; `data class ArchiveHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `class ArchiveRow(val header: ArchiveHeader, val payload: ByteArray)`; `sealed interface ArchiveEntry { val header: ArchiveHeader; class Readable(header, val payload: ByteArray); class Unreadable(header); class Unknown(header) }`; `interface ConversationStore { suspend fun open(): ConversationSnapshot?; suspend fun save(snapshot: ConversationSnapshot); suspend fun list(): List<ConversationSummary>; suspend fun get(id: ConversationId): ConversationSnapshot?; suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?; suspend fun delete(id: ConversationId); suspend fun deleteAll(); suspend fun purge(retentionDays: Int, nowWall: Long): Int; suspend fun closedSince(sinceWall: Long): List<ConversationSnapshot> }`; `data class ConversationSummary(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?)`; `class ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore` with `ArchivedConversationStore.KIND = "conversation"` and `DAY_MILLIS`; `class Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which checks the wall clock every hour. Fixtures (`dev.kestrel.conversation.testing`): `class MemoryArchive : RecordArchive` (`rows`, `unreadable`, `unknown`, `transactions`, `calls`, `keyDeleted`, `payload(id)`); `class ManualConversationClock(elapsed: () -> Long = { 0L }, var base: Long = BASE, var zone: ZoneId = BELGRADE) : ConversationClock` with `BASE` (20 November 2026, 10:20 in Belgrade) and `BELGRADE`.
 
 Counts: `:core:conversation` 31 + 12 (`ArchivedConversationStoreTest` 10, `RetentionTest` 2) = 43.
 
@@ -1741,11 +1741,12 @@ package dev.kestrel.conversation.store
  * `kestrel.conversations` with the associated data `conversations/<id>`; the JVM tests use the fixtures' `MemoryArchive`.
  */
 interface RecordArchive {
-    /** Every row's header, the newest change first. */
-    suspend fun headers(): List<ArchiveHeader>
-
-    /** The row [id], or null; [ArchiveEntry.Unreadable] when its payload failed its tag, [ArchiveEntry.Unknown] when its format is newer. */
-    suspend fun read(id: String): ArchiveEntry?
+    /**
+     * Every row in one call, the newest change first, so that the first use of the store is one query: each row as
+     * [ArchiveEntry.Readable], [ArchiveEntry.Unreadable] when its payload failed its tag, or [ArchiveEntry.Unknown] when its
+     * format is newer.
+     */
+    suspend fun readAll(): List<ArchiveEntry>
 
     /** Inserts or replaces [rows], all in one transaction. */
     suspend fun write(rows: List<ArchiveRow>)
@@ -1846,47 +1847,46 @@ Create `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testi
 package dev.kestrel.conversation.testing
 
 import dev.kestrel.conversation.store.ArchiveEntry
-import dev.kestrel.conversation.store.ArchiveHeader
 import dev.kestrel.conversation.store.ArchiveRow
 import dev.kestrel.conversation.store.RecordArchive
 
 /**
  * The archive in memory, for the JVM tests: the rows by id, the ids whose payload fails its tag ([unreadable]) or is in a
- * format that this version cannot read ([unknown]), each write's ids in order ([transactions]), how many rows were read,
- * and whether the key was deleted.
+ * format that this version cannot read ([unknown]), each write's ids in order ([transactions]), the port's calls by name
+ * in order ([calls]), and whether the key was deleted.
  */
 class MemoryArchive : RecordArchive {
     val rows = LinkedHashMap<String, ArchiveRow>()
     val unreadable = mutableSetOf<String>()
     val unknown = mutableSetOf<String>()
     val transactions = mutableListOf<List<String>>()
-    var reads = 0
+    val calls = mutableListOf<String>()
     var keyDeleted = false
 
-    override suspend fun headers(): List<ArchiveHeader> = rows.values.map { it.header }.sortedByDescending { it.lastMillis }
-
-    override suspend fun read(id: String): ArchiveEntry? {
-        reads++
-        val row = rows[id] ?: return null
-        return when (id) {
-            in unreadable -> ArchiveEntry.Unreadable(row.header)
-            in unknown -> ArchiveEntry.Unknown(row.header)
-            else -> ArchiveEntry.Readable(row.header, row.payload.copyOf())
+    override suspend fun readAll(): List<ArchiveEntry> {
+        calls += "readAll"
+        return rows.values.sortedByDescending { it.header.lastMillis }.map { row ->
+            when (row.header.id) {
+                in unreadable -> ArchiveEntry.Unreadable(row.header)
+                in unknown -> ArchiveEntry.Unknown(row.header)
+                else -> ArchiveEntry.Readable(row.header, row.payload.copyOf())
+            }
         }
     }
 
     override suspend fun write(rows: List<ArchiveRow>) {
+        calls += "write"
         transactions += rows.map { it.header.id }
         for (row in rows) this.rows[row.header.id] = row
     }
 
     override suspend fun delete(id: String) {
-        rows.remove(id)
-        unreadable.remove(id)
-        unknown.remove(id)
+        calls += "delete"
+        remove(id)
     }
 
     override suspend fun deleteAll() {
+        calls += "deleteAll"
         rows.clear()
         unreadable.clear()
         unknown.clear()
@@ -1894,13 +1894,20 @@ class MemoryArchive : RecordArchive {
     }
 
     override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int {
+        calls += "deleteOutside"
         val gone = rows.values.filter { !it.header.open && (it.header.lastMillis < oldestMillis || it.header.lastMillis > newestMillis) }
-        for (row in gone) delete(row.header.id)
+        for (row in gone) remove(row.header.id)
         return gone.size
     }
 
     /** The payload of row [id] as text. */
     fun payload(id: String): String = rows.getValue(id).payload.decodeToString()
+
+    private fun remove(id: String) {
+        rows.remove(id)
+        unreadable.remove(id)
+        unknown.remove(id)
+    }
 
     override fun toString(): String = "MemoryArchive(rows=${rows.size})"
 }
@@ -2081,10 +2088,13 @@ class ArchivedConversationStoreTest {
         assertTrue(archive.keyDeleted)
     }
 
+    // On the A71, 300 queries of one row each took 1.8 s, and one query of the same 300 rows took 23 ms.
     @Test
-    fun eachRowIsReadOncePerProcess() = runTest {
+    fun theFirstUseReadsEveryRowInOneCallAndNoRowAgain() = runTest {
         store.save(conversation(1, now - 2_000))
         store.save(conversation(2, now - 1_000))
+        store.save(conversation(3, now, open = true))
+        archive.calls.clear()
         val fresh = ArchivedConversationStore(archive) {}
 
         fresh.list()
@@ -2092,7 +2102,7 @@ class ArchivedConversationStoreTest {
         fresh.get(id(1))
         fresh.open()
 
-        assertEquals(2, archive.reads)
+        assertEquals(listOf("readAll"), archive.calls)
     }
 
     @Test
@@ -2209,8 +2219,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * The conversations as JSON behind [archive] (design 9.1 and 9.2 of sub-project 7): one row per conversation, whose
- * payload is its snapshot. Each row is read and decoded once per process and kept in memory, which every change updates,
- * so the list and the search never read a row twice. A row whose payload fails its tag, or does not decode, is deleted and
+ * payload is its snapshot. Every row is read in one call to the archive and decoded once per process, at the store's first
+ * use, and kept in memory, which every change updates, so the list and the search never read a row twice. A row whose payload fails its tag, or does not decode, is deleted and
  * reported to [unreadable] by its kind only, as `SettingsStore` does with a setting. A row in a format that this version
  * cannot read ([ArchiveEntry.Unknown]) is left out and kept for a later version; the archive has reported it. Whether a
  * conversation is open is its row's [ArchiveHeader.open], never its payload's, so that the archive's table is the one
@@ -2284,13 +2294,13 @@ class ArchivedConversationStore(
     private suspend fun all(): MutableMap<ConversationId, ConversationSnapshot> {
         known?.let { return it }
         val loaded = LinkedHashMap<ConversationId, ConversationSnapshot>()
-        for (header in archive.headers()) decoded(archive.read(header.id))?.let { loaded[it.id] = it }
+        for (entry in archive.readAll()) decoded(entry)?.let { loaded[it.id] = it }
         known = loaded
         return loaded
     }
 
-    private suspend fun decoded(entry: ArchiveEntry?): ConversationSnapshot? = when (entry) {
-        null, is ArchiveEntry.Unknown -> null
+    private suspend fun decoded(entry: ArchiveEntry): ConversationSnapshot? = when (entry) {
+        is ArchiveEntry.Unknown -> null
         is ArchiveEntry.Unreadable -> dropped(entry.header.id)
         is ArchiveEntry.Readable -> try {
             json.decodeFromString(ConversationSnapshot.serializer(), entry.payload.decodeToString()).copy(open = entry.header.open)
@@ -8152,9 +8162,9 @@ These change what the owner sees or hears, or move a line between plans; the con
 What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves `:core:conversation`. Packages are below `dev.kestrel.conversation`.
 
 **The archive (plan 7C)**
-- `store.RecordArchive`: `suspend fun headers(): List<ArchiveHeader>` (every row, the newest `lastMillis` first); `suspend fun read(id: String): ArchiveEntry?` (`ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes and reports, `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out and keeps, and which the archive reports, null when there is no row); `suspend fun write(rows: List<ArchiveRow>)` (insert or replace, all in one Room transaction); `suspend fun delete(id: String)`; `suspend fun deleteAll()` (every row, the open one too, and the Keystore key `kestrel.conversations`; a new key is made at the next write); `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int` (closed rows only, `last_millis < oldest OR last_millis > newest`).
+- `store.RecordArchive`: `suspend fun readAll(): List<ArchiveEntry>` (every row in one call, the newest `lastMillis` first, so that the store's first use is one query: `ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes and reports, `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out and keeps, and which the archive reports); `suspend fun write(rows: List<ArchiveRow>)` (insert or replace, all in one Room transaction); `suspend fun delete(id: String)`; `suspend fun deleteAll()` (every row, the open one too, and the Keystore key `kestrel.conversations`; a new key is made at the next write); `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int` (closed rows only, `last_millis < oldest OR last_millis > newest`).
 - `store.ArchiveHeader(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int)` (its `open` is the only record of whether a conversation is open; `ArchivedConversationStore` reads it from the header, never from the payload): the columns `id`, `opened_millis`, `last_millis`, `open`, `commands` of design 9.2's `ConversationRow`; `store.ArchiveRow(header: ArchiveHeader, payload: ByteArray)`: the payload is the snapshot's JSON in UTF-8, which `ConversationArchiveStore` encrypts with `AesGcmFieldCipher` under `kestrel.conversations` and the associated data `conversations/<id>`.
-- `store.ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore`, with `ArchivedConversationStore.KIND = "conversation"` (the activity log's kind for an unreadable row) and `DAY_MILLIS`. It decodes each row once per process.
+- `store.ArchivedConversationStore(archive: RecordArchive, unreadable: (kind: String) -> Unit) : ConversationStore`, with `ArchivedConversationStore.KIND = "conversation"` (the activity log's kind for an unreadable row) and `DAY_MILLIS`. It reads every row in one `readAll` at its first use and decodes each row once per process.
 - `store.ConversationStore`: `open()`, `save(snapshot)`, `list(): List<ConversationSummary>` (closed, newest first), `get(id)`, `reopen(id, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?`, `delete(id)`, `deleteAll()`, `purge(retentionDays: Int, nowWall: Long): Int`, `closedSince(sinceWall: Long): List<ConversationSnapshot>`; `store.ConversationSummary(id, openedAtWall, lastWall, commands, firstRequest: String?)`.
 - `store.Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which purges at once, at every change of the retention and once a day by the wall clock, checked every hour, and which plan 7C's purge job runs for the life of the process with the Conversations page's `keptDays`.
 - `model.ConversationSnapshot(id, openedAtWall, lastWall, open, testMode, records, continuedAtWall, goal, steering, quietSinceWall, replyChannel, version = 1)`, `@Serializable`, whose `open` is `@Transient`: the payload never holds it, and the store takes it from the row's `ArchiveHeader.open`, which is the one source of whether a conversation is open (the archive's purge and `closeOthers` act on that column). The store writes its JSON with `encodeDefaults = true` and reads it with `ignoreUnknownKeys = true`, so an older payload's `open` key is ignored.

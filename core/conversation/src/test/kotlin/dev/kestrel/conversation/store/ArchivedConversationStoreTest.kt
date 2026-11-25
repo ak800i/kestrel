@@ -135,10 +135,13 @@ class ArchivedConversationStoreTest {
         assertTrue(archive.keyDeleted)
     }
 
+    // On the A71, 300 queries of one row each took 1.8 s, and one query of the same 300 rows took 23 ms.
     @Test
-    fun eachRowIsReadOncePerProcess() = runTest {
+    fun theFirstUseReadsEveryRowInOneCallAndNoRowAgain() = runTest {
         store.save(conversation(1, now - 2_000))
         store.save(conversation(2, now - 1_000))
+        store.save(conversation(3, now, open = true))
+        archive.calls.clear()
         val fresh = ArchivedConversationStore(archive) {}
 
         fresh.list()
@@ -146,7 +149,7 @@ class ArchivedConversationStoreTest {
         fresh.get(id(1))
         fresh.open()
 
-        assertEquals(2, archive.reads)
+        assertEquals(listOf("readAll"), archive.calls)
     }
 
     @Test

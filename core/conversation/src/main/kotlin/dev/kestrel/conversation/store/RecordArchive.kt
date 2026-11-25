@@ -7,11 +7,12 @@ package dev.kestrel.conversation.store
  * `kestrel.conversations` with the associated data `conversations/<id>`; the JVM tests use the fixtures' `MemoryArchive`.
  */
 interface RecordArchive {
-    /** Every row's header, the newest change first. */
-    suspend fun headers(): List<ArchiveHeader>
-
-    /** The row [id], or null; [ArchiveEntry.Unreadable] when its payload failed its tag, [ArchiveEntry.Unknown] when its format is newer. */
-    suspend fun read(id: String): ArchiveEntry?
+    /**
+     * Every row in one call, the newest change first, so that the first use of the store is one query: each row as
+     * [ArchiveEntry.Readable], [ArchiveEntry.Unreadable] when its payload failed its tag, or [ArchiveEntry.Unknown] when its
+     * format is newer.
+     */
+    suspend fun readAll(): List<ArchiveEntry>
 
     /** Inserts or replaces [rows], all in one transaction. */
     suspend fun write(rows: List<ArchiveRow>)
