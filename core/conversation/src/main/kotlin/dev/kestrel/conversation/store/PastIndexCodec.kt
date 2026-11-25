@@ -15,10 +15,19 @@ import java.util.zip.Inflater
  * list, each written as its distance from the one before; and the kept rows. Every count and distance is a number of
  * variable length, so that a full shard is about 200 KB, and 30 days of heavy use make about 340 KB in all (design R3).
  * Bytes in another format, or that do not decode, throw [IllegalArgumentException], and the store rebuilds the index from
- * the conversations.
+ * the conversations. So do forged or damaged bytes that would fill the memory: the decoder inflates at most
+ * [MAX_PLAIN_BYTES], and allocates for a count only as many elements as the bytes that are left can hold.
  */
 object PastIndexCodec {
     const val FORMAT: Byte = 1
+
+    /**
+     * The most bytes that a shard may inflate to. A shard is full at [PastIndex.SHARD_POSITIONS] word positions and holds
+     * more only by its last conversation; a position takes about 4 plain bytes (its distance, and its share of the words,
+     * which are written once per shard), so a full shard inflates to about 0.4 MB (379 KB for the random words of 30 heavy
+     * days). 160 bytes per position, 16 MB, leave a margin of about 40, so that only damaged or forged bytes reach it.
+     */
+    const val MAX_PLAIN_BYTES = 160 * PastIndex.SHARD_POSITIONS
 
     fun encode(shard: IndexShard): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -62,20 +71,20 @@ object PastIndexCodec {
     fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard {
         require(bytes.isNotEmpty() && bytes[0] == FORMAT) { "The index is in a format that this version cannot read" }
         val input = Reader(inflated(bytes))
-        val list = List(input.count()) { input.text().let { word -> words.getOrPut(word) { word } } }
+        val list = List(input.count(WORD_BYTES)) { input.text().let { word -> words.getOrPut(word) { word } } }
         val conversations = ArrayList<PastConversation>()
         val records = ArrayList<IndexedRecord>()
-        repeat(input.count()) {
+        repeat(input.count(CONVERSATION_BYTES)) {
             val id = ConversationId(input.text())
             val openedAtWall = input.long()
             val lastWall = input.long()
             val firstRequest = input.optionalText()
-            val commands = input.count()
+            val commands = input.count(RECORD_BYTES)
             repeat(commands) {
                 val record = input.number()
                 val atWall = input.long()
                 var previous = -1
-                val positions = IntArray(input.count()) {
+                val positions = IntArray(input.count(POSITION_BYTES)) {
                     previous += input.number() + 1
                     previous
                 }
@@ -83,25 +92,38 @@ object PastIndexCodec {
             }
             conversations += PastConversation(id, openedAtWall, lastWall, commands, firstRequest)
         }
-        val kept = List(input.count()) { KeptRow(input.text(), input.long()) }
+        val kept = List(input.count(KEPT_BYTES)) { KeptRow(input.text(), input.long()) }
         require(input.atEnd) { "The index has bytes after its end" }
         return IndexShard.restored(number, conversations, SearchIndex.restored(list, records), kept)
     }
 
-    private const val MAX_COUNT = 1 shl 24
+    // The fewest bytes that one element of each kind takes in format 1: a word its length; a conversation its id's length,
+    // its two times, its first request's length and its count of records; a record its number, its time and its count of
+    // words; a position its distance; a kept row its id's length and its time.
+    private const val WORD_BYTES = 1
+    private const val CONVERSATION_BYTES = 1 + 8 + 8 + 1 + 1
+    private const val RECORD_BYTES = 1 + 8 + 1
+    private const val POSITION_BYTES = 1
+    private const val KEPT_BYTES = 1 + 8
+
+    // A non-negative Int in 7 bits per byte: 5 bytes at most, the fifth with only the 3 bits that are left (28 to 30).
+    private const val MAX_NUMBER_BYTES = 5
+    private const val MAX_LAST_BYTE = 0x07
 
     private const val BUFFER_BYTES = 64 * 1024
 
-    // The bytes after the format byte, inflated whole: the compressed stream must end exactly where the bytes end.
+    // The bytes after the format byte, inflated whole: the compressed stream must end exactly where the bytes end, and
+    // inflate to at most MAX_PLAIN_BYTES, which is checked before each part is kept.
     private fun inflated(bytes: ByteArray): ByteArray {
         val inflater = Inflater()
         try {
             inflater.setInput(bytes, 1, bytes.size - 1)
-            val plain = ByteArrayOutputStream(bytes.size * 3)
-            val buffer = ByteArray(64 * 1024)
+            val plain = ByteArrayOutputStream(minOf(bytes.size.toLong() * 3, MAX_PLAIN_BYTES.toLong()).toInt())
+            val buffer = ByteArray(BUFFER_BYTES)
             while (!inflater.finished()) {
                 val inflatedBytes = inflater.inflate(buffer)
                 require(inflatedBytes > 0 || !inflater.needsInput() && !inflater.needsDictionary()) { "The index is cut short" }
+                require(inflatedBytes <= MAX_PLAIN_BYTES - plain.size()) { "The index inflates past its bound" }
                 plain.write(buffer, 0, inflatedBytes)
             }
             require(inflater.remaining == 0) { "The index has bytes after its end" }
@@ -149,20 +171,20 @@ object PastIndexCodec {
 
         fun number(): Int {
             var result = 0
-            var shift = 0
-            while (true) {
+            for (index in 0 until MAX_NUMBER_BYTES) {
                 val byte = next()
-                result = result or ((byte and 0x7F) shl shift)
-                if (byte and 0x80 == 0) break
-                shift += 7
-                require(shift < 32) { "A number of the index is too long" }
+                result = result or ((byte and 0x7F) shl (7 * index))
+                if (byte and 0x80 == 0) {
+                    require(index < MAX_NUMBER_BYTES - 1 || byte <= MAX_LAST_BYTE) { "A number of the index is too large" }
+                    return result
+                }
             }
-            require(result >= 0) { "A number of the index is too large" }
-            return result
+            throw IllegalArgumentException("A number of the index is too long")
         }
 
-        // A count of words, records or rows, which a damaged length could make large enough to exhaust the memory.
-        fun count(): Int = number().also { require(it <= MAX_COUNT) { "A count of the index is too large" } }
+        // A count of elements that each take at least [each] bytes, so that it can be no more than the bytes that are left
+        // can hold: a damaged count is refused before anything is allocated for it.
+        fun count(each: Int): Int = number().also { require(it <= (bytes.size - at) / each) { "A count of the index is larger than its bytes" } }
 
         fun long(): Long {
             var result = 0L
@@ -170,9 +192,9 @@ object PastIndexCodec {
             return result
         }
 
-        fun text(): String = string(count())
+        fun text(): String = string(number())
 
-        fun optionalText(): String? = count().let { if (it == 0) null else string(it - 1) }
+        fun optionalText(): String? = number().let { if (it == 0) null else string(it - 1) }
 
         private fun string(size: Int): String {
             require(size <= bytes.size - at) { "The index is cut short" }

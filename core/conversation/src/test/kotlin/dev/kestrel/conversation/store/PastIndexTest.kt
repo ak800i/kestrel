@@ -11,6 +11,10 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.DeflaterOutputStream
+import java.util.zip.InflaterInputStream
 import kotlin.random.Random
 
 class PastIndexTest {
@@ -82,6 +86,53 @@ class PastIndexTest {
         for (wrong in listOf(byteArrayOf(), byteArrayOf(2) + bytes.copyOfRange(1, bytes.size), bytes.copyOf(bytes.size - 3), bytes + byteArrayOf(0))) {
             assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(shard.number, wrong) }
         }
+    }
+
+    // Damage that Deflate and its checksum let through, as a foreign or faulty encoder would write it, reaches the reader's
+    // own checks, and each of them refuses it with the exception that makes the store rebuild the index.
+    @Test
+    fun theReaderRefusesDamageThatPassesDeflate() {
+        val ana = id(1).value
+        fun valid() = Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept("later", 7)
+
+        val read = PastIndexCodec.decode(0, valid().sealed())
+        assertEquals(listOf("ana", "call"), read.search.wordsOf(read.search.records.single()))
+        assertEquals(listOf(KeptRow("later", 7)), read.kept)
+
+        val damaged = mapOf(
+            "a number of 6 bytes" to Plain().raw(0x82, 0x80, 0x80, 0x80, 0x80, 0x00),
+            "a number past 31 bits" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).raw(0x80, 0x80, 0x80, 0x80, 0x10),
+            "more words than bytes" to Plain().number(1_000_000).text("ana"),
+            "more kept rows than bytes" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(2).kept("later", 7),
+            "a text past the end" to Plain().number(1).number(50).raw(*"ana".encodeToByteArray().map { it.toInt() }.toIntArray()),
+            "a position past the words" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 1)).number(0),
+            "words out of order" to Plain().words("call", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "a word twice" to Plain().words("ana", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "an id that is no conversation's" to Plain().words("ana", "call").number(1).conversation("not an id", 10, "Call Ana", listOf(0, 0)).number(0),
+            "conversations out of order" to Plain().words("ana", "call").number(2)
+                .conversation(ana, 10, "Call Ana", listOf(0, 0)).conversation(id(2).value, 20, null, listOf(1)).number(0),
+            "an id twice" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept(ana, 7),
+            "a byte after the kept rows" to valid().raw(0),
+        )
+        for ((damage, plain) in damaged) {
+            assertThrows(damage, IllegalArgumentException::class.java) { PastIndexCodec.decode(0, plain.sealed()) }
+        }
+    }
+
+    // A few hundred compressed bytes can inflate to more than the memory holds: the decoder stops at its bound while it
+    // inflates, so that forged bytes end in the exception that makes the store rebuild, never in an OutOfMemoryError.
+    @Test
+    fun aShardThatInflatesPastItsBoundIsRefusedWhileItInflates() {
+        fun inflatingTo(size: Int): ByteArray {
+            fun plain(request: Int) = Plain().words().number(1).conversation(id(1).value, 10, "a".repeat(request)).number(0)
+            val trial = size - 100
+            return plain(trial + size - plain(trial).size).also { assertEquals(size, it.size) }.sealed()
+        }
+
+        val largest = inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES)
+        assertTrue("${largest.size} bytes", largest.size < 100_000)
+        assertEquals(1, PastIndexCodec.decode(0, largest).conversations.size)
+        assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(0, inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES + 1)) }
     }
 
     // Design 9.2: a close re-encodes only the newest shard, which is never much larger than its limit, and a conversation
@@ -156,6 +207,55 @@ class PastIndexTest {
         assertEquals(2, shards.size)
         assertTrue("${bytes.map { it.size }} bytes", bytes.sumOf { it.size } < 550_000 && bytes.all { it.size < 300_000 })
         assertEquals(300, shards.zip(bytes).sumOf { (shard, encoded) -> PastIndexCodec.decode(shard.number, encoded).conversations.size })
+        assertTrue("${bytes.map { plainSize(it) }} plain bytes", bytes.all { plainSize(it) * 20 < PastIndexCodec.MAX_PLAIN_BYTES })
         assertFalse(PastIndex.EMPTY.toString().contains("w0"))
+    }
+
+    private fun plainSize(encoded: ByteArray): Int =
+        InflaterInputStream(ByteArrayInputStream(encoded, 1, encoded.size - 1)).use { it.readBytes().size }
+
+    // A shard's plain bytes written by hand in PastIndexCodec's format 1, so that a test can damage what Deflate and its
+    // checksum protect.
+    private class Plain {
+        private val out = ByteArrayOutputStream()
+
+        val size: Int get() = out.size()
+
+        fun raw(vararg values: Int) = apply { values.forEach(out::write) }
+
+        fun number(value: Int) = apply {
+            var rest = value
+            while (rest >= 0x80) {
+                out.write(rest and 0x7F or 0x80)
+                rest = rest ushr 7
+            }
+            out.write(rest)
+        }
+
+        fun long(value: Long) = apply { for (shift in 56 downTo 0 step 8) out.write((value ushr shift).toInt() and 0xFF) }
+
+        fun text(value: String) = apply { value.encodeToByteArray().let { number(it.size).out.write(it) } }
+
+        fun words(vararg words: String) = apply { number(words.size).also { words.forEach { text(it) } } }
+
+        // A conversation that closed at [lastWall], with one record per list of distances between its words' positions.
+        fun conversation(id: String, lastWall: Long, firstRequest: String?, vararg records: List<Int>) = apply {
+            text(id).long(lastWall - 9).long(lastWall)
+            if (firstRequest == null) number(0) else firstRequest.encodeToByteArray().let { number(it.size + 1).out.write(it) }
+            number(records.size)
+            records.forEachIndexed { index, distances ->
+                number(index + 1).long(lastWall - 5).number(distances.size)
+                distances.forEach { number(it) }
+            }
+        }
+
+        fun kept(id: String, lastWall: Long) = apply { text(id).long(lastWall) }
+
+        fun sealed(): ByteArray {
+            val sealed = ByteArrayOutputStream()
+            sealed.write(PastIndexCodec.FORMAT.toInt())
+            DeflaterOutputStream(sealed).use { it.write(out.toByteArray()) }
+            return sealed.toByteArray()
+        }
     }
 }
