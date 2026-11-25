@@ -4266,7 +4266,7 @@ git commit -m "feat(conversation): the index of past conversations in shards of 
 
 ### Task 5c: The search's answer while its index is rebuilt or cannot be read (`:core:agent`)
 
-Design 9.2 and 9.4 of sub-project 7: when the index of past conversations is missing, unreadable, in another format or out of step with the table, the store rebuilds it from the conversations in the background (Task 5d), which takes about 10 s on the A71 for 30 days of heavy use and about 2 minutes for 365 days. When it can be neither read nor rebuilt, the store notes it once and tries again later. The search never waits for a rebuild, and it never answers "No match." then, because that would tell the model something false. `HistoryResult` gains `unavailable`, `HistoryUnavailable.REBUILDING` or `HistoryUnavailable.FAILED`, which plan 7A's `HistorySteps` turns into the step's reason: "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute", or "Kestrel cannot read its past conversations right now and tries again by itself later". Neither is a new failure of the archive: the store has noted a failure once in the activity log, so nothing goes into the run's log. This is a change to `:core:agent` that plan 7B makes, as fix 7B-2 did (Global Constraints).
+Design 9.2 and 9.4 of sub-project 7: when the index of past conversations is missing, unreadable, in another format or out of step with the table, the store rebuilds it from the conversations in the background (Task 5d), which takes about 10 s on the A71 for 30 days of heavy use and about 2 minutes for 365 days. When it can be neither read nor rebuilt, the store notes it once and tries again later. The search never waits for a rebuild, and it never answers "No match." then, because that would tell the model something false. `HistoryResult` gains `unavailable`, `HistoryUnavailable.REBUILDING` or `HistoryUnavailable.FAILED`, which plan 7A's `HistorySteps` turns into the step's reason: "Kestrel is still rebuilding the index of its past conversations and can't search them yet", or "Kestrel cannot read its past conversations right now and tries again by itself later". Neither is a new failure of the archive: the store has noted a failure once in the activity log, so nothing goes into the run's log. This is a change to `:core:agent` that plan 7B makes, as fix 7B-2 did (Global Constraints).
 
 **Files:**
 - Modify: `core/agent/src/main/kotlin/dev/kestrel/agent/goal/HistoryPort.kt`, `core/agent/src/main/kotlin/dev/kestrel/agent/loop/HistorySteps.kt`
@@ -4299,7 +4299,7 @@ with:
     @Test
     fun aSearchThatCannotRunSaysWhy() = runTest {
         val sentences = mapOf(
-            HistoryResult.REBUILDING to "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute.",
+            HistoryResult.REBUILDING to "Kestrel is still rebuilding the index of its past conversations and can't search them yet.",
             HistoryResult.FAILED to "Kestrel cannot read its past conversations right now and tries again by itself later.",
         )
         for ((result, sentence) in sentences) {
@@ -4364,7 +4364,7 @@ data class HistoryResult(val matches: List<HistoryMatch>, val more: Boolean = fa
 
 /** Why a search over past conversations could not run (design 9.2 of sub-project 7). */
 enum class HistoryUnavailable {
-    /** The index of past conversations is being rebuilt from them, which takes about a minute at most. */
+    /** The index of past conversations is being rebuilt from them. */
     REBUILDING,
 
     /** The index could not be read or rebuilt; Kestrel has noted it once and tries again by itself later. */
@@ -4456,7 +4456,7 @@ with:
 ```kotlin
     private companion object {
         const val UNAVAILABLE = "Kestrel could not read its past conversations"
-        const val REBUILDING = "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute"
+        const val REBUILDING = "Kestrel is still rebuilding the index of its past conversations and can't search them yet"
         const val FAILED = "Kestrel cannot read its past conversations right now and tries again by itself later"
     }
 }
@@ -11270,7 +11270,7 @@ Expected: FAIL, the compiler reports `Unresolved reference 'LocalRequests'`, `'R
 
 - [ ] **Step 3: Create the recorded owner and the requests**
 
-Design 9.2 of sub-project 7: when the index of past conversations cannot be read, "continue the conversation about X" says so. In `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt`, replace:
+Design 9.2 of sub-project 7: when the index of past conversations cannot be read, "continue the conversation about X" says so; while it is rebuilt, it says so without promising a time, because a rebuild of 365 days takes minutes. In `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt`, replace:
 
 ```kotlin
     const val PREPARING_PAST = "I'm still preparing your past conversations. Try again in a minute."
@@ -11279,7 +11279,7 @@ Design 9.2 of sub-project 7: when the index of past conversations cannot be read
 with:
 
 ```kotlin
-    const val PREPARING_PAST = "I'm still preparing your past conversations. Try again in a minute."
+    const val PREPARING_PAST = "I'm still rebuilding the index of your past conversations and can't search them yet."
     const val PAST_UNAVAILABLE = "I can't read your past conversations right now. I'll try again later."
 ```
 
@@ -12638,7 +12638,7 @@ These change what the owner sees or hears, or move a line between plans; the con
 8. **Words that hold no topic** ("the", "about", "my", "i", "u", "o", …) do not count in the search, so that "continue the conversation about the trip" needs "trip".
 9. **The retention's purge job** runs from plan 7C, as design 16's row for plan 7C says; the Conversations page that sets the retention is plan 7F's, so until then the job reads the default of `ConversationSettings`.
 10. **"Turn off", "stop listening" and the spotter's "stop" while a goal runs (settled by the owner on 2026-11-24, for plan 7D).** Today each of them cancels a task. With D19 a goal runs whether Kestrel listens or not, so the rule is: "turn off" (by voice, the toggle or the listening notification) and "stop listening" (by voice or the listening notification's Stop listening) change only the listening mode and give the conversation no input; a running goal goes on and shows on the conversation screen and in the goal's notification (plan 7E). The keyword spotter's "stop" while Kestrel speaks keeps today's meaning: it ends the speech and gives a `Stop` input, which ends the running goal, so that a spoken "stop" can always stop the work quickly. "Stop" and "cancel" as an utterance (`InputIntent.Stop`), the screen's Stop and the goal notification's Stop end the goal too. In the paused mode Kestrel still hears its name, so a goal there keeps its speech and takes its answers by voice without the name, as today (`aTaskWhilePausedRunsAndKestrelStaysPaused` keeps its behaviour). Only while Kestrel is off (its listening mode is `OFF`) can the voice neither speak nor hear, and a spoken conversation's goal still reaches the owner: the engine reads whether Kestrel is on from its `voiceOn` flow (at `restore()` and at every change, which only "turn off" and turning on again make), every question, hand-over and permission request also shows as the text channel's card from the moment Kestrel turns off, a question gets D21's waits (2 minutes, 30 s for a confirmation, 5 minutes after "Reply…"), and the voice channel gets Kestrel's words and final replies as `Shown`, so they are shown on the bar without speech and open no follow-up window; a typed conversation's replies are still spoken with "Speak replies to typed commands" on (design 10.6 and 11). When Kestrel is on again, a card that is shown stays until its question or hand-over ends, so that the owner keeps the way to answer that he may be using, and the voice's own waits replace D21's. So `turningOffStopsTheSpeechAndTheTask`, `turningOffEndsATaskInEveryPhase` and `stopListeningWhileATaskRunsEndsTheTaskAndPauses` change on purpose, and `stopWhileKestrelSpeaksEndsTheSpeechAndCancelsTheTask` and `theSpottersStopCancelsATaskDuringItsHandOverSentence` keep their behaviour (Task 7's table).
-11. **While the index of past conversations is rebuilt or cannot be read (Tasks 5a to 5d, design 9.2).** A rebuild happens only when the index is missing, unreadable, in another format or out of step with the table: about 10 s on the A71 for 30 days of heavy use and about 2.5 minutes for 365 days, once, in the background. Meanwhile the search's step fails with "Kestrel is rebuilding the index of its past conversations and cannot search them yet; search again in a minute" and logs no error (Task 5c changes `:core:agent` for it, as fix 7B-2 did); "continue the conversation about X" answers "I'm still preparing your past conversations. Try again in a minute."; the list of past conversations (plan 7F) waits and shows "Loading past conversations…"; and the activity log gets the note "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations". When the index can be neither read nor rebuilt, the activity log gets "Kestrel could not read the index of past conversations and tries again later" once; the search's step fails with "Kestrel cannot read its past conversations right now and tries again by itself later"; "continue the conversation about X" answers "I can't read your past conversations right now. I'll try again later."; the list says "Kestrel can't read past conversations right now. It will try again later." (plan 7F); and the store tries again after 1 minute, then after twice as long each time, up to 1 hour. In both cases the search gives no match, not even from the open conversation, because a part of the matches would read as "nothing older matched". Recommendation: as written; the search never waits for a rebuild, because a goal's step that waits minutes would look stuck. With 90 or 365 days of retention, a search in the first seconds after a start waits for the index to be read (up to about 1.4 s or 4.6 s by design R3's estimate) and says nothing about it; that is design R3's stated limit.
+11. **While the index of past conversations is rebuilt or cannot be read (Tasks 5a to 5d, design 9.2).** A rebuild happens only when the index is missing, unreadable, in another format or out of step with the table: about 10 s on the A71 for 30 days of heavy use and about 2.5 minutes for 365 days, once, in the background. Meanwhile the search's step fails with "Kestrel is still rebuilding the index of its past conversations and can't search them yet" and logs no error (Task 5c changes `:core:agent` for it, as fix 7B-2 did); "continue the conversation about X" answers "I'm still rebuilding the index of your past conversations and can't search them yet."; the list of past conversations (plan 7F) waits and shows "Loading past conversations…"; and the activity log gets the note "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations". When the index can be neither read nor rebuilt, the activity log gets "Kestrel could not read the index of past conversations and tries again later" once; the search's step fails with "Kestrel cannot read its past conversations right now and tries again by itself later"; "continue the conversation about X" answers "I can't read your past conversations right now. I'll try again later."; the list says "Kestrel can't read past conversations right now. It will try again later." (plan 7F); and the store tries again after 1 minute, then after twice as long each time, up to 1 hour. In both cases the search gives no match, not even from the open conversation, because a part of the matches would read as "nothing older matched". Recommendation: as written; the search never waits for a rebuild, because a goal's step that waits minutes would look stuck. With 90 or 365 days of retention, a search in the first seconds after a start waits for the index to be read (up to about 1.4 s or 4.6 s by design R3's estimate) and says nothing about it; that is design R3's stated limit.
 
 ## Interfaces for 7C and 7D
 
