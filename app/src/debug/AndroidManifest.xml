@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- The hook goal-control do=send-later has a goal notification's button sent a few seconds later by an exact alarm
+         (plan 7E, Task 8, Step 8a). Android grants USE_EXACT_ALARM at the install (API 33 and later, Kestrel's minimum),
+         so the hook changes no setting of the phone; release builds do not have it. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application>
         <!-- Test hooks for adb (design spec, section 16.1). Only callers that hold DUMP, in practice adb shell,
              can send commands. Release builds do not contain this receiver, and the audit checks that. -->

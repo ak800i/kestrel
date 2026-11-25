@@ -62,6 +62,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, intent)
         if (command in ProviderHooks.COMMANDS) return ProviderHooks(graph).run(command, intent)
         if (command in AgentHooks.COMMANDS) return AgentHooks(graph, context).run(command, intent)
+        if (command in GoalServiceHooks.COMMANDS) return GoalServiceHooks(graph, context).run(command, intent)
         if (command in ConversationHooks.COMMANDS) return ConversationHooks(graph).run(command, intent)
         if (command == "PROFILES") return profiles()
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
