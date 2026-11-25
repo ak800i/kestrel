@@ -4,11 +4,15 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.graphics.Rect
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.debug.ManagedService
+import dev.kestrel.app.debug.ServiceStall
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.TouchSource
@@ -40,24 +44,46 @@ class ScreenServiceRule : ExternalResource() {
     private suspend fun start() {
         // A mode that an interrupted run stored would turn Kestrel on when its service connects (section 8.5).
         graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
-        // Off as Android's accessibility manager applies it, not only as Kestrel's session ends. In a new test process the
-        // session is gone already while the manager may still be binding the service; when the manager reads the setting
-        // only after the next write, it never sees the service off, keeps that binding, which never completes, and never
-        // connects the service again (plan 7E, Task 8).
-        shell("settings delete secure enabled_accessibility_services")
-        withTimeout(10_000) { while (managerHasService()) delay(100) }
-        withTimeout(10_000) { graph.screen.first { it == null } }
-        shell("settings put secure enabled_accessibility_services $SERVICE")
-        shell("settings put secure accessibility_enabled 1")
-        session = withTimeout(10_000) { graph.screen.filterNotNull().first() }
+        var retried = 0
+        while (true) {
+            turnOff()
+            val on = SystemClock.elapsedRealtime()
+            turnOn()?.let {
+                session = it
+                return
+            }
+            when (val stall = ServiceStall.after(managed(), (SystemClock.elapsedRealtime() - on) / 1_000, retried)) {
+                is ServiceStall.Retry -> {
+                    Log.w("ScreenServiceRule", "${stall.message}; turning it off and on once more")
+                    retried++
+                }
+                is ServiceStall.Fail -> throw AssertionError(stall.message)
+            }
+        }
     }
 
     /**
-     * Whether Android's accessibility manager has Kestrel's service enabled or is binding it. `dumpsys accessibility` names
-     * the services by their components on these lines, and the rule reads nothing else of it.
+     * Turns Kestrel's service off, as Android's accessibility manager applies it, not only as Kestrel's session ends. In a
+     * new test process the session is gone already while the manager may still be binding the service, and a bind that never
+     * completes keeps the manager from binding it again until it has seen the service off (`ServiceStall`). When the
+     * setting is put back right after its deletion, the manager can read it only after both writes and never see the off
+     * (plan 7E, Task 8).
      */
-    private fun managerHasService(): Boolean = shell("dumpsys accessibility").lineSequence().map { it.trim() }
-        .any { (it.startsWith("Enabled services:") || it.startsWith("Binding services:")) && SERVICE in it }
+    private suspend fun turnOff() {
+        shell("settings delete secure enabled_accessibility_services")
+        withTimeoutOrNull(BOUND_MILLIS) { while (!managed().off) delay(100) }
+            ?: throw AssertionError("Android's accessibility manager still has Kestrel's service (${managed()}) ${BOUND_MILLIS / 1_000} s after its setting was deleted")
+        withTimeout(BOUND_MILLIS) { graph.screen.first { it == null } }
+    }
+
+    /** Turns Kestrel's service on; its new session, or null when it did not connect within the bound. */
+    private suspend fun turnOn(): ScreenSession? {
+        shell("settings put secure enabled_accessibility_services $SERVICE")
+        shell("settings put secure accessibility_enabled 1")
+        return withTimeoutOrNull(BOUND_MILLIS) { graph.screen.filterNotNull().first() }
+    }
+
+    private fun managed(): ManagedService = ManagedService.of(shell("dumpsys accessibility"), SERVICE)
 
     /**
      * Runs [block] with [source] as this device's touch rule and branch (design D19 of sub-project 5), and puts back the
@@ -151,6 +177,7 @@ class ScreenServiceRule : ExternalResource() {
         const val FIXTURES = "dev.kestrel.testapp"
         const val KESTREL = "dev.kestrel"
         private const val SERVICE = "dev.kestrel/dev.kestrel.app.KestrelAccessibilityService"
+        private const val BOUND_MILLIS = 10_000L
 
         // Connecting UiAutomation without this flag would turn off every accessibility service, Kestrel's included.
         private val automation: UiAutomation by lazy {
