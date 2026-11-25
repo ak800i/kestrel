@@ -1156,7 +1156,7 @@ git commit -m "feat(conversation): a command's record from the run's traces, wit
 
 ### Task 3: The records block
 
-`ContextBlock` builds the bounded records block that a later command gets as `TaskRequest.conversation` (design 8.3 and 8.4): the header of plan 7A, a continued conversation's note, then the parts in the design's fill order, each added only while the block stays within its budget, and what does not fit counted on one line.
+`ContextBlock` builds the bounded records block that a later command gets as `TaskRequest.conversation` (design 8.3 and 8.4): the header of plan 7A, a continued conversation's note, then the parts in the design's fill order, each added only while the block stays within its budget, and what does not fit counted on one line. Before it fills any part, the block keeps room for the line that each part would need if it left out all it has, and each part fills within what is left, so a count line is never what does not fit (review I1 of Task 3).
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/context/ContextBlock.kt`
@@ -1164,7 +1164,7 @@ git commit -m "feat(conversation): a command's record from the run's traces, wit
 
 **Interfaces:**
 - Consumes: Task 2's `RecordLines` and `RecordCondenser`; `dev.kestrel.agent.TaskRequest.CONVERSATION_HEADER`, `dev.kestrel.agent.loop.Redacted.kestrel`, `dev.kestrel.agent.observe.ScreenText.tokens`, `dev.kestrel.agent.port.ModelInfo`.
-- Produces: `object ContextBlock { const val BUDGET = 2_000; const val REQUEST_CAP = 400; const val ANSWER_CAP = 400; const val DATA = 5; const val DATA_CAP = 600; const val LINES = 10; const val LINE_CAP = 300; const val LEDGER = 5; const val LEDGER_CAP = 200; fun budget(model: ModelInfo): Int; fun build(earlier: List<CommandRecord>, budget: Int, zone: ZoneId, note: String? = null): Redacted? }`. `build` gives null for a first command without a note; its text starts with `TaskRequest.CONVERSATION_HEADER`, then the note, then the left-out older commands' line, the older records condensed (oldest first) and the newest record; `ScreenText.tokens` of its text never passes `budget`.
+- Produces: `object ContextBlock { const val BUDGET = 2_000; const val REQUEST_CAP = 400; const val ANSWER_CAP = 400; const val DATA = 5; const val DATA_CAP = 600; const val LINES = 10; const val LINE_CAP = 300; const val LEDGER = 5; const val LEDGER_CAP = 200; fun budget(model: ModelInfo): Int; fun build(earlier: List<CommandRecord>, budget: Int, zone: ZoneId, note: String? = null): Redacted? }`. `build` gives null for a first command without a note, and when the budget cannot hold the header, the note and the line that counts every record; its text starts with `TaskRequest.CONVERSATION_HEADER`, then the note, then the left-out older commands' line, the older records condensed (oldest first) and the newest record; `ScreenText.tokens` of its text never passes `budget`, and each part that leaves something out (the open items, the data notes, the lines, the ledger lines and the older records) has the one line that counts it.
 
 Counts: `:core:conversation` 17 + 9 = 26.
 
@@ -1254,23 +1254,29 @@ class ContextBlockTest {
 
     @Test
     fun theFillOrderLeavesOutTheLatePartsFirstAndCountsThem() {
-        val newest = record(
-            4,
-            data = (1..5).map { DataNote("list_sms", it, "d".repeat(600)) },
-            lines = (1..10).map { RecordLine(LineKind.KESTREL_SAID, "y".repeat(300)) },
-        )
+        for (letter in listOf("d", "ж")) {
+            val items = (1..12).map { ChecklistItem("c$it", letter.repeat(120), ItemState.TODO) }
+            val newest = record(
+                4,
+                data = (1..5).map { DataNote("list_sms", it, letter.repeat(600)) },
+                lines = (1..10).map { RecordLine(LineKind.KESTREL_SAID, letter.repeat(300)) },
+                ledger = (1..5).map { letter.repeat(200) },
+                checklist = Checklist(items),
+            )
+            val earlier = listOf(record(1), record(2), record(3), newest)
 
-        val block = text(listOf(record(1), record(2), record(3), newest), budget = 400)
+            val block = text(earlier)
 
-        assertTrue(block.contains("(3 earlier commands of this conversation are left out; search_conversations finds them.)"))
-        assertTrue(block.contains("  (4 earlier data notes of this command are left out.)"))
-        assertTrue(block.contains("  (9 earlier lines of this command are left out.)"))
-        assertTrue(block.contains("  Data from list_sms at step 5: "))
-        assertTrue(ScreenText.tokens(block) <= 400)
+            assertTrue(block.contains("(3 earlier commands of this conversation are left out; search_conversations finds them.)"))
+            assertTrue(Regex("  \\(\\d+ earlier lines of this command are left out\\.\\)").containsMatchIn(block))
+            assertTrue(block.contains("  Data from list_sms at step 5: "))
+            assertEverythingShownOrCounted(block, earlier)
+            assertTrue("$letter: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= ContextBlock.BUDGET)
+        }
     }
 
     @Test
-    fun theBlockNeverPassesItsBudgetAlsoWithTheLargestRecordsAndInCyrillic() {
+    fun theBlockNeverPassesItsBudgetAndCountsWhatItLeavesOutAlsoWithTheLargestRecordsAndInCyrillic() {
         for (letter in listOf('w', 'ж')) {
             val long = letter.toString().repeat(2_000)
             val items = (1..30).map { ChecklistItem("c$it", letter.toString().repeat(120), if (it <= 10) ItemState.DONE else ItemState.TODO, step = if (it <= 10) it else null) }
@@ -1294,8 +1300,29 @@ class ContextBlockTest {
                 val block = text(earlier, budget, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
                 assertTrue("$letter $budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
                 assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
+                assertEverythingShownOrCounted(block, earlier)
             }
         }
+    }
+
+    // Design 8.3: whatever a part of the block leaves out, one line counts it, so the shown and the counted add up to the
+    // whole. The newest record's lines here are only of the kinds that say "Kestrel said" or "The owner added".
+    private fun assertEverythingShownOrCounted(block: String, earlier: List<CommandRecord>) {
+        val newest = earlier.last()
+        val heads = Regex("^Command \\d+, at ", RegexOption.MULTILINE).findAll(block).count()
+        assertEquals("records", earlier.size, heads + counted(block, "\\((\\d+) earlier commands? of this conversation (?:is|are) left out; search_conversations finds them\\.\\)"))
+        if (heads == 0) return
+        val rows = block.lines()
+        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\(and (\\d+) more open items?\\)"))
+        assertEquals("data notes", newest.data.size + newest.droppedData, rows.count { it.startsWith("  Data from ") } + counted(block, "\\((\\d+) earlier data notes? of this command (?:is|are) left out\\.\\)"))
+        assertEquals("lines", newest.lines.size + newest.droppedLines, rows.count { it.startsWith("  Kestrel said: ") || it.startsWith("  The owner added (") } + counted(block, "\\((\\d+) earlier lines? of this command (?:is|are) left out\\.\\)"))
+        assertEquals("ledger", newest.ledger.size, rows.count { it.startsWith("  Kestrel did: ") } + counted(block, "\\((\\d+) earlier ledger lines? of this command (?:is|are) left out\\.\\)"))
+    }
+
+    private fun counted(block: String, pattern: String): Int {
+        val found = Regex(pattern).findAll(block).toList()
+        assertTrue("one line counts them", found.size <= 1)
+        return found.singleOrNull()?.groupValues?.get(1)?.toInt() ?: 0
     }
 
     @Test
@@ -1368,13 +1395,16 @@ import java.time.ZoneId
  * The records block of a later command (design 8.3 and 8.4 of sub-project 7), which goes into the request's context after
  * the test-mode note as `TaskRequest.conversation`. It starts with plan 7A's header and a continued conversation's note,
  * and holds the newest earlier record in full, within the caps below, and the older ones condensed. Every text in it was
- * redacted once, when it entered its record, so the block is Kestrel's own text and is redacted nothing twice.
+ * redacted once, when it entered its record, so the block is Kestrel's own text and is never redacted twice.
  *
- * The block never passes its budget, counted as `ScreenText.tokens` counts. It is filled in this order, each part only
- * while the block stays within the budget: (1) the newest record's head, request, answer, end, apps and its checklist's
- * line of counts, the request and the answer cut further when a small local budget needs it; (2) its open items in the
- * checklist's order, the rest counted; (3) its data notes, then its lines, then its ledger lines, each newest first, the
- * rest counted; (4) the older records, condensed, newest first, each whole, the rest left out with one line.
+ * The block never passes its budget, counted as `ScreenText.tokens` counts, and whatever it leaves out, one line counts.
+ * Before anything else, it keeps room for the line that each part would need if it left out all it has; each part then
+ * gives that room back, shows what fits and counts the rest in the room it kept, so a count line is never the line that
+ * does not fit. The parts are filled in this order, each only while the block stays within the budget: (1) the newest
+ * record's head, request, answer, end, apps and its checklist's line of counts, the request and the answer cut further
+ * when a small local budget needs it; (2) its open items in the checklist's order; (3) its data notes, then its lines,
+ * then its ledger lines, each newest first; (4) the older records, condensed, newest first, each whole. When even the
+ * smallest head does not fit beside the kept room, one line counts every record instead.
  */
 object ContextBlock {
     const val BUDGET = 2_000
@@ -1397,19 +1427,45 @@ object ContextBlock {
         return minOf(BUDGET, window / 8)
     }
 
-    /** The block of the conversation's [earlier] records, oldest first; null for a first command without a [note]. */
+    /**
+     * The block of the conversation's [earlier] records, oldest first. Null for a first command without a [note], and
+     * when the budget cannot hold the header, the note and the line that counts every record.
+     */
     fun build(earlier: List<CommandRecord>, budget: Int, zone: ZoneId, note: String? = null): Redacted? {
         if (earlier.isEmpty() && note == null) return null
         val fill = Fill(budget)
         val opening = listOfNotNull(TaskRequest.CONVERSATION_HEADER, note)
-        if (!fill.take(opening)) return null
-        val newest = earlier.lastOrNull() ?: return Redacted.kestrel(opening.joinToString("\n"))
-        val head = HEAD_CAPS.asSequence().map { head(newest, zone, it) }.firstOrNull { fill.take(it) }
-            ?: return Redacted.kestrel((opening + listOfNotNull(fill.one(olderLeftOut(earlier.size)))).joinToString("\n"))
-        val body = head + openItems(newest, fill) + newestFirst(newest, fill)
-        val older = older(earlier.dropLast(1), fill, zone)
-        return Redacted.kestrel((opening + older + body).joinToString("\n"))
+        val everyRecord = earlier.takeIf { it.isNotEmpty() }?.let { olderLeftOut(it.size) }
+        if (!fill.take(opening, reserve = listOfNotNull(everyRecord))) return null
+        val newest = earlier.lastOrNull() ?: return block(opening)
+
+        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, RecordLines::moreItems)
+        val data = newestFirst(newest.data.map { RecordLines.data(it, DATA_CAP) }, DATA, newest.droppedData) {
+            RecordLines.leftOut(it, "data note", "data notes")
+        }
+        val lines = newestFirst(newest.lines.map { RecordLines.line(it, LINE_CAP) }, LINES, newest.droppedLines) {
+            RecordLines.leftOut(it, "line", "lines")
+        }
+        val ledger = newestFirst(newest.ledger.map { RecordLines.did(it, LEDGER_CAP) }, LEDGER, 0) {
+            RecordLines.leftOut(it, "ledger line", "ledger lines")
+        }
+        val older = Part(earlier.dropLast(1).asReversed().map { RecordCondenser.lines(it, zone) }, ::olderLeftOut)
+        val parts = listOf(items, data, lines, ledger, older)
+
+        val head = if (fill.hold(parts)) HEAD_CAPS.map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
+        if (head == null) return block(opening + listOfNotNull(everyRecord))
+        val shownItems = fill.fill(items)
+        val shownData = fill.fill(data)
+        val shownLines = fill.fill(lines)
+        val shownLedger = fill.fill(ledger)
+        val shownOlder = fill.fill(older)
+        return block(
+            opening + shownOlder.countFirst() + head + shownItems.countLast() + shownData.countFirst() + shownLines.countFirst() +
+                shownLedger.countFirst(),
+        )
     }
+
+    private fun block(lines: List<String>): Redacted = Redacted.kestrel(lines.joinToString("\n"))
 
     private fun head(record: CommandRecord, zone: ZoneId, cap: Int): List<String> = listOfNotNull(
         RecordLines.head(record, zone),
@@ -1420,77 +1476,74 @@ object ContextBlock {
         record.checklist?.let(RecordLines::counts),
     )
 
-    private fun openItems(record: CommandRecord, fill: Fill): List<String> {
-        val open = record.checklist?.open.orEmpty()
-        if (open.isEmpty()) return emptyList()
-        val (taken, more) = fill.group(open.map(RecordLines::item), extra = 0, rest = RecordLines::moreItems)
-        return taken + listOfNotNull(more)
-    }
-
-    // The data notes, then the lines, then the ledger lines, each taken newest first and shown oldest first after the line
-    // that counts the ones left out.
-    private fun newestFirst(record: CommandRecord, fill: Fill): List<String> {
-        val data = record.data.takeLast(DATA)
-        val lines = record.lines.takeLast(LINES)
-        val ledger = record.ledger.takeLast(LEDGER)
-        return part(data.map { RecordLines.data(it, DATA_CAP) }, record.data.size - data.size + record.droppedData, fill) {
-            RecordLines.leftOut(it, "data note", "data notes")
-        } + part(lines.map { RecordLines.line(it, LINE_CAP) }, record.lines.size - lines.size + record.droppedLines, fill) {
-            RecordLines.leftOut(it, "line", "lines")
-        } + part(ledger.map { RecordLines.did(it, LEDGER_CAP) }, record.ledger.size - ledger.size, fill) {
-            RecordLines.leftOut(it, "ledger line", "ledger lines")
-        }
-    }
-
-    private fun part(oldestFirst: List<String>, extra: Int, fill: Fill, rest: (Int) -> String): List<String> {
-        val (taken, more) = fill.group(oldestFirst.reversed(), extra, rest)
-        return listOfNotNull(more) + taken.reversed()
-    }
-
-    // The older records, condensed, newest first and each whole; the line that names the ones left out comes first.
-    private fun older(older: List<CommandRecord>, fill: Fill, zone: ZoneId): List<String> {
-        val shown = mutableListOf<List<String>>()
-        for ((index, record) in older.asReversed().withIndex()) {
-            val lines = RecordCondenser.lines(record, zone)
-            val left = older.size - index - 1
-            if (!fill.take(lines, reserve = if (left > 0) olderLeftOut(left) else null)) break
-            shown += lines
-        }
-        val left = older.size - shown.size
-        return listOfNotNull(if (left > 0) fill.one(olderLeftOut(left)) else null) + shown.asReversed().flatten()
+    // The newest [most] of a record's [all] lines, offered newest first; the older ones and [dropped] more are counted.
+    private fun newestFirst(all: List<String>, most: Int, dropped: Int, count: (Int) -> String): Part {
+        val offered = all.takeLast(most)
+        return Part(offered.asReversed().map(::listOf), count, notOffered = all.size - offered.size + dropped)
     }
 
     private fun olderLeftOut(count: Int): String =
         "($count earlier ${if (count == 1) "command of this conversation is" else "commands of this conversation are"} left out; " +
             "search_conversations finds them.)"
 
+    /**
+     * A part of the block that may leave something out: its [offered] items in the order they are taken, each item one
+     * or more lines that are taken whole, and the line that [count]s what is left out, which also counts [notOffered].
+     */
+    private class Part(val offered: List<List<String>>, private val count: (Int) -> String, private val notOffered: Int = 0) {
+        fun countLine(shown: Int): String? = (offered.size + notOffered - shown).takeIf { it > 0 }?.let(count)
+
+        /** The line that this part needs when it shows nothing, the room that the block keeps for it. */
+        val worst: String? get() = countLine(0)
+    }
+
+    /** What a part shows, in the order that it took them, and its count line, if it left something out. */
+    private class Shown(private val taken: List<List<String>>, private val count: String?) {
+        // The items in the order the part took them, then the count line.
+        fun countLast(): List<String> = taken.flatten() + listOfNotNull(count)
+
+        // The count line, then the items oldest first, for the parts that are taken newest first.
+        fun countFirst(): List<String> = listOfNotNull(count) + taken.asReversed().flatten()
+    }
+
     // The block's budget as it fills. Each line costs the tokens of itself and its line break, so the joined block never
-    // costs more than the lines taken.
+    // costs more than the lines taken. [held] is the room kept for the count lines of the parts that are not filled yet.
     private class Fill(private val limit: Int) {
         private var used = 0
+        private var held = 0
 
-        fun cost(line: String): Int = ScreenText.tokens(line + "\n")
+        private fun cost(lines: List<String>): Int = lines.sumOf { ScreenText.tokens(it + "\n") }
 
-        /** Takes all of [lines] when they fit with room left for [reserve], else nothing. */
-        fun take(lines: List<String>, reserve: String? = null): Boolean {
-            val cost = lines.sumOf(::cost)
-            if (used + cost + (reserve?.let(::cost) ?: 0) > limit) return false
+        /** Takes all of [lines] when they fit beside the kept room and [reserve], else nothing. */
+        fun take(lines: List<String>, reserve: List<String> = emptyList()): Boolean {
+            val cost = cost(lines)
+            if (used + held + cost + cost(reserve) > limit) return false
             used += cost
             return true
         }
 
-        fun one(line: String): String? = line.takeIf { take(listOf(it)) }
+        /** Keeps room for each of [parts]' worst count line, all or none. */
+        fun hold(parts: List<Part>): Boolean {
+            val cost = cost(parts.mapNotNull { it.worst })
+            if (used + held + cost > limit) return false
+            held += cost
+            return true
+        }
 
-        /** Takes [items] in order while they fit with room for the line that counts the rest (and [extra] more). */
-        fun group(items: List<String>, extra: Int, rest: (Int) -> String): Pair<List<String>, String?> {
-            val taken = mutableListOf<String>()
-            for ((index, item) in items.withIndex()) {
-                val left = items.size - index - 1 + extra
-                if (!take(listOf(item), reserve = if (left > 0) rest(left) else null)) break
+        /**
+         * Gives back the room kept for [part] and takes its items in order while each fits with room for the count line
+         * of the rest. Its count line always fits: the room for it was either kept or reserved by the last item taken.
+         */
+        fun fill(part: Part): Shown {
+            held -= cost(listOfNotNull(part.worst))
+            val taken = mutableListOf<List<String>>()
+            for (item in part.offered) {
+                if (!take(item, reserve = listOfNotNull(part.countLine(taken.size + 1)))) break
                 taken += item
             }
-            val left = items.size - taken.size + extra
-            return taken to (if (left > 0) one(rest(left)) else null)
+            val count = part.countLine(taken.size)
+            check(count == null || take(listOf(count))) { "A part's count line did not fit in the room kept for it" }
+            return Shown(taken, count)
         }
     }
 }
@@ -8009,7 +8062,7 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - **The design's plan 7B row.** The module and its build file (Task 1); `model` (Task 1); `ConversationMachine` with `QuietClock` and `GoalRules` (Task 7); `ConversationEngine` (Task 10); `GoalRunner`, `RunningGoal` and `SteeringInbox` (Task 8); `RecordBuilder` and `RecordCondenser` (Task 2) and `ContextBlock` (Task 3); `ConversationOwner` (Task 6); `LocalRequests` with "new conversation" (the machine, Task 7) and continuing a past conversation (Tasks 7, 9 and 10); `ConversationStore`, `ArchivedConversationStore`, `Retention` and the `RecordArchive` port (Task 4); `HistorySearch` (Task 5). JVM only, with `ScriptedModel`, fake channels and a fake archive.
 - **Every rule of the lifecycle has a JVM test.** The quiet clock's start, holds, end, older timers, signals and changes (`QuietClockTest`); every row of design 6.4 (`ConversationMachineTest`); touches, locks, calls, holds of 30 minutes, "Continue the goal?", the hand-over's 3 minutes, the backstop and the typed waits (`GoalRulesTest`); the follow-up window's interaction with the engine, which holds the quiet clock until the spoken reply ends (`ConversationEngineTest.theQuietClockWaitsUntilTheSpokenReplyHasEnded`); continuing a past conversation from none, from an open one, refused with a goal open, and gone (`ConversationMachineTest`, `LocalRequestsTest`, `ConversationEngineTest`); process-death restore without a goal inside and after the quiet time, with a goal inside and after 30 minutes (`ConversationMachineTest`), and end to end with its checklist and its steering (`ConversationEngineTest`); the moved `RulesTest` cases, by name, each with its test here or its rewrite in plan 7D (Task 7's table, which lists all 124 cases); the bar's step across rounds and a restart (`GoalRunnerTest`, `ConversationEngineTest`); a hand-over that a lock met as it opened (`GoalRulesTest`); a switch from an open conversation and "delete history" end to end (`ConversationEngineTest`).
 - **Plan 7A's interfaces, as consumed.** A record's final ledger is its rounds' reports' ledgers, which hold every line, also those of a step that a round's end cut and the shares that Kestrel could not see go; the `Did` traces are the live view while a round runs (`RecordBuilderTest`). A question that an interruption cut and the run asked again is a line each time (`RecordBuilderTest`). A data note names the goal's step, counted across its rounds as the bar counts it, or a replayed routine's own step as "routine step n", because plan 7A numbers a routine's steps and each run's from 1 (`RecordBuilderTest`, `ConversationEngineTest`). Late steering: kept for a held goal's next round, named in the final reply of a goal that ended for good (`GoalRunnerTest`). A resumed run's `ResumeNote.steered` carries every steer that the goal's earlier rounds took, also one that an interruption cut before the model acted on it (`GoalRequestsTest`, `ConversationEngineTest`). A resumed run's `ownerHistory` and `carried`: the earlier commands' words and allowance, then the goal's own inputs and steering's allowance, its first command as `text`, the block without the goal's own record (`GoalRequestsTest`). `TracingOwner`: `ConversationOwner` traces nothing of a run's dialogue; only the conversation's own lines ("Continue the goal?", a hold's sentence) and memory requests (`RecordedOwner`) enter records. `Interruption` chooses the hold (`TOUCH`, `KESTREL_SCREEN`), never a sentence. `GoalPort`, `HistoryPort`, `Checklist`, `GoalLimits`, `ResumeNote` and `TaskRequest`'s fields are used as plan 7A defines them.
-- **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what is left out; `ContextBlockTest` checks the order, the caps, the largest records in Latin and Cyrillic at three budgets, the Ollama budget and the condensed records' stability.
+- **Design 8.3's fill order.** `ContextBlock` takes the newest record's head (cut further for a small budget), its open items, its data notes, lines and ledger lines newest first, then the older records condensed and whole, and counts what each part leaves out on one line, in room that it keeps before it fills; `ContextBlockTest` checks the order, the caps, that what is shown and what is counted add up, for a heavy newest record at the default budget and for the largest records in Latin and Cyrillic at three budgets, the Ollama budget and the condensed records' stability.
 - **Safety.** No record holds a value or a placeholder (`RecordText`, tested in Tasks 2 and 3); the owner's words are only the records' requests, answers, steering and "continue" lines; test mode is fixed per conversation and overrides the round's settings (`GoalRunnerTest`), and a change of test mode closes the conversation after its goal (`ConversationMachineTest`); confirmations never carry, because every round is a new run of plan 7A; every new type prints no words (`ToStringTest`, `GoalRulesTest`).
 - **The owner's hard rule.** Each concern is its own unit: the pure machine and the engine that performs its effects; the quiet clock's rules in one place; the goal's phases apart from the conversation's lifecycle; the owner over the channels apart from the channels; the records' building, condensing and block apart; the bytes-level archive apart from the JSON store and the search. The design's sketch changed where a cleaner form exists ("Changes to the design"), and the ones that the owner hears are in "Decisions for the controller".
 - **Placeholders.** Every step that creates code shows the whole file; every command names its expected result; the counts add up to 141.

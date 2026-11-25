@@ -79,23 +79,29 @@ class ContextBlockTest {
 
     @Test
     fun theFillOrderLeavesOutTheLatePartsFirstAndCountsThem() {
-        val newest = record(
-            4,
-            data = (1..5).map { DataNote("list_sms", it, "d".repeat(600)) },
-            lines = (1..10).map { RecordLine(LineKind.KESTREL_SAID, "y".repeat(300)) },
-        )
+        for (letter in listOf("d", "ж")) {
+            val items = (1..12).map { ChecklistItem("c$it", letter.repeat(120), ItemState.TODO) }
+            val newest = record(
+                4,
+                data = (1..5).map { DataNote("list_sms", it, letter.repeat(600)) },
+                lines = (1..10).map { RecordLine(LineKind.KESTREL_SAID, letter.repeat(300)) },
+                ledger = (1..5).map { letter.repeat(200) },
+                checklist = Checklist(items),
+            )
+            val earlier = listOf(record(1), record(2), record(3), newest)
 
-        val block = text(listOf(record(1), record(2), record(3), newest), budget = 400)
+            val block = text(earlier)
 
-        assertTrue(block.contains("(3 earlier commands of this conversation are left out; search_conversations finds them.)"))
-        assertTrue(block.contains("  (4 earlier data notes of this command are left out.)"))
-        assertTrue(block.contains("  (9 earlier lines of this command are left out.)"))
-        assertTrue(block.contains("  Data from list_sms at step 5: "))
-        assertTrue(ScreenText.tokens(block) <= 400)
+            assertTrue(block.contains("(3 earlier commands of this conversation are left out; search_conversations finds them.)"))
+            assertTrue(Regex("  \\(\\d+ earlier lines of this command are left out\\.\\)").containsMatchIn(block))
+            assertTrue(block.contains("  Data from list_sms at step 5: "))
+            assertEverythingShownOrCounted(block, earlier)
+            assertTrue("$letter: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= ContextBlock.BUDGET)
+        }
     }
 
     @Test
-    fun theBlockNeverPassesItsBudgetAlsoWithTheLargestRecordsAndInCyrillic() {
+    fun theBlockNeverPassesItsBudgetAndCountsWhatItLeavesOutAlsoWithTheLargestRecordsAndInCyrillic() {
         for (letter in listOf('w', 'ж')) {
             val long = letter.toString().repeat(2_000)
             val items = (1..30).map { ChecklistItem("c$it", letter.toString().repeat(120), if (it <= 10) ItemState.DONE else ItemState.TODO, step = if (it <= 10) it else null) }
@@ -119,8 +125,29 @@ class ContextBlockTest {
                 val block = text(earlier, budget, note = "This conversation was continued on Friday, 20 November 2026; test mode is on now.")
                 assertTrue("$letter $budget: ${ScreenText.tokens(block)}", ScreenText.tokens(block) <= budget)
                 assertTrue(block.startsWith(TaskRequest.CONVERSATION_HEADER))
+                assertEverythingShownOrCounted(block, earlier)
             }
         }
+    }
+
+    // Design 8.3: whatever a part of the block leaves out, one line counts it, so the shown and the counted add up to the
+    // whole. The newest record's lines here are only of the kinds that say "Kestrel said" or "The owner added".
+    private fun assertEverythingShownOrCounted(block: String, earlier: List<CommandRecord>) {
+        val newest = earlier.last()
+        val heads = Regex("^Command \\d+, at ", RegexOption.MULTILINE).findAll(block).count()
+        assertEquals("records", earlier.size, heads + counted(block, "\\((\\d+) earlier commands? of this conversation (?:is|are) left out; search_conversations finds them\\.\\)"))
+        if (heads == 0) return
+        val rows = block.lines()
+        assertEquals("open items", newest.checklist?.open.orEmpty().size, rows.count { it.matches(Regex("^ {4}c\\d+ \\[.*")) } + counted(block, "\\(and (\\d+) more open items?\\)"))
+        assertEquals("data notes", newest.data.size + newest.droppedData, rows.count { it.startsWith("  Data from ") } + counted(block, "\\((\\d+) earlier data notes? of this command (?:is|are) left out\\.\\)"))
+        assertEquals("lines", newest.lines.size + newest.droppedLines, rows.count { it.startsWith("  Kestrel said: ") || it.startsWith("  The owner added (") } + counted(block, "\\((\\d+) earlier lines? of this command (?:is|are) left out\\.\\)"))
+        assertEquals("ledger", newest.ledger.size, rows.count { it.startsWith("  Kestrel did: ") } + counted(block, "\\((\\d+) earlier ledger lines? of this command (?:is|are) left out\\.\\)"))
+    }
+
+    private fun counted(block: String, pattern: String): Int {
+        val found = Regex(pattern).findAll(block).toList()
+        assertTrue("one line counts them", found.size <= 1)
+        return found.singleOrNull()?.groupValues?.get(1)?.toInt() ?: 0
     }
 
     @Test

@@ -11,13 +11,16 @@ import java.time.ZoneId
  * The records block of a later command (design 8.3 and 8.4 of sub-project 7), which goes into the request's context after
  * the test-mode note as `TaskRequest.conversation`. It starts with plan 7A's header and a continued conversation's note,
  * and holds the newest earlier record in full, within the caps below, and the older ones condensed. Every text in it was
- * redacted once, when it entered its record, so the block is Kestrel's own text and is redacted nothing twice.
+ * redacted once, when it entered its record, so the block is Kestrel's own text and is never redacted twice.
  *
- * The block never passes its budget, counted as `ScreenText.tokens` counts. It is filled in this order, each part only
- * while the block stays within the budget: (1) the newest record's head, request, answer, end, apps and its checklist's
- * line of counts, the request and the answer cut further when a small local budget needs it; (2) its open items in the
- * checklist's order, the rest counted; (3) its data notes, then its lines, then its ledger lines, each newest first, the
- * rest counted; (4) the older records, condensed, newest first, each whole, the rest left out with one line.
+ * The block never passes its budget, counted as `ScreenText.tokens` counts, and whatever it leaves out, one line counts.
+ * Before anything else, it keeps room for the line that each part would need if it left out all it has; each part then
+ * gives that room back, shows what fits and counts the rest in the room it kept, so a count line is never the line that
+ * does not fit. The parts are filled in this order, each only while the block stays within the budget: (1) the newest
+ * record's head, request, answer, end, apps and its checklist's line of counts, the request and the answer cut further
+ * when a small local budget needs it; (2) its open items in the checklist's order; (3) its data notes, then its lines,
+ * then its ledger lines, each newest first; (4) the older records, condensed, newest first, each whole. When even the
+ * smallest head does not fit beside the kept room, one line counts every record instead.
  */
 object ContextBlock {
     const val BUDGET = 2_000
@@ -40,19 +43,45 @@ object ContextBlock {
         return minOf(BUDGET, window / 8)
     }
 
-    /** The block of the conversation's [earlier] records, oldest first; null for a first command without a [note]. */
+    /**
+     * The block of the conversation's [earlier] records, oldest first. Null for a first command without a [note], and
+     * when the budget cannot hold the header, the note and the line that counts every record.
+     */
     fun build(earlier: List<CommandRecord>, budget: Int, zone: ZoneId, note: String? = null): Redacted? {
         if (earlier.isEmpty() && note == null) return null
         val fill = Fill(budget)
         val opening = listOfNotNull(TaskRequest.CONVERSATION_HEADER, note)
-        if (!fill.take(opening)) return null
-        val newest = earlier.lastOrNull() ?: return Redacted.kestrel(opening.joinToString("\n"))
-        val head = HEAD_CAPS.asSequence().map { head(newest, zone, it) }.firstOrNull { fill.take(it) }
-            ?: return Redacted.kestrel((opening + listOfNotNull(fill.one(olderLeftOut(earlier.size)))).joinToString("\n"))
-        val body = head + openItems(newest, fill) + newestFirst(newest, fill)
-        val older = older(earlier.dropLast(1), fill, zone)
-        return Redacted.kestrel((opening + older + body).joinToString("\n"))
+        val everyRecord = earlier.takeIf { it.isNotEmpty() }?.let { olderLeftOut(it.size) }
+        if (!fill.take(opening, reserve = listOfNotNull(everyRecord))) return null
+        val newest = earlier.lastOrNull() ?: return block(opening)
+
+        val items = Part(newest.checklist?.open.orEmpty().map { listOf(RecordLines.item(it)) }, RecordLines::moreItems)
+        val data = newestFirst(newest.data.map { RecordLines.data(it, DATA_CAP) }, DATA, newest.droppedData) {
+            RecordLines.leftOut(it, "data note", "data notes")
+        }
+        val lines = newestFirst(newest.lines.map { RecordLines.line(it, LINE_CAP) }, LINES, newest.droppedLines) {
+            RecordLines.leftOut(it, "line", "lines")
+        }
+        val ledger = newestFirst(newest.ledger.map { RecordLines.did(it, LEDGER_CAP) }, LEDGER, 0) {
+            RecordLines.leftOut(it, "ledger line", "ledger lines")
+        }
+        val older = Part(earlier.dropLast(1).asReversed().map { RecordCondenser.lines(it, zone) }, ::olderLeftOut)
+        val parts = listOf(items, data, lines, ledger, older)
+
+        val head = if (fill.hold(parts)) HEAD_CAPS.map { head(newest, zone, it) }.firstOrNull { fill.take(it) } else null
+        if (head == null) return block(opening + listOfNotNull(everyRecord))
+        val shownItems = fill.fill(items)
+        val shownData = fill.fill(data)
+        val shownLines = fill.fill(lines)
+        val shownLedger = fill.fill(ledger)
+        val shownOlder = fill.fill(older)
+        return block(
+            opening + shownOlder.countFirst() + head + shownItems.countLast() + shownData.countFirst() + shownLines.countFirst() +
+                shownLedger.countFirst(),
+        )
     }
+
+    private fun block(lines: List<String>): Redacted = Redacted.kestrel(lines.joinToString("\n"))
 
     private fun head(record: CommandRecord, zone: ZoneId, cap: Int): List<String> = listOfNotNull(
         RecordLines.head(record, zone),
@@ -63,77 +92,74 @@ object ContextBlock {
         record.checklist?.let(RecordLines::counts),
     )
 
-    private fun openItems(record: CommandRecord, fill: Fill): List<String> {
-        val open = record.checklist?.open.orEmpty()
-        if (open.isEmpty()) return emptyList()
-        val (taken, more) = fill.group(open.map(RecordLines::item), extra = 0, rest = RecordLines::moreItems)
-        return taken + listOfNotNull(more)
-    }
-
-    // The data notes, then the lines, then the ledger lines, each taken newest first and shown oldest first after the line
-    // that counts the ones left out.
-    private fun newestFirst(record: CommandRecord, fill: Fill): List<String> {
-        val data = record.data.takeLast(DATA)
-        val lines = record.lines.takeLast(LINES)
-        val ledger = record.ledger.takeLast(LEDGER)
-        return part(data.map { RecordLines.data(it, DATA_CAP) }, record.data.size - data.size + record.droppedData, fill) {
-            RecordLines.leftOut(it, "data note", "data notes")
-        } + part(lines.map { RecordLines.line(it, LINE_CAP) }, record.lines.size - lines.size + record.droppedLines, fill) {
-            RecordLines.leftOut(it, "line", "lines")
-        } + part(ledger.map { RecordLines.did(it, LEDGER_CAP) }, record.ledger.size - ledger.size, fill) {
-            RecordLines.leftOut(it, "ledger line", "ledger lines")
-        }
-    }
-
-    private fun part(oldestFirst: List<String>, extra: Int, fill: Fill, rest: (Int) -> String): List<String> {
-        val (taken, more) = fill.group(oldestFirst.reversed(), extra, rest)
-        return listOfNotNull(more) + taken.reversed()
-    }
-
-    // The older records, condensed, newest first and each whole; the line that names the ones left out comes first.
-    private fun older(older: List<CommandRecord>, fill: Fill, zone: ZoneId): List<String> {
-        val shown = mutableListOf<List<String>>()
-        for ((index, record) in older.asReversed().withIndex()) {
-            val lines = RecordCondenser.lines(record, zone)
-            val left = older.size - index - 1
-            if (!fill.take(lines, reserve = if (left > 0) olderLeftOut(left) else null)) break
-            shown += lines
-        }
-        val left = older.size - shown.size
-        return listOfNotNull(if (left > 0) fill.one(olderLeftOut(left)) else null) + shown.asReversed().flatten()
+    // The newest [most] of a record's [all] lines, offered newest first; the older ones and [dropped] more are counted.
+    private fun newestFirst(all: List<String>, most: Int, dropped: Int, count: (Int) -> String): Part {
+        val offered = all.takeLast(most)
+        return Part(offered.asReversed().map(::listOf), count, notOffered = all.size - offered.size + dropped)
     }
 
     private fun olderLeftOut(count: Int): String =
         "($count earlier ${if (count == 1) "command of this conversation is" else "commands of this conversation are"} left out; " +
             "search_conversations finds them.)"
 
+    /**
+     * A part of the block that may leave something out: its [offered] items in the order they are taken, each item one
+     * or more lines that are taken whole, and the line that [count]s what is left out, which also counts [notOffered].
+     */
+    private class Part(val offered: List<List<String>>, private val count: (Int) -> String, private val notOffered: Int = 0) {
+        fun countLine(shown: Int): String? = (offered.size + notOffered - shown).takeIf { it > 0 }?.let(count)
+
+        /** The line that this part needs when it shows nothing, the room that the block keeps for it. */
+        val worst: String? get() = countLine(0)
+    }
+
+    /** What a part shows, in the order that it took them, and its count line, if it left something out. */
+    private class Shown(private val taken: List<List<String>>, private val count: String?) {
+        // The items in the order the part took them, then the count line.
+        fun countLast(): List<String> = taken.flatten() + listOfNotNull(count)
+
+        // The count line, then the items oldest first, for the parts that are taken newest first.
+        fun countFirst(): List<String> = listOfNotNull(count) + taken.asReversed().flatten()
+    }
+
     // The block's budget as it fills. Each line costs the tokens of itself and its line break, so the joined block never
-    // costs more than the lines taken.
+    // costs more than the lines taken. [held] is the room kept for the count lines of the parts that are not filled yet.
     private class Fill(private val limit: Int) {
         private var used = 0
+        private var held = 0
 
-        fun cost(line: String): Int = ScreenText.tokens(line + "\n")
+        private fun cost(lines: List<String>): Int = lines.sumOf { ScreenText.tokens(it + "\n") }
 
-        /** Takes all of [lines] when they fit with room left for [reserve], else nothing. */
-        fun take(lines: List<String>, reserve: String? = null): Boolean {
-            val cost = lines.sumOf(::cost)
-            if (used + cost + (reserve?.let(::cost) ?: 0) > limit) return false
+        /** Takes all of [lines] when they fit beside the kept room and [reserve], else nothing. */
+        fun take(lines: List<String>, reserve: List<String> = emptyList()): Boolean {
+            val cost = cost(lines)
+            if (used + held + cost + cost(reserve) > limit) return false
             used += cost
             return true
         }
 
-        fun one(line: String): String? = line.takeIf { take(listOf(it)) }
+        /** Keeps room for each of [parts]' worst count line, all or none. */
+        fun hold(parts: List<Part>): Boolean {
+            val cost = cost(parts.mapNotNull { it.worst })
+            if (used + held + cost > limit) return false
+            held += cost
+            return true
+        }
 
-        /** Takes [items] in order while they fit with room for the line that counts the rest (and [extra] more). */
-        fun group(items: List<String>, extra: Int, rest: (Int) -> String): Pair<List<String>, String?> {
-            val taken = mutableListOf<String>()
-            for ((index, item) in items.withIndex()) {
-                val left = items.size - index - 1 + extra
-                if (!take(listOf(item), reserve = if (left > 0) rest(left) else null)) break
+        /**
+         * Gives back the room kept for [part] and takes its items in order while each fits with room for the count line
+         * of the rest. Its count line always fits: the room for it was either kept or reserved by the last item taken.
+         */
+        fun fill(part: Part): Shown {
+            held -= cost(listOfNotNull(part.worst))
+            val taken = mutableListOf<List<String>>()
+            for (item in part.offered) {
+                if (!take(item, reserve = listOfNotNull(part.countLine(taken.size + 1)))) break
                 taken += item
             }
-            val left = items.size - taken.size + extra
-            return taken to (if (left > 0) one(rest(left)) else null)
+            val count = part.countLine(taken.size)
+            check(count == null || take(listOf(count))) { "A part's count line did not fit in the room kept for it" }
+            return Shown(taken, count)
         }
     }
 }
