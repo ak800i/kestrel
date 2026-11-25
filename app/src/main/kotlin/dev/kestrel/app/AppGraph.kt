@@ -81,7 +81,12 @@ import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.ModelDownloads
 import dev.kestrel.app.download.downloadBlockedBy
 import dev.kestrel.app.download.gatewayDownloader
+import android.app.ForegroundServiceStartNotAllowedException
 import dev.kestrel.app.download.networkKind
+import dev.kestrel.app.goal.GoalForeground
+import dev.kestrel.app.goal.GoalNotification
+import dev.kestrel.app.goal.GoalService
+import java.util.concurrent.atomic.AtomicBoolean
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.forVoice
 import dev.kestrel.app.phone.AndroidScreenSource
@@ -509,12 +514,39 @@ class AppGraph(context: Context) {
         ).also(::followConversation)
     }
 
-    // The voice reads the conversation's view, and the phone's lock and calls reach the conversation while it is open
-    // (design 5.5 and 6.5 of sub-project 7).
+    // The voice reads the conversation's view, the phone's lock and calls reach the conversation while it is open (design
+    // 5.5 and 6.5 of sub-project 7), and the goal service follows its goal, with the held goal's notification that Kestrel
+    // posts without the service after a refusal (design 10.6; plan 7E).
     private fun followConversation(engine: ConversationEngine) {
         scope.launch { engine.view.forVoice().collect { view -> listening.send(Event.ConversationChanged(view)) } }
         scope.launch { ConversationSignals(phoneSignals, callBackstop, scope, engine::signal, reportFailure).follow(engine.view) }
+        scope.launch { goalForeground.follow(engine.view) }
+        scope.launch { goalForeground.posted.collect { notice -> GoalNotification.post(appContext, notice) } }
     }
+
+    /**
+     * The goal service's coordinator (design 10.6 of sub-project 7; plan 7E): it starts GoalService for every open goal,
+     * with listening on or off, and again at each start or resume of the goal's work, and a start that Android refuses
+     * holds the goal of the command that asked for it. GoalService, the notification's receiver and the debug hooks read it.
+     */
+    internal val goalForeground: GoalForeground by lazy {
+        GoalForeground(
+            start = {
+                if (goalStartRefusals.getAndSet(false)) throw ForegroundServiceStartNotAllowedException("goal-control do=refuse")
+                GoalService.start(appContext)
+            },
+            holdGoal = { command -> conversations.backgroundRefused(command) },
+            sdk = Build.VERSION.SDK_INT,
+            report = reportFailure,
+        )
+    }
+
+    /**
+     * Debug builds only: the hook `goal-control do=refuse` sets it, and the goal service's next start then throws as
+     * Android's refusal does, so that Task 8 of plan 7E checks the held goal's notification that Kestrel posts without the
+     * service, and a tap on it that starts Kestrel's process. A release build never sets it.
+     */
+    internal val goalStartRefusals = AtomicBoolean(false)
 
     // Android's records of how Kestrel's processes ended: one reader, which listening's restore and the conversation's
     // restore both read, so that one record has one reading (plan 7E).

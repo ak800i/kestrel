@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Granted at install, for GoalService from Android 14 on (design 10.6 of sub-project 7; spec 13.6). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Granted at install. Kestrel asks for the earbuds as the device of calls' audio when the owner allows the earbud
          microphone (design spec, section 8.8; research r12). -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -252,6 +254,24 @@
              PendingIntents reach it. -->
         <receiver
             android:name=".listen.NotificationActionReceiver"
+            android:exported="false" />
+
+        <!-- Keeps a goal working while Kestrel's screen is not in front, and shows its notification (design 10.6 of
+             sub-project 7; plan 7E): specialUse from Android 14 on, with mediaPlayback added while Kestrel speaks a typed
+             command's reply with listening off. Android 13 checks no type. -->
+        <service
+            android:name=".goal.GoalService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|mediaPlayback">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="An on-device agent that carries out the owner's spoken or typed request on the phone through its accessibility service while the owner watches; its notification shows the progress and stops it." />
+        </service>
+
+        <!-- The goal notification's Stop, Continue and Cancel (design 10.6 of sub-project 7). Only Kestrel's own
+             PendingIntents reach it. -->
+        <receiver
+            android:name=".goal.GoalActionReceiver"
             android:exported="false" />
 
         <!-- The Quick Settings tile that toggles listening (design spec, sections 7.2 and 8.6). Only SystemUI, which holds
