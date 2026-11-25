@@ -26,7 +26,7 @@ class ScreenTurnsTest {
     fun withoutACommandTheScreenIsFreeAtOnce() = runTest {
         assertFalse(turns.held())
 
-        assertFalse(turns.take(after = null))
+        assertFalse(turns.take(after = null) {})
 
         assertEquals(0L, currentTime)
     }
@@ -40,7 +40,7 @@ class ScreenTurnsTest {
             var asked = 0
             turns.startCommand(job, since = 5) { asked++ }
 
-            val taken = async { turns.take(after) }
+            val taken = async { turns.take(after) {} }
             advanceTimeBy(60_000)
             runCurrent()
             assertFalse("$after", taken.isCompleted)
@@ -55,11 +55,34 @@ class ScreenTurnsTest {
         assertEquals(emptyList<String>(), reports)
     }
 
+    // Plan 7E: a round that waits behind the owner's command, which goes on, says so as it starts to wait, so that the goal
+    // notification can tell why the goal does not move while the bar belongs to the command. A round that has the command
+    // cancelled, for the owner's newer input, waits only for the cancellation's end and says nothing.
+    @Test
+    fun aRoundSaysWhenItWaitsBehindTheOwnersCommandButNotWhenItHasItCancelled() = runTest {
+        var waits = 0
+        val job = Job()
+        turns.startCommand(job, since = 5) {}
+
+        val taken = async { turns.take(after = null) { waits++ } }
+        runCurrent()
+        assertEquals(1, waits)
+        job.complete()
+        assertTrue(taken.await())
+        assertEquals(1, waits)
+        turns.release()
+
+        val cancelled = Job()
+        turns.startCommand(cancelled, since = 5) { cancelled.complete() }
+        assertTrue(turns.take(after = 6) { waits++ })
+        assertEquals(1, waits)
+    }
+
     // Re-review round 4, R4-1: while a round holds the turn, no instant command starts, whatever the Orchestrator reads of the
     // goal's phase; once the round lets go, as a wait for the owner starts or the round ends, commands start again.
     @Test
     fun aCommandCannotStartWhileARoundHoldsTheTurnAndCanAfterItLetsGo() = runTest {
-        assertFalse(turns.take(after = null))
+        assertFalse(turns.take(after = null) {})
         assertTrue(turns.roundHolds())
 
         assertFalse(turns.startCommand(Job(), since = 5) {})
@@ -80,7 +103,7 @@ class ScreenTurnsTest {
         turns.startCommand(job, since = 5) { asked++ }
         assertTrue(turns.held())
 
-        val taken = async { turns.take(after = 6) }
+        val taken = async { turns.take(after = 6) {} }
         runCurrent()
         assertEquals(1, asked)
         advanceTimeBy(1_000)
@@ -104,7 +127,7 @@ class ScreenTurnsTest {
         job.cancel()
         turns.stopped(job)
 
-        val taken = async { turns.take(after = null) }
+        val taken = async { turns.take(after = null) {} }
         advanceTimeBy(1_000)
         runCurrent()
         assertFalse(taken.isCompleted)
@@ -122,7 +145,7 @@ class ScreenTurnsTest {
     fun aWaitingRoundGivesACommandThatIsCancelledMeanwhileAtMostThreeSeconds() = runTest {
         val job = Job()
         turns.startCommand(job, since = 5) {}
-        val taken = async { turns.take(after = null) }
+        val taken = async { turns.take(after = null) {} }
         advanceTimeBy(10_000)
         runCurrent()
         assertFalse(taken.isCompleted)
@@ -142,7 +165,7 @@ class ScreenTurnsTest {
     fun aStuckCommandHoldsTheScreenForAtMostThreeSecondsAndIsReportedOnce() = runTest {
         turns.startCommand(Job(), since = 5) {}
 
-        val taken = async { turns.take(after = 6) }
+        val taken = async { turns.take(after = 6) {} }
         advanceTimeBy(2_999)
         runCurrent()
         assertFalse(taken.isCompleted)
@@ -153,7 +176,7 @@ class ScreenTurnsTest {
         assertEquals(listOf("A cancelled instant command"), reports)
         // Kestrel goes on without it: nothing waits for it again.
         assertFalse(turns.held())
-        assertFalse(turns.take(after = 7))
+        assertFalse(turns.take(after = 7) {})
         assertEquals(1, reports.size)
     }
 }

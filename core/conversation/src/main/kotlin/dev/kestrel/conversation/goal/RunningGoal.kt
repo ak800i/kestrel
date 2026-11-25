@@ -35,6 +35,12 @@ interface GoalListener {
     /** The touch watcher saw the owner's touch. */
     fun touched()
 
+    /**
+     * The round's screen turn waits behind the owner's instant command, which goes on ([waits] true), or no longer does
+     * (plan 7E): the view says so, for the goal notification, because the bar belongs to the command then. Must not block.
+     */
+    fun waitsBehindCommand(waits: Boolean)
+
     fun ended(end: RoundEnd)
 }
 

@@ -5,7 +5,8 @@ import dev.kestrel.agent.goal.GoalPort
 /**
  * A goal's round as its run sees it (design 6.5 and 7.1 of sub-project 7): the goal, whose screen turn goes through
  * [screen], the one rule for who acts on the screen, with the number of the owner's input that lets the round act now
- * (`RunningGoal.takeAct`) at the first turn after that input, and none at the turns after it.
+ * (`RunningGoal.takeAct`) at the first turn after that input, and none at the turns after it. While a turn waits behind
+ * the owner's instant command, the goal's listener knows it (plan 7E).
  *
  * It is also the one rule for when a pause lets go of the round's turn (plan 7E). From the moment the run asks for the
  * turn ([takeScreen], at the round's start and as every wait for the owner ends) until its next model call starts
@@ -26,7 +27,17 @@ internal class ScreenTakingGoal(private val goal: RunningGoal, private val scree
     override suspend fun takeScreen(): Boolean {
         // A pause that comes while the turn is being taken waits too: the run acts right after the take.
         synchronized(lock) { acting = true }
-        return screen.take(goal.takeAct())
+        var behind = false
+        try {
+            return screen.take(goal.takeAct()) {
+                if (!behind) {
+                    behind = true
+                    goal.listener.waitsBehindCommand(true)
+                }
+            }
+        } finally {
+            if (behind) goal.listener.waitsBehindCommand(false)
+        }
     }
 
     // The run's model call comes next, and no step acts on the screen before the next gate takes the turn again.

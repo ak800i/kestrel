@@ -547,7 +547,7 @@ class ListeningTest {
         runCurrent()
         assertEquals(Work.RUNNING_COMMAND, listening.state.value.work)
 
-        val taken = async { turns.take(after = InputIds.next()) }
+        val taken = async { turns.take(after = InputIds.next()) {} }
         runCurrent()
         assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(ListeningTexts.CANCELLED, shown.last())
@@ -565,7 +565,7 @@ class ListeningTest {
     fun aTranscriptAfterARoundTookTheTurnStartsNoCommand() = runTest {
         val listening = listeningWithSession()
         collectReports(listening)
-        assertFalse(turns.take(after = null))
+        assertFalse(turns.take(after = null) {})
 
         listening.send(Event.Heard("Scroll down", named = false))
         runCurrent()
@@ -594,7 +594,7 @@ class ListeningTest {
         listening.send(Event.Heard("Scroll down", named = false))
         runCurrent()
 
-        val taken = async { turns.take(after = before) }
+        val taken = async { turns.take(after = before) {} }
         advanceTimeBy(60_000)
         runCurrent()
         assertEquals(Work.RUNNING_COMMAND, listening.state.value.work)

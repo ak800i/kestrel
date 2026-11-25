@@ -976,6 +976,26 @@ class ConversationEngineTest {
         assertTrue(engine.view.value.records.single().data.isEmpty())
     }
 
+    // Plan 7E: while the goal's round waits behind the owner's instant command, the view says so, for the goal
+    // notification, because the bar belongs to the command then; once the round has the turn, it no longer does.
+    @Test
+    fun theViewSaysWhileTheRoundWaitsBehindTheOwnersCommand() = scope.runTest {
+        val screen = FakeScreenTurn()
+        val command = CompletableDeferred<Unit>()
+        screen.command = command
+        val engine = engine(environment(listSms, finish(1)), screen = screen)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.ACTING, engine.view.value.goal)
+        assertTrue(engine.view.value.waitsBehindCommand)
+
+        command.complete(Unit)
+        runCurrent()
+        assertFalse(engine.view.value.waitsBehindCommand)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
     // A save that fails is reported; the view still shows the step, and the next step saves the conversation again.
     @Test
     fun aFailedSaveStillShowsTheStepAndTheNextStepSavesAgain() = scope.runTest {

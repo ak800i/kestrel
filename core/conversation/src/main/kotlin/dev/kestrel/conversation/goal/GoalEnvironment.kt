@@ -78,10 +78,12 @@ sealed interface RoundSetup {
  * hand-overs and pauses, and when it ends, on every path (`GoalRunner`, `TaskRun.waitForOwner`); a pause that the
  * conversation starts lets go of it as soon as no step that a gate let through can act any more, at once while the round
  * waits for its model (`ScreenTakingGoal`; plan 7E).
- * `:app`'s `ScreenTurns` (plan 7D) implements it.
+ * [waiting] hears it each time a [take] starts to wait for an instant command that goes on, the owner's newest act, so
+ * that the conversation's view can say why the goal does not move (plan 7E); a command that the round has asked to let go
+ * is no such wait. `:app`'s `ScreenTurns` (plan 7D) implements it.
  */
 interface ScreenTurn {
-    suspend fun take(after: Long?): Boolean
+    suspend fun take(after: Long?, waiting: () -> Unit): Boolean
 
     fun release()
 }

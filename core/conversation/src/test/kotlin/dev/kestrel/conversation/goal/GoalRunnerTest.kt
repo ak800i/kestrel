@@ -70,6 +70,7 @@ class GoalRunnerTest {
         val ends = mutableListOf<RoundEnd>()
         var steering = 0
         var touches = 0
+        val waits = mutableListOf<Boolean>()
 
         override fun stepStarted(step: Int) {
             steps += step
@@ -93,6 +94,10 @@ class GoalRunnerTest {
 
         override fun touched() {
             touches++
+        }
+
+        override fun waitsBehindCommand(waits: Boolean) {
+            this.waits += waits
         }
 
         override fun ended(end: RoundEnd) {
@@ -545,6 +550,27 @@ class GoalRunnerTest {
         assertTrue(afters.drop(2).all { it == null })
         assertEquals(1, environment.screen.actions.size)
         assertEquals(1, listener.ends.size)
+    }
+
+    // Plan 7E: a round whose turn waits behind the owner's instant command, at its start or as a wait for the owner ends,
+    // tells its listener as the wait starts and once it has the turn, so that the goal notification can say why the goal
+    // does not move while the bar belongs to the command.
+    @Test
+    fun aRoundThatWaitsBehindTheOwnersCommandTellsItsListenerUntilItHasTheTurn() = runTest {
+        val screen = FakeScreenTurn()
+        val command = CompletableDeferred<Unit>()
+        screen.command = command
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment(listSms, finish(1)), screen).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertEquals(listOf(true), listener.waits)
+        assertTrue(listener.ends.isEmpty())
+        command.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(true, false), listener.waits)
+        assertEquals(EndReason.FINISHED, listener.ends.single().report.end)
     }
 
     // Re-review round 4, R4-1: the round holds the screen's turn while it acts, and lets go of it when it ends, on every

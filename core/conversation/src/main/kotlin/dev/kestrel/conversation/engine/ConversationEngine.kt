@@ -118,6 +118,12 @@ class ConversationEngine(
         /** Step [step] of the running round of record [record] of [conversation] started; it only changes the view. */
         class Step(val conversation: ConversationId, val record: Int, val step: Int) : Message
 
+        /**
+         * The running round of record [record] of [conversation] waits behind the owner's instant command, or no longer
+         * ([waits]); it only changes the view (plan 7E).
+         */
+        class BehindCommand(val conversation: ConversationId, val record: Int, val waits: Boolean) : Message
+
         /** The wake-up of [timer]'s deadline of number [number] came. */
         class Wake(val timer: Timer, val number: Int) : Message
 
@@ -195,6 +201,9 @@ class ConversationEngine(
 
     // The running round's newest step, which the view and the snapshot add to the goal's earlier steps (design 10.5).
     private var roundStep: Int? = null
+
+    // Whether the running round waits behind the owner's instant command, for the view (plan 7E).
+    private var roundBehindCommand = false
 
     // How many ledger lines the running goal's record held when its round started; the round's report replaces the rest.
     private var roundLedgerFrom = 0
@@ -342,6 +351,10 @@ class ConversationEngine(
                     roundStep = message.step
                     publish()
                 }
+                is Message.BehindCommand -> if (message.conversation == recordsOf && running?.record == message.record) {
+                    roundBehindCommand = message.waits
+                    publish()
+                }
                 is Message.Wake -> woken(message)
                 Message.SaveFailed -> dirty = true
                 is Message.Reopened -> reopened(message)
@@ -459,6 +472,7 @@ class ConversationEngine(
         goal.actedFor(effect.input.id)
         running = goal
         roundStep = null
+        roundBehindCommand = false
         roundLedgerFrom = 0
         owner.startWork()
         goals.run(scope, goal, plan(id, goal, effect.text, resume = null), owner)
@@ -478,6 +492,7 @@ class ConversationEngine(
         val plan = plan(id, goal, record.request, effect.cause)
         effect.steer?.let { steer(id, goal, SteeringMessage.of(it.text, it.channel)) }
         roundStep = null
+        roundBehindCommand = false
         roundLedgerFrom = record.ledger.size
         owner.startWork()
         goals.run(scope, goal, plan, owner)
@@ -801,6 +816,10 @@ class ConversationEngine(
 
         override fun touched() = this@ConversationEngine.touched()
 
+        override fun waitsBehindCommand(waits: Boolean) {
+            inbox.trySend(Message.BehindCommand(conversation, record, waits))
+        }
+
         // The round's report holds every ledger line of the round, also those that its traces missed (plan 7A); the record
         // takes them before the machine sees the end.
         override fun ended(end: RoundEnd) {
@@ -933,6 +952,7 @@ class ConversationEngine(
             hold = current.goal?.hold,
             goalEnding = current.goal?.ending,
             goalRecord = current.goal?.record,
+            waitsBehindCommand = own && roundBehindCommand && current.goal?.phase in WORKING,
         )
     }
 

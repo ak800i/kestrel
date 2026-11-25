@@ -33,6 +33,8 @@ class ScreenTakingGoalTest {
 
         override fun touched() = Unit
 
+        override fun waitsBehindCommand(waits: Boolean) = Unit
+
         override fun ended(end: RoundEnd) = Unit
     }
     private val taking = ScreenTakingGoal(RunningGoal(1, 1, emptyMap(), emptyList(), listener), screen)

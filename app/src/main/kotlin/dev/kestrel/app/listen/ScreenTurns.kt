@@ -19,7 +19,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * - A round that takes the turn while a command holds the screen asks the command to let go only for an input of the
  *   owner's that came after the command started: that input chose the goal, and the Orchestrator cancels the command
  *   (`Event.ScreenWanted`). A round that goes on by itself, or for an older input, never does: the command is the owner's
- *   newest act, as during a hand-over (D15 of sub-project 5), so the round waits until it has ended. A cancelled job that
+ *   newest act, as during a hand-over (D15 of sub-project 5), so the round waits until it has ended, and says so as it
+ *   starts to wait, for the goal notification (plan 7E). A cancelled job that
  *   is still not done after [waitMillis] is reported once to [report], and Kestrel goes on without it.
  * Any thread may call it.
  */
@@ -68,14 +69,15 @@ internal class ScreenTurns(
      * Returns once no instant command's job, running or cancelled, can act on the screen, or once a cancelled one was stuck
      * for [waitMillis]; true when it waited. Listening waits here before a new command or the settings.
      */
-    suspend fun commandEnded(): Boolean = waitFor(null)
+    suspend fun commandEnded(): Boolean = waitFor(null) {}
 
     /**
      * Gives a goal's round the turn once no instant command holds the screen, and holds it until [release]; true when it
      * waited, because the screen may have changed meanwhile. [after] is the number of the owner's input that lets the round
-     * act now, or null when it goes on by itself.
+     * act now, or null when it goes on by itself. [waiting] hears it each time the round starts to wait for a command that
+     * goes on (plan 7E).
      */
-    override suspend fun take(after: Long?): Boolean {
+    override suspend fun take(after: Long?, waiting: () -> Unit): Boolean {
         var waited = false
         while (true) {
             synchronized(lock) {
@@ -84,7 +86,7 @@ internal class ScreenTurns(
                     return waited
                 }
             }
-            waited = waitFor(after) || waited
+            waited = waitFor(after, waiting) || waited
         }
     }
 
@@ -93,13 +95,14 @@ internal class ScreenTurns(
         synchronized(lock) { round = false }
     }
 
-    private suspend fun waitFor(after: Long?): Boolean {
+    private suspend fun waitFor(after: Long?, waiting: () -> Unit): Boolean {
         val held = synchronized(lock) { holder }?.takeIf { !it.job.isCompleted } ?: return false
         if (!held.stopping.isCompleted) {
             if (after != null && after > held.since) {
                 held.letGo()
             } else {
                 // The owner's command goes on: the caller waits until it ends, or until something cancels it.
+                waiting()
                 select {
                     held.job.onJoin {}
                     held.stopping.onAwait {}
