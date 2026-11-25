@@ -4696,7 +4696,7 @@ Design 9.1 to 9.4, 9.7 and R3 of sub-project 7, as amended on 2026-11-25 and 202
 
 When the index is missing while closed rows exist, unreadable, in another format or out of step with the table's stamp, the store rebuilds it in its scope. It reads the closed rows in pages and folds each body into the new index as soon as it is read, so that it never holds more than a page of bodies, and it encodes the new shards outside its lock. Meanwhile the open conversation is saved as usual; every other change deletes the old shards and is replayed onto the new index; `searchable()` says `Rebuilding`; `list()` waits; and `purge()` deletes by the table. When the index can be neither read nor rebuilt, the store notes `ArchiveNote.INDEX_FAILED` once, `list()` throws `PastUnavailableException`, `searchable()` says `Failed`, every change of the closed conversations deletes the old shards, and the store reads the index again after 1 minute, then after twice as long each time, up to 1 hour, never at each call. A change that fails meanwhile keeps the failure and its next try, so that a change that keeps failing, on a full disk, never makes the store read the index or rebuild it at each call.
 
-Task 4's lifecycle rules hold. The memory changes only after the archive's call completed and is dropped after a call that did not; only an index that has failed stays failed, with its next try, because it holds nothing of the archive. A conversation that this process deleted is never written again; when the store reads the archive again and finds one, after a deletion that did not complete, it deletes it again before it shows anything. `deleteAll` raises the `generation` before it deletes. The row's plain fields are the truth for whether a conversation is open and for its times, so that a rebuilt index is always in step with the rows that it read. A row's id is compared as text, so that a row whose id is not a conversation's, which only a write from outside Kestrel can make, fails as a row that does not decode, and is deleted and noted.
+Task 4's lifecycle rules hold. The memory changes only after the archive's call completed and is dropped after a call that did not; only an index that has failed stays failed, with its next try, because it holds nothing of the archive. A conversation that this process deleted, by `delete` or by a `deleteAll` that completed, is never written again; when the store reads the archive again and finds one, after a `delete` that did not complete, it deletes it again before it shows anything. `deleteAll` works on the archive alone (every row and the index in one transaction, then the key), so that it has one outcome whatever the store holds (design 9.7): it raises the `generation` before it deletes, and marks the conversations that the process held as deleted only once it completed; when it fails, also before the index is ready, it marks nothing, and every conversation stays as the archive has it. The row's plain fields are the truth for whether a conversation is open and for its times, so that a rebuilt index is always in step with the rows that it read. A row's id is compared as text, so that a row whose id is not a conversation's, which only a write from outside Kestrel can make, fails as a row that does not decode, and is deleted and noted, also when it is in a format that this version cannot read, so that a kept row's id is always a conversation's.
 
 The tests also take the load of the index through each of its failures, with the archive's gates: "delete history" while the index is read, a change that fails then, the load's own write that fails, a stamp that cannot be read, and a scope that ends while the index is read, after which no call waits for ever.
 
@@ -4704,9 +4704,11 @@ The tests also take the load of the index through each of its failures, with the
 
 `MemoryArchive` checks, after every write that stores shards, what the store's design rests on: the shards decode, their stamp is the table's, and no open row is in them. So every test of the store also checks that property.
 
+Every shard that the store writes decodes again, by construction (design 9.2), never by an estimate of how Kestrel is used: `SearchIndex` leaves out a folded word longer than `MAX_WORD_LENGTH` (40 characters) and holds at most `CONVERSATION_WORDS` (10,000) different words and `CONVERSATION_POSITIONS` (20,000) positions of one conversation, its records in order and each record's words in the order of its texts, and no record that is left without words. A conversation or a kept row enters a shard one at a time, and a shard is full at `PastIndex.SHARD_POSITIONS` positions or at `PastIndex.SHARD_BYTES` (2 MB) of `IndexShard.plainBytes`, the most bytes that it takes before Deflate; a `KeptRow`'s id is at most 32 characters. So one conversation adds at most `PastIndexCodec.MOST_CONVERSATION_BYTES` (about 1.7 MB) to a shard, `MAX_PLAIN_BYTES` is four times a full shard's bound (about 14.8 MB), and `PastIndexCodec.encode` refuses a shard past it. A shard's format keeps each conversation's number of commands apart from the records that the index holds of it, which `IndexShard.restored` allows to be fewer, each once. A test saves one huge conversation of long words: it is indexed within the bounds, its shard decodes, and the next start rebuilds nothing. The tests that use the coroutines' test clock opt in to `ExperimentalCoroutinesApi` in their class.
+
 **Files:**
-- Modify (whole files): `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`
-- Test (whole files): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/ArchivedConversationStoreTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistorySearchTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistoryRankingTest.kt`; and `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`
+- Modify (whole files): `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`; and Task 5b's `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/IndexShard.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt` and `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndexCodec.kt`
+- Test (whole files): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/ArchivedConversationStoreTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistorySearchTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistoryRankingTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/PastIndexTest.kt` and `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`
 - Test (create): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/MemoryArchiveTest.kt`
 
 **Interfaces:**
@@ -4720,11 +4722,12 @@ The tests also take the load of the index through each of its failures, with the
   - `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED }`; `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore` with `DAY_MILLIS`, `REBUILD_PAGE = 50`, `FIRST_RETRY_MILLIS = 60_000` and `MAX_RETRY_MILLIS = 3_600_000`.
   - `data class RecordRef(val conversation: ConversationId, val record: Int)`; `data class RankedEntry(val entry: IndexedRecord, val score: Int)`; `object HistoryRanking` with `NEAR_LETTERS`, `IGNORED`, `wanted(text)` and `rank(indexes: List<SearchIndex>, query, zone, reached = { true }, similarity = LabelMatcher's score)`.
   - `data class ConversationMatch(id, openedAtWall, firstRequest)`; `sealed interface ConversationLookup { data class Found(val match: ConversationMatch); data object NotFound; data object Rebuilding; data object Unavailable }`; `class HistorySearch(store, retentionDays, clock)` with `search(query, excluding)`, `port(excluding)` and `conversation(topic): ConversationLookup`.
+  - In Task 5b's files: `SearchIndex.MAX_WORD_LENGTH = 40`, `CONVERSATION_WORDS = 10_000` and `CONVERSATION_POSITIONS = 20_000`, `SearchIndex.plainBytes` and `SearchIndex.Builder.plainBytes`; `IndexShard.plainBytes`; `PastIndex.SHARD_BYTES = 2_000_000`; `KeptRow.MAX_ID_LENGTH = 32`; `PastIndexCodec.SHARD_HEADER_BYTES`, `MOST_CONVERSATION_BYTES`, `MAX_PLAIN_BYTES = 4 * (PastIndex.SHARD_BYTES + MOST_CONVERSATION_BYTES)`, `wordBytes(word)`, `recordBytes(positions)`, `conversationBytes(conversation)` and `keptBytes(row)`.
   - Fixture: `MemoryArchive` with `rows`, `unreadable`, `unknown`, `shards`, `unreadableShards`, `transactions`, `calls`, `interruptions` (`write`, `purge`, `deleteAll`), `failures` (also `readShards`, `readStamp`, `closedIds`, `read`), `readShardsGate`, `closedIdsGate`, `readGate`, `keyErased`, `payload(id)`, `past()` and `stamp()`.
 
   Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
 
-Counts: `:core:conversation` 149 + 26 (`ArchivedConversationStoreTest` 16 → 39, `HistorySearchTest` 11 → 13, `MemoryArchiveTest` 1, `HistoryRankingTest` and `RetentionTest` unchanged) = 175; N + 26 if Task 5b's count differed.
+Counts: `:core:conversation` 149 + 30 (`ArchivedConversationStoreTest` 16 → 41, `HistorySearchTest` 11 → 13, `PastIndexTest` 10 → 12, `MemoryArchiveTest` 1, `HistoryRankingTest` and `RetentionTest` unchanged) = 179; N + 30 if Task 5b's count differed.
 
 - [ ] **Step 1: Write the failing tests and the archive in memory**
 
@@ -4905,6 +4908,7 @@ import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -4919,6 +4923,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ArchivedConversationStoreTest {
     private val archive = MemoryArchive()
     private val notes = mutableListOf<ArchiveNote>()
@@ -5201,9 +5206,10 @@ class ArchivedConversationStoreTest {
         assertEquals(before + 1, watched.generation)
     }
 
-    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back.
+    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back. The
+    // store marks nothing, as after any "delete history" that did not complete, and shows what the archive holds.
     @Test
-    fun aDeleteAllCancelledAfterTheArchiveDeletedLeavesNothingInMemoryAndNothingComesBack() = test {
+    fun aDeleteAllCancelledAfterTheArchiveDeletedMarksNothingAndShowsWhatTheArchiveHolds() = test {
         store.save(conversation(1, now - 2_000))
         val open = conversation(2, now - 1_000, open = true)
         store.save(open)
@@ -5213,12 +5219,70 @@ class ArchivedConversationStoreTest {
 
         assertTrue(store.list().isEmpty())
         assertNull(store.open())
-        assertNull(store.reopen(id(1), open, now, testMode = true))
+        assertNull(store.reopen(id(1), null, now, testMode = true))
+        // The owner was told that the history was not deleted, so the conversation that he goes on with is saved again.
         store.save(open.copy(lastWall = now))
-        assertTrue(archive.rows.isEmpty())
-        store.save(conversation(3, now, open = true))
-        assertEquals(setOf(id(3).value), archive.rows.keys)
+        assertEquals(setOf(id(2).value), archive.rows.keys)
+        assertEquals(id(2), fresh().open()!!.id)
     }
+
+    // Design 9.7: "delete history" works on the archive alone. One that fails before the index is ready, while the store
+    // has read only some of the conversations, marks none of them, and every conversation stays as it was.
+    @Test
+    fun aDeleteHistoryThatFailsBeforeTheIndexIsReadyLeavesEveryConversationAsItWas() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        store.save(conversation(3, now - 1_000, open = true))
+        archive.readShardsGate = CompletableDeferred()
+        val fresh = fresh()
+        assertEquals(id(3), fresh.open()!!.id)
+        assertEquals(id(1), fresh.get(id(1))!!.id)
+        archive.failures["deleteAll"] = IOException("the disk failed")
+
+        assertTrue(runCatching { fresh.deleteAll() }.exceptionOrNull() is IOException)
+
+        archive.failures.clear()
+        archive.readShardsGate = null
+        assertEquals(id(3), fresh.open()!!.id)
+        assertEquals(listOf(id(2), id(1)), fresh.list().map { it.id })
+        assertEquals(id(1), fresh.get(id(1))!!.id)
+        assertEquals(setOf(id(1).value, id(2).value, id(3).value), archive.rows.keys)
+        assertFalse(archive.keyErased)
+        assertTrue(notes.isEmpty())
+    }
+
+    // Design 9.2 and 9.4: whatever a conversation holds, the index keeps at most SearchIndex's bounds of it: no word longer
+    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first records
+    // first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
+    @Test
+    fun aHugeConversationOfLongWordsIsIndexedWithinItsBoundsAndTheNextStartTrustsItsShard() = test {
+        fun letters(n: Int) = (0 until 3).map { 'a' + n / pow26(it) % 26 }.joinToString("")
+        val common = List(100) { "com" + letters(it) }
+        val records = List(120) { r ->
+            val own = List(150) { "own" + letters(r) + letters(it) }
+            val long = List(70) { "lng" + letters(r) + letters(it) + "q".repeat(2_000) }
+            CommandRecord(r + 1, now - 1_000 + r, InputChannel.TEXT, (common + own).joinToString(" "), answer = long.joinToString(" "))
+        }
+
+        store.save(ConversationSnapshot(id(1), now - 1_000, now, open = false, testMode = true, records = records))
+
+        val shard = archive.past()!!.shards.single()
+        val words = shard.search.words.toSet()
+        assertEquals(SearchIndex.CONVERSATION_WORDS, words.size)
+        assertEquals(SearchIndex.CONVERSATION_POSITIONS, shard.positions)
+        assertTrue(words.all { it.length <= SearchIndex.MAX_WORD_LENGTH })
+        assertTrue("com" + letters(0) in words && "own" + letters(0) + letters(0) in words)
+        assertFalse("own" + letters(119) + letters(0) in words)
+        archive.calls.clear()
+
+        val started = fresh()
+
+        assertEquals(listOf(id(1)), started.list().map { it.id })
+        assertEquals(listOf("readOpen", "readShards", "readStamp"), archive.calls)
+        assertTrue(notes.isEmpty())
+    }
+
+    private fun pow26(exponent: Int): Int = (0 until exponent).fold(1) { power, _ -> power * 26 }
 
     @Test
     fun anOlderSnapshotOfADeletedConversationIsNeverWrittenBack() = test {
@@ -5713,13 +5777,16 @@ class ArchivedConversationStoreTest {
     }
 
     // An id that is not one of Kestrel's can come only from a write from outside Kestrel; its row fails as a row that does
-    // not decode fails.
+    // not decode fails, also when it is in a format that this version cannot read, so that the index never keeps its id.
     @Test
     fun aRowWhoseIdIsNotAConversationsIdIsDeletedAndNotedAsARowThatFailed() = test {
         store.save(conversation(1, now - 1_000))
         val payload = "{}".encodeToByteArray()
         archive.rows["not an id"] = ArchiveRow(ArchiveHeader("not an id", now - 3_000, now - 2_000, open = false, commands = 1), payload)
         archive.rows["open, not an id"] = ArchiveRow(ArchiveHeader("open, not an id", now - 3_000, now - 500, open = true, commands = 1), payload)
+        val later = "later, not an id " + "x".repeat(10_000)
+        archive.rows[later] = ArchiveRow(ArchiveHeader(later, now - 3_000, now - 1_500, open = false, commands = 1), payload)
+        archive.unknown += later
         val fresh = fresh()
 
         assertNull(fresh.open())
@@ -5727,7 +5794,8 @@ class ArchivedConversationStoreTest {
 
         assertEquals(setOf(id(1).value), archive.rows.keys)
         assertEquals(listOf(id(1)), pastIds())
-        assertEquals(listOf(ArchiveNote.CONVERSATION_DELETED, ArchiveNote.CONVERSATION_DELETED, ArchiveNote.INDEX_REBUILT), notes)
+        assertTrue(archive.past()!!.kept.isEmpty())
+        assertEquals(List(3) { ArchiveNote.CONVERSATION_DELETED } + ArchiveNote.INDEX_REBUILT, notes)
     }
 }
 ```
@@ -5751,6 +5819,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -5761,6 +5830,7 @@ import org.junit.Test
 import java.io.IOException
 import java.time.LocalDate
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HistorySearchTest {
     private val clock = ManualConversationClock()
     private val day = ArchivedConversationStore.DAY_MILLIS
@@ -6045,32 +6115,392 @@ class HistoryRankingTest {
 }
 ```
 
-In `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`, replace:
+Replace the whole `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/PastIndexTest.kt` with:
 
 ```kotlin
-        val store = ArchivedConversationStore(MemoryArchive()) {}
-        fun closed(n: Int, age: Long) = ConversationSnapshot(
+package dev.kestrel.conversation.store
+
+import dev.kestrel.conversation.model.CommandRecord
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.DataNote
+import dev.kestrel.conversation.model.InputChannel
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.util.zip.DeflaterOutputStream
+import java.util.zip.InflaterInputStream
+import kotlin.random.Random
+
+class PastIndexTest {
+    private val day = ArchivedConversationStore.DAY_MILLIS
+
+    private fun id(n: Int) = ConversationId(n.toString().padStart(32, '0'))
+
+    private fun closed(n: Int, last: Long, vararg requests: String) = ConversationSnapshot(
+        id(n), last - 1_000, last, open = false, testMode = true,
+        records = requests.mapIndexed { index, request -> CommandRecord(index + 1, last - 1_000 + index, InputChannel.TEXT, request) },
+    )
+
+    @Test
+    fun aClosedConversationEntersWithWhatTheListShowsAndLeavesWithItsWords() {
+        val long = "Plan the trip to Novi Sad and book a hotel near the river for the long weekend in December, with parking"
+        val index = PastIndex.EMPTY.with(listOf(closed(1, 100, long, "Book it"), closed(2, 200, "Call Ana")))
+
+        assertEquals(listOf(id(2), id(1)), index.conversations.map { it.id })
+        assertEquals(PastConversation(id(1), -900, 100, 2, long.take(PastIndex.FIRST_REQUEST).trimEnd() + "…"), index.conversations[1])
+        assertEquals(3, index.searches.single().records.size)
+        assertTrue(id(1) in index)
+
+        val left = index.without(setOf(id(1).value))
+        assertEquals(listOf(id(2)), left.conversations.map { it.id })
+        assertEquals(listOf("ana", "call"), left.searches.single().words)
+        assertSame(left, left.without(setOf(id(1).value)))
+        assertSame(left, left.with(emptyList()))
+    }
+
+    @Test
+    fun theStampCountsEveryClosedRowAndRetentionFindsTheOldOnesAndTheKeptOnes() {
+        val index = PastIndex.of(listOf(closed(1, 100, "a"), closed(2, 300, "b")), listOf(KeptRow("later", 50)))
+
+        assertEquals(IndexStamp(closed = 3, newest = 300, total = 450), index.stamp)
+        assertEquals(IndexStamp(0, 0, 0), PastIndex.EMPTY.stamp)
+        assertEquals(setOf(id(1).value, "later"), index.outside(oldest = 101, newest = 300))
+        assertEquals(IndexStamp(1, 300, 300), index.without(setOf(id(1).value, "later")).stamp)
+    }
+
+    @Test
+    fun anIndexComesBackFromItsBytes() {
+        val record = CommandRecord(
+            1, 5, InputChannel.TEXT, "Пронађи ресторан", answer = "Ambar 🙂",
+            data = listOf(DataNote("list_sms", 1, "body: \"Ambar\"", items = 1)),
+        )
+        val index = PastIndex.of(
+            listOf(ConversationSnapshot(id(1), 1, 10, testMode = true, records = listOf(record)), closed(2, 20), closed(3, 30, "Call Ana")),
+            listOf(KeptRow("later", 7)),
+        )
+
+        val shard = index.shards.single()
+
+        val read = PastIndexCodec.decode(shard.number, PastIndexCodec.encode(shard))
+
+        assertEquals(shard.number, read.number)
+        assertEquals(shard.conversations, read.conversations)
+        assertEquals(shard.kept, read.kept)
+        assertEquals(shard.search.words, read.search.words)
+        assertEquals(shard.search.records.associate { it.ref to shard.search.wordsOf(it) }, read.search.records.associate { it.ref to read.search.wordsOf(it) })
+        assertEquals(shard.stamp, read.stamp)
+        assertEquals(PastIndexCodec.FORMAT, PastIndexCodec.encode(shard)[0])
+    }
+
+    @Test
+    fun bytesInAnotherFormatOrThatDoNotDecodeAreRefused() {
+        val shard = PastIndex.of(listOf(closed(1, 10, "Call Ana")), emptyList()).shards.single()
+        val bytes = PastIndexCodec.encode(shard)
+
+        for (wrong in listOf(byteArrayOf(), byteArrayOf(2) + bytes.copyOfRange(1, bytes.size), bytes.copyOf(bytes.size - 3), bytes + byteArrayOf(0))) {
+            assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(shard.number, wrong) }
+        }
+    }
+
+    // Damage that Deflate and its checksum let through, as a foreign or faulty encoder would write it, reaches the reader's
+    // own checks, and each of them refuses it with the exception that makes the store rebuild the index.
+    @Test
+    fun theReaderRefusesDamageThatPassesDeflate() {
+        val ana = id(1).value
+        fun valid() = Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept("later", 7)
+
+        val read = PastIndexCodec.decode(0, valid().sealed())
+        assertEquals(listOf("ana", "call"), read.search.wordsOf(read.search.records.single()))
+        assertEquals(listOf(KeptRow("later", 7)), read.kept)
+
+        val damaged = mapOf(
+            "a number of 6 bytes" to Plain().raw(0x82, 0x80, 0x80, 0x80, 0x80, 0x00),
+            "a number past 31 bits" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).raw(0x80, 0x80, 0x80, 0x80, 0x10),
+            "more words than bytes" to Plain().number(1_000_000).text("ana"),
+            "more kept rows than bytes" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(2).kept("later", 7),
+            "a text past the end" to Plain().number(1).number(50).raw(*"ana".encodeToByteArray().map { it.toInt() }.toIntArray()),
+            "a position past the words" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 1)).number(0),
+            "words out of order" to Plain().words("call", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "a word twice" to Plain().words("ana", "ana").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(0),
+            "an id that is no conversation's" to Plain().words("ana", "call").number(1).conversation("not an id", 10, "Call Ana", listOf(0, 0)).number(0),
+            "conversations out of order" to Plain().words("ana", "call").number(2)
+                .conversation(ana, 10, "Call Ana", listOf(0, 0)).conversation(id(2).value, 20, null, listOf(1)).number(0),
+            "an id twice" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept(ana, 7),
+            "more records than commands" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0), listOf(1), commands = 1).number(0),
+            "a kept id longer than a conversation's" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept("x".repeat(33), 7),
+            "a byte after the kept rows" to valid().raw(0),
+        )
+        for ((damage, plain) in damaged) {
+            assertThrows(damage, IllegalArgumentException::class.java) { PastIndexCodec.decode(0, plain.sealed()) }
+        }
+    }
+
+    // A few hundred compressed bytes can inflate to more than the memory holds: the decoder stops at its bound while it
+    // inflates, so that forged bytes end in the exception that makes the store rebuild, never in an OutOfMemoryError.
+    @Test
+    fun aShardThatInflatesPastItsBoundIsRefusedWhileItInflates() {
+        fun inflatingTo(size: Int): ByteArray {
+            fun plain(request: Int) = Plain().words().number(1).conversation(id(1).value, 10, "a".repeat(request)).number(0)
+            val trial = size - 100
+            return plain(trial + size - plain(trial).size).also { assertEquals(size, it.size) }.sealed()
+        }
+
+        val largest = inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES)
+        assertTrue("${largest.size} bytes", largest.size < 100_000)
+        assertEquals(1, PastIndexCodec.decode(0, largest).conversations.size)
+        assertThrows(IllegalArgumentException::class.java) { PastIndexCodec.decode(0, inflatingTo(PastIndexCodec.MAX_PLAIN_BYTES + 1)) }
+    }
+
+    // Design 9.2: a close re-encodes only the newest shard, which is never much larger than its limit, and a conversation
+    // that changes again moves to the newest shard.
+    @Test
+    fun aCloseGoesToTheNewestShardUntilItIsFullAndAConversationThatChangesAgainMoves() {
+        val index = PastIndex.empty(shardPositions = 4).with(listOf(closed(1, 100, "Call Ana"))).with(listOf(closed(2, 200, "Book the hotel")))
+        val full = index.with(listOf(closed(3, 300, "Plan the trip")))
+
+        assertEquals(listOf(listOf(id(3)), listOf(id(2), id(1))), full.shards.map { shard -> shard.conversations.map { it.id } })
+        assertEquals(listOf(1), full.changesFrom(index).put.map { it.number })
+        assertSame(index.shards.single(), full.shards.last())
+
+        val moved = full.with(listOf(closed(1, 400, "Call Ana again")))
+
+        assertEquals(listOf(id(1), id(3), id(2)), moved.conversations.map { it.id })
+        assertEquals(listOf(listOf(id(1), id(3)), listOf(id(2))), moved.shards.map { shard -> shard.conversations.map { it.id } })
+        assertEquals(setOf(0, 1), moved.changesFrom(full).put.mapTo(HashSet()) { it.number })
+        assertEquals(setOf(0), moved.without(setOf(id(2).value)).changesFrom(moved).gone)
+        assertEquals(IndexStamp(3, 400, 400 + 300 + 200), moved.stamp)
+    }
+
+    // A rebuild folds the conversations, the oldest first, into a builder; the changes fold them into the index one at a
+    // time. Both must make the same shards.
+    @Test
+    fun aRebuildAndTheChangesOneAtATimeMakeTheSameIndex() {
+        val random = Random(9)
+        val words = listOf("ambar", "mila", "restoran", "hotel", "novi", "sad", "viber", "poruka", "Đorđe", "Ђорђе")
+        val snapshots = (1..40).map { n -> closed(n, random.nextLong(0, 200 * day), *Array(random.nextInt(1, 4)) { List(3) { words.random(random) }.joinToString(" ") }) }
+            .sortedBy { it.lastWall }
+        val kept = listOf(KeptRow("later", 5 * day), KeptRow("newer", 150 * day))
+
+        val built = PastIndex.of(snapshots, kept, shardPositions = 20)
+        val folded = snapshots.fold(PastIndex.empty(shardPositions = 20)) { index, snapshot -> index.with(listOf(snapshot)) }.keeping(kept)
+
+        assertTrue(built.shards.size > 3)
+        assertEquals(folded.conversations, built.conversations)
+        assertEquals(folded.kept.toSet(), built.kept.toSet())
+        assertEquals(folded.shards.map { it.number }, built.shards.map { it.number })
+        for ((one, other) in folded.shards.zip(built.shards)) {
+            assertEquals(one.conversations, other.conversations)
+            assertEquals(one.search.words, other.search.words)
+            assertEquals(one.search.records.associate { it.ref to one.search.wordsOf(it) }, other.search.records.associate { it.ref to other.search.wordsOf(it) })
+        }
+        assertEquals(folded.stamp, built.stamp)
+    }
+
+    @Test
+    fun anIndexWhoseShardsDisagreeIsRefused() {
+        val first = PastIndex.of(listOf(closed(1, 10, "Call Ana")), emptyList()).shards.single()
+        val again = PastIndex.of(listOf(closed(2, 20, "Book it"), closed(1, 30, "Call Ana")), emptyList(), shardPositions = 1).shards.first()
+
+        assertEquals(1, again.number)
+        assertThrows(IllegalArgumentException::class.java) { PastIndex.restored(listOf(first, first)) }
+        assertThrows(IllegalArgumentException::class.java) { PastIndex.restored(listOf(first, again)) }
+        assertEquals(listOf(id(1)), PastIndex.restored(listOf(first)).conversations.map { it.id })
+    }
+
+    // Design 9.2 and R3 of sub-project 7: 30 days of heavy use make two shards, and a close re-encodes at most one of them.
+    @Test
+    fun theIndexOf30HeavyDaysStaysSmall() {
+        val random = Random(30)
+        val pool = List(25_000) { n -> "w${n.toString(36)}" + List(random.nextInt(2, 8)) { 'a' + random.nextInt(26) }.joinToString("") }
+        val conversations = List(300) { n ->
+            val records = List(2) { r -> CommandRecord(r + 1, n * 10L + r, InputChannel.TEXT, List(300) { pool.random(random) }.joinToString(" ")) }
+            ConversationSnapshot(id(n + 1), n * 10L, n * 10L + 1, testMode = true, records = records)
+        }
+
+        val shards = PastIndex.of(conversations, emptyList()).shards
+        val bytes = shards.map { PastIndexCodec.encode(it) }
+
+        assertEquals(2, shards.size)
+        assertTrue("${bytes.map { it.size }} bytes", bytes.sumOf { it.size } < 550_000 && bytes.all { it.size < 300_000 })
+        assertEquals(300, shards.zip(bytes).sumOf { (shard, encoded) -> PastIndexCodec.decode(shard.number, encoded).conversations.size })
+        assertTrue("${bytes.map { plainSize(it) }} plain bytes", bytes.all { plainSize(it) * 20 < PastIndexCodec.MAX_PLAIN_BYTES })
+        assertTrue("${shards.map { it.plainBytes }} bounds", shards.all { it.plainBytes < PastIndex.SHARD_BYTES })
+        assertFalse(PastIndex.EMPTY.toString().contains("w0"))
+    }
+
+    // Design 9.2: long words fill a shard by their letters before they fill it by their positions, so a shard is full by its
+    // bytes too, and every shard, made by a rebuild or by the changes one at a time, decodes again, far under its decoder's
+    // bound.
+    @Test
+    fun conversationsAtTheirBoundsFillShardsByTheirBytesAndEveryShardDecodesAgain() {
+        fun word(n: Int) = (0 until 4).map { 'a' + n / pow26(it) % 26 }.joinToString("").padEnd(SearchIndex.MAX_WORD_LENGTH, 'q')
+        val conversations = List(5) { n ->
+            val words = List(SearchIndex.CONVERSATION_WORDS) { word(n * SearchIndex.CONVERSATION_WORDS + it) }
+            val records = words.chunked(100).mapIndexed { r, chunk -> CommandRecord(r + 1, n * 10L, InputChannel.TEXT, chunk.joinToString(" ")) }
+            ConversationSnapshot(id(n + 1), n * 10L, n * 10L + 1, testMode = true, records = records)
+        }
+
+        val built = PastIndex.of(conversations, emptyList())
+        val folded = conversations.fold(PastIndex.EMPTY) { index, conversation -> index.with(listOf(conversation)) }
+
+        assertTrue(built.shards.sumOf { it.positions } < PastIndex.SHARD_POSITIONS)
+        assertEquals(2, built.shards.size)
+        assertEquals(built.shards.map { shard -> shard.conversations.map { it.id } }, folded.shards.map { shard -> shard.conversations.map { it.id } })
+        for (shard in built.shards) {
+            val bytes = PastIndexCodec.encode(shard)
+            assertTrue("${plainSize(bytes)} of ${shard.plainBytes}", plainSize(bytes) <= shard.plainBytes)
+            assertTrue("${shard.plainBytes}", shard.plainBytes * 4 <= PastIndexCodec.MAX_PLAIN_BYTES)
+            assertEquals(shard.conversations, PastIndexCodec.decode(shard.number, bytes).conversations)
+        }
+    }
+
+    // The encoder refuses a shard that its decoder would refuse, a fault of Kestrel's code, before the archive stores it.
+    @Test
+    fun theEncoderRefusesAShardThatItsDecoderWouldRefuse() {
+        val huge = PastConversation(id(1), 1, 10, 0, "a".repeat(PastIndexCodec.MAX_PLAIN_BYTES))
+        val shard = IndexShard.restored(0, listOf(huge), SearchIndex.EMPTY, emptyList())
+
+        assertThrows(IllegalStateException::class.java) { PastIndexCodec.encode(shard) }
+    }
+
+    private fun pow26(exponent: Int): Int = (0 until exponent).fold(1) { power, _ -> power * 26 }
+
+    private fun plainSize(encoded: ByteArray): Int =
+        InflaterInputStream(ByteArrayInputStream(encoded, 1, encoded.size - 1)).use { it.readBytes().size }
+
+    // A shard's plain bytes written by hand in PastIndexCodec's format 1, so that a test can damage what Deflate and its
+    // checksum protect.
+    private class Plain {
+        private val out = ByteArrayOutputStream()
+
+        val size: Int get() = out.size()
+
+        fun raw(vararg values: Int) = apply { values.forEach(out::write) }
+
+        fun number(value: Int) = apply {
+            var rest = value
+            while (rest >= 0x80) {
+                out.write(rest and 0x7F or 0x80)
+                rest = rest ushr 7
+            }
+            out.write(rest)
+        }
+
+        fun long(value: Long) = apply { for (shift in 56 downTo 0 step 8) out.write((value ushr shift).toInt() and 0xFF) }
+
+        fun text(value: String) = apply { value.encodeToByteArray().let { number(it.size).out.write(it) } }
+
+        fun words(vararg words: String) = apply { number(words.size).also { words.forEach { text(it) } } }
+
+        // A conversation that closed at [lastWall], with one record per list of distances between its words' positions, and
+        // [commands] commands, as many as it has records unless it is given.
+        fun conversation(id: String, lastWall: Long, firstRequest: String?, vararg records: List<Int>, commands: Int = records.size) = apply {
+            text(id).long(lastWall - 9).long(lastWall)
+            if (firstRequest == null) number(0) else firstRequest.encodeToByteArray().let { number(it.size + 1).out.write(it) }
+            number(commands)
+            number(records.size)
+            records.forEachIndexed { index, distances ->
+                number(index + 1).long(lastWall - 5).number(distances.size)
+                distances.forEach { number(it) }
+            }
+        }
+
+        fun kept(id: String, lastWall: Long) = apply { text(id).long(lastWall) }
+
+        fun sealed(): ByteArray {
+            val sealed = ByteArrayOutputStream()
+            sealed.write(PastIndexCodec.FORMAT.toInt())
+            DeflaterOutputStream(sealed).use { it.write(out.toByteArray()) }
+            return sealed.toByteArray()
+        }
+    }
+}
 ```
 
-with:
+Replace the whole `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt` with:
 
 ```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.conversation.model.CommandRecord
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.testing.ManualConversationClock
+import dev.kestrel.conversation.testing.MemoryArchive
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class RetentionTest {
+    @Test
+    fun retentionPurgesAtOnceDailyAndWhenItShortens() = runTest {
+        val day = ArchivedConversationStore.DAY_MILLIS
+        val clock = ManualConversationClock({ testScheduler.currentTime })
         val store = ArchivedConversationStore(MemoryArchive(), backgroundScope) {}
         fun closed(n: Int, age: Long) = ConversationSnapshot(
-```
+            ConversationId(n.toString().padStart(32, '0')), clock.wallMillis() - age, clock.wallMillis() - age, open = false, testMode = true,
+            records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Request $n")),
+        )
+        store.save(closed(1, 40 * day))
+        store.save(closed(2, 10 * day))
+        store.save(closed(3, 3 * day))
+        val days = MutableStateFlow(30)
+        backgroundScope.launch { Retention(store, clock) { _, _ -> }.keepPurging(days) }
 
-In `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`, replace:
+        runCurrent()
+        assertEquals(2, store.list().size)
 
-```kotlin
-        val store = ArchivedConversationStore(MemoryArchive()) {}
-        fun closed(n: Int, last: Long) = ConversationSnapshot(
-```
+        days.value = 7
+        runCurrent()
+        assertEquals(listOf(ConversationId("3".padStart(32, '0'))), store.list().map { it.id })
 
-with:
+        advanceTimeBy(5 * day)
+        runCurrent()
+        assertTrue(store.list().isEmpty())
+    }
 
-```kotlin
+    @Test
+    fun aDayOnTheWallClockCountsWhileThePhoneSleptAndAClockThatWentBackPurgesAgain() = runTest {
+        val day = ArchivedConversationStore.DAY_MILLIS
+        val hour = 60 * 60_000L
+        val clock = ManualConversationClock({ testScheduler.currentTime })
         val store = ArchivedConversationStore(MemoryArchive(), backgroundScope) {}
         fun closed(n: Int, last: Long) = ConversationSnapshot(
+            ConversationId(n.toString().padStart(32, '0')), last, last, open = false, testMode = true,
+            records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Request $n")),
+        )
+        store.save(closed(1, clock.wallMillis() - 25 * day))
+        backgroundScope.launch { Retention(store, clock) { _, _ -> }.keepPurging(MutableStateFlow(30)) }
+        runCurrent()
+        assertEquals(1, store.list().size)
+
+        // The phone slept for six days: the wall clock moved on, the coroutines' clock did not.
+        clock.base += 6 * day
+        advanceTimeBy(hour)
+        runCurrent()
+        assertTrue(store.list().isEmpty())
+
+        store.save(closed(2, clock.wallMillis()))
+        clock.base -= 3 * day
+        advanceTimeBy(hour)
+        runCurrent()
+        assertTrue(store.list().isEmpty())
+    }
+}
 ```
 
 Create `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/MemoryArchiveTest.kt`, which checks that the archive in memory gives `read`'s rows in the order of the ids, as the port says and plan 7C's archive does:
@@ -6100,7 +6530,7 @@ class MemoryArchiveTest {
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: FAIL, the compiler reports `Unresolved reference 'readShards'`, `'ShardRead'`, `'ArchiveNote'`, `'Searchable'`, `'PastUnavailableException'` and `'ConversationLookup'`.
+Expected: FAIL, the compiler reports `Unresolved reference 'readShards'`, `'ShardRead'`, `'ArchiveNote'`, `'Searchable'`, `'PastUnavailableException'`, `'ConversationLookup'`, `'CONVERSATION_WORDS'` and `'plainBytes'`.
 
 - [ ] **Step 3: The port, the store and the search on the index**
 
@@ -6272,7 +6702,10 @@ interface ConversationStore {
 
     suspend fun delete(id: ConversationId)
 
-    /** Deletes every conversation, the open one too, the index and the archive's key (design 9.7). */
+    /**
+     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). When
+     * it throws, it has marked nothing, and every conversation stays as the archive has it.
+     */
     suspend fun deleteAll()
 
     /**
@@ -6385,9 +6818,11 @@ enum class ArchiveNote {
  * changed the archive, so the memory is dropped and the next call reads the archive again; an index that has failed stays
  * failed until its next try, because it holds nothing of the archive. A conversation that this process
  * deleted is never written again, also when its deletion did not complete, because the owner asked for it (design 9.7): an
- * older snapshot that a holder saves, or closes in [reopen], after "delete history" or a deletion of the conversation is
- * left out, and when the store reads the archive again and finds such a conversation, it deletes it again before it shows
- * anything.
+ * older snapshot that a holder saves, or closes in [reopen], after a deletion of the conversation is left out, and when the
+ * store reads the archive again and finds such a conversation, it deletes it again before it shows anything. "Delete
+ * history" ([deleteAll]) works on the archive alone, every row and the index in one transaction and then the key, so it has
+ * one outcome whatever the store holds: after it completed, no snapshot of a conversation that this process held is written
+ * again; when it did not complete, it marks nothing, and every conversation stays as the archive has it.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -6432,13 +6867,14 @@ class ArchivedConversationStore(
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val mutex = Mutex()
 
-    // Both are null until a call reads the archive, and again after a change that did not complete; they are set and
-    // dropped together, under the lock.
+    // Both are null until a call reads the archive, and again after a change that did not complete, under the lock; a
+    // failed index stays with its next try (forget).
     private var opened: Opened? = null
     private var past: Past? = null
 
     // Every conversation that this process read from the archive or wrote to it, so that a snapshot of it may be held
-    // outside the store; and those of them that it deleted, which it never writes or shows again.
+    // outside the store; and those that it deleted, one by one or by a "delete history" that completed, which it never
+    // writes or shows again.
     private val held = mutableSetOf<ConversationId>()
     private val deleted = mutableSetOf<ConversationId>()
 
@@ -6483,7 +6919,6 @@ class ArchivedConversationStore(
 
     override suspend fun deleteAll() = mutex.withLock {
         generation++
-        deleted += held
         stopWork()
         try {
             archive.deleteAll()
@@ -6491,6 +6926,8 @@ class ArchivedConversationStore(
             forget()
             throw e
         }
+        // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
+        deleted += held
         (past as? Past.Failed)?.retry?.cancel()
         opened = Opened(null, null)
         past = ready(PastIndex.EMPTY)
@@ -6614,7 +7051,7 @@ class ArchivedConversationStore(
      */
     private suspend fun loaded(): Opened {
         opened?.let { return it }
-        val entry = archive.readOpen()
+        val entry = archive.readOpen()?.let(::checked)
         var snapshot: ConversationSnapshot? = null
         var unknown: ArchiveHeader? = null
         when (entry) {
@@ -6732,7 +7169,7 @@ class ArchivedConversationStore(
         val failed = HashSet<String>()
         try {
             for (page in archive.closedIds().chunked(REBUILD_PAGE)) {
-                for (entry in archive.read(page)) {
+                for (entry in archive.read(page).map(::checked)) {
                     if (entry.header.open) continue
                     when (entry) {
                         is ArchiveEntry.Unknown -> builder.keep(KeptRow(entry.header.id, entry.header.lastMillis))
@@ -6787,7 +7224,7 @@ class ArchivedConversationStore(
         val closed = wanted.filter { it != open?.id }
         if (closed.isEmpty()) return found
         val failed = HashSet<String>()
-        for (entry in archive.read(closed.map { it.value })) {
+        for (entry in archive.read(closed.map { it.value }).map(::checked)) {
             when (entry) {
                 is ArchiveEntry.Unknown -> Unit
                 is ArchiveEntry.Unreadable -> failed += entry.header.id
@@ -6827,6 +7264,18 @@ class ArchivedConversationStore(
         if (changes.isEmpty) IndexWrite.Keep else IndexWrite.Update(encoded(changes.put), changes.gone.mapTo(HashSet()) { it.toString() })
 
     private fun encoded(shards: List<IndexShard>): Map<String, ByteArray> = shards.associate { it.number.toString() to PastIndexCodec.encode(it) }
+
+    // A row that this version cannot read is kept for a later version only when its id is a conversation's; any other comes
+    // only from a write from outside Kestrel, and fails as a row that does not decode, so that a kept row's id is bounded.
+    private fun checked(entry: ArchiveEntry): ArchiveEntry =
+        if (entry is ArchiveEntry.Unknown && !isConversationId(entry.header.id)) ArchiveEntry.Unreadable(entry.header) else entry
+
+    private fun isConversationId(id: String): Boolean = try {
+        ConversationId(id)
+        true
+    } catch (e: IllegalArgumentException) {
+        false
+    }
 
     // The row's plain fields are the truth for whether the conversation is open and for its times, which the stamp and
     // retention count, so that a rebuilt index is always in step with the rows that it read.
@@ -7093,15 +7542,808 @@ class HistorySearch(
 }
 ```
 
+Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt` with:
+
+```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.conversation.model.CommandRecord
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.ConversationSnapshot
+
+/**
+ * One command as the search sees it (design 9.4 of sub-project 7): where it is, when it was given (wall clock), and its
+ * words, as the ascending positions of its texts' folded words in its index's [SearchIndex.words]. toString prints only
+ * counts.
+ */
+class IndexedRecord(val ref: RecordRef, val atWall: Long, val words: IntArray) {
+    override fun toString(): String = "IndexedRecord(record=${ref.record}, words=${words.size})"
+}
+
+/**
+ * The folded words of some records (design 9.2 and 9.4 of sub-project 7): [words], each folded word once and in ascending
+ * order, and one [IndexedRecord] per record that holds a word, whose positions point into [words]. A record's texts are
+ * folded once, when it enters an index, within the bounds of one conversation ([Builder.add]), so a search folds only its
+ * query, finds the positions of the words that count for each query word once
+ * per index, and then compares positions. The folded words are the owner's words and Kestrel's, so an index lives in memory
+ * or encrypted in the archive, never in a log. An index never changes: [plus] and [without] give a new one. toString prints
+ * only counts.
+ */
+class SearchIndex private constructor(val words: List<String>, val records: List<IndexedRecord>) {
+    /** The position of [word] in [words], or a negative number when the index does not hold it. */
+    fun position(word: String): Int = words.binarySearch(word)
+
+    /** The positions of the words that start with [letter], which lie together because [words] are in order. */
+    fun startingWith(letter: Char): IntRange {
+        val first = lowerBound(letter.toString())
+        val end = if (letter == Char.MAX_VALUE) words.size else lowerBound((letter + 1).toString())
+        return first until end
+    }
+
+    /** The folded words of [record], one of this index's records. */
+    fun wordsOf(record: IndexedRecord): List<String> = record.words.map { words[it] }
+
+    /** The most plain bytes that this index's words and records take in a shard (`PastIndexCodec`). */
+    val plainBytes: Long by lazy { words.sumOf(PastIndexCodec::wordBytes) + records.sumOf { PastIndexCodec.recordBytes(it.words.size) } }
+
+    /** This index with [other]'s records, which replace this index's records of the same conversations. */
+    operator fun plus(other: SearchIndex): SearchIndex {
+        if (other.records.isEmpty()) return this
+        val replaced = other.records.mapTo(HashSet()) { it.ref.conversation }
+        val kept = without(replaced)
+        val merged = merged(kept.words, other.words)
+        return SearchIndex(merged, kept.moved(merged) + other.moved(merged))
+    }
+
+    /** This index without the records of [conversations], and without the words that only those records held. */
+    fun without(conversations: Set<ConversationId>): SearchIndex {
+        if (records.none { it.ref.conversation in conversations }) return this
+        val kept = records.filter { it.ref.conversation !in conversations }
+        val used = kept.flatMapTo(sortedSetOf()) { record -> record.words.asIterable() }.toIntArray()
+        return SearchIndex(used.map { words[it] }, kept.map { IndexedRecord(it.ref, it.atWall, positions(it.words, used)) })
+    }
+
+    override fun toString(): String = "SearchIndex(words=${words.size}, records=${records.size})"
+
+    /**
+     * Builds an index one conversation at a time, as a rebuild reads them (design 9.2): each word gets a number when it
+     * first comes, and [build] sorts the words once and turns the numbers into positions, so that no conversation is kept
+     * after it was added. A word that [shared] already holds, from another builder, is taken from it, so that the words of
+     * several indexes are kept once in memory. toString prints only counts.
+     */
+    class Builder(private val shared: MutableMap<String, String> = HashMap()) {
+        private val numbers = HashMap<String, Int>()
+        private val records = ArrayList<IndexedRecord>()
+
+        /** The most plain bytes that the words and records added so far take in a shard, as [SearchIndex.plainBytes] counts them. */
+        var plainBytes = 0L
+            private set
+
+        /**
+         * Adds [conversation]'s records within the bounds of one conversation (design 9.2 and 9.4): its records in order,
+         * each record's words in the order of its texts, at most [CONVERSATION_WORDS] different words and at most
+         * [CONVERSATION_POSITIONS] positions in all. A word that would pass a bound is left out, and so is a record that is
+         * left without words, because it can match no query. Returns how many word positions the conversation holds.
+         */
+        fun add(conversation: ConversationSnapshot): Int {
+            val own = HashSet<String>()
+            var positions = 0
+            for (record in conversation.records) {
+                if (positions == CONVERSATION_POSITIONS) break
+                val found = ArrayList<Int>()
+                for (word in folded(record)) {
+                    if (positions == CONVERSATION_POSITIONS) break
+                    if (word !in own) {
+                        if (own.size == CONVERSATION_WORDS) continue
+                        own += word
+                    }
+                    found += number(word)
+                    positions++
+                }
+                if (found.isEmpty()) continue
+                records += IndexedRecord(RecordRef(conversation.id, record.number), record.atWall, found.toIntArray())
+                plainBytes += PastIndexCodec.recordBytes(found.size)
+            }
+            return positions
+        }
+
+        fun build(): SearchIndex {
+            if (records.isEmpty()) return EMPTY
+            val words = numbers.keys.sorted()
+            val positions = IntArray(words.size)
+            words.forEachIndexed { position, word -> positions[numbers.getValue(word)] = position }
+            return SearchIndex(words, records.map { record -> IndexedRecord(record.ref, record.atWall, IntArray(record.words.size) { positions[record.words[it]] }.apply { sort() }) })
+        }
+
+        override fun toString(): String = "SearchIndex.Builder(words=${numbers.size}, records=${records.size})"
+
+        private fun number(word: String): Int = numbers[word] ?: shared.getOrPut(word) { word }.let { kept ->
+            plainBytes += PastIndexCodec.wordBytes(kept)
+            numbers.size.also { numbers[kept] = it }
+        }
+    }
+
+    // This index's records with their positions in [to], a list in order that holds every word of this index; the
+    // positions keep their order, because both lists are in the same order.
+    private fun moved(to: List<String>): List<IndexedRecord> {
+        val moves = IntArray(words.size) { to.binarySearch(words[it]) }
+        return records.map { record -> IndexedRecord(record.ref, record.atWall, IntArray(record.words.size) { moves[record.words[it]] }) }
+    }
+
+    private fun lowerBound(key: String): Int = words.binarySearch(key).let { if (it >= 0) it else -it - 1 }
+
+    companion object {
+        /**
+         * The longest folded word that the index holds, in characters: no name or topic is longer, and the longer runs of
+         * letters and digits are tokens, codes and numbers, of which a near miss cannot be judged anyway. A longer word is
+         * not searchable (design 9.4). With [CONVERSATION_WORDS] and [CONVERSATION_POSITIONS], it bounds what one
+         * conversation adds to a shard, so that every shard stays far under the bound that its decoder allows (design 9.2).
+         */
+        const val MAX_WORD_LENGTH = 40
+
+        /**
+         * The most different words that the index holds of one conversation: about 30 commands of heavy use (design R3).
+         * The words of a longer conversation that come after them are not searchable; those that it already holds are.
+         */
+        const val CONVERSATION_WORDS = 10_000
+
+        /**
+         * The most word positions that the index holds of one conversation, a fifth of a shard: about 65 commands of heavy
+         * use. The records after them are not searchable. Without it, a conversation continued again and again would carry
+         * its shard past its decoder's bound by its records alone.
+         */
+        const val CONVERSATION_POSITIONS = 20_000
+
+        val EMPTY = SearchIndex(emptyList(), emptyList())
+
+        /** The index of the records of [conversations]: the folded words of every text that each record holds. */
+        fun of(conversations: List<ConversationSnapshot>): SearchIndex {
+            val builder = Builder()
+            for (conversation in conversations) builder.add(conversation)
+            return builder.build()
+        }
+
+        /**
+         * An index read back from the archive (`PastIndexCodec`): [words] must ascend without repeats, and each record's
+         * positions must ascend within them; otherwise it throws [IllegalArgumentException].
+         */
+        fun restored(words: List<String>, records: List<IndexedRecord>): SearchIndex {
+            require((1 until words.size).all { words[it - 1] < words[it] }) { "The index's words are not in order" }
+            for (record in records) {
+                val positions = record.words
+                require(positions.isEmpty() || (positions.first() >= 0 && positions.last() < words.size)) { "A record's word is outside the index" }
+                require((1 until positions.size).all { positions[it - 1] < positions[it] }) { "A record's words are not in order" }
+            }
+            return SearchIndex(words, records)
+        }
+
+        /**
+         * The folded words of every text that [record] holds, each once, in the order of its texts: its request and answer,
+         * its apps' labels, its data notes, its lines, its ledger and its checklist's items, folded with `Normalizer.words`,
+         * so that letter case, diacritics and the two Serbian scripts fold as the matcher folds them. A word longer than
+         * [MAX_WORD_LENGTH] is left out.
+         */
+        fun folded(record: CommandRecord): Set<String> {
+            val texts = listOfNotNull(record.request, record.answer) +
+                record.apps.map { it.label } +
+                record.data.map { it.text } +
+                record.lines.map { it.text } +
+                record.ledger +
+                record.checklist?.items?.map { it.text }.orEmpty()
+            val words = LinkedHashSet<String>()
+            for (text in texts) Normalizer.words(text).filterTo(words) { it.length <= MAX_WORD_LENGTH }
+            return words
+        }
+
+        // The positions of [positions] in [used], which holds all of them in order.
+        private fun positions(positions: IntArray, used: IntArray): IntArray = IntArray(positions.size) { used.binarySearch(positions[it]) }
+
+        // The words of [first] and [second], two lists in order, each word once, in order.
+        private fun merged(first: List<String>, second: List<String>): List<String> {
+            val merged = ArrayList<String>(first.size + second.size)
+            var i = 0
+            var j = 0
+            while (i < first.size || j < second.size) {
+                val order = if (i == first.size) 1 else if (j == second.size) -1 else first[i].compareTo(second[j])
+                if (order <= 0) merged += first[i++] else merged += second[j++]
+                if (order == 0) j++
+            }
+            return merged
+        }
+    }
+}
+```
+
+Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/IndexShard.kt` with:
+
+```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.agent.observe.ScreenText
+import dev.kestrel.conversation.model.ConversationSnapshot
+
+/**
+ * A part of the index of past conversations (design 9.2 of sub-project 7): some closed conversations and kept rows, with
+ * what the list shows of each conversation ([conversations], the newest last change first), its records' words ([search])
+ * and the kept rows ([kept]). The archive keeps each shard encrypted in a row of its own, named by its [number], so that a
+ * close re-encodes and re-encrypts only the newest shard, which holds at most about [PastIndex.SHARD_POSITIONS] word
+ * positions and [PastIndex.SHARD_BYTES] bytes before Deflate, and one conversation more, however long the retention and
+ * however heavy the use. A shard never changes: [with], [keeping] and [without]
+ * give a new one, or this one when nothing changes. toString prints only counts.
+ */
+class IndexShard private constructor(val number: Int, val conversations: List<PastConversation>, val search: SearchIndex, val kept: List<KeptRow>) {
+    /** What this shard counts of the closed rows: its part of the index's stamp. */
+    val stamp: IndexStamp by lazy {
+        val last = conversations.map { it.lastWall } + kept.map { it.lastWall }
+        IndexStamp(last.size, last.maxOrNull() ?: 0, last.sum())
+    }
+
+    /** How many word positions the shard's records hold, which its size follows. */
+    val positions: Int by lazy { search.records.sumOf { it.words.size } }
+
+    /** The most bytes that the shard takes in `PastIndexCodec`'s format before Deflate; a shard is full by it too. */
+    val plainBytes: Long by lazy {
+        PastIndexCodec.SHARD_HEADER_BYTES + search.plainBytes + conversations.sumOf(PastIndexCodec::conversationBytes) + kept.sumOf(PastIndexCodec::keptBytes)
+    }
+
+    /** Whether the shard holds nothing, so that the archive keeps no row for it. */
+    val isEmpty: Boolean get() = conversations.isEmpty() && kept.isEmpty()
+
+    /** This shard with [snapshots], closed conversations, each replacing its earlier entry. */
+    fun with(snapshots: List<ConversationSnapshot>): IndexShard {
+        if (snapshots.isEmpty()) return this
+        val ids = snapshots.mapTo(HashSet()) { it.id }
+        val values = ids.mapTo(HashSet()) { it.value }
+        val listed = (conversations.filter { it.id !in ids } + snapshots.map(::listed)).sortedByDescending { it.lastWall }
+        return IndexShard(number, listed, search.without(ids) + SearchIndex.of(snapshots), kept.filter { it.id !in values })
+    }
+
+    /** This shard with [rows] kept, each replacing its earlier entry. */
+    fun keeping(rows: List<KeptRow>): IndexShard {
+        if (rows.isEmpty()) return this
+        val ids = rows.mapTo(HashSet()) { it.id }
+        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
+        return IndexShard(number, conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids } + rows)
+    }
+
+    /** This shard without the conversations and kept rows [ids]. */
+    fun without(ids: Set<String>): IndexShard {
+        val gone = conversations.filter { it.id.value in ids }.mapTo(HashSet()) { it.id }
+        if (gone.isEmpty() && kept.none { it.id in ids }) return this
+        return IndexShard(number, conversations.filter { it.id !in gone }, search.without(gone), kept.filter { it.id !in ids })
+    }
+
+    /** The ids of the conversations and kept rows whose last change is before [oldest] or after [newest] (design 9.3). */
+    fun outside(oldest: Long, newest: Long): Set<String> {
+        fun out(last: Long) = last < oldest || last > newest
+        return conversations.filter { out(it.lastWall) }.mapTo(HashSet()) { it.id.value } + kept.filter { out(it.lastWall) }.map { it.id }
+    }
+
+    override fun toString(): String = "IndexShard(number=$number, conversations=${conversations.size}, kept=${kept.size}, $search)"
+
+    companion object {
+        fun empty(number: Int): IndexShard = IndexShard(number, emptyList(), SearchIndex.EMPTY, emptyList())
+
+        /**
+         * A shard read back from the archive (`PastIndexCodec`): its conversations must come the newest last change first,
+         * each id once, with no more records in [search] than each counts commands, each record once, and no record of
+         * another conversation; otherwise it throws [IllegalArgumentException].
+         */
+        fun restored(number: Int, conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): IndexShard {
+            require(number >= 0) { "A shard's number is negative" }
+            require((1 until conversations.size).all { conversations[it - 1].lastWall >= conversations[it].lastWall }) { "The conversations are not in order" }
+            val ids = conversations.map { it.id.value } + kept.map { it.id }
+            require(ids.toSet().size == ids.size) { "A conversation is in the shard twice" }
+            require(search.records.map { it.ref }.toSet().size == search.records.size) { "A record is in the shard twice" }
+            val records = search.records.groupingBy { it.ref.conversation }.eachCount()
+            val known = conversations.mapTo(HashSet()) { it.id }
+            require(records.keys.all { it in known }) { "A record belongs to no conversation of the shard" }
+            require(conversations.all { (records[it.id] ?: 0) <= it.commands }) { "A conversation has more records than commands" }
+            return IndexShard(number, conversations, search, kept)
+        }
+
+        /** A shard that a [PastIndex.Builder] made: its conversations, in any order, and its records in [search]. */
+        internal fun built(number: Int, conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): IndexShard =
+            IndexShard(number, conversations.sortedByDescending { it.lastWall }, search, kept)
+
+        /** What the list shows of [snapshot], its first request cut at [PastIndex.FIRST_REQUEST] characters. */
+        internal fun listed(snapshot: ConversationSnapshot): PastConversation = PastConversation(
+            snapshot.id, snapshot.openedAtWall, snapshot.lastWall, snapshot.records.size,
+            snapshot.records.firstOrNull()?.request?.let { ScreenText.cut(it, PastIndex.FIRST_REQUEST) },
+        )
+    }
+}
+```
+
+Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt` with:
+
+```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.ConversationSnapshot
+
+/**
+ * A closed conversation as the index of past conversations holds it (design 9.2 of sub-project 7): what the list shows
+ * (design 9.5), with its first request cut at [PastIndex.FIRST_REQUEST] characters, and when it changed, so that the list,
+ * retention and the search's reach need no body. Its records' words are in its shard's [IndexShard.search]. toString
+ * prints only counts.
+ */
+data class PastConversation(val id: ConversationId, val openedAtWall: Long, val lastWall: Long, val commands: Int, val firstRequest: String?) {
+    override fun toString(): String = "PastConversation(commands=$commands, firstRequest=${firstRequest?.length} chars)"
+}
+
+/**
+ * A closed row that this version cannot read, because its format is newer (design 9.2): the index counts it, so that it
+ * stays in step with the table, and retention purges it by its last change. Its id is at most [MAX_ID_LENGTH] characters,
+ * so that a kept row adds little to its shard; the store keeps only rows whose id is a conversation's.
+ */
+data class KeptRow(val id: String, val lastWall: Long) {
+    init {
+        require(id.length <= MAX_ID_LENGTH) { "A kept row's id is too long" }
+    }
+
+    companion object {
+        /** The length of a conversation's id. */
+        const val MAX_ID_LENGTH = 32
+    }
+}
+
+/**
+ * What an index counts of the table's closed rows (design 9.2): how many there are, their newest last change and the sum of
+ * their last changes, each 0 without rows. The archive gives the table's own stamp, and an index whose stamp differs is out
+ * of step and is rebuilt.
+ */
+data class IndexStamp(val closed: Int, val newest: Long, val total: Long)
+
+/**
+ * The index of past conversations (design 9.2 of sub-project 7): for each closed conversation that this version can read,
+ * what the list shows ([conversations], the newest last change first) and its records' words for the search ([searches]);
+ * and the closed rows that it cannot read ([kept]). The open conversation is never in it. It is made of [shards], which
+ * the archive keeps encrypted, each in a row of its own. A conversation that closes goes into the newest shard, and a new
+ * shard starts when the newest holds [shardPositions] word positions or more, or [SHARD_BYTES] bytes before Deflate, so
+ * that every change of the closed conversations writes only the few shards that it changed ([changesFrom]), in the same
+ * transaction, and every shard decodes again: a conversation or a kept row enters a shard one at a time, and adds at most
+ * `PastIndexCodec.MOST_CONVERSATION_BYTES` to it. The store keeps the
+ * index in memory. An index never changes: [with], [keeping] and [without] give a new one, which shares the shards that did
+ * not change, or this one when nothing changes. toString prints only counts.
+ */
+class PastIndex private constructor(shards: Collection<IndexShard>, val shardPositions: Int) {
+    /** The shards, the newest first; none is empty. */
+    val shards: List<IndexShard> = shards.filter { !it.isEmpty }.sortedByDescending { it.number }
+
+    val conversations: List<PastConversation> by lazy { this.shards.flatMap { it.conversations }.sortedByDescending { it.lastWall } }
+
+    /** The shards' words, one index per shard, as the search ranks them. */
+    val searches: List<SearchIndex> get() = shards.map { it.search }
+
+    val kept: List<KeptRow> by lazy { this.shards.flatMap { it.kept } }
+
+    /** What this index counts of the closed rows, which must be the table's stamp. */
+    val stamp: IndexStamp by lazy {
+        val parts = this.shards.map { it.stamp }
+        IndexStamp(parts.sumOf { it.closed }, parts.maxOfOrNull { it.newest } ?: 0, parts.sumOf { it.total })
+    }
+
+    // The number of the shard that holds each conversation and kept row, by its id.
+    private val homes: Map<String, Int> by lazy {
+        val homes = HashMap<String, Int>()
+        for (shard in this.shards) {
+            for (conversation in shard.conversations) homes[conversation.id.value] = shard.number
+            for (row in shard.kept) homes[row.id] = shard.number
+        }
+        homes
+    }
+
+    private val known: Set<ConversationId> by lazy { conversations.mapTo(HashSet()) { it.id } }
+
+    operator fun contains(id: ConversationId): Boolean = id in known
+
+    /** This index with [snapshots], each a closed conversation that replaces its earlier entry, in the newest shard. */
+    fun with(snapshots: List<ConversationSnapshot>): PastIndex =
+        snapshots.fold(this) { index, snapshot -> index.into(snapshot.id.value) { it.with(listOf(snapshot)) } }
+
+    /** This index with [rows] kept, each replacing its earlier entry, in the newest shard. */
+    fun keeping(rows: List<KeptRow>): PastIndex = rows.fold(this) { index, row -> index.into(row.id) { it.keeping(listOf(row)) } }
+
+    /** This index without the conversations and kept rows [ids]. */
+    fun without(ids: Set<String>): PastIndex {
+        val numbers = ids.mapNotNullTo(HashSet()) { homes[it] }
+        if (numbers.isEmpty()) return this
+        return PastIndex(shards.map { if (it.number in numbers) it.without(ids) else it }, shardPositions)
+    }
+
+    /** The ids of the conversations and kept rows whose last change is before [oldest] or after [newest] (design 9.3). */
+    fun outside(oldest: Long, newest: Long): Set<String> = shards.flatMapTo(HashSet()) { it.outside(oldest, newest) }
+
+    /** What the archive must write to go from [before] to this index: the shards that are new or changed, and those that went. */
+    fun changesFrom(before: PastIndex): ShardChanges {
+        val earlier = before.shards.associateBy { it.number }
+        val numbers = shards.mapTo(HashSet()) { it.number }
+        return ShardChanges(shards.filter { earlier[it.number] !== it }, earlier.keys.filterTo(HashSet()) { it !in numbers })
+    }
+
+    override fun toString(): String = "PastIndex(shards=${shards.size}, conversations=${conversations.size}, kept=${kept.size})"
+
+    // This index with the entry [id] taken out of the shard that holds it and [added] to the newest shard, or to a new one
+    // when the newest is full.
+    private fun into(id: String, added: (IndexShard) -> IndexShard): PastIndex {
+        val left = without(setOf(id)).shards
+        val newest = left.firstOrNull()?.takeIf { !full(it.positions, it.plainBytes, shardPositions) } ?: IndexShard.empty((left.firstOrNull()?.number ?: -1) + 1)
+        return PastIndex(left.filter { it.number != newest.number } + added(newest), shardPositions)
+    }
+
+    /**
+     * Builds an index one closed row at a time, as a rebuild reads them, the oldest last change first (design 9.2): each
+     * conversation is folded into the newest shard's words as it is added, and a new shard starts when the newest is full,
+     * so that a rebuild keeps no body after it read it, and the newest conversations are in the newest shard. toString
+     * prints only counts.
+     */
+    class Builder(private val shardPositions: Int = SHARD_POSITIONS) {
+        private inner class Shard(val number: Int) {
+            val conversations = ArrayList<PastConversation>()
+            val search = SearchIndex.Builder(words)
+            val kept = ArrayList<KeptRow>()
+            var positions = 0
+
+            // The shard's plain bytes but its words' and records', which its search counts.
+            var listedBytes = PastIndexCodec.SHARD_HEADER_BYTES
+
+            val full: Boolean get() = full(positions, listedBytes + search.plainBytes, shardPositions)
+        }
+
+        private val words = HashMap<String, String>()
+        private val shards = mutableListOf(Shard(0))
+
+        fun add(snapshot: ConversationSnapshot) {
+            val shard = newest()
+            val listed = IndexShard.listed(snapshot)
+            shard.conversations += listed
+            shard.listedBytes += PastIndexCodec.conversationBytes(listed)
+            shard.positions += shard.search.add(snapshot)
+        }
+
+        fun keep(row: KeptRow) {
+            val shard = newest()
+            shard.kept += row
+            shard.listedBytes += PastIndexCodec.keptBytes(row)
+        }
+
+        fun build(): PastIndex = PastIndex(shards.map { IndexShard.built(it.number, it.conversations, it.search.build(), it.kept) }, shardPositions)
+
+        private fun newest(): Shard = shards.last().takeIf { !it.full } ?: Shard(shards.size).also { shards += it }
+
+        override fun toString(): String = "PastIndex.Builder(shards=${shards.size})"
+    }
+
+    companion object {
+        /** The length at which the index keeps a conversation's first request: the list's (design 9.5). */
+        const val FIRST_REQUEST = 80
+
+        /** The word positions at which the newest shard is full: about 200 KB encoded, a close's whole work (design R3). */
+        const val SHARD_POSITIONS = 100_000
+
+        /**
+         * The bytes before Deflate (`IndexShard.plainBytes`) at which the newest shard is full, whatever its positions: long
+         * words fill a shard by their letters before they fill it by their positions. A shard of 30 heavy days' words is
+         * full by its positions at about 0.85 MB, so this bound only splits the shards of unusual text.
+         */
+        const val SHARD_BYTES = 2_000_000
+
+        val EMPTY = PastIndex(emptyList(), SHARD_POSITIONS)
+
+        // Whether a shard with [positions] and [plainBytes] takes no more conversations or kept rows.
+        private fun full(positions: Int, plainBytes: Long, shardPositions: Int): Boolean = positions >= shardPositions || plainBytes >= SHARD_BYTES
+
+        /** An index without conversations whose shards are full at [shardPositions]. */
+        fun empty(shardPositions: Int): PastIndex = PastIndex(emptyList(), shardPositions)
+
+        /** The index of the closed conversations [snapshots], the oldest first, and the rows [kept]. */
+        fun of(snapshots: List<ConversationSnapshot>, kept: List<KeptRow>, shardPositions: Int = SHARD_POSITIONS): PastIndex {
+            val builder = Builder(shardPositions)
+            snapshots.forEach(builder::add)
+            kept.forEach(builder::keep)
+            return builder.build()
+        }
+
+        /**
+         * An index read back from the archive, shard by shard: each number once, and each conversation and kept row in one
+         * shard only; otherwise it throws [IllegalArgumentException].
+         */
+        fun restored(shards: List<IndexShard>, shardPositions: Int = SHARD_POSITIONS): PastIndex {
+            require(shards.map { it.number }.toSet().size == shards.size) { "A shard is in the index twice" }
+            val ids = HashSet<String>()
+            for (shard in shards) {
+                for (id in shard.conversations.map { it.id.value } + shard.kept.map { it.id }) require(ids.add(id)) { "A conversation is in two shards" }
+            }
+            return PastIndex(shards, shardPositions)
+        }
+    }
+}
+
+/** What a change writes of the index: the shards to store, each replacing its row, and the numbers of those whose rows go. */
+class ShardChanges(val put: List<IndexShard>, val gone: Set<Int>) {
+    val isEmpty: Boolean get() = put.isEmpty() && gone.isEmpty()
+
+    override fun toString(): String = "ShardChanges(put=${put.size}, gone=${gone.size})"
+}
+```
+
+Replace the whole `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndexCodec.kt` with:
+
+```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.conversation.model.ConversationId
+import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.util.zip.DataFormatException
+import java.util.zip.DeflaterOutputStream
+import java.util.zip.Inflater
+
+/**
+ * A shard of the index of past conversations as bytes (design 9.2 of sub-project 7), which the archive encrypts in a row of
+ * its own, named by the shard's number. One byte names the format, [FORMAT]; the rest is compressed with Deflate: every
+ * folded word of the shard once, in order; each conversation with its count of commands and the records that the index
+ * holds of it, each record's words as positions in that
+ * list, each written as its distance from the one before; and the kept rows. Every count and distance is a number of
+ * variable length, so that a full shard is about 200 KB, and 30 days of heavy use make about 340 KB in all (design R3).
+ * Bytes in another format, or that do not decode, throw [IllegalArgumentException], and the store rebuilds the index from
+ * the conversations. So do forged or damaged bytes that would fill the memory: the decoder inflates at most
+ * [MAX_PLAIN_BYTES], and allocates for a count only as many elements as the bytes that are left can hold. Every shard that
+ * Kestrel writes decodes again, by construction: `SearchIndex` bounds what one conversation adds to a shard
+ * ([MOST_CONVERSATION_BYTES]), a shard is full at [PastIndex.SHARD_BYTES], and [encode] refuses a shard past
+ * [MAX_PLAIN_BYTES].
+ */
+object PastIndexCodec {
+    const val FORMAT: Byte = 1
+
+    // A non-negative Int in 7 bits per byte: 5 bytes at most, the fifth with only the 3 bits that are left (28 to 30).
+    private const val MAX_NUMBER_BYTES = 5
+    private const val MAX_LAST_BYTE = 0x07
+    private const val LONG_BYTES = 8
+
+    /** The most bytes of a shard's three counts: of its words, of its conversations and of its kept rows. */
+    const val SHARD_HEADER_BYTES = 3L * MAX_NUMBER_BYTES
+
+    /**
+     * The most bytes that one conversation adds to a shard: its listing (its id, its two times, its first request cut at
+     * [PastIndex.FIRST_REQUEST] characters, each of at most 3 bytes in UTF-8, and its two counts), at most
+     * [SearchIndex.CONVERSATION_WORDS] new words of at most [SearchIndex.MAX_WORD_LENGTH] characters, and at most
+     * [SearchIndex.CONVERSATION_POSITIONS] positions, each in a record of its own at most. About 1.7 MB; a kept row adds less.
+     */
+    const val MOST_CONVERSATION_BYTES: Long =
+        4L * MAX_NUMBER_BYTES + 2 * LONG_BYTES + 32 + 3L * (PastIndex.FIRST_REQUEST + 1) +
+            SearchIndex.CONVERSATION_WORDS * (MAX_NUMBER_BYTES + 3L * SearchIndex.MAX_WORD_LENGTH) +
+            SearchIndex.CONVERSATION_POSITIONS * (3L * MAX_NUMBER_BYTES + LONG_BYTES)
+
+    /**
+     * The most bytes that a shard may inflate to. A shard takes conversations and kept rows, one at a time, while it is under
+     * [PastIndex.SHARD_BYTES] before Deflate, so it holds at most [PastIndex.SHARD_BYTES] and [MOST_CONVERSATION_BYTES]:
+     * about 3.7 MB. Four times that, about 14.8 MB, leaves a margin that only damaged or forged bytes reach, and [encode]
+     * refuses a shard past it, a fault of Kestrel's code, before the archive stores it.
+     */
+    const val MAX_PLAIN_BYTES: Int = (4 * (PastIndex.SHARD_BYTES + MOST_CONVERSATION_BYTES)).toInt()
+
+    /** The most bytes that [word] takes in a shard's list of words. */
+    fun wordBytes(word: String): Long = MAX_NUMBER_BYTES + utf8Bytes(word)
+
+    /** The most bytes that a record of [positions] word positions takes: its number, its time, its count and its positions. */
+    fun recordBytes(positions: Int): Long = 2L * MAX_NUMBER_BYTES + LONG_BYTES + positions.toLong() * MAX_NUMBER_BYTES
+
+    /** The most bytes that [conversation]'s listing takes, without its records. */
+    fun conversationBytes(conversation: PastConversation): Long =
+        4L * MAX_NUMBER_BYTES + 2 * LONG_BYTES + utf8Bytes(conversation.id.value) + utf8Bytes(conversation.firstRequest.orEmpty())
+
+    /** The most bytes that [row] takes. */
+    fun keptBytes(row: KeptRow): Long = MAX_NUMBER_BYTES + LONG_BYTES + utf8Bytes(row.id)
+
+    fun encode(shard: IndexShard): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        bytes.write(FORMAT.toInt())
+        DataOutputStream(BufferedOutputStream(DeflaterOutputStream(bytes), BUFFER_BYTES)).use { out ->
+            out.number(shard.search.words.size)
+            for (word in shard.search.words) out.text(word)
+            val records = shard.search.records.groupBy { it.ref.conversation }
+            out.number(shard.conversations.size)
+            for (conversation in shard.conversations) {
+                out.text(conversation.id.value)
+                out.writeLong(conversation.openedAtWall)
+                out.writeLong(conversation.lastWall)
+                out.optionalText(conversation.firstRequest)
+                out.number(conversation.commands)
+                val own = records[conversation.id].orEmpty()
+                out.number(own.size)
+                for (record in own) {
+                    out.number(record.ref.record)
+                    out.writeLong(record.atWall)
+                    out.number(record.words.size)
+                    var previous = -1
+                    for (position in record.words) {
+                        out.number(position - previous - 1)
+                        previous = position
+                    }
+                }
+            }
+            out.number(shard.kept.size)
+            for (row in shard.kept) {
+                out.text(row.id)
+                out.writeLong(row.lastWall)
+            }
+            check(out.size() <= MAX_PLAIN_BYTES) { "A shard of the index is larger than its decoder allows" }
+        }
+        return bytes.toByteArray()
+    }
+
+    /**
+     * The shard [number] from [bytes], which the archive read from the row of that number. A word that [words] already holds,
+     * from an earlier shard, is taken from it, so that the index keeps each word once in memory however many shards hold it.
+     */
+    fun decode(number: Int, bytes: ByteArray, words: MutableMap<String, String> = HashMap()): IndexShard {
+        require(bytes.isNotEmpty() && bytes[0] == FORMAT) { "The index is in a format that this version cannot read" }
+        val input = Reader(inflated(bytes))
+        val list = List(input.count(WORD_BYTES)) { input.text().let { word -> words.getOrPut(word) { word } } }
+        val conversations = ArrayList<PastConversation>()
+        val records = ArrayList<IndexedRecord>()
+        repeat(input.count(CONVERSATION_BYTES)) {
+            val id = ConversationId(input.text())
+            val openedAtWall = input.long()
+            val lastWall = input.long()
+            val firstRequest = input.optionalText()
+            val commands = input.number()
+            repeat(input.count(RECORD_BYTES)) {
+                val record = input.number()
+                val atWall = input.long()
+                var previous = -1
+                val positions = IntArray(input.count(POSITION_BYTES)) {
+                    previous += input.number() + 1
+                    previous
+                }
+                records += IndexedRecord(RecordRef(id, record), atWall, positions)
+            }
+            conversations += PastConversation(id, openedAtWall, lastWall, commands, firstRequest)
+        }
+        val kept = List(input.count(KEPT_BYTES)) { KeptRow(input.text(), input.long()) }
+        require(input.atEnd) { "The index has bytes after its end" }
+        return IndexShard.restored(number, conversations, SearchIndex.restored(list, records), kept)
+    }
+
+    // The fewest bytes that one element of each kind takes in format 1: a word its length; a conversation its id's length,
+    // its two times, its first request's length, its count of commands and its count of records; a record its number, its
+    // time and its count of words; a position its distance; a kept row its id's length and its time.
+    private const val WORD_BYTES = 1
+    private const val CONVERSATION_BYTES = 1 + 8 + 8 + 1 + 1 + 1
+    private const val RECORD_BYTES = 1 + 8 + 1
+    private const val POSITION_BYTES = 1
+    private const val KEPT_BYTES = 1 + 8
+
+    private const val BUFFER_BYTES = 64 * 1024
+
+    // The length of [text] in UTF-8, as encodeToByteArray writes it: a lone surrogate becomes a replacement character.
+    private fun utf8Bytes(text: String): Long {
+        var bytes = 0L
+        var index = 0
+        while (index < text.length) {
+            val char = text[index]
+            bytes += when {
+                char.code < 0x80 -> 1L
+                char.code < 0x800 -> 2L
+                char.isHighSurrogate() && index + 1 < text.length && text[index + 1].isLowSurrogate() -> 4L.also { index++ }
+                else -> 3L
+            }
+            index++
+        }
+        return bytes
+    }
+
+    // The bytes after the format byte, inflated whole: the compressed stream must end exactly where the bytes end, and
+    // inflate to at most MAX_PLAIN_BYTES, which is checked before each part is kept.
+    private fun inflated(bytes: ByteArray): ByteArray {
+        val inflater = Inflater()
+        try {
+            inflater.setInput(bytes, 1, bytes.size - 1)
+            val plain = ByteArrayOutputStream(minOf(bytes.size.toLong() * 3, MAX_PLAIN_BYTES.toLong()).toInt())
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (!inflater.finished()) {
+                val inflatedBytes = inflater.inflate(buffer)
+                require(inflatedBytes > 0 || !inflater.needsInput() && !inflater.needsDictionary()) { "The index is cut short" }
+                require(inflatedBytes <= MAX_PLAIN_BYTES - plain.size()) { "The index inflates past its bound" }
+                plain.write(buffer, 0, inflatedBytes)
+            }
+            require(inflater.remaining == 0) { "The index has bytes after its end" }
+            return plain.toByteArray()
+        } catch (e: DataFormatException) {
+            throw IllegalArgumentException("The index does not decode", e)
+        } finally {
+            inflater.end()
+        }
+    }
+
+    private fun DataOutputStream.number(value: Int) {
+        require(value >= 0) { "A number of the index is negative" }
+        var rest = value
+        while (rest >= 0x80) {
+            writeByte(rest and 0x7F or 0x80)
+            rest = rest ushr 7
+        }
+        writeByte(rest)
+    }
+
+    private fun DataOutputStream.text(value: String) {
+        val bytes = value.encodeToByteArray()
+        number(bytes.size)
+        write(bytes)
+    }
+
+    // 0 for none, else the text's length in bytes plus 1.
+    private fun DataOutputStream.optionalText(value: String?) {
+        if (value == null) {
+            number(0)
+        } else {
+            val bytes = value.encodeToByteArray()
+            number(bytes.size + 1)
+            write(bytes)
+        }
+    }
+
+    // Reads the inflated bytes directly, a number, a long or a text at a time; running past the end throws
+    // IllegalArgumentException, as every damage does.
+    private class Reader(private val bytes: ByteArray) {
+        private var at = 0
+
+        val atEnd: Boolean get() = at == bytes.size
+
+        fun number(): Int {
+            var result = 0
+            for (index in 0 until MAX_NUMBER_BYTES) {
+                val byte = next()
+                result = result or ((byte and 0x7F) shl (7 * index))
+                if (byte and 0x80 == 0) {
+                    require(index < MAX_NUMBER_BYTES - 1 || byte <= MAX_LAST_BYTE) { "A number of the index is too large" }
+                    return result
+                }
+            }
+            throw IllegalArgumentException("A number of the index is too long")
+        }
+
+        // A count of elements that each take at least [each] bytes, so that it can be no more than the bytes that are left
+        // can hold: a damaged count is refused before anything is allocated for it.
+        fun count(each: Int): Int = number().also { require(it <= (bytes.size - at) / each) { "A count of the index is larger than its bytes" } }
+
+        fun long(): Long {
+            var result = 0L
+            repeat(8) { result = result shl 8 or next().toLong() }
+            return result
+        }
+
+        fun text(): String = string(number())
+
+        fun optionalText(): String? = number().let { if (it == 0) null else string(it - 1) }
+
+        private fun string(size: Int): String {
+            require(size <= bytes.size - at) { "The index is cut short" }
+            return bytes.decodeToString(at, at + size).also { at += size }
+        }
+
+        private fun next(): Int {
+            require(at < bytes.size) { "The index is cut short" }
+            return bytes[at++].toInt() and 0xFF
+        }
+    }
+}
+```
+
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: PASS, 71 tests (`ArchivedConversationStoreTest` 39, `HistorySearchTest` 13, `PastIndexTest` 10, `MemoryArchiveTest` 1, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
+Expected: PASS, 75 tests (`ArchivedConversationStoreTest` 41, `HistorySearchTest` 13, `PastIndexTest` 12, `MemoryArchiveTest` 1, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 175`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 179`.
 
 - [ ] **Step 6: Commit**
 
@@ -8062,7 +9304,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
 - Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 31.
+Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 44 to `:core:conversation` (Task 5b 14, Task 5d 30).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -10366,7 +11608,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 175 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 190, after Tasks 5a to 5d.
+Counts: `:core:conversation` 179 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 194, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -11443,7 +12685,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 190`.
+Expected: BUILD SUCCESSFUL; `core\conversation 194`.
 
 - [ ] **Step 7: Commit**
 
@@ -11467,7 +12709,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
-Counts: `:core:conversation` 190 + 9 = 199.
+Counts: `:core:conversation` 194 + 9 = 203.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -11842,7 +13084,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 199`.
+Expected: BUILD SUCCESSFUL; `core\conversation 203`.
 
 - [ ] **Step 6: Commit**
 
@@ -11865,7 +13107,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 199 + 15 = 214. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 203 + 15 = 218. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -12999,7 +14241,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 214` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 218` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -13012,7 +14254,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 214, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 26, Task 8: 15, Task 9: 9, Task 10: 15).
+- `:core:conversation`: C₀ + 218, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 30, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
