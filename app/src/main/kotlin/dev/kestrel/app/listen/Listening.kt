@@ -1263,7 +1263,8 @@ class Listening internal constructor(
     }
 
     // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends. It takes the bar only from the
-    // final reply that it follows, and stops for good once someone else has shown a text, such as "Microphone blocked".
+    // final reply that it follows, and stops for good once someone else has shown a text, such as "Microphone blocked",
+    // which ends the window in the Rules too.
     private fun countDown(window: Feedback.FollowUp) {
         followUpTicker?.cancel()
         val reply = BarOwner.FinalReply(window.reply)

@@ -536,7 +536,7 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
-    fun next(state: State, event: Event): Step = silenceTimer(state, event, endLateAnswers(react(state, event)))
+    fun next(state: State, event: Event): Step = silenceTimer(state, event, endLateAnswers(endFollowUp(state, react(state, event))))
 
     private val STOP_WORDS = setOf("stop", "cancel")
 
@@ -1038,17 +1038,33 @@ object Rules {
     }
 
     // Design 6.6 of sub-project 7: once Kestrel has finished speaking final reply number [reply], the next utterance is a
-    // command without the name, for the window's length, with the screen on and the conversation open, outside a call,
-    // also in the paused mode. The bar counts the seconds down over the reply's text.
+    // command without the name, for the window's length, while Kestrel can hear it (followsUp), also in the paused mode.
+    // The bar counts the seconds down over the reply's text.
     private fun followUp(state: State, reply: Int): Step {
-        val opens = state.followUpMillis > 0 && state.mode != Mode.OFF && !state.inCall && state.screenOn &&
-            state.work == Work.IDLE && state.conversation.open
-        if (!opens) return Step(state)
+        if (state.followUpMillis <= 0 || state.work != Work.IDLE || !followsUp(state)) return Step(state)
         val seconds = ((state.followUpMillis + 999) / 1_000).toInt()
         return Step(
             state.copy(work = Work.FOLLOWING_UP, followUp = state.followUp + 1),
             listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(seconds, reply))),
         )
+    }
+
+    // Whether a follow-up window may open or stay open: the conversation is open, and Kestrel is on and can hear the owner,
+    // with the screen on, outside a call and with a microphone that Android does not block.
+    private fun followsUp(state: State): Boolean =
+        state.mode != Mode.OFF && !state.inCall && state.screenOn && !state.micBusy && state.conversation.open
+
+    // Design 6.6 of sub-project 7: the window holds only while Kestrel can hear a command in it and the bar counts its
+    // seconds down, so that the bar and the window never disagree (re-check of plan 7D's Task 4, N1). It ends when it can
+    // no longer be heard ([followsUp]: the screen turns off, a call rings, Kestrel turns off, Android blocks the microphone
+    // or the conversation closes), and when anything else takes the bar: Kestrel's next reply, spoken or shown, a change of
+    // mode or "Microphone blocked". Its timer and a transcript end it where they come.
+    private fun endFollowUp(before: State, step: Step): Step {
+        val state = step.state
+        if (state.work != Work.FOLLOWING_UP) return step
+        val wasOpen = before.work == Work.FOLLOWING_UP && before.followUp == state.followUp
+        val barTaken = wasOpen && step.effects.any { it is Effect.Say || (it is Effect.Show && it.feedback !is Feedback.FollowUp) }
+        return if (barTaken || !followsUp(state)) step.copy(state = state.copy(work = Work.IDLE)) else step
     }
 
     // Design 5.5 of sub-project 7: what the voice reads of the conversation changed. The question that the voice answered
@@ -1057,8 +1073,6 @@ object Rules {
         val changed = state.copy(
             conversation = view,
             answered = state.answered?.takeIf { it == view.question },
-            // The follow-up window ends when the conversation closes (design 6.6 of sub-project 7).
-            work = if (state.work == Work.FOLLOWING_UP && !view.open) Work.IDLE else state.work,
         )
         return stayOff(changed)
     }
@@ -1131,13 +1145,9 @@ object Rules {
         *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray(),
     )
 
-    // Kestrel's next reply ends the follow-up window (design 6.6 of sub-project 7); only a final reply opens a new one.
+    // Only a final reply opens a follow-up window; Kestrel's next reply ends the open one (endFollowUp).
     private fun say(state: State, reply: Reply, vararg first: Effect, finalReply: Int? = null): Step = Step(
-        state.copy(
-            speeches = state.speeches + 1,
-            work = if (state.work == Work.FOLLOWING_UP) Work.IDLE else state.work,
-            finalReply = finalReply,
-        ),
+        state.copy(speeches = state.speeches + 1, finalReply = finalReply),
         first.toList() + Effect.Say(reply),
     )
 
@@ -1182,11 +1192,11 @@ object Rules {
     )
 
     // Section 8.5: after an unlock, Kestrel follows the setting "On screen wake-up" while it listens or is paused; a call
-    // keeps its mode. Waiting for a task ends when the screen turns off.
+    // keeps its mode. Waiting for a task ends when the screen turns off, and so does the follow-up window (endFollowUp).
     private fun screen(state: State, on: Boolean): Step {
         val changed = state.copy(
             screenOn = on,
-            work = if (!on && (state.work == Work.AWAITING_TASK || state.work == Work.FOLLOWING_UP)) Work.IDLE else state.work,
+            work = if (!on && state.work == Work.AWAITING_TASK) Work.IDLE else state.work,
             // An unlock is a wake-up only after the owner has used the phone in this run: not the first report after a
             // start, not the unlock after a start on the lock screen, and not a report from a service that stops.
             screenSeen = state.mode != Mode.OFF && (on || state.screenSeen),

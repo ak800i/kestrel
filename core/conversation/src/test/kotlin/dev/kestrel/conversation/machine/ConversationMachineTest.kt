@@ -338,6 +338,39 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals("Open Viber", ended.effect<ConversationEffect.StartGoal>().text)
     }
 
+    // "Stop. Kestrel, forget the gate code" while "Remember …?" asks (re-check of plan 7D's Task 3, N1): Kestrel's own
+    // request after the stop waits for the cancelled request's end and then runs, as it does after a stopping goal.
+    @Test
+    fun stopThenKestrelsOwnRequestWhileAnotherAsksRunsItAfterTheCancelledOneEnds() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val stopped = step(asked(remembering.state, 7, QuestionKind.CONFIRM), spoken(InputIntent.Stop)).state
+
+        val forgetting = step(stopped, spoken(InputIntent.Forget("the gate code")))
+        assertTrue(forgetting.effects.none { it is ConversationEffect.Output || it is ConversationEffect.RunLocal || it is ConversationEffect.AnswerQuestion })
+
+        val ended = step(forgetting.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Quiet))
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.CANCELLED, null), ended.effect<ConversationEffect.EndRecord>())
+        assertEquals(LocalRequest.Forget("the gate code"), ended.effect<ConversationEffect.RunLocal>().request)
+    }
+
+    // Kestrel's own request that comes while another one runs waits for it and then runs, as a command does, in the order
+    // in which they came (design 6.4).
+    @Test
+    fun kestrelsOwnRequestWhileAnotherRunsWaitsForItInItsTurn() {
+        val remembering = step(idleOpen(), spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        val saving = step(remembering.state, spoken(InputIntent.SaveRoutine("evening")))
+        assertTrue(saving.effects.none { it is ConversationEffect.Output || it is ConversationEffect.RunLocal })
+        val both = step(saving.state, spoken("Open Viber")).state
+
+        val done = step(both, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+
+        assertEquals(LocalRequest.SaveRoutine("evening"), done.effect<ConversationEffect.RunLocal>().request)
+        assertFalse(done.has<ConversationEffect.StartGoal>())
+        assertEquals(listOf("Open Viber"), done.state.waiting.map { (it.intent as InputIntent.Command).text })
+    }
+
     // A change of test mode waits for a running memory request, as it waits for a goal: the conversation closes once the
     // request's end is recorded, and a command that waited runs in a new conversation under the new test mode.
     @Test

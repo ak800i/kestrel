@@ -329,7 +329,8 @@ class ListeningTest {
         listening.send(Event.ConversationChanged(VoiceView(open = true)))
         listening.send(Event.FollowUpLength(3_000))
 
-        // "Microphone blocked" stays: the countdown stops, and the window's end releases nothing.
+        // "Microphone blocked" stays: it ends the window at once (re-check of Task 4, N1), the countdown stops, and the
+        // window's end releases nothing.
         val said = async { listening.voicePath.say("Done.", final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
@@ -339,13 +340,10 @@ class ListeningTest {
         listening.send(Event.MicBusy(true))
         runCurrent()
         assertEquals(ListeningTexts.MIC_BUSY, shown.last())
-        advanceTimeBy(1_001)
+        assertEquals(Work.IDLE, listening.state.value.work)
+        advanceTimeBy(3_001)
         runCurrent()
         assertEquals(ListeningTexts.MIC_BUSY, shown.last())
-        assertEquals(Work.FOLLOWING_UP, listening.state.value.work)
-        advanceTimeBy(2_000)
-        runCurrent()
-        assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(0, releases)
         listening.send(Event.MicBusy(false))
 

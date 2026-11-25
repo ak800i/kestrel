@@ -1714,6 +1714,32 @@ class RulesTest {
         assertEquals(Mode.OFF, Rules.next(window, Event.TurnOff).state.mode)
     }
 
+    // Re-check of plan 7D's Task 4, N1: the window holds only while the bar counts its seconds down and Kestrel can hear
+    // the owner in it, so whatever else takes the bar, or blocks the microphone, ends it, and no utterance without the
+    // name becomes a command while the bar says something else.
+    @Test
+    fun theFollowUpWindowEndsWhenAnotherTextTakesTheBarOrTheMicrophoneIsBlocked() {
+        val window = replied()
+        val pausedWindow = replied(paused.copy(conversation = open.conversation))
+        assertEquals(Work.FOLLOWING_UP, pausedWindow.work)
+
+        val blocked = Rules.next(window, Event.MicBusy(true))
+        assertEquals(listOf(Effect.Show(Feedback.MicBusy)), blocked.effects)
+        assertEquals(Work.IDLE, blocked.state.work)
+        for ((from, event) in listOf(window to Event.Pause, window to Event.Toggle, pausedWindow to Event.Resume, pausedWindow to Event.Toggle)) {
+            val switched = Rules.next(from, event)
+            assertTrue(event.toString(), switched.effects.any { it is Effect.Show && it.feedback is Feedback.ModeChanged })
+            assertEquals(event.toString(), Work.IDLE, switched.state.work)
+        }
+        assertEquals(Recognition.NAMED, Rules.next(window, Event.Pause).state.recognition)
+        assertEquals(Work.IDLE, Rules.next(window, Event.ChannelShows("Cancelled.")).state.work)
+        // What takes nothing from the bar keeps the window.
+        assertEquals(Work.FOLLOWING_UP, Rules.next(window, Event.MicBusy(false)).state.work)
+        assertEquals(Work.FOLLOWING_UP, Rules.next(window, Event.FollowUpLength(5_000)).state.work)
+        // While the microphone is blocked, no window opens: Kestrel could not hear a command in it.
+        assertEquals(Work.IDLE, replied(open.copy(micBusy = true)).work)
+    }
+
     @Test
     fun noWindowOpensAfterWordsInTheMiddleOfAGoalAnUnspokenReplyOrWithoutItsLength() {
         // Kestrel's words in the middle of a goal need the name again (D9 of sub-project 7).

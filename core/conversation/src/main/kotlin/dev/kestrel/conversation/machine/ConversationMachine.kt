@@ -56,24 +56,24 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         return persisted(QuietRules.settle(step, now), state)
     }
 
-    // Design 6.4: an open question takes the owner's answer first; a local request lets a command wait for it.
+    // Design 6.4: an open question takes the owner's answer first. A command, and each of Kestrel's own requests, waits
+    // for the work that it may not run beside ([waitsForWork]).
     private fun input(state: ConversationState, input: OwnerInput, now: Long): MachineStep {
         state.question?.let { open -> answer(state, open, input)?.let { return it } }
-        state.local?.let { run -> return whileLocal(state, run, input) }
         return when (val intent = input.intent) {
             is InputIntent.Command -> command(state, input, intent.text, now)
             is InputIntent.Answer -> MachineStep(state)
-            InputIntent.Stop -> GoalRules.stop(state)
+            InputIntent.Stop -> state.local?.let { stopLocal(state, it) } ?: GoalRules.stop(state)
             InputIntent.Continue -> continued(state, input, now)
-            InputIntent.NewConversation -> withoutGoal(state, input) { newConversation(it, input) }
-            is InputIntent.ContinuePast -> withoutGoal(state, input) { local(it, LocalRequest.ContinuePast(intent.topic), input) }
-            is InputIntent.ContinueConversation -> withoutGoal(state, input) { switch(it, intent.id, input) }
+            InputIntent.NewConversation -> alone(state, input) { newConversation(it, input) }
+            is InputIntent.ContinuePast -> alone(state, input) { local(it, LocalRequest.ContinuePast(intent.topic), input) }
+            is InputIntent.ContinueConversation -> alone(state, input) { switch(it, intent.id, input) }
             // Design 9.7: while a goal is open, "delete history" is ignored, as today.
             InputIntent.DeleteHistory ->
-                if (state.goal != null && state.goal.ending != GoalEnding.STOPPING) MachineStep(state) else withoutGoal(state, input) { local(it, LocalRequest.DeleteHistory, input) }
-            is InputIntent.Remember -> withoutGoal(state, input) { memory(it, input, LocalRequest.Remember(intent.key, intent.value), now) }
-            is InputIntent.Forget -> withoutGoal(state, input) { memory(it, input, LocalRequest.Forget(intent.key), now) }
-            is InputIntent.SaveRoutine -> withoutGoal(state, input) { memory(it, input, LocalRequest.SaveRoutine(intent.name), now) }
+                if (state.goal != null && state.goal.ending != GoalEnding.STOPPING) MachineStep(state) else alone(state, input) { local(it, LocalRequest.DeleteHistory, input) }
+            is InputIntent.Remember -> alone(state, input) { memory(it, input, LocalRequest.Remember(intent.key, intent.value), now) }
+            is InputIntent.Forget -> alone(state, input) { memory(it, input, LocalRequest.Forget(intent.key), now) }
+            is InputIntent.SaveRoutine -> alone(state, input) { memory(it, input, LocalRequest.SaveRoutine(intent.name), now) }
         }
     }
 
@@ -104,18 +104,15 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         }
     }
 
-    // A command waits for the request in its turn; "stop" cancels the request, a switch too, and drops what waits. The
-    // request's question goes with it at once, so that a command after the stop is no answer to it ("Stop. Kestrel, …";
-    // design 6.4).
-    private fun whileLocal(state: ConversationState, run: LocalRun, input: OwnerInput): MachineStep = when (input.intent) {
-        is InputIntent.Command -> MachineStep(state.copy(waiting = state.waiting + input))
-        InputIntent.Stop -> MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true), question = null), listOf(ConversationEffect.CancelLocal))
-        else -> MachineStep(state)
-    }
+    // "Stop" cancels Kestrel's own request, a switch too, and drops what waits. The request's question goes with it at
+    // once, so that the command or the request after the stop is no answer to it ("Stop. Kestrel, …"; design 6.4).
+    private fun stopLocal(state: ConversationState, run: LocalRun): MachineStep =
+        MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true), question = null), listOf(ConversationEffect.CancelLocal))
 
     private fun command(state: ConversationState, input: OwnerInput, text: String, now: Long): MachineStep {
+        if (state.local != null) return waitsForWork(state, input)
         val goal = state.goal ?: return startGoal(open(state, now), input, text, now)
-        if (goal.ending != null) return MachineStep(state.copy(waiting = state.waiting + input))
+        if (goal.ending != null) return waitsForWork(state, input)
         return when (goal.phase) {
             GoalPhase.ACTING, GoalPhase.ASKING -> MachineStep(state, listOf(ConversationEffect.SteerGoal(text, input.channel)))
             GoalPhase.HANDED_OVER -> refuse(state, ConversationTexts.finishHandOverFirst(input.channel))
@@ -134,7 +131,9 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         )
     }
 
+    // Kestrel's own request that runs has nothing to continue, and ignores Continue as a goal that ends does.
     private fun continued(state: ConversationState, input: OwnerInput, now: Long): MachineStep {
+        if (state.local != null) return MachineStep(state)
         val goal = state.goal ?: return refuse(state, ConversationTexts.NOTHING_TO_CONTINUE)
         val channel = input.channel
         if (goal.ending != null) return MachineStep(state)
@@ -329,12 +328,21 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             step.then { input(it.copy(replyChannel = next.channel), next, now) }
         }
 
-    // Kestrel's own requests run without a goal. "Stop. Kestrel, …": one that comes while "stop" ends the goal waits for
-    // the goal's end, as a command does (design 6.4); while the goal stays open, Kestrel says to stop it first.
-    private inline fun withoutGoal(state: ConversationState, input: OwnerInput, run: (ConversationState) -> MachineStep): MachineStep {
-        val goal = state.goal ?: return run(state)
-        return if (goal.ending == GoalEnding.STOPPING) MachineStep(state.copy(waiting = state.waiting + input)) else refuse(state, ConversationTexts.STOP_GOAL_FIRST)
+    // Kestrel's own requests run alone: without a goal, and one at a time. One that comes while another runs, also one that
+    // "stop" has cancelled, or while "stop" ends the goal, waits for that end and then runs, as a command does ("Stop.
+    // Kestrel, …"; design 6.4); while the goal stays open, Kestrel says to stop it first.
+    private inline fun alone(state: ConversationState, input: OwnerInput, run: (ConversationState) -> MachineStep): MachineStep {
+        val goal = state.goal
+        return when {
+            state.local != null || goal?.ending == GoalEnding.STOPPING -> waitsForWork(state, input)
+            goal != null -> refuse(state, ConversationTexts.STOP_GOAL_FIRST)
+            else -> run(state)
+        }
     }
+
+    // The one way in which an input waits for the work before it: it runs in its turn once that work has ended (runWaiting).
+    private fun waitsForWork(state: ConversationState, input: OwnerInput): MachineStep =
+        MachineStep(state.copy(waiting = state.waiting + input))
 
     private fun open(state: ConversationState, now: Long): ConversationState =
         if (state.id != null) state else state.copy(id = ids(), openedAtWall = now, testMode = state.safetyTestMode, continuedAtWall = null, commands = 0)

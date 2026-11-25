@@ -17,8 +17,8 @@ import dev.kestrel.conversation.model.RecordRef
  * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
  * until the owner is there ([PhoneState.present]), [heldReports] are the goals' final replies, oldest first, and
  * [heldWords] a held goal's round report with how to go on, each waiting for him (design 6.4). [local] is a local request
- * or a switch that runs; [waiting] are the commands, oldest first, that wait for the goal that "stop" ended or for the
- * local request, and each runs in its turn; [closeAfterWork] closes the conversation once its
+ * or a switch that runs; [waiting] are the commands and Kestrel's own requests, oldest first, that wait for the goal that
+ * "stop" ended or for the local request, and each runs in its turn; [closeAfterWork] closes the conversation once its
  * goal or its local request has ended and its record holds the end, after a change of test mode. [continueAnswer] is the owner's input
  * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
  * mode is not `OFF`, so the voice can speak a question and hear its answer, also in the paused mode); while it is off, a

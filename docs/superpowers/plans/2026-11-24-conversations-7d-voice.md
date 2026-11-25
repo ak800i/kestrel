@@ -64,6 +64,8 @@ These are this plan's readings of the design where it leaves a choice open, or w
 - **`agent-state` keeps its words.** Its `asking=` keeps sub-project 5's names (`yes-no`, `confirm`, `free`, `pick-number`, `continue`), with a limit's "Continue?" and the switch as `yes-no` and the screenshot question as `free`, so that `:tools:eval`'s answers need no change before plan 7G; `question=` names `screenshot` and `limit`. Its `phase=` gains `paused-at-limit` and `interrupted` in Task 3, and the hook gains `checklist=` and `conversation=` in Task 6.
 - **`voice-task` becomes a stand-in round.** The A71 session's hook makes every goal's round a stand-in on fake ports whose model waits the given seconds and then finishes, and the goal's final words are the reply itself, whole and of any length (review of Task 3: I1; the model's summary and a failure's reason have limits, 200 characters for `fail`, which the A71 session's 478-character story exceeds) No script and no part of `:tools:eval` reads the reply's words; Task 3 changes the descriptions in `scripts\hook.ps1` and `scripts\a71-session.ps1`.
 - **The follow-up window reads as after "Yes?", with design 3.6's exceptions.** Inside the window the words are read as the words after the name (`Requests.read(…, afterName = true, followUp = true)`), so every other utterance is a command, while "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6): "turn off" alone turns Kestrel off and never reaches the conversation. After "Yes?" a bare "turn off" stays a command, as today.
+- **The follow-up window ends whenever the bar stops counting it down.** Design 6.6 names the ends that it foresaw; the window also ends when Android blocks the microphone and when anything else takes the bar, such as a change of mode by the tile, the notification or the voice, or a reply that is only shown, and none opens while the microphone is blocked (`Rules.endFollowUp`, Task 4's re-check N1). So the bar never says "Paused" or "Microphone blocked" while an utterance without the name is still a command.
+- **Kestrel's own requests run one at a time.** Design 6.4 lets a command wait for Kestrel's own request that runs; one of Kestrel's own requests that comes then waits too, also after "stop" has cancelled the running one ("Stop. Kestrel, forget the gate code" while "Remember …?" is asked), as both do while "stop" ends a goal (`ConversationMachine.alone`, Task 3's re-check N1). Before, the machine dropped it without a word.
 - **The limits stay within the page's bounds.** `conversation-control do=limits` writes the Conversations setting within its bounds (at least 50 replies, 5 minutes and 10 AI Credits); plan 7G adds a debug-only seam for smaller limits with its task `limit-continue`.
 
 ## File structure
@@ -1254,7 +1256,7 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 - Produces (`TaskWitness`): `said`, `watch` and `evidence` without `ended`; `TaskEvidence(said, markerInData)` without `spoken`.
 - Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply) : GoalEnvironment`, whose finished round's final words are the reply. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
 
-Counts: `:app` JVM A₂ + 4 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 + 1 = 100, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 7 + 1 = 8, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1, and in `app/src/testDebug` `StandInRoundTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ + 2 (`ConversationMachineTest` + 1, `ConversationEngineTest` + 1; review of Task 3: M1), and `:core:agent` G₀, unchanged. Pester + 1 (`AgentChecks.Tests.ps1`; review of Task 3: M2). Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
+Counts: `:app` JVM A₂ + 4 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 + 1 = 100, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 7 + 1 = 8, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1, and in `app/src/testDebug` `StandInRoundTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ + 4 (`ConversationMachineTest` + 1, `ConversationEngineTest` + 1; review of Task 3: M1; `ConversationMachineTest` + 2, its re-check's N1), and `:core:agent` G₀, unchanged. Pester + 1 (`AgentChecks.Tests.ps1`; review of Task 3: M2). Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
 
 - [ ] **Step 1: Check the plans that this task consumes, and count the tests of the files that it deletes**
 
@@ -11043,7 +11045,7 @@ Expected: PASS.
 - [ ] **Step 14: Run every module that this task touches, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :core:conversation:test :core:agent:test :tools:eval:test :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'tools\eval\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`, then `scripts\test-scripts.ps1`
-Expected: BUILD SUCCESSFUL; `app` A₂ + 4 − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ + 2 and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with one Pester test more than it had before (`AgentChecks.Tests.ps1`; the other scripts' changes are comments).
+Expected: BUILD SUCCESSFUL; `app` A₂ + 4 − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ + 4 and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with one Pester test more than it had before (`AgentChecks.Tests.ps1`; the other scripts' changes are comments).
 
 - [ ] **Step 15: Commit**
 
@@ -11056,7 +11058,7 @@ git commit -m "feat(app): the voice path gives the conversation its inputs; Agen
 
 ### Task 4: The follow-up window
 
-Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a local request's final reply (`ChannelOutput.Report`, which `VoiceChannel` now says as `final`), the next utterance is a command without the name, for the window's length from the Conversations page (8 s by default, never longer than the quiet time), with recognition `ALL`, also in the paused mode. Kestrel's own requests keep their meaning in it, and the instant commands' parser is not asked: the words are read as after "Yes?", except that "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6 of sub-project 7), so "turn off" alone turns Kestrel off there and never reaches the conversation (`Requests.read(…, followUp = true)`). The bar shows "Go on…" with the seconds left over the reply's text and fades when the window ends. It ends at its timer, at any transcript, at Kestrel's next reply, when the screen turns off, a call rings or Kestrel turns off, and when the conversation closes. Words in the middle of a goal (`Said`) open no window, and neither does a final reply that Kestrel did not speak to its end: one that the owner or a call stopped, that Android refused or interrupted (as when another app takes the audio focus), that no voice session could speak, or that Kestrel only showed while off. The owner did not hear such a reply, and its text stays on the bar as the owner's way to read it: `Event.SpeechEnded(spoken)` tells the Rules whether Kestrel spoke the whole reply (the controller's decision on the review's I1 of 2026-11-25). The bar knows whose text it shows (`OwnedBar`, the review's M1): the countdown takes the bar only while it is free or shows the final reply that the window follows, stops for good once someone else shows a text, and releases only its own text, so it never hides "Microphone blocked", a question or a hand-over's sentence; an instant command likewise releases only a command's text.
+Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a local request's final reply (`ChannelOutput.Report`, which `VoiceChannel` now says as `final`), the next utterance is a command without the name, for the window's length from the Conversations page (8 s by default, never longer than the quiet time), with recognition `ALL`, also in the paused mode. Kestrel's own requests keep their meaning in it, and the instant commands' parser is not asked: the words are read as after "Yes?", except that "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6 of sub-project 7), so "turn off" alone turns Kestrel off there and never reaches the conversation (`Requests.read(…, followUp = true)`). The bar shows "Go on…" with the seconds left over the reply's text and fades when the window ends. It ends at its timer, at any transcript, at Kestrel's next reply, when the screen turns off, a call rings or Kestrel turns off, and when the conversation closes. Words in the middle of a goal (`Said`) open no window, and neither does a final reply that Kestrel did not speak to its end: one that the owner or a call stopped, that Android refused or interrupted (as when another app takes the audio focus), that no voice session could speak, or that Kestrel only showed while off. The owner did not hear such a reply, and its text stays on the bar as the owner's way to read it: `Event.SpeechEnded(spoken)` tells the Rules whether Kestrel spoke the whole reply (the controller's decision on the review's I1 of 2026-11-25). The bar knows whose text it shows (`OwnedBar`, the review's M1): the countdown takes the bar only while it is free or shows the final reply that the window follows, stops for good once someone else shows a text, and releases only its own text, so it never hides "Microphone blocked", a question or a hand-over's sentence; an instant command likewise releases only a command's text. The window holds only while the bar counts its seconds down and Kestrel can hear the owner in it (`Rules.endFollowUp`, the re-check's N1): it also ends when Android blocks the microphone and when anything else takes the bar (Kestrel's next reply, spoken or shown, a change of mode by the tile, the notification or the voice, "Microphone blocked"), and none opens while the microphone is blocked, so the bar and the window never disagree.
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt`
@@ -11067,7 +11069,7 @@ Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a
 - Consumes: Task 3's `Rules`, `VoicePath` and `VoiceChannel`; plan 7B's `ConversationSettings.followUpMillis`.
 - Produces: `Work.FOLLOWING_UP`; `State.followUpMillis`, `State.followUp`, `State.finalReply: Int?`; `Event.SpeechEnded(spoken: Boolean)` (was a `data object`), `Event.ChannelSays(reply, text, final = false)`, `Event.FollowUpLength(millis: Long)`, `Event.FollowUpEnded(followUp: Int)`; `Feedback.FollowUp(seconds: Int, reply: Int)`, `Feedback.ConversationText(text, keep = false, finalReply: Int? = null)`; `Effect.TimeFollowUp(answering = false)`; `VoicePath.say(text, final = false)`; `Requests.read(transcript, spotted, afterName = false, stopSpotted = false, followUp = false)`; `ListeningTexts.goOn(seconds)`; `internal class OwnedBar(bar: FeedbackBar)` with `show(text, keep = false, owner = BarOwner.Other)`, `takeOver(text, owner, over): Boolean` and `release(owner)`, and `internal sealed interface BarOwner` (`Other`, `Commands`, `FinalReply(reply)`, `FollowUp`); the app graph sends `FollowUpLength` at every change of the Conversations page.
 
-Counts: `:app` JVM A₃ + 10 (`RulesTest` 100 + 4 = 104, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 4 = 150; `VoiceChannelTest` changes a case, `ListeningTest` two, and `RulesTest` and `OrchestratorTest` give every `Event.SpeechEnded` its `spoken`). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₃ + 11 (`RulesTest` 100 + 5 = 105, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 4 = 150; `VoiceChannelTest` changes a case, `ListeningTest` two, and `RulesTest` and `OrchestratorTest` give every `Event.SpeechEnded` its `spoken`). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -12627,7 +12629,7 @@ Expected: PASS.
 - [ ] **Step 6: Run `:app`'s JVM tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₃ + 10.
+Expected: BUILD SUCCESSFUL; `app` A₃ + 11.
 
 - [ ] **Step 7: Commit**
 
@@ -12650,7 +12652,7 @@ Design 6.8, 9.6 and 12.2 of sub-project 7: after the name, "new conversation" (a
 - Consumes: Task 3's `Requests.intent` and `Rules`; plan 7B's `InputIntent.NewConversation` and `InputIntent.ContinuePast(topic: String?)`.
 - Produces: `Request.NewConversation`, `Request.ContinuePast(topic: String?)`; `Requests.typed(text: String): InputIntent?` for plan 7F.
 
-Counts: `:app` JVM A₄ + 6 (`RequestsTest` 33 + 5 = 38, `RulesTest` 104 + 1 = 105). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₄ + 6 (`RequestsTest` 33 + 5 = 38, `RulesTest` 105 + 1 = 106). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -13642,7 +13644,7 @@ This is the one task of this plan that changes `:core:conversation`: plan 7B's e
 - Consumes: plan 7B's `ConversationEngine`, `LocalRequests`, `ConversationEvent` and `ConversationMachine`; Task 3's `AppGraph.conversations`.
 - Produces: `enum class HistoryDeletion { DELETED, REFUSED, FAILED }` (package `dev.kestrel.conversation.engine`); `suspend fun ConversationEngine.deleteHistory(): HistoryDeletion`; `suspend fun LocalRequests.deleteAll(stored: suspend () -> Unit = {}): Boolean`; `ConversationEvent.HistoryDeleted`; `SettingsData.deleteHistory(): HistoryDeletion`; the strings `logs_delete_refused` and `logs_delete_failed`.
 
-Counts: `:core:conversation` C₀ + 2 + 4 = C₀ + 6 (`ConversationEngineTest` + 4; Task 3 added 2). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
+Counts: `:core:conversation` C₀ + 4 + 4 = C₀ + 8 (`ConversationEngineTest` + 4; Task 3 added 4). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -14237,7 +14239,7 @@ with:
 - [ ] **Step 4: Run the conversation's tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`
-Expected: PASS, C₀ + 6 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
+Expected: PASS, C₀ + 8 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
 
 - [ ] **Step 5: The settings page**
 
@@ -14379,7 +14381,7 @@ with:
 - [ ] **Step 6: Run the modules' tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 6 tests pass. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 8 tests pass. Task 8 runs the device tests.
 
 - [ ] **Step 7: Commit**
 
@@ -14452,9 +14454,9 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 ## Counts at the end of plan 7D
 
-- `:app` JVM (with `app/src/testDebug`): A₀ + 33 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 4 − D, Task 4 + 10, Task 5 + 6, Task 6 + 3, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
+- `:app` JVM (with `app/src/testDebug`): A₀ + 34 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 4 − D, Task 4 + 11, Task 5 + 6, Task 6 + 3, Task 7 + 0). `RulesTest` has 106 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
-- `:core:conversation`: C₀ + 6 (`ConversationMachineTest` + 1 and `ConversationEngineTest` + 1, Task 3's review fix M1; `ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: + 1 (`AgentChecks.Tests.ps1`, Task 3's review fix M2); otherwise Task 3 changes only comments of two scripts.
+- `:core:conversation`: C₀ + 8 (`ConversationMachineTest` + 1 and `ConversationEngineTest` + 1, Task 3's review fix M1; `ConversationMachineTest` + 2, its re-check's N1; `ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: + 1 (`AgentChecks.Tests.ps1`, Task 3's review fix M2); otherwise Task 3 changes only comments of two scripts.
 
 ## Interfaces for 7E and 7F
 
