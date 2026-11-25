@@ -24,6 +24,8 @@ android {
 
 dependencies {
     implementation(project(":core:commands"))
+    // Sub-project 7: the conversation, whose archive port :app implements on :core:privacy (plan 7C).
+    implementation(project(":core:conversation"))
     implementation(project(":core:privacy"))
     implementation(project(":core:providers"))
     implementation(project(":core:safety"))
