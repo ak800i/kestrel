@@ -99,4 +99,22 @@ class NormalizerTest {
         assertEquals("Ми\u0306", cyrillic.substring(Normalizer.withOffsets(cyrillic).span(0, 1)))
         assertEquals("і\u0308", cyrillic.substring(Normalizer.withOffsets(cyrillic).span(1, 2)))
     }
+
+    // The search over past conversations keeps folded words and folds them again (plan 7B), and LabelMatcher.mayAccept is
+    // exact only for words that fold to themselves.
+    @Test
+    fun everyFoldedWordFoldsToItself() {
+        val letters = ((0x00C0..0x024F) + (0x0400..0x052F) + (0x1E00..0x1EFF))
+            .filter { Character.isLetter(it) }
+            .map { String(Character.toChars(it)) }
+        val texts = listOf(
+            "Нѐбо над Београдом", "Ѓорѓи ќе дојде", "Ў ӂ ӟ ӱ ӹ", "Đorđe, Čačak i Šabac", "Ǽsir Ǿre Œuvre straße",
+            "Mi\u0306 i\u0308 й ё ї", "Grünewald façade naïve", "Љубав, Њиве, Џеп, Ћуприја",
+        )
+        for (text in letters + texts) {
+            for (word in Normalizer.words(text)) assertEquals("$text: $word", listOf(word), Normalizer.words(word))
+        }
+        assertEquals(listOf("nebo"), Normalizer.words("Нѐбо"))
+        assertEquals(listOf("gorgi", "ke"), Normalizer.words("Ѓорѓи ќе"))
+    }
 }

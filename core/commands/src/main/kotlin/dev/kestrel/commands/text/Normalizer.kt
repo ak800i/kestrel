@@ -99,14 +99,21 @@ object Normalizer {
 
     /** [text] without diacritics, with the explicit rules first. Apostrophes and separators stay. */
     internal fun fold(text: String): String = buildString {
-        for (char in text) {
-            val explicit = EXPLICIT[char]
-            if (explicit != null) {
-                append(explicit)
-                continue
-            }
+        for (char in text) append(folded(char))
+    }
+
+    // One character: its explicit rule, or else its base letters without their marks. A base letter other than [char]
+    // goes through the Cyrillic table and the fold again, so that "ѐ" folds as "е" does and "ǿ" as "ø", and a folded
+    // word folds to itself.
+    private fun folded(char: Char): String {
+        EXPLICIT[char]?.let { return it }
+        return buildString {
             for (part in Unicode.normalize(char.toString(), Unicode.Form.NFD)) {
-                if (!isMark(part.code)) append(part)
+                when {
+                    isMark(part.code) -> Unit
+                    part == char -> append(part)
+                    else -> append(fold(transliterate(part.toString())))
+                }
             }
         }
     }

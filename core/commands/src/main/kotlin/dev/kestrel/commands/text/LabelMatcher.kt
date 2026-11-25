@@ -58,6 +58,17 @@ object LabelMatcher {
     fun exact(spoken: String, name: String): Boolean = score(spoken, name) == EXACT
 
     /**
+     * Whether [spoken] can name [name] well enough to act, for two single words that [Normalizer] folded: false means that
+     * [score] of the two, with either strictness, stays below `MatchRules.ACCEPT`. For one word against one, only the
+     * overlap that counts the two as the same word lifts the score that far, because the joined similarity and the phonetic
+     * key alone give at most `JOINED_WEIGHT + PHONETIC_WEIGHT`, which is less. So this checks only that the two are the same
+     * word, have the same stem, are at least `WORD_SIMILARITY` alike or sound the same. It folds nothing and scores nothing,
+     * so that a caller that compares one word with many, as the search over past conversations does, scores only the few
+     * words that pass it.
+     */
+    fun mayAccept(spoken: String, name: String): Boolean = sameWord(spoken, name, phoneticWords = true)
+
+    /**
      * Decides which of [candidates] [spoken] names: [MatchDecision.Found] for the only exact match or else a clear winner,
      * [MatchDecision.Ambiguous] for two or more exact matches or else the close ones, and [MatchDecision.NotFound] when no
      * candidate comes close.

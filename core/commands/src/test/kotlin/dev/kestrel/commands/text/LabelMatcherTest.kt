@@ -168,6 +168,34 @@ class LabelMatcherTest {
         }
     }
 
+    // The search over past conversations scores only the words that pass mayAccept (plan 7B), so the check must never refuse
+    // a word that score lets act, and must refuse most words, or it saves nothing.
+    @Test
+    fun mayAcceptRefusesOnlyWordsThatScoreBelowTheAcceptLimit() {
+        assertTrue(MatchRules.JOINED_WEIGHT + MatchRules.PHONETIC_WEIGHT + MatchRules.TOLERANCE < MatchRules.ACCEPT)
+        val names = listOf(
+            "milica", "milan", "marko", "restoran", "ambar", "viber", "settings", "delete", "georgie", "đorđe", "tonči",
+            "colour", "later", "letter", "save", "safe", "sound", "sand", "wifi", "novi", "beograd", "hotel", "parking",
+            "poruka", "poslala", "anja", "dina", "screenshot", "kamera", "telefon", "sunday", "monday", "jovana", "nikolina",
+        )
+        val corpus = (names + names.flatMap { listOf(it + "s", it.dropLast(1), it.replaceFirst(it[1].toString(), it[1].toString().repeat(2)), it.drop(1)) })
+            .map { Normalizer.words(it).single() }.distinct()
+        var refused = 0
+        for (spoken in corpus) {
+            for (name in corpus) {
+                if (LabelMatcher.mayAccept(spoken, name)) continue
+                refused++
+                assertTrue("$spoken to $name", LabelMatcher.score(spoken, name) + MatchRules.TOLERANCE < MatchRules.ACCEPT)
+            }
+        }
+        assertTrue("$refused of ${corpus.size * corpus.size}", refused * 10 > corpus.size * corpus.size * 9)
+        assertTrue(LabelMatcher.mayAccept("veiber", "viber"))
+        val nebo = Normalizer.words("Нѐбо").single()
+        assertTrue(LabelMatcher.mayAccept(nebo, "nebo"))
+        assertEquals(1.0, LabelMatcher.score(nebo, "nebo"), 0.0)
+        assertFalse(LabelMatcher.mayAccept("later", "letter"))
+    }
+
     @Test
     fun printsNoNames() {
         assertFalse(MatchCandidate("key:Send", listOf("Send")).toString().contains("Send"))
