@@ -11,6 +11,7 @@ import dev.kestrel.commands.TextCommand
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.voice.Keyword
@@ -37,6 +38,12 @@ enum class Work {
 
     /** After "Kestrel" on its own: the next utterance is the command for the conversation. */
     AWAITING_TASK,
+
+    /**
+     * The follow-up window after a spoken final reply (design 6.6 of sub-project 7): the next utterance is a command for
+     * the conversation without the name.
+     */
+    FOLLOWING_UP,
 
     /** An instant command runs (section 7.3): it may ask a question or count down, and "stop" or "cancel" cancel it. */
     RUNNING_COMMAND,
@@ -73,7 +80,10 @@ data class VoiceQuestion(val number: Int, val kind: QuestionKind)
  * Orchestrator's answer waits; [voiceAnswers] is false while only its card may answer it (D32 item 17 of sub-project 5);
  * [answered] is the number of the latest question that the voice answered, so that the next transcript does not answer it
  * again before the conversation has taken the answer. [offAfterGoal]: "On screen wake-up" is "Stay off", and Kestrel
- * turns off once the goal has ended and its final reply has been spoken.
+ * turns off once the goal has ended and its final reply has been spoken. [followUpMillis] is the follow-up window's length
+ * from the Conversations page, and [followUp] the number of the latest window, so that the end of an older one changes
+ * nothing; [finalReply]: the reply that Kestrel speaks now is a final reply, whose end opens the window (design 6.6 of
+ * sub-project 7).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -104,6 +114,9 @@ data class State(
     val voiceAnswers: Boolean = true,
     val answered: Int? = null,
     val offAfterGoal: Boolean = false,
+    val followUpMillis: Long = ConversationSettings().followUpMillis,
+    val followUp: Int = 0,
+    val finalReply: Boolean = false,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -129,7 +142,8 @@ data class State(
             "screenSeen=$screenSeen, command=$command, running=${running?.javaClass?.simpleName}, heard=${heard?.length}, " +
             "asking=$asking, counting=$counting, lastCommand=${lastCommand?.javaClass?.simpleName}, " +
             "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop, questionEnded=$questionEnded, conversation=$conversation, " +
-            "voiceQuestion=$voiceQuestion, voiceAnswers=$voiceAnswers, answered=$answered, offAfterGoal=$offAfterGoal)"
+            "voiceQuestion=$voiceQuestion, voiceAnswers=$voiceAnswers, answered=$answered, offAfterGoal=$offAfterGoal, " +
+            "followUpMillis=$followUpMillis, followUp=$followUp, finalReply=$finalReply)"
 
     /** Whether a call rings or is active (section 8.7). */
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
@@ -303,11 +317,18 @@ sealed interface Event {
 
     /**
      * The conversation says [text] through the voice channel (design 11 of sub-project 7). [reply] numbers it, so that
-     * the channel learns when it has been spoken, or that it was only shown ([Effect.EndReply]).
+     * the channel learns when it has been spoken, or that it was only shown ([Effect.EndReply]). [final]: it is a command's
+     * or a local request's final reply, whose end opens the follow-up window (design 6.6).
      */
-    data class ChannelSays(val reply: Int, val text: String) : Event {
-        override fun toString() = "ChannelSays($reply, ${text.length} characters)"
+    data class ChannelSays(val reply: Int, val text: String, val final: Boolean = false) : Event {
+        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final)"
     }
+
+    /** The follow-up window's length from the Conversations page (design 6.6 and 13 of sub-project 7); 0 is off. */
+    data class FollowUpLength(val millis: Long) : Event
+
+    /** Follow-up window number [followUp] has lasted its length (design 6.6 of sub-project 7). */
+    data class FollowUpEnded(val followUp: Int) : Event
 
     /** The conversation shows [text] on the bar without speaking it, as "Got it." for steering. */
     data class ChannelShows(val text: String) : Event {
@@ -389,6 +410,9 @@ sealed interface Feedback {
 
     /** Three transcripts in a row had no words, so the owner may check the microphone (section 14.6). */
     data object NoWords : Feedback
+
+    /** The follow-up window opens for [seconds] (design 6.6 of sub-project 7): the bar counts them down. */
+    data class FollowUp(val seconds: Int) : Feedback
 
     /** What an instant command shows. With [keep], the text stays until the command ends or the next text. */
     data class CommandText(val text: String, val keep: Boolean = false) : Feedback {
@@ -492,6 +516,13 @@ sealed interface Effect {
      * ([Event.LateAnswersEnded]), in place of the one that runs. The Orchestrator runs it itself.
      */
     data object TimeLateAnswers : Effect
+
+    /**
+     * Starts the timer that ends the latest follow-up window ([Event.FollowUpEnded]), in place of the one that runs:
+     * [State.followUpMillis], or with [answering], once the owner has started an utterance in it, the time to finish and
+     * transcribe it. The Orchestrator runs it itself.
+     */
+    data class TimeFollowUp(val answering: Boolean = false) : Effect
 }
 
 /** A transition: the new state, and what to do, in order. */
@@ -538,6 +569,7 @@ object Rules {
         Event.Speaking -> when {
             state.speaking -> Step(state)
             state.work == Work.AWAITING_TASK -> waitForTask(state, answering = true)
+            state.work == Work.FOLLOWING_UP -> Step(state, listOf(Effect.TimeFollowUp(answering = true)))
             state.voiceQuestion != null -> waitForAnswer(state, answering = true)
             else -> Step(state)
         }
@@ -556,6 +588,7 @@ object Rules {
         Event.SettingsBlocked -> if (state.mode == Mode.OFF || state.inCall) Step(state) else say(state, Reply.SettingsBlocked)
         Event.NothingHeard -> when {
             state.mode != Mode.OFF && state.work == Work.AWAITING_TASK -> waitForTask(state)
+            state.work == Work.FOLLOWING_UP -> Step(state.copy(work = Work.IDLE))
             state.mode != Mode.OFF && state.voiceQuestion != null -> waitForAnswer(state)
             else -> Step(state)
         }
@@ -568,6 +601,9 @@ object Rules {
         is Event.LateAnswersEnded ->
             if (event.command == state.command && state.questionEnded) Step(state.copy(questionEnded = false)) else Step(state)
         is Event.ConversationChanged -> conversationChanged(state, event.view)
+        is Event.FollowUpLength -> Step(state.copy(followUpMillis = event.millis))
+        is Event.FollowUpEnded ->
+            if (state.work == Work.FOLLOWING_UP && event.followUp == state.followUp) Step(state.copy(work = Work.IDLE)) else Step(state)
         is Event.ChannelSays -> channelSays(state, event)
         is Event.ChannelShows -> Step(state, listOf(Effect.Show(Feedback.ConversationText(event.text))))
         is Event.ChannelAsks -> channelAsks(state, event)
@@ -592,10 +628,12 @@ object Rules {
         if (state.mode == Mode.OFF) return Step(state)
         if (state.inCall) return callCommand(state, event)
         val awaiting = state.work == Work.AWAITING_TASK
+        // Inside the follow-up window the words are read as after the name (design 6.6 of sub-project 7).
+        val following = state.work == Work.FOLLOWING_UP
         // An empty transcript that finishes after the screen turned off does not count: nobody could see its hint.
-        // Waiting for a command ends when the screen turns off.
-        val request = Requests.read(event.text, event.named, afterName = awaiting, stopSpotted = event.stopSpotted)
-            ?: return if (state.screenOn) withoutWords(state, awaiting) else Step(state)
+        // Waiting for a command ends when the screen turns off, and any transcript ends the follow-up window.
+        val request = Requests.read(event.text, event.named, afterName = awaiting || following, stopSpotted = event.stopSpotted, followUp = following)
+            ?: return if (state.screenOn) withoutWords(if (following) state.copy(work = Work.IDLE) else state, awaiting) else Step(state)
         // Words start the count of empty transcripts again.
         val counted = state.copy(emptyTranscripts = 0)
         val shown = Effect.Show(Feedback.Heard(event.text))
@@ -606,7 +644,9 @@ object Rules {
         if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopGoal(counted, shown) else Step(counted)
         if (stopsFirst) return stopFirst(counted, request, event, shown, event.spokeAt)
         return when (counted.work) {
-            Work.AWAITING_TASK -> whileAwaitingTask(counted, request, event, shown)
+            // Every utterance in the follow-up window is a command, and Kestrel's own requests keep their meaning; the
+            // instant commands' parser is not asked (design 6.6 of sub-project 7).
+            Work.AWAITING_TASK, Work.FOLLOWING_UP -> whileAwaitingTask(counted, request, event, shown)
             Work.IDLE -> idle(counted, request, event, shown, event.spokeAt)
             // duringCommand() reads the transcripts of a running command.
             Work.RUNNING_COMMAND -> Step(counted)
@@ -957,11 +997,12 @@ object Rules {
             // As after a cancelled command, the transcript of the same word then names no button (design D2). The spotter's
             // "stop" while Kestrel speaks stops the goal in every phase, also while Kestrel speaks a hand-over's sentence,
             // and the conversation's own question (plan 7B's decision 10).
+            // A final reply that the owner stopped opens no follow-up window.
             Keyword.STOP, Keyword.CANCEL ->
                 if (state.goal != null || state.openQuestion != null) {
-                    stopGoal(state.copy(spottedStop = true))
+                    stopGoal(state.copy(spottedStop = true, finalReply = false))
                 } else {
-                    Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
+                    Step(state.copy(work = Work.IDLE, spottedStop = true, finalReply = false), listOf(Effect.StopSaying))
                 }
             // Kestrel does not wait for a command while a goal works or asks "Continue the goal?", or the screen is off.
             Keyword.KESTREL ->
@@ -980,8 +1021,23 @@ object Rules {
         return when {
             state.speeches == 1 && state.work == Work.AWAITING_TASK -> waitForTask(ended)
             state.speeches == 1 && state.voiceQuestion != null -> waitForAnswer(ended)
+            ended.speeches == 0 && state.finalReply -> stayOff(ended.copy(finalReply = false)).then { followUp(it) }
             else -> stayOff(ended)
         }
+    }
+
+    // Design 6.6 of sub-project 7: once Kestrel has finished speaking a final reply, the next utterance is a command
+    // without the name, for the window's length, with the screen on and the conversation open, outside a call, also in
+    // the paused mode. The bar counts the seconds down.
+    private fun followUp(state: State): Step {
+        val opens = state.followUpMillis > 0 && state.mode != Mode.OFF && !state.inCall && state.screenOn &&
+            state.work == Work.IDLE && state.conversation.open
+        if (!opens) return Step(state)
+        val seconds = ((state.followUpMillis + 999) / 1_000).toInt()
+        return Step(
+            state.copy(work = Work.FOLLOWING_UP, followUp = state.followUp + 1),
+            listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(seconds))),
+        )
     }
 
     // Design 5.5 of sub-project 7: what the voice reads of the conversation changed. The question that the voice answered
@@ -990,6 +1046,8 @@ object Rules {
         val changed = state.copy(
             conversation = view,
             answered = state.answered?.takeIf { it == view.question },
+            // The follow-up window ends when the conversation closes (design 6.6 of sub-project 7).
+            work = if (state.work == Work.FOLLOWING_UP && !view.open) Work.IDLE else state.work,
         )
         return stayOff(changed)
     }
@@ -1012,7 +1070,7 @@ object Rules {
     private fun channelSays(state: State, event: Event.ChannelSays): Step {
         val shown = Effect.Show(Feedback.ConversationText(event.text))
         if (state.mode == Mode.OFF) return Step(state, listOf(shown, Effect.EndReply(event.reply)))
-        return say(state, Reply.Channel(event.reply, event.text), shown)
+        return say(state, Reply.Channel(event.reply, event.text), shown, final = event.final)
     }
 
     // Design D2 of sub-project 5 and 11 of sub-project 7: the conversation asks one question at a time. The question stays
@@ -1061,8 +1119,15 @@ object Rules {
         *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray(),
     )
 
-    private fun say(state: State, reply: Reply, vararg first: Effect): Step =
-        Step(state.copy(speeches = state.speeches + 1), first.toList() + Effect.Say(reply))
+    // Kestrel's next reply ends the follow-up window (design 6.6 of sub-project 7); only a final reply opens a new one.
+    private fun say(state: State, reply: Reply, vararg first: Effect, final: Boolean = false): Step = Step(
+        state.copy(
+            speeches = state.speeches + 1,
+            work = if (state.work == Work.FOLLOWING_UP) Work.IDLE else state.work,
+            finalReply = final,
+        ),
+        first.toList() + Effect.Say(reply),
+    )
 
     private fun switch(state: State, mode: Mode, vararg first: Effect): Step =
         Step(state.copy(mode = mode), first.toList() + Effect.Show(Feedback.ModeChanged(mode)))
@@ -1095,6 +1160,7 @@ object Rules {
             voiceAnswers = true,
             answered = null,
             offAfterGoal = false,
+            finalReply = false,
         ),
         first.toList() + listOfNotNull(
             Effect.StopSaying.takeIf { state.speaking },
@@ -1108,7 +1174,7 @@ object Rules {
     private fun screen(state: State, on: Boolean): Step {
         val changed = state.copy(
             screenOn = on,
-            work = if (!on && state.work == Work.AWAITING_TASK) Work.IDLE else state.work,
+            work = if (!on && (state.work == Work.AWAITING_TASK || state.work == Work.FOLLOWING_UP)) Work.IDLE else state.work,
             // An unlock is a wake-up only after the owner has used the phone in this run: not the first report after a
             // start, not the unlock after a start on the lock screen, and not a report from a service that stops.
             screenSeen = state.mode != Mode.OFF && (on || state.screenSeen),

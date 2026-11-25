@@ -8,6 +8,7 @@ import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.WakeUpMode
+import dev.kestrel.app.orchestrator.VoiceView
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
@@ -260,6 +261,30 @@ class ListeningTest {
         runCurrent()
         assertTrue(shownOnly.isCompleted)
         assertEquals("Later.", shown.last())
+    }
+
+    @Test
+    fun theFollowUpWindowCountsItsSecondsDownOnTheBarAndFadesAtItsEnd() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        listening.send(Event.FollowUpLength(3_000))
+
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        session.replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(ListeningTexts.goOn(3), kept.last())
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals(ListeningTexts.goOn(2), kept.last())
+
+        val before = releases
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(before + 1, releases)
     }
 
     @Test

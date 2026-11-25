@@ -52,7 +52,8 @@ internal class VoiceChannel(
     override suspend fun show(output: ChannelOutput) {
         when (output) {
             is ChannelOutput.Said -> inTurn { voice.say(output.text) }
-            is ChannelOutput.Report -> inTurn { voice.say(output.text) }
+            // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
+            is ChannelOutput.Report -> inTurn { voice.say(output.text, final = true) }
             is ChannelOutput.Shown -> voice.show(output.text)
         }
     }

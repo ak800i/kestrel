@@ -329,4 +329,32 @@ class OrchestratorTest {
         assertEquals(1, performed.count { it is Effect.Converse })
         assertEquals(emptyList<Exception>(), errors)
     }
+
+    @Test
+    fun theFollowUpWindowEndsAfterItsLengthUnlessAnUtteranceStartedInIt() = runTest {
+        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
+        orchestrator.send(Event.Toggle)
+        orchestrator.send(Event.ConversationChanged(VoiceView(open = true)))
+        orchestrator.send(Event.FollowUpLength(4_000))
+        orchestrator.send(Event.ChannelSays(1, "Done.", final = true))
+        orchestrator.send(Event.SpeechEnded)
+        runCurrent()
+        assertEquals(Work.FOLLOWING_UP, orchestrator.state.value.work)
+        advanceTimeBy(4_001)
+        runCurrent()
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
+
+        // An utterance that started inside the window gets the time to end and to be transcribed.
+        orchestrator.send(Event.ChannelSays(2, "Done.", final = true))
+        orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.Speaking)
+        runCurrent()
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(Work.FOLLOWING_UP, orchestrator.state.value.work)
+        advanceTimeBy(25_001)
+        runCurrent()
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
+        assertEquals(emptyList<Exception>(), errors)
+    }
 }

@@ -125,6 +125,9 @@ internal enum class SettingsOpening {
 /** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
 internal object ListeningTexts {
     const val YES = "Yes?"
+
+    /** The follow-up window's bar with the seconds left (design 6.6 of sub-project 7). */
+    fun goOn(seconds: Int): String = "Go on… $seconds"
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
@@ -417,6 +420,9 @@ class Listening internal constructor(
     @Volatile
     internal var inputs: ((Event.Heard?, OwnerInput) -> OwnerInput)? = null
 
+    // Only [thread] uses it: the follow-up window's countdown on the bar (design 6.6 of sub-project 7).
+    private var followUpTicker: Job? = null
+
     // The conversation's replies that wait for their speech's end, by their numbers (design 11 of sub-project 7).
     private val replies = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
     private val replyNumbers = AtomicInteger()
@@ -429,12 +435,12 @@ class Listening internal constructor(
     internal val voicePath: VoicePath = object : VoicePath {
         override val ready: StateFlow<Boolean> get() = sessionOpen
 
-        override suspend fun say(text: String) {
+        override suspend fun say(text: String, final: Boolean) {
             val reply = replyNumbers.incrementAndGet()
             val ended = CompletableDeferred<Unit>()
             replies[reply] = ended
             try {
-                send(Event.ChannelSays(reply, text))
+                send(Event.ChannelSays(reply, text, final))
                 ended.await()
             } finally {
                 replies.remove(reply)
@@ -759,6 +765,7 @@ class Listening internal constructor(
     }
 
     private fun follow(state: State) {
+        if (state.work != Work.FOLLOWING_UP) endCountDown()
         if (state.mode != Mode.OFF && serviceState == ServiceState.STOPPED) start()
         val current = session ?: return
         current.recognition = state.recognition
@@ -1085,6 +1092,10 @@ class Listening internal constructor(
                     timeline.reacted("mode-${it.mode.name.lowercase()}")
                 }
                 if (effect.feedback == Feedback.AwaitingTask) timeline.reacted("wait")
+                (effect.feedback as? Feedback.FollowUp)?.let {
+                    countDown(it.seconds)
+                    return
+                }
                 if (effect.feedback == Feedback.MicBusy && demotedByBattery()) {
                     // Section 14.6: the microphone stays silenced, and Android may never stop the service: Android 13
                     // did not on the A71 (A71 session of sub-project 2, item 2). Only the first MicBusy asks: when
@@ -1099,7 +1110,7 @@ class Listening internal constructor(
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers -> Unit
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, is Effect.TimeFollowUp -> Unit
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
@@ -1234,6 +1245,26 @@ class Listening internal constructor(
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
         is Feedback.ConversationText -> feedback.text
+        is Feedback.FollowUp -> ListeningTexts.goOn(feedback.seconds)
+    }
+
+    // Design 6.6 of sub-project 7: "Go on…" with the seconds left, until the window ends.
+    private fun countDown(seconds: Int) {
+        followUpTicker?.cancel()
+        followUpTicker = scope.launch(thread) {
+            for (left in seconds downTo 1) {
+                bar.show(ListeningTexts.goOn(left), keep = true)
+                delay(COUNT_DOWN_MILLIS)
+            }
+        }
+    }
+
+    // The window ended: its countdown stops and fades.
+    private fun endCountDown() {
+        val ticker = followUpTicker ?: return
+        followUpTicker = null
+        ticker.cancel()
+        bar.release()
     }
 
     private fun privateInput(): Boolean = try {
@@ -1464,5 +1495,8 @@ class Listening internal constructor(
         // speech in the background cannot hold a call for ever (design D2 of sub-project 3).
         const val TICK_MILLIS = 100L
         const val HOLD_LIMIT_MILLIS = 30_000L
+
+        // Design 6.6 of sub-project 7: the follow-up window's bar counts whole seconds.
+        const val COUNT_DOWN_MILLIS = 1_000L
     }
 }

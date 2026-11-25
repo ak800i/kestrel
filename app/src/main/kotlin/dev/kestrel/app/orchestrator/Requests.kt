@@ -180,8 +180,11 @@ object Requests {
      * because a pause of more than 1.5 s still splits the answer and the owner may not have finished, while "Stop
      * Kestrel" and "Turn off, Kestrel" still turn Kestrel off. [stopSpotted]: the keyword spotter heard "stop" at its
      * start, so that "Stop Kestrel" allows a first word one letter away from "stop" and a name three letters away.
+     * [followUp]: the transcript came in the follow-up window (design 6.6 of sub-project 7), which is read as after the
+     * name, except that "turn off" alone turns Kestrel off there, as "stop", "cancel" and "stop listening" keep their
+     * meaning (design 3.6 of sub-project 7).
      */
-    fun read(transcript: String, spotted: Boolean, afterName: Boolean = false, stopSpotted: Boolean = false): Request? {
+    fun read(transcript: String, spotted: Boolean, afterName: Boolean = false, stopSpotted: Boolean = false, followUp: Boolean = false): Request? {
         val words = words(transcript)
         if (words.isEmpty()) return null
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
@@ -195,7 +198,7 @@ object Requests {
                 rest = rest.drop(again)
                 again = nameAt(rest, 0, limit)
             }
-            return named(transcript, rest, limit, afterName = afterName, nameSaid = true)
+            return named(transcript, rest, limit, afterName = afterName, turnOffAlone = true)
         }
         val phrase = phrase(words)
         val trailingName = nameBefore(words, words.size, limit)
@@ -205,7 +208,7 @@ object Requests {
             beforeName == "wake up" -> Request.WakeUp
             beforeName != null && beforeName in TURN_OFF -> Request.TurnOff
             afterName && trailingName > 0 && isNeverMind(words.dropLast(trailingName)) -> Request.Stop(named = true)
-            afterName -> named(transcript, words, limit, afterName = true, nameSaid = false)
+            afterName -> named(transcript, words, limit, afterName = true, turnOffAlone = followUp)
             else -> Request.Other(transcript.trim())
         }
     }
@@ -303,16 +306,16 @@ object Requests {
     }
 
     /**
-     * What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". [nameSaid]: the owner said the
-     * name before them; without it, a bare "turn off" is a task, because the answer is held for only 1.5 s of silence,
-     * and after a longer pause the owner may not have finished.
+     * What [rest], the words after the name, ask for. [afterName]: they answer "Yes?". [turnOffAlone]: a bare "turn off"
+     * turns Kestrel off, after the name and in the follow-up window; in an answer to "Yes?" without the name it is a task,
+     * because the answer is held for only 1.5 s of silence, and after a longer pause the owner may not have finished.
      */
     private fun named(
         transcript: String,
         rest: List<Word>,
         limit: Int,
         afterName: Boolean,
-        nameSaid: Boolean,
+        turnOffAlone: Boolean,
     ): Request {
         if (rest.isEmpty()) return Request.Name
         if (readStop(rest, limit) != null) return Request.Stop(named = true)
@@ -320,7 +323,7 @@ object Requests {
         val fromWakeUp = wakeUpDistance(said)
         return when {
             said == "stop listening" -> Request.PauseListening
-            nameSaid && said in TURN_OFF -> Request.TurnOff
+            turnOffAlone && said in TURN_OFF -> Request.TurnOff
             said in OPEN_SETTINGS -> Request.OpenSettings
             said == CONTINUE -> Request.Continue
             said in DELETE_HISTORY -> Request.DeleteHistory

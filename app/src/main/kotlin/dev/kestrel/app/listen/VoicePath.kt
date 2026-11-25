@@ -17,8 +17,11 @@ internal interface VoicePath {
      */
     val speechStops: Long
 
-    /** Says [text] and shows it on the bar; returns once it has been spoken, stopped or refused, or only shown while Kestrel is off. */
-    suspend fun say(text: String)
+    /**
+     * Says [text] and shows it on the bar; returns once it has been spoken, stopped or refused, or only shown while Kestrel
+     * is off. A [final] reply's end opens the follow-up window (design 6.6 of sub-project 7).
+     */
+    suspend fun say(text: String, final: Boolean = false)
 
     /** Shows [text] on the bar without speaking it. */
     fun show(text: String)

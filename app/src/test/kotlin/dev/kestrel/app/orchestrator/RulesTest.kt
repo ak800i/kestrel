@@ -1654,4 +1654,67 @@ class RulesTest {
 
         assertFalse(printed, printed.contains("secret"))
     }
+
+    // Design 6.6 of sub-project 7: an open conversation, and a final reply that Kestrel has finished speaking.
+    private val open = listening.copy(conversation = VoiceView(open = true))
+
+    private fun replied(from: State = open): State =
+        Rules.next(Rules.next(from, Event.ChannelSays(5, "Done.", final = true)).state, Event.SpeechEnded).state
+
+    @Test
+    fun aSpokenFinalReplyOpensTheFollowUpWindowWhereAnUtteranceIsACommand() {
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+        val ended = Rules.next(said, Event.SpeechEnded)
+
+        assertEquals(listOf(Effect.TimeFollowUp(), Effect.Show(Feedback.FollowUp(8))), ended.effects)
+        assertEquals(Work.FOLLOWING_UP, ended.state.work)
+        assertEquals(Recognition.ALL, ended.state.recognition)
+        assertEquals(Recognition.ALL, replied(paused.copy(conversation = open.conversation)).recognition)
+        // Words without the name are a command; the instant commands' parser is not asked.
+        val heard = Event.Heard("Scroll down", named = false)
+        val step = Rules.next(ended.state, heard)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Scroll down")), Effect.Converse(InputIntent.Command("Scroll down"), heard)), step.effects)
+        assertEquals(Work.IDLE, step.state.work)
+        // Kestrel's own requests keep their meaning, and an utterance that started inside the window gets the time to end.
+        assertEquals(Mode.PAUSED, Rules.next(ended.state, Event.Heard("Stop listening.", named = false)).state.mode)
+        assertEquals(listOf(Effect.TimeFollowUp(answering = true)), Rules.next(ended.state, Event.Speaking).effects)
+    }
+
+    @Test
+    fun theFollowUpWindowEndsAtItsTimerTheNextReplyTheScreenACallOrTheConversationsEnd() {
+        val window = replied()
+
+        assertEquals(Work.IDLE, Rules.next(window, Event.FollowUpEnded(window.followUp)).state.work)
+        assertEquals(Step(window), Rules.next(window, Event.FollowUpEnded(window.followUp - 1)))
+        assertEquals(Work.IDLE, Rules.next(window, Event.ChannelSays(6, "Got it.")).state.work)
+        assertEquals(Work.IDLE, Rules.next(window, Event.Screen(on = false)).state.work)
+        assertEquals(Work.IDLE, Rules.next(window, Event.CallState(CallState.RINGING)).state.work)
+        assertEquals(Work.IDLE, Rules.next(window, Event.ConversationChanged(VoiceView())).state.work)
+        assertEquals(Work.IDLE, Rules.next(window, Event.NothingHeard).state.work)
+        assertEquals(Mode.OFF, Rules.next(window, Event.TurnOff).state.mode)
+    }
+
+    @Test
+    fun noWindowOpensAfterWordsInTheMiddleOfAGoalAStoppedReplyOrWithoutItsLength() {
+        // Kestrel's words in the middle of a goal need the name again (D9 of sub-project 7).
+        assertEquals(Work.IDLE, Rules.next(Rules.next(open, Event.ChannelSays(5, "Opening Viber.")).state, Event.SpeechEnded).state.work)
+        // A final reply that the owner stopped, or that Kestrel only showed while off.
+        val stopped = Rules.next(Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state, Event.Spotted(Keyword.STOP)).state
+        assertEquals(Work.IDLE, Rules.next(stopped, Event.SpeechEnded).state.work)
+        assertEquals(
+            listOf(Effect.Show(Feedback.ConversationText("Done.")), Effect.EndReply(5)),
+            Rules.next(open.copy(mode = Mode.OFF), Event.ChannelSays(5, "Done.", final = true)).effects,
+        )
+        // Without its length, or with the screen off.
+        assertEquals(Work.IDLE, replied(Rules.next(open, Event.FollowUpLength(0)).state).work)
+        assertEquals(Work.IDLE, replied(open.copy(screenOn = false)).work)
+    }
+
+    @Test
+    fun turnOffAloneInTheFollowUpWindowTurnsKestrelOffAndReachesNoConversation() {
+        val step = Rules.next(replied(), Event.Heard("Turn off.", named = false))
+
+        assertEquals(Mode.OFF, step.state.mode)
+        assertTrue(step.effects.none { it is Effect.Converse })
+    }
 }

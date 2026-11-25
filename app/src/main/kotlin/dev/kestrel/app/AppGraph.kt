@@ -512,10 +512,14 @@ class AppGraph(context: Context) {
         scope.launch { ConversationSignals(phoneSignals, callBackstop, scope, engine::signal, reportFailure).follow(engine.view) }
     }
 
-    // Listening gives the conversation the owner's spoken inputs and its wait for a command after "Yes?".
+    // Listening gives the conversation the owner's spoken inputs and its wait for a command after "Yes?", and gets the
+    // follow-up window's length from the Conversations page (design 6.6 of sub-project 7).
     private fun converse(listening: Listening) {
         listening.converse = { input -> conversations.submit(input) }
         listening.awaitingCommand = { active -> conversations.awaitingCommand(active) }
+        scope.launch {
+            conversationSettings.map { it.followUpMillis }.distinctUntilChanged().collect { listening.send(Event.FollowUpLength(it)) }
+        }
     }
 
     // sub-project 5C: eyes

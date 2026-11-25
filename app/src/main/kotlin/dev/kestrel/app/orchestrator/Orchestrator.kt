@@ -24,7 +24,9 @@ import kotlinx.coroutines.launch
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
  * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). The
  * answer to a question of the conversation that the voice asked has the same waits, and the end of its wait is the
- * answer `Silence` (design 11 of sub-project 7); the conversation runs a goal's hand-over and pauses itself. A
+ * answer `Silence` (design 11 of sub-project 7); the conversation runs a goal's hand-over and pauses itself. The
+ * follow-up window after a spoken final reply lasts [State.followUpMillis], and [answerMillis] once the owner has started
+ * an utterance in it (design 6.6 of sub-project 7). A
  * [Effect.RunCommand] that throws counts as a command that ended as failed,
  * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14). [onStep] sees each event with the
  * state before it and the step that it caused, on the Orchestrator's coroutine, after the new state is set and before the
@@ -49,6 +51,7 @@ class Orchestrator(
     private var silence: Job? = null
     private var answer: Job? = null
     private var late: Job? = null
+    private var followUp: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -97,6 +100,10 @@ class Orchestrator(
             late?.cancel()
             late = null
         }
+        if (step.state.work != Work.FOLLOWING_UP) {
+            followUp?.cancel()
+            followUp = null
+        }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
             if (effect is Effect.WaitForTask) {
@@ -121,6 +128,14 @@ class Orchestrator(
                 late = scope.launch {
                     delay(lateMillis)
                     send(Event.LateAnswersEnded(number))
+                }
+            } else if (effect is Effect.TimeFollowUp) {
+                val number = step.state.followUp
+                val millis = if (effect.answering) answerMillis else step.state.followUpMillis
+                followUp?.cancel()
+                followUp = scope.launch {
+                    delay(millis)
+                    send(Event.FollowUpEnded(number))
                 }
             } else if (effect == Effect.TimeSilence) {
                 val number = step.state.silence

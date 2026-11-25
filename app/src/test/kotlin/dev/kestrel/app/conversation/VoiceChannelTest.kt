@@ -43,6 +43,8 @@ class VoiceChannelTest {
         channel.show(ChannelOutput.Shown("Got it."))
 
         assertEquals(listOf("Android gave Kestrel only the photos that you selected.", "Done."), voice.said)
+        // Only the final reply opens the follow-up window (design 6.6 of sub-project 7).
+        assertEquals(listOf(false, true), voice.finals)
         assertEquals(listOf("Got it."), voice.shown)
     }
 
@@ -205,6 +207,7 @@ class VoiceChannelTest {
     private class FakeVoice : VoicePath {
         override val ready = MutableStateFlow(true)
         val said = mutableListOf<String>()
+        val finals = mutableListOf<Boolean>()
         val shown = mutableListOf<String>()
         val asked = mutableListOf<Asked>()
         val handOvers = mutableListOf<String>()
@@ -221,8 +224,9 @@ class VoiceChannelTest {
             ends.removeFirstOrNull()?.complete(Unit)
         }
 
-        override suspend fun say(text: String) {
+        override suspend fun say(text: String, final: Boolean) {
             said += text
+            finals += final
             if (holds) CompletableDeferred<Unit>().also(ends::addLast).await()
         }
 

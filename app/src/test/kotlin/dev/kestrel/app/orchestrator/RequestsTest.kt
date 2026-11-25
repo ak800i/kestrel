@@ -319,4 +319,14 @@ class RequestsTest {
         assertEquals(Request.Task("forget it"), Requests.read("Kestrel, forget it", spotted = false))
         assertEquals(Request.Task("delete the history of Chrome"), Requests.read("Kestrel, delete the history of Chrome", spotted = false))
     }
+
+    @Test
+    fun turnOffAloneTurnsKestrelOffInTheFollowUpWindowButNotAfterYes() {
+        assertEquals(Request.TurnOff, Requests.read("Turn off.", spotted = false, afterName = true, followUp = true))
+        assertEquals(Request.TurnOff, Requests.read("switch off", spotted = false, afterName = true, followUp = true))
+        assertEquals(Request.PauseListening, Requests.read("Stop listening.", spotted = false, afterName = true, followUp = true))
+        assertEquals(Request.Task("turn off the lights"), Requests.read("turn off the lights", spotted = false, afterName = true, followUp = true))
+        // After "Yes?" the owner may not have finished (plan 4E).
+        assertEquals(Request.Task("Turn off."), Requests.read("Turn off.", spotted = false, afterName = true))
+    }
 }
