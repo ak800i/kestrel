@@ -83,8 +83,8 @@ The controller accepted these on 2026-11-24; Task 7 writes them into the design'
 - **The index of past conversations in a table of its own (Task 4b, design 9.2 and R3 as amended on 2026-11-25 and 2026-11-26).** On the A71, reading and decrypting every conversation at the store's first use took 13.8 s, and still 5.2 s in one query. So version 3 also holds the table `conversation_index`, whose rows are the index's shards, each encrypted under the same key and bound to its name; a table of its own keeps every query of `conversations` plain. The DAO's functions block, so that `ConversationArchiveStore` runs a query and the decryption of its rows on one thread: `open()` (a restore), `shards()`, `stamp()` (of the closed rows), `rows(ids)`, `closedIds()` (for a rebuild in pages), `write(rows, deleted, index)`, `purge(oldest, newest, index)` and `deleteAll()`. A restore is one Keystore operation, the index one per shard, and each body that a caller asks for one more.
 - **What `ConversationArchiveStore` offers.** The design lists "encrypt, decrypt, put, headers, get, delete, purge". Here it offers exactly what plan 7B's port needs: `open()`, `shards()`, `stamp()`, `read(ids)`, `closedIds()`, `write(ConversationChange)`, `purge(oldest, newest, IndexUpdate)` and `deleteAll()`. Encryption and decryption stay inside, so no caller handles a ciphertext. The plain fields travel as the table's own `ConversationHeader`, and the stamp as `ConversationStamp`. Its reads take no lock, because they store nothing, and stop between two rows when their caller is cancelled; its writes, its purge and `deleteAll` take the key's guard. `deleteAll` erases the key first and then deletes the rows, so that a deletion cut short leaves nothing that a key opens.
 - **Two kinds of unreadable conversation.** Every read tells a payload that fails its check (`FailedCheck`, which plan 7B's store deletes and reports) from one in a format that this version cannot read (`UnknownFormat`, which is kept for a later version and reported once per process by the archive, as `SettingsStore` and `CredentialStore` do). The activity log's texts are "A conversation could not be read, so Kestrel deleted it" (from plan 7B's `ArchiveNote.CONVERSATION_DELETED`) and "A past conversation is in a format that this version of Kestrel cannot read, so Kestrel keeps it".
-- **The key is erasable and never in StrongBox.** `ErasableKey` (`guard`, `get()`, `erase()`) is the key's own type. `KeystoreErasableKey.of(alias)` gives one key object per alias and process, by construction: it keeps the Keystore key after its first use, as `PrivacyStore`'s `by lazy` keys do, until `erase()` deletes it from Keystore, so that no part of the process, not even a second `PrivacyStore`, keeps a key that another erased. `KeystoreKeys` gains `delete(alias)`. StrongBox's slower operations would make the first read of hundreds of conversations slow (R3), and the data key is not in StrongBox either.
-- **One lock for the key.** Every write of `ConversationArchiveStore` and its `deleteAll` run under the key's own lock, `ErasableKey.guard`, which is process-wide with the key, so that "delete history" can never erase the key between the encryption of a write and its row, which would leave a row that no key opens, also not from a second `PrivacyStore` of the same process. From Task 4b on, its reads take no lock, because they store nothing: a rebuild's read of every row, about 5 s on the A71 for 30 days, never holds up a save. A read that overlaps "delete history" may see a row fail its check; plan 7B's store orders the two, and drops a rebuild that "delete history" overtook.
+- **The key is erasable and never in StrongBox.** `ErasableKey` (`guard`, `get()`, `withExisting`, `erase()`) is the key's own type: only a write's `get()` makes the key, a read decrypts with `withExisting`, which never makes it, and `erase()` waits for a read that decrypts with it. `KeystoreErasableKey.of(alias)` gives one key object per alias and process, by construction: it keeps the Keystore key after its first use, as `PrivacyStore`'s `by lazy` keys do, until `erase()` deletes it from Keystore, so that no part of the process, not even a second `PrivacyStore`, keeps a key that another erased. `KeystoreKeys` gains `delete(alias)`. StrongBox's slower operations would make the first read of hundreds of conversations slow (R3), and the data key is not in StrongBox either.
+- **One lock for the key.** Every write of `ConversationArchiveStore` and its `deleteAll` run under the key's own lock, `ErasableKey.guard`, which is process-wide with the key, so that "delete history" can never erase the key between the encryption of a write and its row, which would leave a row that no key opens, also not from a second `PrivacyStore` of the same process. From Task 4b on, its reads take no lock, because they store nothing: a rebuild's read of every row, about 5 s on the A71 for 30 days, never holds up a save. A read that overlaps "delete history" never fails because the key went and never makes a new one: it sees a row as it was, or, once the key is erased, as failing its check (a shard as unreadable), or, once the rows are deleted, not at all; plan 7B's store orders the two, and drops a rebuild that "delete history" overtook.
 - **The purge job runs for the life of the process.** `KestrelApplication` starts plan 7B's `Retention` in `AppGraph.scope`. Unlike the logs' purge, which the accessibility service keeps, it runs with the service on or off, as design 9.3 says ("while the process runs").
 - **The archive's speed is measured in `:core:privacy`.** The device test `ConversationArchiveSpeedTest` writes 300 closed conversations of 12 KB, an open one and an index in two shards of 240 and 210 KB to a database file, and times, each through a new store as after a start of Kestrel, what plan 7B's store does: the restore (`open()`), the restore and the index (`shards()` and `stamp()`), those and the bodies of a search's 5 best matches (`read(ids)`), every closed conversation in pages of 50, as a rebuild reads them (`closedIds()` and `read(page)`), and a close (`write` of a conversation and one shard). It runs only with the instrumentation argument `kestrelArchiveSpeed=true`, so that the routine runs stay quick. It is a measurement: it fails only when something does not read back, and it logs the times under the tag `KestrelArchive`. Two rules decide, in Task 8: the restore, the index and 5 bodies above 500 ms on the A71, the archive's share of design 4.3's 1 s, go to the owner, and so does a close above 500 ms; the emulator's times and the rebuild's read are only noted. It needs no install of Kestrel, so it can run on the A71.
 
@@ -93,7 +93,7 @@ The controller accepted these on 2026-11-24; Task 7 writes them into the design'
 | File | Responsibility |
 |---|---|
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt` (new), `db/KestrelDatabase.kt`, `core/privacy/schemas/dev.kestrel.privacy.db.KestrelDatabase/3.json` (new, generated); tests `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/` `KestrelDatabaseTest.kt`, `KestrelDatabaseMigrationTest.kt` (new), `CredentialStoreTest.kt` | Task 1: the table `conversations` in version 3 of the database |
-| `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt`, `crypto/ErasableKey.kt` (new); test `KeystoreCipherTest.kt` | Task 2: the key `kestrel.conversations`, which "delete history" erases |
+| `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt`, `crypto/ErasableKey.kt` (new), `crypto/FieldCipher.kt`; tests `KeystoreCipherTest.kt`, `AesGcmFieldCipherTest.kt` | Task 2: the key `kestrel.conversations`, which "delete history" erases |
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt` (new); test `core/privacy/src/test/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStoreTest.kt` (new) | Task 3: the archive that knows only bytes |
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/PrivacyStore.kt`; tests `PrivacyStoreTest.kt`, `ConversationArchiveSpeedTest.kt` (new) | Task 4: `PrivacyStore.conversations`, its report of a kept conversation, and the first read's speed |
 | `core/privacy/src/main/kotlin/dev/kestrel/privacy/db/ConversationRow.kt`, `db/KestrelDatabase.kt`, `conversations/ConversationArchiveStore.kt`, `core/privacy/schemas/dev.kestrel.privacy.db.KestrelDatabase/3.json` (generated again); tests `ConversationArchiveStoreTest.kt`, `KestrelDatabaseTest.kt`, `KestrelDatabaseMigrationTest.kt`, `PrivacyStoreTest.kt`, `ConversationArchiveSpeedTest.kt` | Task 4b: the index of past conversations in shards of a table of its own, and reads that decrypt on one thread |
@@ -139,6 +139,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 
 /**
  * The database's migrations from each earlier version (design spec, section 13.4; design 9.2 of sub-project 7). Each test
@@ -153,7 +154,10 @@ class KestrelDatabaseMigrationTest {
 
     @After
     fun deleteTheTestDatabase() {
-        instrumentation.targetContext.deleteDatabase(MIGRATED)
+        val context = instrumentation.targetContext
+        context.deleteDatabase(MIGRATED)
+        // Room's lock file beside the database, which deleteDatabase leaves.
+        File("${context.getDatabasePath(MIGRATED).path}.lck").delete()
     }
 
     @Test
@@ -526,20 +530,20 @@ git commit -m "feat(privacy): version 3 of Kestrel's database holds the table of
 
 ### Task 2: The key `kestrel.conversations`, which "delete history" erases
 
-The archive's key is a key of its own (design 9.1), which "delete history" erases with the rows (crypto-shredding, design 9.7): once it is gone, no copy of the database file can be read. The next use makes a new key.
+The archive's key is a key of its own (design 9.1), which "delete history" erases with the rows (crypto-shredding, design 9.7): once it is gone, no copy of the database file can be read. The next write makes a new key. A read never makes one: it decrypts with the key as it is (`ErasableKey.withExisting`), and the key's erasure waits for a decryption that has started, so that a read after "delete history" leaves no key behind and a read beside it never meets its key deleted in Keystore. `AesGcmFieldCipher` takes a key that may be missing: a value in the known format then fails its check, as under any other wrong key.
 
 **Files:**
 - Create: `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/ErasableKey.kt`
-- Modify: `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt`
-- Test: `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt`
+- Modify: `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt`, `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/FieldCipher.kt`
+- Test: `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt`, `core/privacy/src/test/kotlin/dev/kestrel/privacy/crypto/AesGcmFieldCipherTest.kt`
 
 **Interfaces:**
 - Consumes: `KeystoreKeys.getOrCreate(alias: String, strongBox: Boolean = false): SecretKey`; `AesGcmFieldCipher(key: () -> SecretKey)`.
-- Produces: `KeystoreKeys.CONVERSATIONS_KEY = "kestrel.conversations"`; `KeystoreKeys.delete(alias: String)`; package `dev.kestrel.privacy.crypto`: `interface ErasableKey { val guard: Mutex; fun get(): SecretKey; fun erase() }` and `class KeystoreErasableKey private constructor(alias: String) : ErasableKey` with `KeystoreErasableKey.of(alias: String): KeystoreErasableKey`, one instance per alias and process. Task 3 takes an `ErasableKey` and runs under its `guard`; Task 4 builds `KeystoreErasableKey.of(KeystoreKeys.CONVERSATIONS_KEY)`; the device tests of Tasks 4 and 5 clean up with `KeystoreErasableKey.of(alias).erase()`.
+- Produces: `KeystoreKeys.CONVERSATIONS_KEY = "kestrel.conversations"`; `KeystoreKeys.find(alias: String): SecretKey?`, which never makes a key; `KeystoreKeys.delete(alias: String)`; `AesGcmFieldCipher(key: () -> SecretKey?)`, whose `decrypt` throws `AEADBadTagException` when there is no key (after its check of the format, so that a later format still throws `IllegalArgumentException`) and whose `encrypt` throws `IllegalStateException` then; package `dev.kestrel.privacy.crypto`: `interface ErasableKey { val guard: Mutex; fun get(): SecretKey; fun <T> withExisting(block: (SecretKey?) -> T): T; fun erase() }`, where `get()` makes the key for a write and `withExisting` runs a read's decryption with the key or null, never makes one, and holds off `erase()` until it returns, and `class KeystoreErasableKey private constructor(alias: String) : ErasableKey` with `KeystoreErasableKey.of(alias: String): KeystoreErasableKey`, one instance per alias and process. Task 3 takes an `ErasableKey` and runs under its `guard`; Task 4 builds `KeystoreErasableKey.of(KeystoreKeys.CONVERSATIONS_KEY)`; the device tests of Tasks 4 and 5 clean up with `KeystoreErasableKey.of(alias).erase()`.
 
-Counts: `:core:privacy` JVM unchanged. `:core:privacy` device tests N + 1 (`KeystoreCipherTest` + 1).
+Counts: `:core:privacy` JVM N + 1 (`AesGcmFieldCipherTest` + 1). `:core:privacy` device tests N + 3 (`KeystoreCipherTest` + 3).
 
-- [ ] **Step 1: Write the failing device test**
+- [ ] **Step 1: Write the failing tests**
 
 Replace the whole `core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt` with:
 
@@ -553,12 +557,17 @@ import dev.kestrel.privacy.crypto.KeystoreKeys
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.security.KeyStore
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import javax.crypto.AEADBadTagException
 
 @RunWith(AndroidJUnit4::class)
@@ -606,15 +615,96 @@ class KeystoreCipherTest {
         assertThrows(AEADBadTagException::class.java) { AesGcmFieldCipher { key.get() }.decrypt(sealed, place) }
         assertTrue(keyStore.containsAlias(alias))
     }
+
+    // Design 9.7 of sub-project 7: only a write makes the key, so that a read after "delete history" leaves no key behind.
+    @Test
+    fun aReadUsesTheKeyOnlyWhenItExistsAndNeverMakesIt() {
+        val key = KeystoreErasableKey.of(alias)
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+
+        assertNull(key.withExisting { it })
+        assertFalse(keyStore.containsAlias(alias))
+        key.get()
+        assertNotNull(key.withExisting { it })
+        key.erase()
+
+        assertNull(key.withExisting { it })
+        assertFalse(keyStore.containsAlias(alias))
+    }
+
+    // Without the wait, the key could be deleted from Keystore while a read decrypts with it, which would then fail with
+    // Keystore's exception instead of reading the value. The pause can only let a wrong order pass, never fail a right one.
+    @Test
+    fun anErasureWaitsForAReadThatUsesTheKey() {
+        val key = KeystoreErasableKey.of(alias)
+        val sealed = AesGcmFieldCipher { key.get() }.encrypt("hello".encodeToByteArray(), place)
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val reading = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val read = executor.submit<String> {
+                key.withExisting { secret ->
+                    reading.countDown()
+                    gate.await(5, TimeUnit.SECONDS)
+                    AesGcmFieldCipher { secret }.decrypt(sealed, place).decodeToString()
+                }
+            }
+            assertTrue(reading.await(5, TimeUnit.SECONDS))
+            val erasing = Thread { key.erase() }.apply { start() }
+            erasing.join(200)
+            assertTrue(erasing.isAlive)
+            assertTrue(keyStore.containsAlias(alias))
+
+            gate.countDown()
+
+            assertEquals("hello", read.get(5, TimeUnit.SECONDS))
+            erasing.join(5_000)
+            assertFalse(erasing.isAlive)
+            assertFalse(keyStore.containsAlias(alias))
+        } finally {
+            gate.countDown()
+            executor.shutdown()
+        }
+    }
 }
 ```
 
-- [ ] **Step 2: Compile the device test to see it fail**
+In `core/privacy/src/test/kotlin/dev/kestrel/privacy/crypto/AesGcmFieldCipherTest.kt`, replace:
+
+```kotlin
+    @Test
+    fun emptyValueRoundTrips() {
+```
+
+with:
+
+```kotlin
+    // Design 9.7 of sub-project 7: once a key is erased, a value fails its check, and a later format is still told apart.
+    @Test
+    fun withoutAKeyAValueFailsItsCheckAndNothingIsEncrypted() {
+        val sealed = cipher.encrypt("hello".encodeToByteArray(), place)
+        val keyless = AesGcmFieldCipher { null }
+
+        assertThrows(AEADBadTagException::class.java) { keyless.decrypt(sealed, place) }
+        sealed[0] = 2
+        assertThrows(IllegalArgumentException::class.java) { keyless.decrypt(sealed, place) }
+        assertThrows(IllegalStateException::class.java) { keyless.encrypt("hello".encodeToByteArray(), place) }
+    }
+
+    @Test
+    fun emptyValueRoundTrips() {
+```
+
+- [ ] **Step 2: Compile the tests to see them fail**
+
+Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest`
+Expected: FAIL, the compiler reports `Null cannot be a value of a non-null type 'SecretKey'`.
 
 Run: `scripts\gradle.ps1 :core:privacy:compileDebugAndroidTestKotlin`
 Expected: FAIL, the compiler reports `Unresolved reference 'KeystoreErasableKey'`.
 
-- [ ] **Step 3: Add the erasable key**
+- [ ] **Step 3: Add the erasable key and a cipher that takes a missing key**
 
 Replace the whole `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt` with:
 
@@ -647,8 +737,7 @@ object KeystoreKeys {
      */
     @Synchronized
     fun getOrCreate(alias: String, strongBox: Boolean = false): SecretKey {
-        val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keyStore.getKey(alias, null) as SecretKey?)?.let { return it }
+        find(alias)?.let { return it }
         if (strongBox) {
             try {
                 return generate(alias, strongBox = true)
@@ -659,9 +748,13 @@ object KeystoreKeys {
         return generate(alias, strongBox = false)
     }
 
+    /** Returns the key [alias], or null when it does not exist; never makes one. */
+    @Synchronized
+    fun find(alias: String): SecretKey? = KeyStore.getInstance(PROVIDER).apply { load(null) }.getKey(alias, null) as SecretKey?
+
     /**
      * Deletes the key [alias] when it exists, so that nothing that it encrypted can be read again (crypto-shredding, design
-     * 9.7 of sub-project 7). The next [getOrCreate] makes a new key.
+     * 9.7 of sub-project 7). The next [getOrCreate] makes a new key; [find] finds none.
      */
     @Synchronized
     fun delete(alias: String) {
@@ -689,11 +782,15 @@ Create `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/ErasableKey.kt`:
 package dev.kestrel.privacy.crypto
 
 import kotlinx.coroutines.sync.Mutex
+import java.util.concurrent.locks.ReentrantReadWriteLock
 import javax.crypto.SecretKey
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * A key that can be erased (crypto-shredding): once it is erased, nothing that it encrypted can be read again, also not
- * from a copy of the database file. Its next use makes a new key (design 9.7 of sub-project 7).
+ * from a copy of the database file. Only a store of data makes a new key, at its next use (design 9.7 of sub-project 7);
+ * a read never makes one, so that a read after the erasure leaves no key behind.
  */
 interface ErasableKey {
     /**
@@ -702,10 +799,17 @@ interface ErasableKey {
      */
     val guard: Mutex
 
-    /** The key; a new one when there is none. */
+    /** The key to store data with, under [guard]; a new one when there is none. */
     fun get(): SecretKey
 
-    /** Erases the key. Erasing a key that is already erased does nothing. */
+    /**
+     * Runs [block] with the key, or with null when there is none, and never makes one: what a read decrypts with. [erase]
+     * waits until [block] has returned, so that the key is never deleted while [block] uses it. [block] must not call
+     * [get] or [erase].
+     */
+    fun <T> withExisting(block: (SecretKey?) -> T): T
+
+    /** Erases the key, once no [withExisting] uses it. Erasing a key that is already erased does nothing. */
     fun erase()
 }
 
@@ -714,19 +818,29 @@ interface ErasableKey {
  * that every user of the alias shares its [guard] and none keeps a key that another one erased. It keeps the key after
  * its first use, as PrivacyStore's other keys are kept, until [erase] deletes it from Keystore. It is never made in
  * StrongBox, whose slower operations would make the first read of hundreds of conversations slow, as the data key is not.
+ *
+ * Reads share [use]'s read lock, so that many decrypt at once; [get] and [erase] take its write lock, so that the key is
+ * never deleted from Keystore while a read decrypts with it, which would fail with Keystore's exception.
  */
 class KeystoreErasableKey private constructor(private val alias: String) : ErasableKey {
     override val guard = Mutex()
 
+    private val use = ReentrantReadWriteLock()
+
+    // Written under use's write lock, or under its read lock with the key that Keystore holds then, which no erasure can
+    // delete meanwhile.
+    @Volatile
     private var key: SecretKey? = null
 
-    @Synchronized
-    override fun get(): SecretKey = key ?: KeystoreKeys.getOrCreate(alias).also { key = it }
+    override fun get(): SecretKey = use.write { key ?: KeystoreKeys.getOrCreate(alias).also { key = it } }
 
-    @Synchronized
+    override fun <T> withExisting(block: (SecretKey?) -> T): T = use.read { block(key ?: KeystoreKeys.find(alias)?.also { key = it }) }
+
     override fun erase() {
-        key = null
-        KeystoreKeys.delete(alias)
+        use.write {
+            key = null
+            KeystoreKeys.delete(alias)
+        }
     }
 
     companion object {
@@ -739,18 +853,74 @@ class KeystoreErasableKey private constructor(private val alias: String) : Erasa
 }
 ```
 
-- [ ] **Step 4: Run the device test to see it pass**
+Replace the whole `core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/FieldCipher.kt` with:
+
+```kotlin
+package dev.kestrel.privacy.crypto
+
+import javax.crypto.AEADBadTagException
+import javax.crypto.Cipher
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** Encrypts single database fields. The associated data binds a value to the place where it is stored. */
+interface FieldCipher {
+    fun encrypt(plaintext: ByteArray, associatedData: ByteArray): ByteArray
+    fun decrypt(ciphertext: ByteArray, associatedData: ByteArray): ByteArray
+}
+
+/**
+ * AES-256-GCM (design spec, section 13.4). The output is a version byte, the 12-byte IV that the
+ * cipher generates, and the ciphertext with its 16-byte tag.
+ *
+ * [key] gives the key at each use, or null when there is none, such as an erased key (design 9.7 of
+ * sub-project 7): then a value in the known format fails its check, as under any other wrong key, and
+ * nothing can be encrypted.
+ */
+class AesGcmFieldCipher(private val key: () -> SecretKey?) : FieldCipher {
+    override fun encrypt(plaintext: ByteArray, associatedData: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        // Android Keystore keys refuse caller-chosen IVs, so the cipher picks a random one.
+        cipher.init(Cipher.ENCRYPT_MODE, checkNotNull(key()) { "No key to encrypt with" })
+        cipher.updateAAD(associatedData)
+        val iv = cipher.iv
+        check(iv.size == IV_BYTES) { "Unexpected IV length ${iv.size}" }
+        return byteArrayOf(VERSION) + iv + cipher.doFinal(plaintext)
+    }
+
+    override fun decrypt(ciphertext: ByteArray, associatedData: ByteArray): ByteArray {
+        // Keystore would report a too-short value as IllegalBlockSizeException, which also signals temporary failures.
+        require(ciphertext.size >= HEADER_BYTES + TAG_BYTES && ciphertext[0] == VERSION) { "Unknown ciphertext format" }
+        val key = key() ?: throw AEADBadTagException("No key")
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, ciphertext, 1, IV_BYTES))
+        cipher.updateAAD(associatedData)
+        return cipher.doFinal(ciphertext, HEADER_BYTES, ciphertext.size - HEADER_BYTES)
+    }
+
+    private companion object {
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val VERSION: Byte = 1
+        const val IV_BYTES = 12
+        const val HEADER_BYTES = 1 + IV_BYTES
+        const val TAG_BITS = 128
+        const val TAG_BYTES = TAG_BITS / 8
+    }
+}
+```
+
+- [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:privacy:compileDebugAndroidTestKotlin :core:privacy:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL, P₀ tests.
+Expected: BUILD SUCCESSFUL, P₀ + 1 tests.
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.KeystoreCipherTest'; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, 3 tests, none failed; the script ends with exit code 0.
+Expected: BUILD SUCCESSFUL, 5 tests, none failed; the script ends with exit code 0.
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/ErasableKey.kt core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt
+git add core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/KeystoreKeys.kt core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/ErasableKey.kt core/privacy/src/main/kotlin/dev/kestrel/privacy/crypto/FieldCipher.kt core/privacy/src/androidTest/kotlin/dev/kestrel/privacy/KeystoreCipherTest.kt core/privacy/src/test/kotlin/dev/kestrel/privacy/crypto/AesGcmFieldCipherTest.kt
 git commit -m "feat(privacy): the key kestrel.conversations is erasable, so that nothing it encrypted can be read once it is gone (plan 7C)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -768,7 +938,7 @@ The store of design 9.2: it encrypts each payload under the erasable key, bound 
 - Consumes: Task 1's `ConversationDao`, `ConversationRow` and `ConversationHeader`; Task 2's `ErasableKey` with its `guard`; `AesGcmFieldCipher`, whose `decrypt` throws `AEADBadTagException` for a payload that fails its check and `IllegalArgumentException` for an unknown format.
 - Produces: package `dev.kestrel.privacy.conversations`: `class PlainConversation(val header: ConversationHeader, val payload: ByteArray)`; `sealed interface StoredConversation { val header: ConversationHeader }` with `class Readable(header, val payload: ByteArray)`, `class FailedCheck(header)` and `class UnknownFormat(header)`; `class ConversationArchiveStore(dao: ConversationDao, key: ErasableKey, onUnknownFormat: suspend () -> Unit = {}, dispatcher: CoroutineDispatcher = Dispatchers.IO)` with `suspend fun readAll(): List<StoredConversation>` (every conversation, the newest last change first, read in one query and decrypted under the key's guard in one `withContext`), `suspend fun write(conversations: List<PlainConversation>)`, `suspend fun delete(id: String)`, `suspend fun deleteAll()` and `suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int`. Task 4 builds it in `PrivacyStore`; Task 5 wraps it in `RoomRecordArchive`.
 
-Counts: `:core:privacy` JVM N + 10 (P₀ + 10). Device tests unchanged.
+Counts: `:core:privacy` JVM N + 10 (P₀ + 11). Device tests unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -933,6 +1103,8 @@ class ConversationArchiveStoreTest {
 
             override fun get(): SecretKey = key.get().also { threads += Thread.currentThread() }
 
+            override fun <T> withExisting(block: (SecretKey?) -> T): T = key.withExisting(block)
+
             override fun erase() = key.erase()
         }
         Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
@@ -960,6 +1132,8 @@ private class MemoryKey : ErasableKey {
     private var key = newKey()
 
     override fun get(): SecretKey = key
+
+    override fun <T> withExisting(block: (SecretKey?) -> T): T = block(key)
 
     override fun erase() {
         erased++
@@ -1152,7 +1326,7 @@ Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest --tests=dev.kestrel.pri
 Expected: PASS, 10 tests.
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`
-Expected: BUILD SUCCESSFUL, P₀ + 10 tests.
+Expected: BUILD SUCCESSFUL, P₀ + 11 tests.
 
 Run: `scripts\gradle.ps1 --stop`
 
@@ -1436,7 +1610,7 @@ class PrivacyStore(context: Context, clock: () -> Long = System::currentTimeMill
 - [ ] **Step 4: Run the device tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:privacy:compileDebugAndroidTestKotlin :core:privacy:testDebugUnitTest`
-Expected: BUILD SUCCESSFUL, P₀ + 10 tests.
+Expected: BUILD SUCCESSFUL, P₀ + 11 tests.
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.PrivacyStoreTest,dev.kestrel.privacy.ConversationArchiveSpeedTest'`
 Expected: BUILD SUCCESSFUL, 6 tests, none failed, 1 of them skipped (the speed test without its argument); the script ends with exit code 0.
@@ -1466,7 +1640,7 @@ Version 3 of the database is on no real install yet: it exists only in the tests
 - `purge(oldest, newest, index)` deletes, in one transaction with the shards' change, every closed row whose `last_millis` is outside retention, by the table's own times, so that retention holds also while the index is rebuilt or cannot be read, and also for a row that the index does not list.
 - `deleteAll()` empties both tables.
 
-`ConversationArchiveStore` offers `open()`, `shards()`, `stamp()`, `read(ids)`, `closedIds()`, `write(ConversationChange)`, `purge(oldest, newest, IndexUpdate)` and `deleteAll()`. It encrypts each shard under the key `kestrel.conversations` with the associated data `conversation_index/<name>`, so that no shard opens under another shard's name or a conversation's. Its reads take no lock, because they store nothing, so that a rebuild's long read never holds up a write, and they stop between two rows when their caller is cancelled, so that "delete history" stops a rebuild's read at once. Its writes, its purge and `deleteAll` keep the key's guard. `deleteAll` now erases the key first and deletes the rows afterwards: a crash or a failure between the two leaves only rows that no key opens, which plan 7B's store deletes as unreadable. A conversation in an unknown format is still reported once per process, after its read.
+`ConversationArchiveStore` offers `open()`, `shards()`, `stamp()`, `read(ids)`, `closedIds()`, `write(ConversationChange)`, `purge(oldest, newest, IndexUpdate)` and `deleteAll()`. It encrypts each shard under the key `kestrel.conversations` with the associated data `conversation_index/<name>`, so that no shard opens under another shard's name or a conversation's. Its reads take no lock, because they store nothing, so that a rebuild's long read never holds up a write, and they stop between two rows when their caller is cancelled, so that "delete history" stops a rebuild's read at once. They decrypt with Task 2's `ErasableKey.withExisting`, so that a read never makes the key and never meets it deleted: a read beside "delete history" sees each row as it was, or, once the key is gone, a conversation as `FailedCheck` (a later format stays `UnknownFormat`) and a shard as `Unreadable`, or, once the rows are deleted, not at all. Its writes, its purge and `deleteAll` keep the key's guard. `deleteAll` now erases the key first and deletes the rows afterwards: a crash or a failure between the two leaves only rows that no key opens, which plan 7B's store deletes as unreadable. A conversation in an unknown format is still reported once per process, after its read.
 
 Android's SQLite is built with `SQLITE_SECURE_DELETE`, so a delete overwrites the pages that it frees: an older copy of a shard, which every close replaces, or of a deleted conversation is not left in the database file's free pages. A device test checks that on the connection that writes. Copies can still stay in the write-ahead log until SQLite checkpoints it and writes over them (design 9.1 says so).
 
@@ -1481,7 +1655,7 @@ Android's SQLite is built with `SQLITE_SECURE_DELETE`, so a delete overwrites th
 - Consumes: Tasks 1 to 4 as built and as the bulk read changed them (`c5124a0a`): `ConversationRow`, `ConversationHeader`, `ConversationDao`, `KestrelDatabase` at version 3, `ErasableKey` with its `guard`, `KeystoreErasableKey.of`, `AesGcmFieldCipher`, `ConversationArchiveStore(dao, key, onUnknownFormat, dispatcher)`, `PlainConversation`, `StoredConversation`, `PrivacyStore.conversations`.
 - Produces (package `dev.kestrel.privacy.db`): `class ConversationIndexRow(name: String, payload: ByteArray)` (table `conversation_index`); `data class ConversationStamp(val closed: Int, val newest: Long, val total: Long)`; `sealed interface IndexRowUpdate { Keep; class Update(put: List<ConversationIndexRow>, deleted: List<String>); class Replace(rows: List<ConversationIndexRow>) }`; `abstract class ConversationDao` with `fun open(): ConversationRow?`, `fun shards(): List<ConversationIndexRow>`, `fun stamp(): ConversationStamp`, `fun rows(ids: List<String>): List<ConversationRow>`, `fun closedIds(): List<String>`, `open fun write(rows, deleted, index: IndexRowUpdate)`, `open fun purge(oldest: Long, newest: Long, index: IndexRowUpdate): Int` and `open fun deleteAll()`, all blocking; `KestrelDatabase` at version 3 with both tables. Package `dev.kestrel.privacy.conversations`: `sealed interface StoredShard { val name: String; class Readable(name, val payload: ByteArray); class Unreadable(name) }`; `sealed interface IndexUpdate { data object Keep; class Update(val put: Map<String, ByteArray>, val deleted: Set<String>); class Replace(val shards: Map<String, ByteArray>) }`; `class ConversationChange(val conversations: List<PlainConversation>, val deleted: Collection<String>, val index: IndexUpdate)`; `class ConversationArchiveStore` with `suspend fun open(): StoredConversation?`, `suspend fun shards(): List<StoredShard>`, `suspend fun stamp(): ConversationStamp`, `suspend fun read(ids: Collection<String>): List<StoredConversation>`, `suspend fun closedIds(): List<String>`, `suspend fun write(change: ConversationChange)`, `suspend fun purge(oldest: Long, newest: Long, index: IndexUpdate): Int` and `suspend fun deleteAll()`. The speed test's five log lines (Step 5), which Task 8 reads. Task 5's `RoomRecordArchive` implements plan 7B's port on them.
 
-Counts: `:core:privacy` JVM N + 6 (`ConversationArchiveStoreTest` 10 → 16; 76 + 6 = 82 at `e12844d5`). `:core:privacy` device tests N + 3 (`KestrelDatabaseTest` 7 → 10; the other classes keep their counts).
+Counts: `:core:privacy` JVM N + 7 (`ConversationArchiveStoreTest` 10 → 17; 77 + 7 = 84 with Task 2's test of the cipher). `:core:privacy` device tests N + 3 (`KestrelDatabaseTest` 7 → 10; the other classes keep their counts).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1756,7 +1930,9 @@ class ConversationArchiveStoreTest {
         val watched = object : ErasableKey {
             override val guard = key.guard
 
-            override fun get(): SecretKey = key.get().also { if (++decrypted == 1) reading.cancel() }
+            override fun get(): SecretKey = key.get()
+
+            override fun <T> withExisting(block: (SecretKey?) -> T): T = key.withExisting(block).also { if (++decrypted == 1) reading.cancel() }
 
             override fun erase() = key.erase()
         }
@@ -1776,7 +1952,9 @@ class ConversationArchiveStoreTest {
         val watched = object : ErasableKey {
             override val guard = key.guard
 
-            override fun get(): SecretKey = key.get().also { threads += Thread.currentThread() }
+            override fun get(): SecretKey = key.get()
+
+            override fun <T> withExisting(block: (SecretKey?) -> T): T = key.withExisting(block).also { threads += Thread.currentThread() }
 
             override fun erase() = key.erase()
         }
@@ -1794,6 +1972,28 @@ class ConversationArchiveStoreTest {
         }
     }
 
+    // Design 9.7 of sub-project 7: a read never makes the key. Between the key's erasure and the rows' deletion, a read that
+    // overlaps "delete history" finds every row failing its check, no readable shard, and a later format still unknown.
+    @Test
+    fun aReadWithoutTheKeyMakesNoKeyAndFindsTheRowsUnreadable() = runTest {
+        write(
+            PlainConversation(opened("a", last = 2), byteArrayOf(1)),
+            PlainConversation(closed("b", last = 1), byteArrayOf(2)),
+            index = IndexUpdate.Update(mapOf("0" to byteArrayOf(3)), emptySet()),
+        )
+        dao.rows["later"] = ConversationRow("later", 1, 2, open = false, commands = 1, payload = laterFormat())
+        key.erase()
+
+        assertTrue(store.open() is StoredConversation.FailedCheck)
+        assertEquals(
+            mapOf("a" to StoredConversation.FailedCheck::class, "b" to StoredConversation.FailedCheck::class, "later" to StoredConversation.UnknownFormat::class),
+            store.read(listOf("a", "b", "later")).associate { it.header.id to it::class },
+        )
+        assertTrue(store.shards().single() is StoredShard.Unreadable)
+        assertEquals(1, key.made)
+        assertFalse(key.exists)
+    }
+
     private fun opened(id: String, last: Long) = ConversationHeader(id, openedMillis = last - 1, lastMillis = last, open = true, commands = 1)
 
     private fun closed(id: String, last: Long) = opened(id, last).copy(open = false)
@@ -1802,20 +2002,35 @@ class ConversationArchiveStoreTest {
     private fun laterFormat() = byteArrayOf(2) + ByteArray(40)
 }
 
-/** An [ErasableKey] in memory; [erase] makes a new key, as Keystore does at the next use. */
+/** An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes. */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
 
     @Volatile
     var erased = 0
         private set
-    private var key = newKey()
 
-    override fun get(): SecretKey = key
+    @Volatile
+    var made = 0
+        private set
+    private var key: SecretKey? = null
 
+    val exists: Boolean
+        @Synchronized get() = key != null
+
+    @Synchronized
+    override fun get(): SecretKey = key ?: newKey().also {
+        key = it
+        made++
+    }
+
+    @Synchronized
+    override fun <T> withExisting(block: (SecretKey?) -> T): T = block(key)
+
+    @Synchronized
     override fun erase() {
         erased++
-        key = newKey()
+        key = null
     }
 
     private fun newKey(): SecretKey = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
@@ -2032,19 +2247,26 @@ class KestrelDatabaseTest {
         assertEquals(listOf("a", "b"), dao.closedIds())
     }
 
-    // Design 9.3 of sub-project 7: retention deletes by the table's own times, never the open row, with the shards in one transaction.
+    // Design 9.3 of sub-project 7: retention deletes by the table's own times, keeps the rows at both limits and the open
+    // row, and changes the shards in one transaction.
     @Test
     fun purgeDeletesTheClosedRowsOutsideTheWindowAndChangesTheShards() {
         val dao = db.conversationDao()
         dao.write(
-            listOf(conversation("old", last = 5, open = false), conversation("kept", last = 50, open = false), conversation("ahead", last = 500, open = false), conversation("open", last = 1, open = true)),
+            listOf(
+                conversation("before", last = 9, open = false),
+                conversation("oldest", last = 10, open = false),
+                conversation("newest", last = 100, open = false),
+                conversation("after", last = 101, open = false),
+                conversation("open", last = 1, open = true),
+            ),
             emptyList(),
             IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()),
         )
 
         assertEquals(2, dao.purge(oldest = 10, newest = 100, index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
 
-        assertEquals(setOf("kept", "open"), dao.rows(listOf("old", "kept", "ahead", "open")).map { it.id }.toSet())
+        assertEquals(setOf("oldest", "newest", "open"), dao.rows(listOf("before", "oldest", "newest", "after", "open")).map { it.id }.toSet())
         assertArrayEquals(byteArrayOf(2), dao.shards().single().payload)
     }
 
@@ -2638,12 +2860,19 @@ class ConversationChange(val conversations: List<PlainConversation>, val deleted
  * retention.
  *
  * Every read runs its query and decrypts its rows on [dispatcher], on one thread, with no hop between the two, because a
- * Keystore operation after a hop costs about twice as much on the A71 (design R3): a restore is one Keystore operation, the
- * index one per shard, and a body one more. The stamp is a plain query. A read stops between two rows when its caller is cancelled. Reads take no lock,
- * because they store nothing, so that a rebuild's long read never holds up a write; a read that overlaps [deleteAll] may
- * see a row fail its check, and its caller orders the two (plan 7B's store does). Writes and [deleteAll] run under the
- * key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll] never erases the key between the
- * encryption of a write and its row. The functions are safe to call from the main thread.
+ * Keystore operation after a hop costs about twice as much on the A71 (design R3): a restore is one Keystore operation,
+ * the index one per shard, and a body one more. The stamp is a plain query. A read stops between two rows when its caller
+ * is cancelled. Reads take no guard, because they store nothing, so that a rebuild's long read never holds up a write.
+ * Writes and [deleteAll] run under the key's [ErasableKey.guard], which every user of the key shares, so that [deleteAll]
+ * never erases the key between the encryption of a write and its row. The functions are safe to call from the main thread.
+ *
+ * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the key's
+ * erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never fails
+ * because the key went, and never makes a new key. It sees each row as one of three: as it was, before the erasure; once
+ * the key is gone and until the rows are deleted, a conversation as [StoredConversation.FailedCheck] (one in a format that
+ * this version cannot read stays [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; and
+ * afterwards not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in
+ * the second case.
  *
  * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
  * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process; when
@@ -2655,7 +2884,8 @@ class ConversationArchiveStore(
     private val onUnknownFormat: suspend () -> Unit = {},
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
-    private val cipher = AesGcmFieldCipher { key.get() }
+    // Writes encrypt with this cipher, which makes the key when there is none; reads decrypt with the key as it is.
+    private val sealing = AesGcmFieldCipher { key.get() }
 
     // The ids of the rows in an unknown format whose report was made, so that each is reported once per process; a report
     // that failed or was cancelled is made again at the next read. Used only under [reports].
@@ -2695,7 +2925,7 @@ class ConversationArchiveStore(
             withContext(dispatcher) {
                 val rows = change.conversations.map {
                     val header = it.header
-                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, cipher.encrypt(it.payload, associatedData(header.id)))
+                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
                 }
                 dao.write(rows, change.deleted.toList(), encrypted(change.index))
             }
@@ -2736,7 +2966,7 @@ class ConversationArchiveStore(
         is IndexUpdate.Replace -> IndexRowUpdate.Replace(update.shards.map { (name, payload) -> shardRow(name, payload) })
     }
 
-    private fun shardRow(name: String, payload: ByteArray) = ConversationIndexRow(name, cipher.encrypt(payload, indexData(name)))
+    private fun shardRow(name: String, payload: ByteArray) = ConversationIndexRow(name, sealing.encrypt(payload, indexData(name)))
 
     // Each conversation in an unknown format that has not been reported in this process yet, once its read has ended.
     private suspend fun report(conversations: List<StoredConversation>) {
@@ -2754,7 +2984,7 @@ class ConversationArchiveStore(
     private fun stored(row: ConversationRow): StoredConversation {
         val header = ConversationHeader(row.id, row.openedMillis, row.lastMillis, row.open, row.commands)
         return try {
-            StoredConversation.Readable(header, cipher.decrypt(row.payload, associatedData(row.id)))
+            StoredConversation.Readable(header, opened(row.payload, associatedData(row.id)))
         } catch (e: AEADBadTagException) {
             StoredConversation.FailedCheck(header)
         } catch (e: IllegalArgumentException) {
@@ -2763,12 +2993,16 @@ class ConversationArchiveStore(
     }
 
     private fun shard(row: ConversationIndexRow): StoredShard = try {
-        StoredShard.Readable(row.name, cipher.decrypt(row.payload, indexData(row.name)))
+        StoredShard.Readable(row.name, opened(row.payload, indexData(row.name)))
     } catch (e: AEADBadTagException) {
         StoredShard.Unreadable(row.name)
     } catch (e: IllegalArgumentException) {
         StoredShard.Unreadable(row.name)
     }
+
+    // Decrypts with the key as it is, or fails the check when there is none, so that a read never makes the key.
+    private fun opened(ciphertext: ByteArray, associatedData: ByteArray): ByteArray =
+        key.withExisting { existing -> AesGcmFieldCipher { existing }.decrypt(ciphertext, associatedData) }
 
     private fun associatedData(id: String) = "conversations/$id".encodeToByteArray()
 
@@ -2780,7 +3014,7 @@ class ConversationArchiveStore(
 - [ ] **Step 4: Build, which generates version 3's schema again**
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`
-Expected: BUILD SUCCESSFUL, N + 6 tests (82 at `e12844d5`).
+Expected: BUILD SUCCESSFUL, N + 7 tests (84).
 
 Run: `(Select-String -Path core\privacy\schemas\dev.kestrel.privacy.db.KestrelDatabase\3.json -SimpleMatch -Pattern '"tableName": "conversation_index"').Count; git status --short core/privacy/schemas`
 Expected: `1`, and only `3.json` modified: Room wrote version 3's schema again with the new table and a new identity hash. `1.json` and `2.json` are unchanged.
@@ -2788,7 +3022,7 @@ Expected: `1`, and only `3.json` modified: Room wrote version 3's schema again w
 - [ ] **Step 5: The device tests on kestrel-api37**
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest`
-Expected: BUILD SUCCESSFUL, every test of `:core:privacy` passes (N + 3, one of them skipped: the speed test without its argument); the script ends with exit code 0. The migration from version 2 to 3 validates against the new `3.json`, with an empty `conversation_index`, and `theConnectionThatWritesOverwritesWhatItDeletes` finds `secure_delete` on.
+Expected: BUILD SUCCESSFUL, every test of `:core:privacy` passes (N + 3, one of them skipped: the speed test without its argument); the script ends with exit code 0. Afterwards `run-as dev.kestrel.privacy.test ls databases` lists nothing. The migration from version 2 to 3 validates against the new `3.json`, with an empty `conversation_index`, and `theConnectionThatWritesOverwritesWhatItDeletes` finds `secure_delete` on.
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; & (Get-Adb) -s emulator-5554 logcat -c; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.privacy.ConversationArchiveSpeedTest' '-Pandroid.testInstrumentationRunnerArguments.kestrelArchiveSpeed=true'; & (Get-Adb) -s emulator-5554 logcat -d -s KestrelArchive:I; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL, 1 test, none failed or skipped; the five log lines `restore: the open conversation of 12 KB in <n> ms`, `restore and the index in 2 shards of [240, 210] KB in <n> ms`, `restore, the index and then 5 conversations of 12 KB in <n> ms`, `a rebuild's read of 300 conversations of 12 KB in pages of 50 in <n> ms` and `a close with a shard of 210 KB in <n> ms`. Note the five times in the task's report; on kestrel-api37 they are only noted, and the A71's decide (Task 8).
@@ -3353,12 +3587,12 @@ The controller runs every device test of this plan, installs this build on kestr
 - Consumes: every earlier task; `scripts\connected-test.ps1`, `scripts\install.ps1`, `scripts\hook.ps1`.
 - Produces: the rule that only builds with plan 7C go onto kestrel-api37, in AGENTS.md and `.superpowers\sdd\progress.md`; the archive's speed on kestrel-api37 and the A71, and the result of the migration, in `.superpowers\sdd\progress.md`.
 
-Counts: `:core:privacy` device tests D₀ + 11 run, 1 of them skipped without its argument; `:app` device tests AD₀ + 7, of which this task runs `RoomRecordArchiveTest` (6) and `AppGraphTest` (its tests at `a4558faf` + 1).
+Counts: `:core:privacy` device tests D₀ + 13 run, 1 of them skipped without its argument; `:app` device tests AD₀ + 7, of which this task runs `RoomRecordArchiveTest` (6) and `AppGraphTest` (its tests at `a4558faf` + 1).
 
 - [ ] **Step 1: Every device test of `:core:privacy` on kestrel-api37**
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :core:privacy:connectedDebugAndroidTest`
-Expected: BUILD SUCCESSFUL, D₀ + 11 tests, none failed, 1 skipped (`ConversationArchiveSpeedTest`); the script ends with exit code 0.
+Expected: BUILD SUCCESSFUL, D₀ + 13 tests, none failed, 1 skipped (`ConversationArchiveSpeedTest`); the script ends with exit code 0.
 
 - [ ] **Step 2: Before the install, keep older builds off kestrel-api37**
 
@@ -3410,9 +3644,9 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 ## Counts at the end of plan 7C
 
-- `:core:privacy` JVM: P₀ + 16 (Task 3: 10, Task 4b: 6).
+- `:core:privacy` JVM: P₀ + 18 (Task 2: 1, Task 3: 10, Task 4b: 7).
 - `:app` JVM: A₀ (unchanged).
-- `:core:privacy` device tests: D₀ + 11 (30 when D₀ is 19), one of them skipped without its instrumentation argument.
+- `:core:privacy` device tests: D₀ + 13 (32 when D₀ is 19), one of them skipped without its instrumentation argument.
 - `:app` device tests: AD₀ + 7 (450 when AD₀ is 443).
 - `:core:conversation`: unchanged.
 - Pester: unchanged; this plan changes no script.
