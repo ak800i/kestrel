@@ -45,10 +45,10 @@ internal object GoalNotification {
             // Not in Android's automatic group with Kestrel's other notifications (NotificationGroups says on which API levels).
             .setGroup(NotificationGroups.alone(id))
             // A colorized notification of a foreground service is in SystemUI's section for them (AOSP's "ForegroundService"
-            // sectioner, in Android 13 and in AOSP's main branch), above the alerting and silent ones, so it is the shade's first notification, which
-            // SystemUI expands with its buttons, unless a heads-up, a call or another colorized service's notification
-            // comes first, or on API 36 and later a Live Update (design 10.6). Android colorizes only a foreground service's
-            // notification, so the one posted without the service is a plain one.
+            // sectioner, in Android 13 and in AOSP's main branch), above the alerting and silent ones, so it is the shade's
+            // first notification, which SystemUI expands with its buttons, unless a heads-up, a call or another colorized
+            // service's notification comes first, or on API 36 and later a Live Update (design 10.6). Android colorizes only
+            // a foreground service's notification, so the one posted without the service is a plain one.
             .setColorized(true)
             .setColor(context.getColor(R.color.kestrel))
             .setVisibility(Notification.VISIBILITY_PRIVATE)

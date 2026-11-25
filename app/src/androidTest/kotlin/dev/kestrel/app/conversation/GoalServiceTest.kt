@@ -42,15 +42,15 @@ import org.junit.runner.RunWith
 /**
  * The goal service's wiring on kestrel-api37 (design 10.6 and 15.2 of sub-project 7; plan 7E): it runs for every open goal
  * with listening on or off, its notification follows the goal, its buttons reach the conversation, a held goal offers
- * Cancel before Continue and Continue asks for the owner's unlock, a held goal's Continue starts it again, the lock and call
- * pauses with listening off ask "Continue the goal?" in it and let go of the screen's turn at once, the shade shows a held
- * goal's buttons at once, a pull of the shade while the goal acts holds the goal, and it adds mediaPlayback while Kestrel
- * speaks. The model's replies wait until the
- * test lets each one go (HeldModel), so that no step depends on the emulator's speed. The tests run in Kestrel's own
- * process, where Android lets the instrumentation start foreground services from the background, so they check the wiring,
- * and the controller checks Android's own rules for the starts and for background audio outside the tests (plan 7E, Task
- * 8). kestrel-api37 has no lock screen, so waking the screen unlocks it. Each test starts without a conversation
- * (`AgentTests.run` closes it through `ConversationTests`), and `AgentTests.stop` ends whatever "stop" stops.
+ * Cancel before Continue and Continue asks for the owner's unlock, a held goal's Continue starts it again, the lock and
+ * call pauses with listening off ask "Continue the goal?" in it and let go of the screen's turn at once, the shade shows a
+ * held goal's buttons at once, a pull of the shade while the goal acts holds the goal, and it adds mediaPlayback while
+ * Kestrel speaks. The model's replies wait until the test lets each one go (HeldModel), so that no step depends on the
+ * emulator's speed. The tests run in Kestrel's own process, where Android lets the instrumentation start foreground
+ * services from the background, so they check the wiring, and the controller checks Android's own rules for the starts and
+ * for background audio outside the tests (plan 7E, Task 8). kestrel-api37 has no lock screen, so waking the screen unlocks
+ * it. Each test starts without a conversation (`AgentTests.run` closes it through `ConversationTests`), and
+ * `AgentTests.stop` ends whatever "stop" stops.
  */
 @RunWith(AndroidJUnit4::class)
 class GoalServiceTest {

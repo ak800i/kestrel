@@ -79,16 +79,17 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
         // is as the hook found it (AGENTS.md's limits on the A71).
+        val seen = ShadeSeen()
         var shadeClosed = false
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            pressInShade(session, notice, action)
+            pressInShade(session, notice, action, seen)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
         } finally {
-            shadeClosed = withContext(NonCancellable) { closeShade(session) }
+            shadeClosed = withContext(NonCancellable) { closeShade(session, seen) }
         }
         if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
         return GoalServiceAnswers.tapped(action, shadeClosed)
@@ -97,21 +98,23 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
     /**
      * Closes SystemUI's shade and says whether it closed, as the screen shows it. SystemUI offers its dismiss only while the
      * shade is expanded, so Android refuses it once SystemUI closes the shade itself, as it does after Open and after a
-     * button that asks for the unlock; the refusal says nothing about the shade, and the screen decides.
+     * button that asks for the unlock; the refusal says nothing about the shade, and the screen decides. "Closed" needs the
+     * screen's evidence: on a locked phone, only the tiles that [seen] saw in the open shade tell it from the lock screen.
      */
-    private suspend fun closeShade(session: ScreenSession): Boolean {
+    private suspend fun closeShade(session: ScreenSession, seen: ShadeSeen): Boolean {
         session.actions.global(GlobalAction.DISMISS_SHADE)
         val keyguard = context.getSystemService(KeyguardManager::class.java)
         repeat(CLOSE_TRIES) {
             delay(SHADE_MILLIS)
-            if (!buttons.shadeOpen(session.snapshots.current().snapshot, keyguard.isKeyguardLocked)) return true
+            if (!buttons.shadeOpen(session.snapshots.current().snapshot, keyguard.isKeyguardLocked, seen.tilesKnown)) return true
         }
         return false
     }
 
     // Null once the button was pressed, else why not.
-    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction): String? {
-        val key = buttonInShade(session, notice, action) ?: return "the goal notification's ${action.name.lowercase()} is not in the shade"
+    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): String? {
+        val key = buttonInShade(session, notice, action, seen)
+            ?: return "the goal notification's ${action.name.lowercase()} is not in the shade"
         // By the button's key, which the press checks again in every snapshot that it acts on: a row that a new notification
         // moved, or another app's button, is never pressed in its place (AGENTS.md's limits on the A71). Once only, so that a
         // Continue is never sent twice.
@@ -150,15 +153,26 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
 
     // The shade opens with an animation, and a notification shows its buttons only once its row, and the row of the group
     // that Android put it in, are expanded: the key of the button in Kestrel's own row, or null, after it asked to expand
-    // those rows, one in each snapshot, the group's first.
-    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction): String? {
+    // those rows, one in each snapshot, the group's first. Each snapshot tells [seen] whether the open shade shows tiles that
+    // Kestrel knows.
+    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): String? {
         repeat(SHADE_TRIES) {
             delay(SHADE_MILLIS)
             val snapshot = session.snapshots.current().snapshot
+            if (buttons.showsTiles(snapshot)) seen.tilesKnown = true
             buttons.button(snapshot, notice.title, action.label)?.let { return it }
             buttons.collapsedRow(snapshot, notice.title)?.let { session.actions.expand(it) }
         }
         return null
+    }
+
+    /**
+     * What one press saw of the shade that it opened: whether the shade showed a Quick Settings tile that
+     * [dev.kestrel.agent.observe.SystemUiParts] knows. Only then are this phone's tiles known, and only then can the hook
+     * tell the closed shade from the lock screen ([NoticeButtons.shadeOpen]).
+     */
+    private class ShadeSeen {
+        var tilesKnown = false
     }
 
     companion object {

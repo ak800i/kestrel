@@ -33,7 +33,11 @@ internal object GoalServiceAnswers {
             "focusRequests=${focus.requests} focusAnswered=${focus.answered}"
     }
 
-    /** goal-control's press in SystemUI's shade, which closes the shade again however the press ended. */
+    /**
+     * goal-control's press in SystemUI's shade, which closes the shade again however the press ended. [shadeClosed] only
+     * when the screen showed the shade closed: `shade=open` also when the hook could not tell ([NoticeButtons.shadeOpen]),
+     * so that a caller collapses the shade.
+     */
     fun tapped(action: GoalAction, shadeClosed: Boolean): String = "tapped=${action.name.lowercase()} ${shade(shadeClosed)}"
 
     /** The error of a press that did not happen, for the [reason] (a hook's own sentence, never the screen's words). */

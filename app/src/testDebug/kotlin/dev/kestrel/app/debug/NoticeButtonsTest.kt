@@ -133,11 +133,26 @@ class NoticeButtonsTest {
         val active = listOf(shade.copy(active = true))
         val tiles = listOf(element("tile", null, clickable = true, viewId = TILE))
 
-        assertTrue(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = active, elements = emptyList()), keyguardLocked = false))
-        assertFalse(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = listOf(statusBar, app), elements = emptyList()), keyguardLocked = false))
+        val bare = ScreenSnapshot(takenAtMillis = 0, windows = active, elements = emptyList())
+
+        assertTrue(buttons.shadeOpen(bare, keyguardLocked = false, tilesKnown = true))
+        assertFalse(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = listOf(statusBar, app), elements = emptyList()), keyguardLocked = false, tilesKnown = true))
         // Locked: SystemUI's active window is the lock screen or the bouncer, unless it shows Quick Settings' tiles.
-        assertFalse(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = active, elements = emptyList()), keyguardLocked = true))
-        assertTrue(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = active, elements = tiles), keyguardLocked = true))
+        assertFalse(buttons.shadeOpen(bare, keyguardLocked = true, tilesKnown = true))
+        assertTrue(buttons.shadeOpen(ScreenSnapshot(takenAtMillis = 0, windows = active, elements = tiles), keyguardLocked = true, tilesKnown = true))
+        assertTrue(buttons.showsTiles(ScreenSnapshot(takenAtMillis = 0, windows = active, elements = tiles)))
+        assertFalse(buttons.showsTiles(bare))
+    }
+
+    @Test
+    fun aLockedPhoneWhoseShadeShowedNoKnownTileCountsAsOpenBecauseTheShadeCannotBeToldFromTheLockScreen() {
+        // As on the A71, whose tile IDs systemui-parts.json lacks: its open shade and its lock screen both show no tile
+        // that Kestrel knows, so the answer is the safe one, after which a caller collapses the shade.
+        val locked = ScreenSnapshot(takenAtMillis = 0, windows = listOf(shade.copy(active = true)), elements = emptyList())
+
+        assertTrue(buttons.shadeOpen(locked, keyguardLocked = true, tilesKnown = false))
+        // Without SystemUI's active window the shade is closed, also on such a phone.
+        assertFalse(buttons.shadeOpen(locked.copy(windows = listOf(shade)), keyguardLocked = true, tilesKnown = false))
     }
 
     private companion object {

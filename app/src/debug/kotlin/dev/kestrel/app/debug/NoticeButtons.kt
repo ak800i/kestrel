@@ -5,6 +5,7 @@ import dev.kestrel.agent.observe.SystemUiParts.Companion.SYSTEM_UI
 import dev.kestrel.screen.model.ElementAction
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.model.WindowSummary
 
 /**
  * A button of Kestrel's own goal notification in SystemUI's shade (plan 7E), for the hook goal-control. The notification's
@@ -37,15 +38,29 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
         rows(snapshot, title).lastOrNull { ElementAction.EXPAND in snapshot.elements[it].actions }?.let { snapshot.elements[it].key }
 
     /**
-     * Whether SystemUI's shade is open. One of SystemUI's windows is the active one while the shade shows, and never its
-     * status bar, which stays inactive under the app in front. While the phone is locked, SystemUI's active window is also
-     * the lock screen or the bouncer, so then the shade counts as open only while that window shows Quick Settings' tiles,
-     * as the shade pulled over the lock screen does and the lock screen and the bouncer do not.
+     * Whether SystemUI's shade may be open: false only when the screen shows that it is closed. One of SystemUI's windows is
+     * the active one while the shade shows, and never its status bar, which stays inactive under the app in front. While
+     * the phone is locked, SystemUI's active window is also the lock screen or the bouncer, so then the shade counts as open
+     * only while that window shows Quick Settings' tiles, as the shade pulled over the lock screen does and the lock screen
+     * and the bouncer do not. That tells them apart only when [SystemUiParts] knows this phone's tiles, which
+     * [tilesKnown] says: whether the shade showed such a tile while it was open ([showsTiles]). Without that evidence, as
+     * on a phone whose tile IDs `systemui-parts.json` lacks, a locked phone's shade counts as open, the safe answer: a
+     * caller then collapses a shade that may already be closed, which does no harm, and never leaves it open over the lock
+     * screen.
      */
-    fun shadeOpen(snapshot: ScreenSnapshot, keyguardLocked: Boolean): Boolean {
-        val active = snapshot.windows.firstOrNull { it.packageName == SYSTEM_UI && it.active } ?: return false
-        return !keyguardLocked || snapshot.elements.any { it.windowId == active.id && parts.isTile(it) }
+    fun shadeOpen(snapshot: ScreenSnapshot, keyguardLocked: Boolean, tilesKnown: Boolean): Boolean {
+        if (activeWindow(snapshot) == null) return false
+        return !keyguardLocked || !tilesKnown || showsTiles(snapshot)
     }
+
+    /** Whether SystemUI's active window shows a Quick Settings tile that [SystemUiParts] knows. */
+    fun showsTiles(snapshot: ScreenSnapshot): Boolean {
+        val active = activeWindow(snapshot) ?: return false
+        return snapshot.elements.any { it.windowId == active.id && parts.isTile(it) }
+    }
+
+    private fun activeWindow(snapshot: ScreenSnapshot): WindowSummary? =
+        snapshot.windows.firstOrNull { it.packageName == SYSTEM_UI && it.active }
 
     // The notification rows that hold the title, from the notification's own row outwards to its group's.
     private fun rows(snapshot: ScreenSnapshot, title: String): List<Int> {
