@@ -3337,13 +3337,13 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
 ```
 
 with:
 
 ```kotlin
-        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The deletion of the past conversation [id] (plan 7F); [done] gets how it ended. */
         class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Message
@@ -3416,7 +3416,7 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/Conversati
 
 ```kotlin
         switching = false
-        val opened = message.snapshot
+        switchChosen = message.chosen
 ```
 
 with:
@@ -3424,7 +3424,7 @@ with:
 ```kotlin
         switching = false
         switchingTo = null
-        val opened = message.snapshot
+        switchChosen = message.chosen
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3545,14 +3545,14 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-                inbox.trySend(Message.Reopened(opened, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
             }
 ```
 
 with:
 
 ```kotlin
-                inbox.trySend(Message.Reopened(opened, failed = false))
+                inbox.trySend(Message.Reopened(opened, chosen, failed = false))
             }
             is Write.DeletePast -> write.done.complete(
                 try {
