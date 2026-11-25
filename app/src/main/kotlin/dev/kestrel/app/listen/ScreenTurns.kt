@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
  * for it. The instant command that the Orchestrator started holds the screen from its start until its job has really
  * ended ([started]); a cancelled job ([stopped]) may still act until it has completed, as when Android finishes a gesture
  * or a binder call of it. A new instant command, Kestrel's settings and every screen step of a goal's round (its start and
- * each step that may act on the screen, `GoalRunner`) wait for that job here. A round that acts for an input of the
+ * the end of each of its waits for the owner, `GoalRunner`) wait for that job here. A round that acts for an input of the
  * owner's that came after the command started asks the command to let go: that input chose the goal, and the Orchestrator
  * cancels the command (`Event.ScreenWanted`). A round that goes on by itself, or for an older input, never does: the
  * command is the owner's newest act, as during a hand-over (D15), so the round waits until it has ended. A cancelled job

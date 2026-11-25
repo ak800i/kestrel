@@ -494,9 +494,8 @@ class GoalRunnerTest {
         assertEquals(0, environment.released)
     }
 
-    // Whole-plan re-review of plan 7D, N1, and its round 2 (R2-1): a round takes the screen's turn before every step that may
-    // act on the screen, also when it goes on after a pause ("Continue the goal?"), so it waits for an instant command that
-    // holds the screen; the turn names the owner's input that lets the round act, once: the input that started it at its
+    // Whole-plan re-review of plan 7D, N1, and its rounds 2 and 3: a round takes the screen's turn at its start and as every
+    // wait for the owner ends, also a pause ("Continue the goal?"), so it waits for an instant command that holds the screen; the turn names the owner's input that lets the round act, once: the input that started it at its
     // start, and the input that resumed it at the first turn after the resume. Every other turn names none, because the
     // round goes on by itself then. A turn that waited counts as a resume, so the run looks at the screen again.
     @Test
@@ -505,7 +504,7 @@ class GoalRunnerTest {
         val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
         val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
         val done = ScriptedModel.call("finish", null, null, null, "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))))
-        val environment = FakeGoalEnvironment(listOf(tap, tap, done), first = start).apply { screen.onTap("Open", opened) }
+        val environment = FakeGoalEnvironment(listOf(tap, done), first = start).apply { screen.onTap("Open", opened) }
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
         val afters = mutableListOf<Long?>()
         val given = CompletableDeferred<Unit>()

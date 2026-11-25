@@ -55,7 +55,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             else -> null
         }
         while (true) {
-            if (run.screenGate()) return paused(call.tool, entry)
+            if (run.gate()) return paused(call.tool, entry)
             val before = run.fresh()
             if (entry != null && !entry.ocr && !fits(entry, before)) return Done(call.tool, Outcome.Failed(CHANGED_BEFORE), entry, after = before)
             if (call is AgentCall.Swipe) {
@@ -454,7 +454,7 @@ internal class ScreenSteps(private val run: TaskRun) {
             if (attempt == 0) {
                 // The second intent is an action, so it waits at the pause gate; after a pause it is not sent, because the
                 // owner may have changed the screen (D2). It is checked again as it is sent, and goes only to Firefox.
-                if (run.screenGate()) break
+                if (run.gate()) break
                 val again = when (val checked = run.launches.intent(spec, kind)) {
                     is Launches.Launch.Stop -> return Done(call.tool, checked.outcome, after = run.fresh())
                     is Launches.Launch.Go -> checked.launch
@@ -494,7 +494,7 @@ internal class ScreenSteps(private val run: TaskRun) {
         val link = linkOf(call)
         val linkTarget = launch.target.takeIf { link != null }
         while (true) {
-            if (run.screenGate()) return paused(call.tool, null)
+            if (run.gate()) return paused(call.tool, null)
             val before = run.fresh()
             // A link's question names the app that opens it by its launcher label (D32 item 12).
             val proposal = ActionMapper.proposal(

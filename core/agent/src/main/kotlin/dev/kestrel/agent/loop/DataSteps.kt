@@ -69,7 +69,7 @@ internal class DataSteps(private val run: TaskRun) {
             found.getOrNull(delete.contact - 1) ?: return Done(call.tool, Outcome.Failed("find_contact's newest result has no contact ${delete.contact}"))
         }
         while (true) {
-            if (run.screenGate()) return Done(call.tool, text = "Result: ${ScreenSteps.PAUSED}", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", after = run.fresh(), progress = false, executed = false)
+            if (run.gate()) return Done(call.tool, text = "Result: ${ScreenSteps.PAUSED}", summary = "Step ${run.replies}: the task was paused; nothing was done.", last = "paused; nothing was done", after = run.fresh(), progress = false, executed = false)
             val before = run.fresh()
             var proposal = ActionMapper.proposal(call, run.observation.table, run.observation.appLabel, receivingPackage = sharePackage, receivingAppLabel = receivingLabel)
             if (call is AgentCall.ShareMedia) proposal = proposal.copy(shareCount = count(call.items))
@@ -117,11 +117,11 @@ internal class DataSteps(private val run: TaskRun) {
         val first = ActionMapper.runData(call, run.ports.data, today, sharePackage, contactRef) ?: return DataResult.Failed(NOT_DATA)
         when (first) {
             is DataResult.NeedsPermission -> {
-                val end = run.limits.waiting { run.ports.owner.askPermission(first.permissions, why(call)) }
+                val end = run.waitForOwner { run.ports.owner.askPermission(first.permissions, why(call)) }
                 if (end == PermissionEnd.REFUSED) return null
             }
             is DataResult.NeedsAccess -> {
-                when (run.limits.waiting { run.ports.owner.handOver(HandOver.of(HandOverKind.ACCESS)) }) {
+                when (run.waitForOwner { run.ports.owner.handOver(HandOver.of(HandOverKind.ACCESS)) }) {
                     HandOverEnd.CANCELLED -> throw Ended(EndReason.CANCELLED)
                     HandOverEnd.EXPIRED -> throw Ended(EndReason.HAND_OVER_EXPIRED)
                     else -> Unit

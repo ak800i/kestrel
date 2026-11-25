@@ -24,7 +24,7 @@ interface GoalPort {
     suspend fun traced(entry: TraceEntry)
 
     /**
-     * Takes the screen's turn before a step that may act on the screen or open an app (design 6.5 of sub-project 7): returns
+     * Takes the screen's turn as a wait for the owner ends (design 6.5 of sub-project 7; `TaskRun.waitForOwner`): returns
      * once no instant command holds the screen; true when it waited, because the screen may have changed meanwhile. A run
      * without a goal around it, as "save that as", acts on no screen and takes nothing.
      */

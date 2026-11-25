@@ -516,30 +516,42 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     // --- The owner ---
 
     /**
-     * The pause gate before a model call, an action or a question (D2); true when the task was paused and resumed. A
-     * resume that no observation has shown yet makes the next turn observe the screen again before its model call.
+     * The pause gate before a model call, an action or a question (D2); true when the task was paused and resumed, or the
+     * goal's screen turn waited for an instant command at its end ([waitForOwner]). Such a resume, which no observation has
+     * shown yet, makes the next turn observe the screen again before its model call.
      */
-    suspend fun gate(): Boolean = (limits.waiting { ports.owner.gate() } == Gate.RESUMED).also {
-        if (it) {
-            talk.countAgain()
-            resumePending = true
-        }
+    suspend fun gate(): Boolean {
+        val turns = turnsWaited
+        val paused = waitForOwner { ports.owner.gate() } == Gate.RESUMED
+        if (paused) lookAgain()
+        return paused || turnsWaited > turns
     }
 
     /**
-     * The pause gate, then the goal's screen turn (design 6.5 of sub-project 7), before every step that may act on the
-     * screen or open an app; true when either held the run, so that the step does not act on a screen that the run has not
-     * observed since. The owner's talk passes only the pause gate: it needs no screen.
+     * Every wait for the owner in which he may use the phone (D2, D12 and D15; design 6.5 of sub-project 7): the pause
+     * gate, a hand-over and a permission request. Its time does not count as work. The owner may start an instant command
+     * while it lasts, and an instant command can start at no other time while a goal's round runs, so when the wait ends
+     * the run takes the goal's screen turn before anything touches the screen again: before an action, an app that opens
+     * again after a hand-over, and the observation's Back on a crashed app. A turn that waited counts as a resume, so the
+     * run looks at the screen afresh.
      */
-    suspend fun screenGate(): Boolean {
-        val resumed = gate()
-        if (!limits.waiting { ports.goal.takeScreen() }) return resumed
-        if (!resumed) {
-            talk.countAgain()
-            resumePending = true
+    suspend fun <T> waitForOwner(wait: suspend () -> T): T {
+        val result = limits.waiting { wait() }
+        if (limits.waiting { ports.goal.takeScreen() }) {
+            turnsWaited++
+            lookAgain()
         }
-        return true
+        return result
     }
+
+    // The screen may have changed since the newest observation: the next turn observes it again first.
+    private fun lookAgain() {
+        talk.countAgain()
+        resumePending = true
+    }
+
+    // How many of the goal's screen turns waited for an instant command, so that a gate can tell whether its own did.
+    private var turnsWaited = 0
 
     // A resume that a gate inside a step saw (in `say`, `ask_user` or a yes/no question), until an observation shows it.
     private var resumePending = false
@@ -564,7 +576,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
     /** A hand-over without a step of its own, such as a Play services screen in front (D15, D16). */
     suspend fun handOverOnly(handOver: HandOver) {
         gate()
-        when (limits.waiting { ports.owner.handOver(handOver) }) {
+        when (waitForOwner { ports.owner.handOver(handOver) }) {
             HandOverEnd.CONTINUED -> Unit
             HandOverEnd.DONE_BY_ITSELF -> if (handOver.kind == HandOverKind.CALL) {
                 // D15 names the person, by the title of the screen that the owner called from.

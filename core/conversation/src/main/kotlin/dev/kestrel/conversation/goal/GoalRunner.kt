@@ -37,8 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, at its start and before every
- * step of its run that may act on the screen (`ScreenTakingGoal`), prepares its ports through
+ * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, at its start and as every
+ * wait of its run for the owner ends (`ScreenTakingGoal`), prepares its ports through
  * [environment], builds its request with [GoalRequests], runs `Agent.run` with the conversation's test mode in its
  * settings (design 12.4), and gives its end to the goal's listener exactly once on every path, with Kestrel's sentence: the
  * environment's refusal, the call backstop's when it stopped the goal, or the environment's sentence. A goal that ended

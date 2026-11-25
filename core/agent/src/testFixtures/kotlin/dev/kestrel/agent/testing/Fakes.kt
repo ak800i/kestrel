@@ -131,7 +131,10 @@ class FakeScreen(first: ScreenSnapshot?) : ScreenPort {
 
     override suspend fun hideBadges() = Unit
 
-    override suspend fun waitForFront(packageName: String?, millis: Long, before: String?): Boolean = true
+    /** Whether the app that [waitForFront] waits for comes to the front in time. */
+    var inFront: (String?) -> Boolean = { true }
+
+    override suspend fun waitForFront(packageName: String?, millis: Long, before: String?): Boolean = inFront(packageName)
 
     override fun toString(): String = "FakeScreen(actions=${actions.size})"
 
@@ -418,6 +421,15 @@ class FakeGoal : GoalPort {
     val checklists = mutableListOf<Checklist>()
     val traces = mutableListOf<TraceEntry>()
     var onTake: () -> Unit = {}
+
+    /** Answers each of the goal's screen turns: true when it waited for an instant command (design 6.5 of sub-project 7). */
+    var screenTurn: suspend () -> Boolean = { false }
+    var screenTurns = 0
+
+    override suspend fun takeScreen(): Boolean {
+        screenTurns++
+        return screenTurn()
+    }
 
     override fun takeSteering(): List<Steer> {
         onTake()
