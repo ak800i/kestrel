@@ -7,7 +7,9 @@ import dev.kestrel.conversation.store.RecordArchive
 /**
  * The archive in memory, for the JVM tests: the rows by id, the ids whose payload fails its tag ([unreadable]) or is in a
  * format that this version cannot read ([unknown]), each write's ids in order ([transactions]), the port's calls by name
- * in order ([calls]), and whether the key was deleted.
+ * in order ([calls]), and whether the key was deleted. Its writes keep at most one row open, as plan 7C's table does. A
+ * change named in [interruptions] (`write`, `delete`, `deleteAll`, `deleteOutside`) is made and then throws its
+ * exception, once, as a Room call does when its coroutine is cancelled while the call runs.
  */
 class MemoryArchive : RecordArchive {
     val rows = LinkedHashMap<String, ArchiveRow>()
@@ -15,6 +17,7 @@ class MemoryArchive : RecordArchive {
     val unknown = mutableSetOf<String>()
     val transactions = mutableListOf<List<String>>()
     val calls = mutableListOf<String>()
+    val interruptions = mutableMapOf<String, Throwable>()
     var keyDeleted = false
 
     override suspend fun readAll(): List<ArchiveEntry> {
@@ -28,34 +31,42 @@ class MemoryArchive : RecordArchive {
         }
     }
 
-    override suspend fun write(rows: List<ArchiveRow>) {
-        calls += "write"
+    override suspend fun write(rows: List<ArchiveRow>) = change("write") {
         transactions += rows.map { it.header.id }
-        for (row in rows) this.rows[row.header.id] = row
+        for (row in rows) {
+            if (row.header.open) closeOthers(row.header.id)
+            this.rows[row.header.id] = row
+        }
     }
 
-    override suspend fun delete(id: String) {
-        calls += "delete"
-        remove(id)
-    }
+    override suspend fun delete(id: String) = change("delete") { remove(id) }
 
-    override suspend fun deleteAll() {
-        calls += "deleteAll"
+    override suspend fun deleteAll() = change("deleteAll") {
         rows.clear()
         unreadable.clear()
         unknown.clear()
         keyDeleted = true
     }
 
-    override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int {
-        calls += "deleteOutside"
+    override suspend fun deleteOutside(oldestMillis: Long, newestMillis: Long): Int = change("deleteOutside") {
         val gone = rows.values.filter { !it.header.open && (it.header.lastMillis < oldestMillis || it.header.lastMillis > newestMillis) }
         for (row in gone) remove(row.header.id)
-        return gone.size
+        gone.size
     }
 
     /** The payload of row [id] as text. */
     fun payload(id: String): String = rows.getValue(id).payload.decodeToString()
+
+    private fun <T> change(name: String, block: () -> T): T {
+        calls += name
+        val result = block()
+        interruptions.remove(name)?.let { throw it }
+        return result
+    }
+
+    private fun closeOthers(id: String) {
+        rows.replaceAll { other, row -> if (other != id && row.header.open) ArchiveRow(row.header.copy(open = false), row.payload) else row }
+    }
 
     private fun remove(id: String) {
         rows.remove(id)

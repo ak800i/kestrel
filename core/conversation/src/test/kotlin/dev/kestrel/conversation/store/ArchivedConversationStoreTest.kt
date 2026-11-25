@@ -5,12 +5,14 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.testing.MemoryArchive
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class ArchivedConversationStoreTest {
     private val archive = MemoryArchive()
@@ -163,5 +165,74 @@ class ArchivedConversationStoreTest {
             store.list(),
         )
         assertEquals(listOf(id(2)), store.closedSince(now - 1_500).map { it.id })
+    }
+
+    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back.
+    @Test
+    fun aDeleteAllCancelledAfterTheArchiveDeletedLeavesNothingInMemoryAndNothingComesBack() = runTest {
+        store.save(conversation(1, now - 2_000))
+        val open = conversation(2, now - 1_000, open = true)
+        store.save(open)
+        archive.interruptions["deleteAll"] = CancellationException("stop")
+
+        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is CancellationException)
+
+        assertTrue(store.list().isEmpty())
+        assertNull(store.open())
+        assertNull(store.reopen(id(1), open, now, testMode = true))
+        store.save(open.copy(lastWall = now))
+        assertTrue(archive.rows.isEmpty())
+        store.save(conversation(3, now, open = true))
+        assertEquals(setOf(id(3).value), archive.rows.keys)
+    }
+
+    @Test
+    fun anOlderSnapshotOfADeletedConversationIsNeverWrittenBack() = runTest {
+        val past = conversation(1, now - 2_000)
+        store.save(past)
+        store.save(conversation(2, now, open = true))
+
+        store.delete(id(1))
+        store.save(past)
+
+        assertNull(store.get(id(1)))
+        assertEquals(setOf(id(2).value), archive.rows.keys)
+    }
+
+    // A change of the retention cancels a running purge (Retention's collectLatest).
+    @Test
+    fun aPurgeThatFailsAfterTheArchivePurgedLeavesThePurgedConversationsOut() = runTest {
+        store.save(conversation(1, now - 31 * ArchivedConversationStore.DAY_MILLIS))
+        store.save(conversation(2, now - ArchivedConversationStore.DAY_MILLIS))
+        archive.interruptions["deleteOutside"] = IOException("the disk is full")
+
+        assertTrue(runCatching { store.purge(30, now) }.exceptionOrNull() is IOException)
+
+        assertEquals(listOf(id(2)), store.list().map { it.id })
+    }
+
+    @Test
+    fun aSwitchCancelledAfterTheArchiveWroteItShowsTheSwitchAsTheArchiveHasIt() = runTest {
+        store.save(conversation(1, now - 5_000))
+        store.save(conversation(2, now - 1_000, open = true))
+        archive.interruptions["write"] = CancellationException("stop")
+
+        assertTrue(runCatching { store.reopen(id(1), conversation(2, now - 500, open = true), now, testMode = true) }.exceptionOrNull() is CancellationException)
+
+        assertEquals(id(1), store.open()!!.id)
+        assertEquals(listOf(id(2)), store.list().map { it.id })
+        assertEquals(now - 500, store.get(id(2))!!.lastWall)
+    }
+
+    // The engine reports a failed save and goes on, so a conversation that failed to close can meet a new open one.
+    @Test
+    fun writingAnOpenConversationClosesTheOthersInMemoryAsTheTableDoes() = runTest {
+        store.save(conversation(1, now - 1_000, open = true))
+
+        store.save(conversation(2, now, open = true))
+
+        assertEquals(id(2), store.open()!!.id)
+        assertEquals(listOf(id(1)), store.list().map { it.id })
+        assertEquals(listOf(id(1)), ArchivedConversationStore(archive) {}.list().map { it.id })
     }
 }

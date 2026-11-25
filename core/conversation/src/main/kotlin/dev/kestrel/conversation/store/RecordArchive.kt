@@ -14,7 +14,10 @@ interface RecordArchive {
      */
     suspend fun readAll(): List<ArchiveEntry>
 
-    /** Inserts or replaces [rows], all in one transaction. */
+    /**
+     * Inserts or replaces [rows], all in one transaction. Before an open row is stored, every other open row closes, so
+     * that at most one is open, as plan 7C's table does.
+     */
     suspend fun write(rows: List<ArchiveRow>)
 
     suspend fun delete(id: String)
