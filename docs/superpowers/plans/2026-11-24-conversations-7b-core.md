@@ -6614,14 +6614,14 @@ The task cases of today's `RulesTest` (`app/src/test/kotlin/dev/kestrel/app/orch
 The other 52 cases of `RulesTest` are the voice's own (the listening modes, the waits of 15 s and 35 s, the instant commands, calls without a task, the hints and the settings page), touch no task, and stay as they are in plan 7D: `theToggleStartsListeningThenPausesAndListensAgain`, `theNotificationPausesResumesAndTurnsOff`, `theWaitCoversTheAnswerOnceTheOwnerStartsIt`, `anEmptyAnswerToYesCountsTowardsTheHint`, `onlyTheEndOfTheLastReplyRestartsTheWait`, `wakeUpResumesListeningFromThePause`, `stopListeningPausesAndStopKestrelTurnsOff`, `otherSpeechRunsAnInstantCommandOnlyWhileListening`, `aCommandEndsWithItsResultAndARepeatableOneBecomesTheLastCommand`, `stopCancelAndSpeechThatStartsWithThemCancelACommand`, `aCommandThatArrivesWhileAnotherRunsIsDropped`, `aQuestionIsSpokenKeptOnTheBarAndTheNextTranscriptAnswersIt`, `theWaitForAnAnswerStartsAgainWhenTheQuestionWasSpokenAndGrowsWhenTheOwnerAnswers`, `aCountdownHoldsWhileTheOwnerSpeaksAndOnlyCancelStopNoOrAModeChangeEndIt`, `theSpottersStopOrCancelEndsACountdownAtOnceAndACommandWhileKestrelSpeaks`, `theTranscriptOfTheSpottersCancelNamesNoButton`, `theTranscriptOfTheSpottersStopOfAReplyNamesNoButton`, `aNumberRightAfterAQuestionEndedWithoutAnAnswerIsOnlyShown`, `theStartOfTheUtteranceGoesWithItsCommand`, `aChangeOfModeOrTheScreenTurningOffCancelsTheCommand`, `lockingTheScreenAndTheCallThatACommandPlacedLeaveItRunning`, `anAnswerThatWasNoAnswerIsReadAsANewUtterance`, `theStatePrintsNoWords`, `leavingACommandWhileKestrelSpeaksStopsTheReplyOnce`, `theNameWhileKestrelSpeaksEndsTheSpeechAndWaitsForARequest`, `keywordsCountOnlyWhileKestrelSpeaks`, `theMicrophoneFollowsTheModeAndTheScreen`, `aBusyMicrophoneIsShownOnce`, `transcriptsAreIgnoredWhileOff`, `theAnswerToYesMayWakeKestrelUp`, `whileIdleAStopEndsOnlyTheSpeech`, `theNotificationAndOtherEventsThatChangeNothing`, `startTurnsKestrelOnOnlyWhileItIsOff`, `kestrelTurnOffTurnsKestrelOff`, `kestrelOpenSettingsOpensThemWhileListeningOrPaused`, `kestrelSaysWhyItCannotOpenItsSettings`, `kestrelSaysThatAndroidKeptItsSettingsBack`, `threeEmptyTranscriptsInARowShowTheHintOncePerSession`, `aTranscriptWithWordsStartsTheCountAgain`, `anUtteranceWithoutATranscriptRestartsTheWaitButIsNotCounted`, `aCallRingsWhileKestrelListensOrIsPausedAndTheModeComesBackAfterIt`, `aCallThatIsActiveWithoutRingingIsInCall`, `callsChangeNothingWhileKestrelIsOffOrWithoutACall`, `whileACallRingsKestrelRecordsAlsoOnTheLockScreenButNotDuringTheCall`, `duringACallTheTogglePauseAndResumeChooseTheModeAfterIt`, `transcriptsAndKeywordsOtherThanTheCallCommandsAreIgnoredDuringACall`, `turningOffDuringACallForgetsTheCall`, `whileACallRingsOnlyTheCallCommandsCountAlsoOnTheLockScreen`, `duringACallItsCommandsCountOnlyWithTheSetting`, `theAssistantGestureChangesNothingDuringACall`, `thirtySecondsWithoutSpeechPauseKestrelWhenTheSettingIsOn`, `theSilenceTimerDoesNotCountWhileTheMicrophoneIsBlocked`.
 
 **Files:**
-- Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/LocalRequest.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationState.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/QuietClock.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationEvent.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationEffect.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/GoalRules.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationMachine.kt`
+- Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/LocalRequest.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationState.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/QuietClock.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/model/ProcessEnd.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationEvent.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationEffect.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/GoalRules.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationMachine.kt`
 - Test: `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/MachineTesting.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/QuietClockTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/GoalRulesTest.kt`
 
 **Interfaces:**
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
-- Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput)`; `data class PhoneState(locked, ringing, inCall)` with `away`; `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
+- Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput)`; `data class PhoneState(locked, ringing, inCall)` with `away`; `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 98 + 43 (`QuietClockTest` 6, `ConversationMachineTest` 22, `GoalRulesTest` 15) = 141, after Tasks 5b to 5d.
+Counts: `:core:conversation` 98 + 44 (`QuietClockTest` 6, `ConversationMachineTest` 23, `GoalRulesTest` 15) = 142, after Tasks 5b to 5d.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6822,6 +6822,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.PhoneSignal
+import dev.kestrel.conversation.model.ProcessEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -7172,6 +7173,25 @@ class ConversationMachineTest : MachineTesting() {
 
         val late = step(idle, ConversationEvent.Restored(snapshot.copy(goal = GoalState(1, GoalPhase.ACTING, now - GoalRules.HOLD_MILLIS - 1))))
         assertEquals(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG), late.effect<ConversationEffect.EndHeldGoal>())
+    }
+
+    @Test
+    fun theOwnersStopOfKestrelEndsTheRestoredGoalAsStopDoesAndAsksNothing() {
+        val snapshot = ConversationSnapshot(
+            id, now - 600_000, now - 60_000, open = true, testMode = false,
+            records = listOf(CommandRecord(1, now - 600_000, InputChannel.TEXT, "Archive the newsletters")),
+            goal = GoalState(1, GoalPhase.ACTING, now - 60_000),
+        )
+
+        // Plan 7E: the owner's stop in Android's "Active apps" after the snapshot ends the goal as "stop" does.
+        val stopped = step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.OwnerStopped(now - 30_000)))
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), stopped.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(stopped.has<ConversationEffect.AskContinueGoal>())
+        assertFalse(stopped.has<ConversationEffect.StartTimer>())
+
+        // A stop before the snapshot ended an older process, and any other end holds the goal and asks.
+        assertTrue(step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.OwnerStopped(now - 90_000))).has<ConversationEffect.AskContinueGoal>())
+        assertTrue(step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.Other)).has<ConversationEffect.AskContinueGoal>())
     }
 
     @Test
@@ -7745,6 +7765,26 @@ internal object QuietRules {
 }
 ```
 
+How Kestrel's previous process ended, which the restore takes (plan 7E: the owner's stop in Android's "Active apps" ends a restored goal as "stop" does).
+
+Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/model/ProcessEnd.kt`:
+
+```kotlin
+package dev.kestrel.conversation.model
+
+/**
+ * How Kestrel's previous process ended, as `:app` reads it from Android's exit records at the next start (D11 of
+ * sub-project 7; plan 7E). The restore ends a goal as "stop" ends it only after [OwnerStopped].
+ */
+sealed interface ProcessEnd {
+    /** The owner stopped Kestrel at [atWall]: Stop in Android's "Active apps", a force stop, or removing it from Recents. */
+    data class OwnerStopped(val atWall: Long) : ProcessEnd
+
+    /** Any other end, or a stop that cannot be told from an update of Kestrel, which Android 13 records alike. */
+    data object Other : ProcessEnd
+}
+```
+
 Create `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationEvent.kt`:
 
 ```kotlin
@@ -7758,6 +7798,7 @@ import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PhoneSignal
+import dev.kestrel.conversation.model.ProcessEnd
 
 /** What happens to the conversation (design 6.3 of sub-project 7). toString prints no words. */
 sealed interface ConversationEvent {
@@ -7803,8 +7844,11 @@ sealed interface ConversationEvent {
     /** The Conversations page, or the Safety page's test mode, as they are now. */
     data class SettingsChanged(val settings: ConversationSettings, val testMode: Boolean) : ConversationEvent
 
-    /** At process start: the open conversation that the store held, or null. */
-    data class Restored(val snapshot: ConversationSnapshot?) : ConversationEvent
+    /**
+     * At process start: the open conversation that the store held, or null, and how the previous process ended
+     * ([previous]; plan 7E), which ends a restored goal when the owner stopped Kestrel after the snapshot.
+     */
+    data class Restored(val snapshot: ConversationSnapshot?, val previous: ProcessEnd = ProcessEnd.Other) : ConversationEvent
 
     /** The owner's answer to "Continue the goal?". */
     data class ContinueAnswered(val answer: ChannelAnswer) : ConversationEvent
@@ -8126,9 +8170,14 @@ internal object GoalRules {
     /**
      * A goal that the end of Kestrel's process cut, in any phase (design 6.7): interrupted, held for 30 minutes from its
      * last change, and "Continue the goal?" asked; when those 30 minutes have passed, it ends with its partial report.
+     * When the owner stopped Kestrel ([ownerStopped]: Stop in Android's "Active apps", a force stop or removing it from
+     * Recents, after the snapshot), the goal ends at once as "stop" ends a held goal, and nothing asks (plan 7E).
      */
-    fun restored(state: ConversationState, stored: GoalState, now: Long): MachineStep {
+    fun restored(state: ConversationState, stored: GoalState, now: Long, ownerStopped: Boolean = false): MachineStep {
         val goal = GoalState(stored.record, GoalPhase.INTERRUPTED, stored.changedAtWall, GoalHold.RESTART, stored.rounds, stored.stepsBefore)
+        if (ownerStopped) {
+            return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(EndReason.CANCELLED)))
+        }
         val left = HOLD_MILLIS - maxOf(0L, now - stored.changedAtWall)
         if (left <= 0) {
             return MachineStep(state.copy(goal = goal.copy(ending = GoalEnding.STOPPING)), listOf(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG)))
@@ -8262,6 +8311,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
+import dev.kestrel.conversation.model.ProcessEnd
 
 /**
  * The conversation's rules (design 6 of sub-project 7): one function from a state, an event and the wall clock's time
@@ -8287,7 +8337,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             is ConversationEvent.ReplyOpened -> GoalRules.replyOpened(state, event.question)
             is ConversationEvent.Signal -> GoalRules.signal(state, event.signal, now)
             is ConversationEvent.SettingsChanged -> settingsChanged(state, event, now)
-            is ConversationEvent.Restored -> restored(state, event.snapshot, now)
+            is ConversationEvent.Restored -> restored(state, event.snapshot, event.previous, now)
             is ConversationEvent.ContinueAnswered -> GoalRules.continueAnswered(state, event.answer, now)
             is ConversationEvent.LocalEnded -> localEnded(state, event, now)
             is ConversationEvent.Switched -> switched(state, event, now)
@@ -8484,8 +8534,9 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     }
 
     // Design 6.7: without a goal the conversation is open while its quiet time has not passed, and its clock runs on for
-    // the rest; with a goal in any phase the goal is held as interrupted.
-    private fun restored(state: ConversationState, snapshot: ConversationSnapshot?, now: Long): MachineStep {
+    // the rest; with a goal in any phase the goal is held as interrupted, unless the owner stopped Kestrel after the
+    // snapshot was saved (plan 7E), which ends the goal as "stop" does.
+    private fun restored(state: ConversationState, snapshot: ConversationSnapshot?, previous: ProcessEnd, now: Long): MachineStep {
         if (snapshot == null || !snapshot.open) return MachineStep(state)
         val base = state.copy(
             id = snapshot.id,
@@ -8500,7 +8551,8 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             val left = state.settings.quietMillis - maxOf(0L, now - since)
             return if (left <= 0) close(base) else QuietRules.start(MachineStep(base), since, left)
         }
-        return GoalRules.restored(base, goal, now)
+        val ownerStopped = previous is ProcessEnd.OwnerStopped && previous.atWall >= snapshot.lastWall
+        return GoalRules.restored(base, goal, now, ownerStopped)
     }
 
     private fun quietEnded(state: ConversationState, number: Int): MachineStep =
@@ -8566,12 +8618,12 @@ class ConversationMachine(private val ids: () -> ConversationId) {
 - [ ] **Step 6: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.machine.*`
-Expected: PASS, 43 tests.
+Expected: PASS, 44 tests.
 
 - [ ] **Step 7: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 141`.
+Expected: BUILD SUCCESSFUL; `core\conversation 142`.
 
 - [ ] **Step 8: Commit**
 
@@ -8594,7 +8646,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 141 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 156.
+Counts: `:core:conversation` 142 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 157.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -9671,7 +9723,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 156`.
+Expected: BUILD SUCCESSFUL; `core\conversation 157`.
 
 - [ ] **Step 7: Commit**
 
@@ -9694,7 +9746,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup`; Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`.
 
-Counts: `:core:conversation` 156 + 9 = 165.
+Counts: `:core:conversation` 157 + 9 = 166.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -10047,7 +10099,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 165`.
+Expected: BUILD SUCCESSFUL; `core\conversation 166`.
 
 - [ ] **Step 6: Commit**
 
@@ -10068,9 +10120,9 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 
 **Interfaces:**
 - Consumes: everything of Tasks 1 to 9.
-- Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
+- Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 165 + 14 = 179. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 166 + 15 = 181. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -10179,6 +10231,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PendingSteer
+import dev.kestrel.conversation.model.ProcessEnd
 import dev.kestrel.conversation.store.ArchivedConversationStore
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
@@ -10371,6 +10424,27 @@ class ConversationEngineTest {
         assertTrue(resumed.contains("What Kestrel did so far, in its own notes: \"opened Gmail\"\n"))
         assertTrue(resumed.contains("The owner added (typed) before the first step: \"only the ones from 2025\""))
         assertNull(engine.view.value.goal)
+    }
+
+    @Test
+    fun aRestoreAfterTheOwnersStopEndsTheGoalWithItsReportAndAsksNothing() = scope.runTest {
+        val now = ManualConversationClock.BASE
+        val record = CommandRecord(1, now - 60_000, InputChannel.TEXT, "Archive my newsletters", ledger = listOf("opened Gmail"))
+        store.save(ConversationSnapshot(
+            ConversationId("0123456789abcdef0123456789abcdef"), now - 60_000, now - 30_000, open = true, testMode = false,
+            records = listOf(record), goal = GoalState(1, GoalPhase.ACTING, now - 30_000),
+        ))
+        val environment = environment()
+        val engine = engine(environment, ArchivedConversationStore(archive, backgroundScope) {})
+
+        assertEquals(Restored.GOAL_ENDED, engine.restore(ProcessEnd.OwnerStopped(now - 10_000)))
+        runCurrent()
+
+        // Plan 7E: no round runs, nothing asks "Continue the goal?", and the record ends as "stop" ends it.
+        assertNull(engine.view.value.goal)
+        assertTrue(voice.asked.isEmpty() && text.asked.isEmpty())
+        assertTrue(environment.starts.isEmpty())
+        assertEquals(EndReason.CANCELLED, engine.view.value.records.single().end)
     }
 
     @Test
@@ -10612,6 +10686,7 @@ import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PendingSteer
 import dev.kestrel.conversation.model.PhoneSignal
+import dev.kestrel.conversation.model.ProcessEnd
 import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.RecordRef
 import dev.kestrel.safety.Category
@@ -10734,8 +10809,11 @@ class ConversationEngine(
         }
     }
 
-    /** At process start, before any input: reads the open conversation and applies design 6.7's rules to it. */
-    suspend fun restore(): Restored {
+    /**
+     * At process start, before any input: reads the open conversation and applies design 6.7's rules to it, with how the
+     * previous process ended ([previous], which `:app` reads from Android's exit records; plan 7E).
+     */
+    suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored {
         check(!started.isCompleted) { "restore() runs once, before any input" }
         try {
             process(ConversationEvent.SettingsChanged(settings.first(), testMode.first()))
@@ -10751,7 +10829,7 @@ class ConversationEngine(
                 null
             }
             if (snapshot != null) load(snapshot)
-            process(ConversationEvent.Restored(snapshot))
+            process(ConversationEvent.Restored(snapshot, previous))
             val found = when {
                 snapshot == null -> Restored.NOTHING
                 state.id == null -> Restored.CLOSED
@@ -11163,12 +11241,12 @@ class ConversationEngine(
 - [ ] **Step 5: Run the test to see it pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: PASS, 14 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 179` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 181` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -11181,7 +11259,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 179, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 5b: 9, Task 5d: 8, Task 7: 43, Task 8: 15, Task 9: 9, Task 10: 14).
+- `:core:conversation`: C₀ + 181, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 5b: 9, Task 5d: 8, Task 7: 44, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
 
@@ -11216,10 +11294,11 @@ What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves 
 - Test fixtures (`testing`): `MemoryArchive` (`unreadable`, `unknown`, `index`, `indexUnreadable`, `readAllGate`, `readAllFailure`, `past()`), `ManualConversationClock(elapsed, base = BASE, zone = BELGRADE)`.
 
 **The engine and its ports (plan 7D)**
-- `engine.ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })`; `val owner: ConversationOwner`; `val view: StateFlow<ConversationView>`; `val restored: Restored?`; `suspend fun restore(): Restored` (once, at process start, before the accessibility service, the assistant service or the conversation screen can send input; inputs wait for it); `fun submit(input: OwnerInput)`; `fun signal(signal: PhoneSignal)`; `fun touched()`; `fun composing(active: Boolean)`; `fun awaitingCommand(active: Boolean)`; `fun replyOpened(question: Int)`; `fun endQuietTime()`; `fun outcome(command: Int): CommandOutcome?`; `MAX_OUTCOMES = 16`.
+- `engine.ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })`; `val owner: ConversationOwner`; `val view: StateFlow<ConversationView>`; `val restored: Restored?`; `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored` (once, at process start, before the accessibility service, the assistant service or the conversation screen can send input; inputs wait for it); `fun submit(input: OwnerInput)`; `fun signal(signal: PhoneSignal)`; `fun touched()`; `fun composing(active: Boolean)`; `fun awaitingCommand(active: Boolean)`; `fun replyOpened(question: Int)`; `fun endQuietTime()`; `fun outcome(command: Int): CommandOutcome?`; `MAX_OUTCOMES = 16`.
 - `engine.ConversationView(id, command, goal: GoalPhase?, step: Int?, asking: QuestionKind?, question: Int?, replyChannel, checklist: ChecklistSummary?, records, continuedAtWall, testMode, quiet: QuietClock)` with `continued`: the bar and the goal's notification draw "Step 12 · 3 of 7 · Replying to Mila" from `step` and `checklist` (design 10.5 and 10.6); `step` is null while no round of the goal works. `engine.ChecklistSummary(done, total, current: String?)`; `engine.CommandOutcome(command, report: TaskReport, answer: String?)`, whose `answer` is Kestrel's final words, also after a routine offer; `engine.Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`.
 - `onStep` for `CommandTags`: every effect that starts work under a new command number carries the owner's input that asked for it, on whatever step it comes, because a command that waited in `next` starts on a `GoalEnded`, `LocalEnded` or `Switched` step, not on its own `Input` step: `ConversationEffect.StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)` (`input` is null when the owner answered "Continue the goal?" on its card), `RunLocal(command, record, request, input)` and `SwitchTo(command, id, input)`. `CommandTags` maps `input.id` to `command` from these effects, and the hook `agent-task -Result -Tag` reads `outcome(command)`. A round takes the debug options of the input that started or resumed it; a yes on the card keeps the latest.
 - `model.OwnerInput(id: Long, channel: InputChannel, intent: InputIntent, atMillis: Long, options: Map<String, String> = emptyMap())`; `model.InputIntent`: `Command(text)`, `Answer(answer: ChannelAnswer)`, `Stop`, `Continue`, `NewConversation`, `ContinuePast(topic: String?)`, `ContinueConversation(id)`, `DeleteHistory`, `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`; `model.ChannelAnswer`: `Yes`, `No`, `Text(text)`, `Pick(number)` (from 1), `Silence`, `Interrupted`. The channels read the owner's words: while `view.asking` is `YES_NO`, `CONFIRM`, `LIMIT`, `CONTINUE_GOAL` or `SWITCH`, a spoken or typed yes or no is `Answer(Yes)` or `Answer(No)`; for `DELETE_HISTORY` only "yes" itself is `Answer(Yes)` (not "continue" or "go on"), so that nothing but a yes deletes the history; for `PICK` a number is `Answer(Pick(n))`; for `FREE` and `SCREENSHOT` the words are `Answer(Text(words))`; an answer that arrives as a typed input (`InputChannel.TEXT`, which only Kestrel's own screen sends) gives the goal its fresh look, whatever its kind (design 10.3); the voice's answer waits (15 s and 35 s) end with `Answer(Silence)`. `Rules` enforces D9 (steering by voice needs "Kestrel"): the machine takes every `Command` that reaches it while a goal acts as steering.
+- `model.ProcessEnd`: `OwnerStopped(atWall)` and `Other`, how Kestrel's previous process ended, which `:app` reads from Android's exit records and gives `ConversationEngine.restore(previous)` (plan 7E). After `OwnerStopped` at or after the snapshot's `lastWall` (Stop in Android's "Active apps", a force stop or removing Kestrel from Recents), a restored goal ends as "stop" ends a held goal (`EndHeldGoal(EndReason.CANCELLED)`) and nothing asks; after any other end it is held and "Continue the goal?" is asked.
 - `model.PhoneSignal { LOCKED, UNLOCKED, RINGING, CALL_ACTIVE, CALL_IDLE, AGENT_CALL }`: `PhoneSignals` sends `AGENT_CALL` instead of `CALL_ACTIVE` when the call backstop's verdict is to stop.
 - `model.ConversationSettings(quietSeconds = 60, followUpSeconds = 8, speakTypedReplies = false, retentionDays = 30, limits = GoalLimits())`, `@Serializable`, with `quietMillis`, `followUpMillis` (the follow-up window's length for `Rules`), `keptDays`, `roundLimits` (every read goes through these, which keep a stored value within the page's bounds), `QUIET_CHOICES`, `FOLLOW_UP_CHOICES`, `RETENTION_CHOICES`, `REPLIES`, `WORK_MINUTES` and `CREDITS`, for `SettingKeys.CONVERSATIONS`.
 - `channel.OwnerChannel { val kind: InputChannel; suspend fun show(output: ChannelOutput); suspend fun ask(question: ChannelQuestion): ChannelAnswer; suspend fun handOver(handOver: HandOver): HandOverEnd; suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd; suspend fun leaveKestrel(): Boolean }`, which `VoiceChannel` implements: `show(Said)` speaks and shows; `show(Shown)` only shows; `show(Report)` speaks the final reply and returns when its speech has ended (`Rules` opens the follow-up window there; a typed conversation's final reply that "Speak replies to typed commands" also speaks reaches `VoiceChannel` as `Said`, never as `Report`, so it opens no follow-up window, design 11); `ask` speaks `question.spoken` and returns only a card's answer (a confirmation's card, as today), the spoken answer coming as an input; `askPermission` says why and shows Android's permission dialog, which no other channel shows again: the card that `TextChannel` (plan 7F) gets for an open permission request once Kestrel is off is a hand-over's card (`handOver(HandOver.of(HandOverKind.PERMISSION))`, Continue and Cancel), whose Continue makes the owner check what Android granted, and `TextChannel.askPermission` shows Android's dialog only when it is the owner's channel, that is, when no channel has shown the dialog yet; "Continue the goal?" is spoken only once a voice session is open and the owner is back, while its card is `TextChannel`'s (plan 7F). While Kestrel is off (the `voiceOn` flow is false: the listening mode is `OFF`; the paused mode counts as on, because Kestrel still hears its name there and a goal keeps its speech and its voice answers), `VoiceChannel.ask` speaks nothing and shows only its own card (a confirmation's), and speaks its question once Kestrel is on again; every question, hand-over and permission request also goes to `TextChannel`'s card from the moment Kestrel turns off, and the card stays until it ends; the machine runs D21's waits for a question until Kestrel is on again; and a spoken conversation's `Said` and `Report` reach `VoiceChannel` as `Shown`, so nothing is spoken and no follow-up window opens; a typed conversation's replies with "Speak replies to typed commands" on still arrive as `Said` and are spoken (design 10.6 and 11).
