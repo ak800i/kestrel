@@ -40,12 +40,24 @@ class ScreenServiceRule : ExternalResource() {
     private suspend fun start() {
         // A mode that an interrupted run stored would turn Kestrel on when its service connects (section 8.5).
         graph.settings.set(SettingKeys.LISTENING, ListeningSetting())
+        // Off as Android's accessibility manager applies it, not only as Kestrel's session ends. In a new test process the
+        // session is gone already while the manager may still be binding the service; when the manager reads the setting
+        // only after the next write, it never sees the service off, keeps that binding, which never completes, and never
+        // connects the service again (plan 7E, Task 8).
         shell("settings delete secure enabled_accessibility_services")
+        withTimeout(10_000) { while (managerHasService()) delay(100) }
         withTimeout(10_000) { graph.screen.first { it == null } }
         shell("settings put secure enabled_accessibility_services $SERVICE")
         shell("settings put secure accessibility_enabled 1")
         session = withTimeout(10_000) { graph.screen.filterNotNull().first() }
     }
+
+    /**
+     * Whether Android's accessibility manager has Kestrel's service enabled or is binding it. `dumpsys accessibility` names
+     * the services by their components on these lines, and the rule reads nothing else of it.
+     */
+    private fun managerHasService(): Boolean = shell("dumpsys accessibility").lineSequence().map { it.trim() }
+        .any { (it.startsWith("Enabled services:") || it.startsWith("Binding services:")) && SERVICE in it }
 
     /**
      * Runs [block] with [source] as this device's touch rule and branch (design D19 of sub-project 5), and puts back the
