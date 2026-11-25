@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import dev.kestrel.app.NotificationGroups
 import dev.kestrel.app.R
 import dev.kestrel.app.listen.ListeningService
 
@@ -29,7 +30,8 @@ internal object GoalNotification {
             .createNotificationChannel(NotificationChannel(CHANNEL, GoalTexts.CHANNEL, NotificationManager.IMPORTANCE_LOW))
     }
 
-    fun build(context: Context, notice: GoalNotice): Notification {
+    /** The notification of [notice] with the ID [id]: [SERVICE_ID] for the service's, [POSTED_ID] for the one posted without it. */
+    fun build(context: Context, notice: GoalNotice, id: Int = SERVICE_ID): Notification {
         val public = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_tile)
             .setContentTitle(GoalTexts.PUBLIC)
@@ -40,10 +42,13 @@ internal object GoalNotification {
             .setContentIntent(ListeningService.openKestrel(context))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            // A colorized notification of a foreground service: SystemUI shows it at the top of the shade, expanded with its
-            // buttons, and Android never puts it in a group with Kestrel's other notifications, whose collapsed group would
-            // hide them (design 10.6). Android colorizes only a foreground service's notification, so the held goal's
-            // notification that Kestrel posts without the service after a refusal is a plain one.
+            // Not in Android's automatic group with Kestrel's other notifications (NotificationGroups says on which API levels).
+            .setGroup(NotificationGroups.alone(id))
+            // A colorized notification of a foreground service is in SystemUI's section for them (AOSP's "ForegroundService"
+            // sectioner, in Android 13 and in AOSP's main branch), above the alerting and silent ones, so it is the shade's first notification, which
+            // SystemUI expands with its buttons, unless a heads-up, a call or another colorized service's notification
+            // comes first, or on API 36 and later a Live Update (design 10.6). Android colorizes only a foreground service's
+            // notification, so the one posted without the service is a plain one.
             .setColorized(true)
             .setColor(context.getColor(R.color.kestrel))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -69,7 +74,7 @@ internal object GoalNotification {
             return
         }
         createChannel(context)
-        notifications.notify(POSTED_ID, build(context, notice))
+        notifications.notify(POSTED_ID, build(context, notice, POSTED_ID))
     }
 
     /**

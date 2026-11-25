@@ -14,6 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.MainActivity
+import dev.kestrel.app.NotificationGroups
 import dev.kestrel.app.R
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
@@ -137,6 +138,8 @@ class ListeningService : Service() {
             .setContentTitle(getString(title))
             .setContentIntent(openKestrel(this))
             .setOngoing(true)
+            // Not in Android's automatic group with Kestrel's other notifications (NotificationGroups).
+            .setGroup(NotificationGroups.alone(NOTIFICATION_ID))
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         // During a call the tile and the shortcut choose the mode that comes back after it (section 8.5).
         when (mode) {
