@@ -53,7 +53,7 @@ These are this plan's readings of the design where it leaves a choice open, or w
 
 - **The voice channel speaks through the Orchestrator.** `VoiceChannel` gives the Orchestrator `Event.ChannelSays(reply, text, final)` for Kestrel's words and final replies, `Event.ChannelShows(text)` for words that are only shown, `Event.ChannelAsks(question, text, voice)` for a question and `Event.ChannelHandsOver(text)` for a hand-over's sentence; `Listening.voicePath` (`VoicePath`) sends them and waits for a reply's end through `Effect.EndReply` or the reply's own end. So the Orchestrator still decides every word that Kestrel speaks, and the answer waits of 15 s and 35 s stay the Orchestrator's.
 - **The voice reads the answer.** `VoiceAnswers` reads a transcript as the `ChannelAnswer` of the view's question kind, as `TaskAnswers` read it for a task, and `Rules` gives it as `InputIntent.Answer`; the end of the voice's wait gives `Answer(Silence)`. A spoken "no answer" to "Continue the goal?" keeps the goal held (plan 7B's decision 2, accepted with plan 7.0).
-- **The page's question stands for the conversation's.** The settings page's "Delete history" asks its own question with the design's words and then calls `ConversationEngine.deleteHistory()`, which deletes what a yes to "delete history" deletes, closes the open conversation, and says nothing on a channel; while a goal is open or one of Kestrel's own requests runs it deletes nothing, and the page says why (design 9.7). This is the plan's one change to `:core:conversation` (Task 7).
+- **The page's question stands for the conversation's.** The settings page's "Delete history" asks its own question with the design's words and then calls `ConversationEngine.deleteHistory()`, which closes the open conversation, has the engine's writer delete what a yes to "delete history" deletes after every write before it, and says nothing on a channel; while a goal is open or one of Kestrel's own requests runs it deletes nothing, and the page says why (design 9.7). This is the plan's one change to `:core:conversation` (Task 7).
 - **The voice reads a projection of the view.** The Orchestrator gets `VoiceView` (open, the goal's phase, the question's kind and number, a final reply that waits), only when it changes, never the records; a question's end reaches it from the voice channel as `Event.ChannelWithdraws`, not inferred from the view.
 - **What the voice's words stay.** The Orchestrator's names that are about voice stay (`Work.AWAITING_TASK`, `Feedback.AwaitingTask`, `Effect.WaitForTask`, `Event.WaitEnded`), so that its 52 voice tests stay as they are; only the task's names go.
 - **The touch watcher is the goal's.** `GoalOwner`, a decorator of the round's owner port that `AppGoalEnvironment` builds, clears the watcher's credits before every question and starts the watcher again after a hand-over, a permission request and a pause, because an instant command in between stops it (design D19 of sub-project 5), and gives every `say` text to the round's witness. Today `AppOwnerPort` did this; in the design it would be split between two channels.
@@ -11843,7 +11843,7 @@ git commit -m "feat(app): the hooks conversation-state and conversation-control,
 
 Design 9.7 of sub-project 7, as the controller settled it on 2026-11-24: the settings page's "Delete history" deletes what "Kestrel, delete history" deletes after a yes: both logs, every past conversation with the index of past conversations and the archive's key `kestrel.conversations`, and the open conversation, which closes. The page asks its own question, as today, now with the design's words ("Delete the activity log, the network log and past conversations?"), and the conversation asks nothing more and says nothing on a channel. While a goal is open or one of Kestrel's own requests runs, the conversation leaves everything alone, as it does for "delete history" by voice, and the page says why. Plan 7F adds only the typed "delete history".
 
-This is the one task of this plan that changes `:core:conversation`: plan 7B's engine had no way in for a deletion that the owner already confirmed. `LocalRequests.deleteAll()` is the deletion that both ways share, `ConversationEngine.deleteHistory()` runs it on the engine's coroutine and closes the open conversation through the machine's new `ConversationEvent.HistoryDeleted`.
+This is the one task of this plan that changes `:core:conversation`: plan 7B's engine had no way in for a deletion that the owner already confirmed. `LocalRequests.deleteAll()` is the deletion that both ways share. `ConversationEngine.deleteHistory()` closes the open conversation at once through the machine's new `ConversationEvent.HistoryDeleted`, unkept, and gives the deletion to the engine's writer (plan 7B, `25cdca0a`), which stores the conversations beside the loop in the loop's order. So the loop never waits for the store, a save that was asked before the request and still waits is deleted too, and a command after the request opens a conversation that stays. When nothing could be deleted, the writer stores the conversation that the request closed as closed, as any close keeps it.
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/HistoryDeletion.kt`
@@ -11854,7 +11854,7 @@ This is the one task of this plan that changes `:core:conversation`: plan 7B's e
 - Consumes: plan 7B's `ConversationEngine`, `LocalRequests`, `ConversationEvent` and `ConversationMachine`; Task 3's `AppGraph.conversations`.
 - Produces: `enum class HistoryDeletion { DELETED, REFUSED, FAILED }` (package `dev.kestrel.conversation.engine`); `suspend fun ConversationEngine.deleteHistory(): HistoryDeletion`; `suspend fun LocalRequests.deleteAll(): Boolean`; `ConversationEvent.HistoryDeleted`; `SettingsData.deleteHistory(): HistoryDeletion`; the strings `logs_delete_refused` and `logs_delete_failed`.
 
-Counts: `:core:conversation` C₀ + 1 (`ConversationEngineTest` + 1). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
+Counts: `:core:conversation` C₀ + 2 (`ConversationEngineTest` + 2). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -11894,6 +11894,41 @@ with:
         // The page asked its own question, and shows the result itself.
         assertEquals(asked, text.asked.size + voice.asked.size)
         assertEquals(shown, text.shown.size + voice.shown.size)
+    }
+
+    // The engine's writer deletes after every write before the request: a save that waits for the store is deleted too,
+    // and a command after the request opens a conversation that stays.
+    @Test
+    fun theSettingsPagesDeleteHistoryComesAfterTheWritesBeforeItAndKeepsTheCommandsAfterIt() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val first = engine.view.value.id
+        assertNotNull(first)
+        val gate = CompletableDeferred<Unit>()
+        gated.gate = gate
+
+        // The close's save waits for the store, and the deletion waits behind it.
+        engine.submit(input(InputChannel.TEXT, InputIntent.NewConversation))
+        runCurrent()
+        var deletion: HistoryDeletion? = null
+        launch { deletion = engine.deleteHistory() }
+        runCurrent()
+        engine.submit(typed("Read my newest SMS"))
+        runCurrent()
+        assertNull(deletion)
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(HistoryDeletion.DELETED, deletion)
+        assertTrue(archive.keyErased)
+        val kept = store.open()!!
+        assertNotEquals(first, kept.id)
+        assertEquals(listOf("Read my newest SMS"), kept.records.map { it.request })
+        assertEquals(listOf(kept.id.value), archive.rows.keys.toList())
     }
 
     @Test
@@ -12062,16 +12097,38 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class Step(val conversation: ConversationId, val record: Int, val step: Int) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
+    }
 ```
 
 with:
 
 ```kotlin
-        class Step(val conversation: ConversationId, val record: Int, val step: Int) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
+    }
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+    }
+```
+
+with:
+
+```kotlin
+        class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+
+        /**
+         * Deletes the history (design 9.7) after every write before it. [closing] is the conversation that the request
+         * closed, which is stored closed when nothing was deleted; [done] gets how the deletion ended.
+         */
+        class DeleteHistory(val closing: ConversationSnapshot?, val done: CompletableDeferred<HistoryDeletion>) : Write
+    }
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -12105,46 +12162,84 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-                }
+                is Message.Reopened -> reopened(message)
             }
 ```
 
 with:
 
 ```kotlin
-                }
-                is Message.DeleteHistory -> message.done.complete(deleteConfirmed())
+                is Message.Reopened -> reopened(message)
+                is Message.DeleteHistory -> deleteHistory(message.done)
             }
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-            (message as? Message.Change)?.done?.complete(Unit)
-        }
+    private fun startTimer(effect: ConversationEffect.StartTimer) {
 ```
 
 with:
 
 ```kotlin
-            (message as? Message.Change)?.done?.complete(Unit)
-            (message as? Message.DeleteHistory)?.done?.complete(HistoryDeletion.FAILED)
+    // Design 9.7: the page's question stands for the conversation's. The open conversation closes unkept at once, and the
+    // writer deletes after every write before the request, so that a save that still waits is deleted too and a command
+    // after the request opens a conversation that stays.
+    private fun deleteHistory(done: CompletableDeferred<HistoryDeletion>) {
+        if (state.goal != null || state.local != null) {
+            done.complete(HistoryDeletion.REFUSED)
+            return
+        }
+        try {
+            val closing = state.id?.takeIf { it == recordsOf }?.let { snapshot(state, open = false) }
+            process(ConversationEvent.HistoryDeleted)
+            writes.trySend(Write.DeleteHistory(closing, done))
+        } catch (e: Throwable) {
+            done.complete(HistoryDeletion.FAILED)
+            throw e
         }
     }
 
-    // Design 9.7: the page's question stands for the conversation's. The deletion runs on the engine's coroutine, so that
-    // no save of the open conversation comes between it and the close.
-    private suspend fun deleteConfirmed(): HistoryDeletion {
-        if (state.goal != null || state.local != null) return HistoryDeletion.REFUSED
-        if (!local.deleteAll()) return HistoryDeletion.FAILED
-        process(ConversationEvent.HistoryDeleted)
-        return HistoryDeletion.DELETED
+    private fun startTimer(effect: ConversationEffect.StartTimer) {
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+                inbox.trySend(Message.Reopened(opened, failed = false))
+            }
+        }
+    }
+```
+
+with:
+
+```kotlin
+                inbox.trySend(Message.Reopened(opened, failed = false))
+            }
+            is Write.DeleteHistory -> try {
+                if (local.deleteAll()) {
+                    write.done.complete(HistoryDeletion.DELETED)
+                } else {
+                    // Nothing was deleted: the conversation that the request closed stays, closed, as any close keeps it.
+                    write.closing?.let { store.save(it) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                report("Keeping the conversation that the deletion closed", e)
+            } finally {
+                write.done.complete(HistoryDeletion.FAILED)
+            }
+        }
+    }
 ```
 
 - [ ] **Step 4: Run the conversation's tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`
-Expected: PASS, C₀ + 1 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
+Expected: PASS, C₀ + 2 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
 
 - [ ] **Step 5: The settings page**
 
@@ -12286,7 +12381,7 @@ with:
 - [ ] **Step 6: Run the modules' tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 1 tests pass. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 2 tests pass. Task 8 runs the device tests.
 
 - [ ] **Step 7: Commit**
 
@@ -12361,7 +12456,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 - `:app` JVM (with `app/src/testDebug`): A₀ + 17 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 4, Task 2 + 3, Task 3 − 3 − D, Task 4 + 7, Task 5 + 4, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 36, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
-- `:core:conversation`: C₀ + 1 (`ConversationEngineTest` + 1, Task 7), on top of plan 7B's count as committed at `2113f5a0`. `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
+- `:core:conversation`: C₀ + 2 (`ConversationEngineTest` + 2, Task 7), on top of plan 7B's count as built (`25cdca0a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
 
 ## Interfaces for 7E and 7F
 
