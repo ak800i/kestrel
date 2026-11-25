@@ -56,7 +56,7 @@ Tasks 5 and 6 use these types of `:core:conversation`, as plan 7B (committed at 
   - `sealed interface ArchiveEntry { val header: ArchiveHeader }` with `class Readable(header, val payload: ByteArray)`, `class Unreadable(header)` (the payload failed its check: the store deletes the row and its index entry and notes `ArchiveNote.CONVERSATION_DELETED`) and `class Unknown(header)` (the payload is in a format that this version cannot read: the store leaves the conversation out, keeps the row and counts it in the index; the archive has reported it).
   - `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore`, with `DAY_MILLIS` and `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED, KEY_NOT_ERASED }`; at its first use it reads the open row alone and starts reading the index in `scope`, keeps the index and the open conversation in memory, reads a past conversation's body only when it is asked for, rebuilds a missing, unreadable, unknown or out-of-step index page by page in `scope`, tries a failed one again later, and takes whether a conversation is open, and its times, from the row's header, the table's columns: `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it.
   - `class Retention(store: ConversationStore, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun purge(days: Int): Int` and `suspend fun keepPurging(days: Flow<Int>)`, which purges at once and at each change of `days`, and checks the wall clock every hour and purges once a day has passed or the clock went back; a failure goes to `report` and the job goes on.
-- package `dev.kestrel.conversation.engine`: `interface ConversationClock { fun wallMillis(): Long; fun zone(): ZoneId }`.
+- package `dev.kestrel.conversation.engine`: `interface ConversationClock { fun wallMillis(): Long; fun sinceBootMillis(): Long; fun zone(): ZoneId }` (`sinceBootMillis` from the review of plan 7B's Task 10: the engine's timers are deadlines on the time since the phone started, its sleep included).
 - package `dev.kestrel.conversation.model`: `@Serializable data class ConversationSettings(val quietSeconds: Int = 60, val followUpSeconds: Int = 8, val speakTypedReplies: Boolean = false, val retentionDays: Int = 30, val limits: GoalLimits = GoalLimits())`, whose read properties `keptDays` (the retention within `RETENTION_CHOICES`, 1 to 365 days), `quietMillis`, `followUpMillis` and `roundLimits` are what Kestrel reads, never the raw fields: a damaged stored value is read within its bounds.
 - Plan 7B adds no dependency of `:app` on `:core:conversation`, no setting key and no `AndroidConversationClock`; Tasks 5 and 6 add them.
 
@@ -3953,7 +3953,7 @@ git commit -m "feat(app): RoomRecordArchive implements the conversation's archiv
 
 **Interfaces:**
 - Consumes: Task 4's `PrivacyStore.conversations`; Task 5's `RoomRecordArchive`; plan 7B's `ArchivedConversationStore(archive, scope, noted)` with `ArchiveNote`, `Retention(store, clock, report).keepPurging(days)`, `ConversationClock` and `ConversationSettings` with its `keptDays` (section "Interfaces consumed from plan 7B"); `AppGraph`'s `scope`, `logs`, `settings` and `reportFailure`.
-- Produces: `internal object AndroidConversationClock : ConversationClock` (package `dev.kestrel.app.conversation`; `System.currentTimeMillis()` and `ZoneId.systemDefault()`); `SettingKeys.CONVERSATIONS: SettingKey<ConversationSettings>` (stored as `conversations`); `AppGraph.conversationStore: ArchivedConversationStore` (`internal`, built on first use); `internal suspend fun AppGraph.keepPurgingConversations()`, which runs `Retention.keepPurging` with the setting's `keptDays` (the retention within its choices, never the raw `retentionDays`) and never returns while the setting's flow lives; the activity log's texts "A conversation could not be read, so Kestrel deleted it" (an error), "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations" (a note) "Kestrel could not read the index of past conversations and tries again later" (an error) and "Kestrel deleted the past conversations but could not erase their key, which it erases before it stores anything new" (an error). Plan 7D builds its engine, `HistorySearch` and `LocalRequests` on `conversationStore` and uses `AndroidConversationClock`; plan 7F's Conversations page writes `SettingKeys.CONVERSATIONS`.
+- Produces: `internal object AndroidConversationClock : ConversationClock` (package `dev.kestrel.app.conversation`; `System.currentTimeMillis()`, `SystemClock.elapsedRealtime()` and `ZoneId.systemDefault()`); `SettingKeys.CONVERSATIONS: SettingKey<ConversationSettings>` (stored as `conversations`); `AppGraph.conversationStore: ArchivedConversationStore` (`internal`, built on first use); `internal suspend fun AppGraph.keepPurgingConversations()`, which runs `Retention.keepPurging` with the setting's `keptDays` (the retention within its choices, never the raw `retentionDays`) and never returns while the setting's flow lives; the activity log's texts "A conversation could not be read, so Kestrel deleted it" (an error), "The index of past conversations could not be used, so Kestrel rebuilt it from the conversations" (a note) "Kestrel could not read the index of past conversations and tries again later" (an error) and "Kestrel deleted the past conversations but could not erase their key, which it erases before it stores anything new" (an error). Plan 7D builds its engine, `HistorySearch` and `LocalRequests` on `conversationStore` and uses `AndroidConversationClock`; plan 7F's Conversations page writes `SettingKeys.CONVERSATIONS`.
 
 Counts: `:app` JVM unchanged. `:app` device tests N + 1 (`AppGraphTest` + 1), run in Task 8.
 
@@ -3997,16 +3997,21 @@ Create `app/src/main/kotlin/dev/kestrel/app/conversation/AndroidConversationCloc
 ```kotlin
 package dev.kestrel.app.conversation
 
+import android.os.SystemClock
 import dev.kestrel.conversation.engine.ConversationClock
 import java.time.ZoneId
 
 /**
- * The phone's wall clock and zone for the conversation (design 6.2 and 6.7 of sub-project 7): stored times are wall-clock
- * times, and the zone names the days of past conversations. The zone is read at each call, so that a change of the phone's
- * zone counts at once.
+ * The phone's clocks and zone for the conversation (design 6.2 and 6.7 of sub-project 7): stored times are wall-clock
+ * times; the conversation's timers are deadlines on the time since the phone started, deep sleep included
+ * (`SystemClock.elapsedRealtime()`), so that the quiet time and a held goal's 30 minutes end on time while the phone
+ * sleeps; and the zone names the days of past conversations. The zone is read at each call, so that a change of the
+ * phone's zone counts at once.
  */
 internal object AndroidConversationClock : ConversationClock {
     override fun wallMillis(): Long = System.currentTimeMillis()
+
+    override fun sinceBootMillis(): Long = SystemClock.elapsedRealtime()
 
     override fun zone(): ZoneId = ZoneId.systemDefault()
 }
