@@ -7,8 +7,10 @@ import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.agent.port.ActionOutcome
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.ConfirmEnd
+import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.IntentSpec
 import dev.kestrel.agent.port.OcrLine
 import dev.kestrel.agent.port.Press
 import dev.kestrel.agent.port.ScreenAction
@@ -602,6 +604,34 @@ class AgentTest {
         assertTrue(report.recipients.isEmpty())
         assertTrue(report.ledger.none { it.startsWith("sent") })
         assertEquals("tried to send the message to Ana Petrović, but the tap may not have worked", report.ledger.last())
+    }
+
+    // Review of plan 7A, R4: a confirmed press of a share that may not have worked, after which the share flow ended, is
+    // reported once, as tried; the flow's pending share does not stay behind as a second line.
+    @Test
+    fun aDoubtedPressThatEndsTheShareFlowIsReportedOnceAsTried() = runTest {
+        val telegram = "org.telegram.messenger"
+        // The share opens on John's chat with its picker over it, so the screen's title names the row that the press picks.
+        val picker = ScreenBuilder.screen(telegram) {
+            text("John Smith", 100)
+            val list = list(null, 300, 2000, viewId = "dialogs_list")
+            row("John Smith", 460, list)
+        }
+        val harness = Harness(Screens.app("com.android.launcher3", "Home"), listOf(
+            call("share_media", null, null, null, "app" to "telegram", "items" to listOf("m1")),
+            call("tap", "John Smith", "ViewGroup", null, "reason" to "send it to John", "category" to "sending"),
+            call("fail", null, null, null, "reason" to "Stop."),
+        ))
+        harness.data.answer("share_media", DataResult.Opens(IntentSpec("android.intent.action.SEND", packageName = telegram), "Kestrel opened the share screen."))
+        harness.data.onCall = { if (it == "share_media") harness.screen.current = picker }
+        harness.screen.outcome = { ActionOutcome(done = true, uncertain = it is ScreenAction.Tap, method = "fake") }
+        harness.owner.confirms += ConfirmEnd.YES
+
+        val report = harness.run("Send the photo to John on Telegram")
+
+        assertEquals(1, harness.owner.confirmations.size)
+        assertEquals(listOf("tried to share the items with John Smith, but the tap may not have worked"), report.ledger.filter { it.startsWith("tried") })
+        assertTrue(report.sends.isEmpty())
     }
 
     @Test
