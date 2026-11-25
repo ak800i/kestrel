@@ -88,6 +88,13 @@ abstract class ConversationDao {
     abstract fun closedIds(): List<String>
 
     /**
+     * Whether both tables are empty, as "delete history" leaves them (design 9.7 of sub-project 7): then nothing is stored
+     * under the archive's key.
+     */
+    @Query("SELECT NOT EXISTS (SELECT 1 FROM conversations) AND NOT EXISTS (SELECT 1 FROM conversation_index)")
+    abstract fun isEmpty(): Boolean
+
+    /**
      * One transaction, so that a switch to another conversation (design 9.6 of sub-project 7) and the index that goes with
      * a change are never stored halfway: deletes [deleted], stores [rows], closing every other open row before an open one,
      * and changes the shards' rows as [index] says.

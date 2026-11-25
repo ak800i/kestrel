@@ -92,11 +92,13 @@ class ConversationChange(val conversations: List<PlainConversation>, val deleted
  *
  * Only a write makes the key: a read decrypts each row with the key as it is ([ErasableKey.withExisting]), and the key's
  * erasure waits for a decryption that has started. So a read that overlaps [deleteAll] ("delete history") never fails
- * because the key went, and never makes a new key. It sees each row as one of three: as it was, before the erasure; once
- * the key is gone and until the rows are deleted, a conversation as [StoredConversation.FailedCheck] (one in a format that
- * this version cannot read stays [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; and
- * afterwards not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in
- * the second case.
+ * because the key went, and never makes a new key. [deleteAll] deletes the rows first and then erases the key, so such a
+ * read sees each row as one of three: as it was; when its query ran before the deletion and the key went while it
+ * decrypted, a conversation as [StoredConversation.FailedCheck] (one in a format that this version cannot read stays
+ * [StoredConversation.UnknownFormat]) and a shard as [StoredShard.Unreadable]; or, when its query ran after the deletion,
+ * not at all. Its caller orders the two (plan 7B's store does). A read with no key at all sees the same as in the second
+ * case. An empty archive never keeps its key: the first change of each process erases the key that a process which ended
+ * between the deletion and the erasure left.
  *
  * It deletes no row on its own: plan 7B's store deletes a conversation that fails its check, and reports it. A
  * conversation in a format that this version cannot read is kept, and [onUnknownFormat] hears of it once per process; when
@@ -115,6 +117,9 @@ class ConversationArchiveStore(
     // that failed or was cancelled is made again at the next read. Used only under [reports].
     private val reports = Mutex()
     private val reportedUnknown = mutableSetOf<String>()
+
+    // Whether this process knows that the key is not one that an empty archive kept. Used only under the key's guard.
+    private var keyChecked = false
 
     /** The open conversation, or null: what plan 7B's store reads first, so that a restore waits for one decryption. */
     suspend fun open(): StoredConversation? {
@@ -145,14 +150,12 @@ class ConversationArchiveStore(
      * sub-project 7). Every payload and shard is encrypted on one thread, right before the transaction.
      */
     suspend fun write(change: ConversationChange) {
-        key.guard.withLock {
-            withContext(dispatcher) {
-                val rows = change.conversations.map {
-                    val header = it.header
-                    ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
-                }
-                dao.write(rows, change.deleted.toList(), encrypted(change.index))
+        changing {
+            val rows = change.conversations.map {
+                val header = it.header
+                ConversationRow(header.id, header.openedMillis, header.lastMillis, header.open, header.commands, sealing.encrypt(it.payload, associatedData(header.id)))
             }
+            dao.write(rows, change.deleted.toList(), encrypted(change.index))
         }
         reports.withLock {
             reportedUnknown -= change.conversations.map { it.header.id }.toSet()
@@ -165,23 +168,39 @@ class ConversationArchiveStore(
      * before [oldest] or after [newest], by the table's own times, and changes the index as [index] says; returns how many
      * conversations went.
      */
-    suspend fun purge(oldest: Long, newest: Long, index: IndexUpdate): Int =
-        key.guard.withLock { withContext(dispatcher) { dao.purge(oldest, newest, encrypted(index)) } }
+    suspend fun purge(oldest: Long, newest: Long, index: IndexUpdate): Int = changing { dao.purge(oldest, newest, encrypted(index)) }
 
     /**
-     * "Delete history" (design 9.7 of sub-project 7): erases the key first, so that nothing stored can be decrypted any more,
-     * also when the deletion that follows does not complete, and then deletes every conversation, the open one too, and the
-     * index. Plan 7B's store deletes a row that fails its check, so a deletion cut short leaves nothing that can be read.
-     * The next write makes a new key.
+     * "Delete history" (design 9.7 of sub-project 7), in one step on one thread: deletes every conversation, the open one
+     * too, and the index, in one transaction, and then erases the key, so that not even a copy of the database file, or what
+     * SQLite's journal still holds, can be decrypted any more. A deletion that does not complete leaves every row as it was.
+     * A process that ends between the two leaves an empty archive and its key, which the next process's first change
+     * erases. The next write makes a new key.
      */
     suspend fun deleteAll() {
         key.guard.withLock {
             withContext(dispatcher) {
-                key.erase()
                 dao.deleteAll()
+                keyChecked = false
+                key.erase()
+                keyChecked = true
             }
         }
         reports.withLock { reportedUnknown.clear() }
+    }
+
+    /**
+     * Runs [change] under the key's guard on [dispatcher]. The first change of each process first erases the key of an
+     * empty archive, before anything is stored under it again (design 9.7 of sub-project 7).
+     */
+    private suspend fun <T> changing(change: () -> T): T = key.guard.withLock {
+        withContext(dispatcher) {
+            if (!keyChecked) {
+                if (dao.isEmpty()) key.erase()
+                keyChecked = true
+            }
+            change()
+        }
     }
 
     private fun encrypted(update: IndexUpdate): IndexRowUpdate = when (update) {

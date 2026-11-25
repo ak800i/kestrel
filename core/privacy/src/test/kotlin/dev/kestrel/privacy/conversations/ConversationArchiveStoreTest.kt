@@ -196,25 +196,49 @@ class ConversationArchiveStoreTest {
         assertEquals(2, reports)
     }
 
-    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read. The key goes
-    // first, so that a deletion cut short leaves only rows that no key opens.
+    // Design 9.7 of sub-project 7: after "delete history", not even a copy of the database file can be read. The rows go
+    // first, so that a deletion cut short leaves every row readable and no note of a row that failed.
     @Test
-    fun deleteAllErasesTheKeyFirstAndThenTheRowsAndTheIndexSoThatACopyCannotBeRead() = runTest {
+    fun deleteAllDeletesTheRowsAndTheIndexAndThenErasesTheKeySoThatACopyCannotBeRead() = runTest {
         write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()))
         val copy = dao.rows.getValue("a")
         val shard = dao.shards.getValue("0")
-        var erasedBeforeTheRowsWent = false
-        dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased == 1 }
+        var erasedBeforeTheRowsWent = true
+        dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased > 0 }
 
         store.deleteAll()
 
-        assertTrue(erasedBeforeTheRowsWent)
+        assertFalse(erasedBeforeTheRowsWent)
+        assertEquals(1, key.erased)
         assertTrue(dao.rows.isEmpty())
         assertTrue(dao.shards.isEmpty())
         dao.rows["a"] = copy
         dao.shards["0"] = shard
         assertTrue(store.read(listOf("a")).single() is StoredConversation.FailedCheck)
         assertTrue(store.shards().single() is StoredShard.Unreadable)
+    }
+
+    // A process that ended between the deletion of the rows and the erasure of the key left the key, which must not encrypt
+    // the next conversation: the first change of the next process erases it, and only that one.
+    @Test
+    fun theFirstChangeOfAProcessErasesTheKeyThatAnEmptyArchiveKept() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
+        dao.rows.clear()
+        val next = ConversationArchiveStore(dao, key, dispatcher = Dispatchers.Unconfined)
+
+        assertTrue(next.read(listOf("a")).isEmpty())
+        assertEquals(0, key.erased)
+        next.write(ConversationChange(listOf(PlainConversation(closed("b", last = 2), "new".encodeToByteArray())), emptyList(), IndexUpdate.Keep))
+        assertEquals(1, key.erased)
+        next.write(ConversationChange(listOf(PlainConversation(closed("c", last = 3), "more".encodeToByteArray())), emptyList(), IndexUpdate.Keep))
+        next.purge(oldest = 0, newest = 10, IndexUpdate.Keep)
+        assertEquals(1, key.erased)
+        assertEquals(2, next.read(listOf("b", "c")).filterIsInstance<StoredConversation.Readable>().size)
+
+        // An archive that holds rows keeps its key at a process's first change.
+        ConversationArchiveStore(dao, key, dispatcher = Dispatchers.Unconfined).write(ConversationChange(emptyList(), listOf("c"), IndexUpdate.Keep))
+        assertEquals(1, key.erased)
+        assertTrue(next.read(listOf("b")).single() is StoredConversation.Readable)
     }
 
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
@@ -338,7 +362,10 @@ class ConversationArchiveStoreTest {
     private fun laterFormat() = byteArrayOf(2) + ByteArray(40)
 }
 
-/** An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes. */
+/**
+ * An [ErasableKey] in memory, which [get] makes when there is none, as Keystore does, and [erase] deletes; [erased] counts
+ * the erasures of a key that existed, so that a first change that finds no key to erase does not count.
+ */
 private class MemoryKey : ErasableKey {
     override val guard = Mutex()
 
@@ -365,7 +392,7 @@ private class MemoryKey : ErasableKey {
 
     @Synchronized
     override fun erase() {
-        erased++
+        if (key != null) erased++
         key = null
     }
 
@@ -407,6 +434,8 @@ private class FakeConversationDao : ConversationDao() {
     override fun closedIds(): List<String> = rows.values.filter { !it.open }.sortedBy { it.lastMillis }.map { it.id }
 
     override fun shards(): List<ConversationIndexRow> = shards.values.toList().also { onQuery() }
+
+    override fun isEmpty(): Boolean = rows.isEmpty() && shards.isEmpty()
 
     override fun stamp(): ConversationStamp {
         val closed = rows.values.filter { !it.open }.map { it.lastMillis }

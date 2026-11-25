@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -160,6 +161,9 @@ class KestrelDatabaseTest {
     @Test
     fun rowsReadsOnlyTheAskedRowsAndDeleteAllEmptiesBothTables() {
         val dao = db.conversationDao()
+        assertTrue(dao.isEmpty())
+        dao.write(emptyList(), emptyList(), IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()))
+        assertFalse(dao.isEmpty())
         dao.write(
             listOf(conversation("a", last = 1, open = false), conversation("b", last = 2, open = false), conversation("c", last = 3, open = true)),
             emptyList(),
@@ -171,6 +175,7 @@ class KestrelDatabaseTest {
         dao.deleteAll()
         assertTrue(dao.rows(listOf("a", "b", "c")).isEmpty())
         assertTrue(dao.shards().isEmpty())
+        assertTrue(dao.isEmpty())
     }
 
     // Design 9.5 and 9.7 of sub-project 7: Android's SQLite overwrites what a delete frees, so that an older copy of a shard
