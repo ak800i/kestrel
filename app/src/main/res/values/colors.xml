@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Kestrel's colour, as on its launcher icon; the goal service's notification is colorized with it (design 10.6). -->
+    <color name="kestrel">#FF9C4A1A</color>
+</resources>

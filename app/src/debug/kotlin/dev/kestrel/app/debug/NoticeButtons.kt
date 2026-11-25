@@ -8,8 +8,10 @@ import dev.kestrel.screen.model.ScreenSnapshot
  * A button of Kestrel's own goal notification in SystemUI's shade (plan 7E), for the hook goal-control. The notification's
  * row is the SystemUI element above the notification's title that offers expand or collapse, as `ScreenActions` tells a
  * row; the button is a clickable SystemUI element in that row with the button's label, so that another app's button with
- * the same label never counts. Collapsed rows around the title, the group's that Android puts Kestrel's notifications in
- * first, are named for expanding. Labels are compared without letter case, because some phones write a notification's
+ * the same label never counts. Collapsed rows around the title, the group's first, are named for expanding: the goal
+ * service's colorized notification is never grouped and shows its buttons at once (design 10.6), but the held goal's
+ * notification that Kestrel posts without the service is a plain one, which Android can put in a collapsed group with
+ * Kestrel's other notifications. Labels are compared without letter case, because some phones write a notification's
  * buttons in capitals.
  */
 internal object NoticeButtons {

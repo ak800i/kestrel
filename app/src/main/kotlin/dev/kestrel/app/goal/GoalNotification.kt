@@ -40,6 +40,12 @@ internal object GoalNotification {
             .setContentIntent(ListeningService.openKestrel(context))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            // A colorized notification of a foreground service: SystemUI shows it at the top of the shade, expanded with its
+            // buttons, and Android never puts it in a group with Kestrel's other notifications, whose collapsed group would
+            // hide them (design 10.6). Android colorizes only a foreground service's notification, so the held goal's
+            // notification that Kestrel posts without the service after a refusal is a plain one.
+            .setColorized(true)
+            .setColor(context.getColor(R.color.kestrel))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(public)
             .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
