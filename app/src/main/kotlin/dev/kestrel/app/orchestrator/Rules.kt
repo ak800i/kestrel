@@ -134,6 +134,13 @@ data class State(
         get() = (voiceQuestion ?: conversation.question?.let { number -> conversation.asking?.let { VoiceQuestion(number, it) } })
             ?.takeIf { it.number != answered }
 
+    /**
+     * Whether "stop" and "cancel" have something of the conversation's to stop (design 6.4 of sub-project 7): its goal in
+     * any phase, its open question, or one of Kestrel's own requests that runs. Every form of the stop reads this one
+     * rule, and only while nothing is stoppable may a plain "stop" name a button.
+     */
+    val stoppable: Boolean get() = goal != null || openQuestion != null || conversation.ownRequest
+
     // The owner's words never reach a log (section 13.5): only the commands' kinds and the transcripts' lengths.
     override fun toString() =
         "State(mode=$mode, work=$work, speeches=$speeches, wait=$wait, screenOn=$screenOn, " +
@@ -173,10 +180,11 @@ data class State(
             // While Kestrel waits for a command, after "Yes?" or after an interruption with "Kestrel", the owner dictates
             // it and may pause in it.
             work == Work.AWAITING_TASK -> Recognition.ANSWER
-            // The conversation's question, a goal that works ("stop" without the name) and a hand-over take words without
-            // the name, also in the paused mode (design D2 of sub-project 5; design 5.5 of sub-project 7).
-            work != Work.IDLE || mode == Mode.LISTENING || openQuestion != null || goalWorks || goal == GoalPhase.HANDED_OVER ->
-                Recognition.ALL
+            // The conversation's question, a goal that works and Kestrel's own request that runs ("stop" without the name),
+            // and a hand-over take words without the name, also in the paused mode (design D2 of sub-project 5; design 5.5
+            // and 6.4 of sub-project 7).
+            work != Work.IDLE || mode == Mode.LISTENING || openQuestion != null || goalWorks || conversation.ownRequest ||
+                goal == GoalPhase.HANDED_OVER -> Recognition.ALL
             else -> Recognition.NAMED
         }
 }
@@ -267,6 +275,12 @@ sealed interface Event {
      * and says so (section 14).
      */
     data object SettingsBlocked : Event
+
+    /**
+     * Starting Kestrel's settings app failed with an error, which Listening reported. The bar says so (section 14), as
+     * every text that it shows comes through the Rules (fix-7d-n1 review, nit 1).
+     */
+    data object SettingsFailed : Event
 
     /**
      * An utterance ended without a transcript: the pipeline dropped it, or transcribing it failed. Like a transcript
@@ -438,6 +452,9 @@ sealed interface Feedback {
      */
     data object QuestionEnded : Feedback
 
+    /** "Kestrel could not open its settings.": starting them failed with an error (section 14). */
+    data object SettingsFailed : Feedback
+
     /**
      * What the conversation says, shows, asks or hands over through the voice channel (design 11 of sub-project 7). With
      * [keep], the text stays until the voice channel releases it, as a question or a hand-over's sentence does.
@@ -592,6 +609,7 @@ object Rules {
         Event.SettingsUnavailable -> if (state.mode == Mode.OFF) Step(state) else say(state, Reply.SettingsNeedService)
         // Not over a ringing call: the verdict comes up to 5 s after the request (SettingsOpener.WAIT_MILLIS).
         Event.SettingsBlocked -> if (state.mode == Mode.OFF || state.inCall) Step(state) else say(state, Reply.SettingsBlocked)
+        Event.SettingsFailed -> Step(state, listOf(Effect.Show(Feedback.SettingsFailed)))
         Event.NothingHeard -> when {
             state.mode != Mode.OFF && state.work == Work.AWAITING_TASK -> waitForTask(state)
             state.work == Work.FOLLOWING_UP -> Step(state.copy(work = Work.IDLE))
@@ -615,16 +633,18 @@ object Rules {
         is Event.ChannelAsks -> channelAsks(state, event)
         is Event.ChannelHandsOver -> channelHandsOver(state, event.text)
         is Event.ChannelWithdraws -> channelWithdraws(state, event.question)
-        is Event.AnswerWaitEnded -> when {
-            event.wait != state.wait -> Step(state)
-            // A question that is still spoken keeps its wait: speechEnded() starts the whole wait again once it has been
-            // spoken, so that a long confirmation is never declined before the owner has heard it (design D14 of
-            // sub-project 5).
-            state.speaking && state.voiceQuestion != null -> Step(state)
-            // The conversation decides what silence means: "no" for a confirmation, the goal held for "Continue the
-            // goal?" (design 6.5 and 11 of sub-project 7).
-            state.voiceQuestion != null -> answer(state, ChannelAnswer.Silence, null)
-            else -> Step(state)
+        is Event.AnswerWaitEnded -> {
+            val question = state.voiceQuestion
+            when {
+                event.wait != state.wait || question == null -> Step(state)
+                // A question that is still spoken keeps its wait: speechEnded() starts the whole wait again once it has
+                // been spoken, so that a long confirmation is never declined before the owner has heard it (design D14 of
+                // sub-project 5).
+                state.speaking -> Step(state)
+                // The conversation decides what silence means: "no" for a confirmation, the goal held for "Continue the
+                // goal?" (design 6.5 and 11 of sub-project 7).
+                else -> answer(state, question, ChannelAnswer.Silence, null)
+            }
         }
         // A command that has ended or was cancelled may still report; nothing changes then.
         is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts -> Step(state)
@@ -647,7 +667,7 @@ object Rules {
         // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
         // only the requests that stop something count, because nothing may start (section 14.4); a "Stop." before the
         // name still stops the goal or Kestrel's own request.
-        if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopGoal(counted, shown) else Step(counted)
+        if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopWork(counted, shown) else Step(counted)
         if (stopsFirst) return stopFirst(counted, request, event, shown, event.spokeAt)
         return when (counted.work) {
             // Every utterance in the follow-up window is a command, and Kestrel's own requests keep their meaning; the
@@ -676,25 +696,25 @@ object Rules {
     // the owner says after the name reaches the conversation: a command steers the goal, Kestrel's own requests wait for
     // it. "Stop listening" and "turn off" change only the listening mode (plan 7B's decision 10). Anything else is ignored.
     private fun whileGoalWorks(state: State, request: Request, event: Event.Heard, shown: Effect): Step {
-        if (request is Request.Stop) return stopGoal(state, shown)
+        if (request is Request.Stop) return stopWork(state, shown)
         if (request == Request.PauseListening) return changeMode(state, Mode.PAUSED, shown)
         if (request == Request.TurnOff) return turnOff(state, shown)
         val intent = Requests.intent(request) ?: return Step(state)
         return converse(state, intent, event, shown)
     }
 
-    // What "Stop. Kestrel, [request]" stops first: the goal in every phase, or Kestrel's own request while it asks or runs
-    // (remember, forget, "save that as", delete history or a switch).
+    // What "Stop. Kestrel, [request]" stops first: whatever is stoppable (State.stoppable), the goal in every phase, the
+    // open question, or Kestrel's own request while it asks or runs (remember, forget, "save that as", delete history or
+    // a switch).
     private fun stopsWorkFirst(state: State, request: Request, event: Event.Heard): Boolean =
-        (state.goal != null || state.openQuestion != null || state.conversation.ownRequest) &&
-            request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
+        state.stoppable && request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
 
     // Design D2 of sub-project 5: "Stop. Kestrel, [request]" stops the goal in every phase, or Kestrel's own request, as
     // the stop alone would, and the request then counts as it does without them, so that the stop is never lost: the
     // conversation takes a command or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off"
     // after the name keep their own rules. The transcript shows once, before the stop.
     private fun stopFirst(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
-        val stopped = stopGoal(state, shown)
+        val stopped = stopWork(state, shown)
         val after = whileIdle(stopped.state, request, event, shown, spokeAt)
         return Step(after.state, stopped.effects + after.effects.filter { it !== shown })
     }
@@ -706,27 +726,33 @@ object Rules {
     // 5), no spoken answer counts. A command after the name answers "Continue the goal?" as steering (design 6.5 of
     // sub-project 7).
     private fun answering(state: State, question: VoiceQuestion, request: Request, event: Event.Heard, shown: Effect): Step {
-        if (request is Request.Stop || (request is Request.Other && startsWithStop(event.text))) return stopGoal(state, shown)
+        if (request is Request.Stop || (request is Request.Other && startsWithStop(event.text))) return stopWork(state, shown)
         if (request == Request.PauseListening || request == Request.TurnOff) {
-            val withdrawn = if (state.goal == null) answer(state, ChannelAnswer.Interrupted, null, shown) else Step(state, listOf(shown))
+            val withdrawn = if (state.goal == null) answer(state, question, ChannelAnswer.Interrupted, null, shown) else Step(state, listOf(shown))
             return withdrawn.then { if (request == Request.TurnOff) turnOff(it) else changeMode(it, Mode.PAUSED) }
         }
         if (request == Request.Name && state.goal == null) return askForTask(state, shown)
         if (!state.voiceAnswers) return Step(state, listOf(shown))
         if (question.kind == QuestionKind.CONTINUE_GOAL && request is Request.Task) return converse(state, InputIntent.Command(request.text), event, shown)
         val answer = VoiceAnswers.read(question.kind, event.text, event.named, request) ?: return Step(state, listOf(shown))
-        return answer(state, answer, event, shown)
+        return answer(state, question, answer, event, shown)
     }
 
-    // The voice's answer to the open question, or the end of its wait ([ChannelAnswer.Silence], without a transcript).
-    private fun answer(state: State, answer: ChannelAnswer, event: Event.Heard?, vararg first: Effect): Step {
-        val number = state.openQuestion?.number
-        return converse(state.copy(voiceQuestion = null, voiceAnswers = true, answered = number), InputIntent.Answer(answer), event, *first)
-    }
+    // The voice's answer to [question], or the end of its wait ([ChannelAnswer.Silence], without a transcript). It names
+    // the question, so that an answer that comes after that question ended answers no newer one (design 11 of sub-project
+    // 7).
+    private fun answer(state: State, question: VoiceQuestion, answer: ChannelAnswer, event: Event.Heard?, vararg first: Effect): Step =
+        converse(
+            state.copy(voiceQuestion = null, voiceAnswers = true, answered = question.number),
+            InputIntent.Answer(answer, question.number),
+            event,
+            *first,
+        )
 
     // The answer to "Yes?" is read as the words after the name, so it is never Other. While Kestrel is paused, a near miss
     // of "wake up" ends the wait and starts nothing (plan 4E). The conversation decides what a command means while a goal
-    // waits for the owner's hand or return (design 6.4 of sub-project 7).
+    // waits for the owner's hand or return (design 6.4 of sub-project 7). "Stop" and "cancel" stop whatever is stoppable;
+    // "never mind" only ends the wait.
     private fun whileAwaitingTask(state: State, request: Request, event: Event.Heard, shown: Effect): Step {
         val idle = state.copy(work = Work.IDLE)
         return when (request) {
@@ -735,7 +761,7 @@ object Rules {
             is Request.Other -> converse(idle, InputIntent.Command(request.text), event, shown)
             Request.Name -> askForTask(state, shown)
             Request.WakeUp -> changeMode(idle, Mode.LISTENING, shown)
-            is Request.Stop -> if (state.goal != null && Normalizer.words(event.text).any { it in STOP_WORDS }) stopGoal(state, shown) else Step(idle, listOf(shown))
+            is Request.Stop -> if (state.stoppable && Normalizer.words(event.text).any { it in STOP_WORDS }) stopWork(state, shown) else Step(idle, listOf(shown))
             Request.PauseListening -> changeMode(idle, Mode.PAUSED, shown)
             Request.TurnOff -> turnOff(state, shown)
             is Request.OpenSettings -> Step(idle, listOf(shown, Effect.OpenSettings))
@@ -746,15 +772,16 @@ object Rules {
     }
 
     // A transcript while Kestrel is idle: the conversation's question takes its answer first, a goal that works takes
-    // only what stops it or reaches it after the name, and while a goal waits for the owner's hand or return, "stop" and
-    // "cancel" stop it and the instant commands work (design D2 of sub-project 5; design 5.5 of sub-project 7).
+    // only what stops it or reaches it after the name, and "stop" and "cancel" stop whatever else is stoppable: a goal
+    // that waits for the owner's hand or return, or Kestrel's own request that runs; then the instant commands work
+    // (design D2 of sub-project 5; design 5.5 and 6.4 of sub-project 7).
     private fun idle(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long? = null): Step {
         val question = state.openQuestion
         return when {
             stopsWorkFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
             question != null -> answering(state, question, request, event, shown)
             state.goalWorks -> whileGoalWorks(state, request, event, shown)
-            state.goal != null && request is Request.Stop -> stopGoal(state, shown)
+            state.stoppable && request is Request.Stop -> stopWork(state, shown)
             else -> whileIdle(state, request, event, shown, spokeAt)
         }
     }
@@ -770,7 +797,8 @@ object Rules {
         Request.TurnOff -> turnOff(state, shown)
         is Request.OpenSettings -> Step(state, listOf(shown, Effect.OpenSettings))
         is Request.Stop -> if (request.named) {
-            // "Kestrel, stop" with nothing running only ends the speech; plain "stop" may name a button.
+            // With nothing stoppable (idle() stops the rest), "Kestrel, stop" only ends the speech; plain "stop" may name
+            // a button.
             Step(state, listOfNotNull(shown, Effect.StopSaying.takeIf { state.speaking }))
         } else {
             command(state, event.text.trim(), shown, spokeAt)
@@ -829,26 +857,22 @@ object Rules {
             Step(state)
         }
         is Event.CommandCounts -> if (event.command == state.command) Step(state.copy(counting = event.counting)) else Step(state)
-        is Event.AnswerWaitEnded -> if (state.asking && event.wait == state.wait) {
-            Step(
-                state.copy(asking = false, questionEnded = true),
-                listOf(Effect.AnswerCommand(state.command, null), Effect.TimeLateAnswers),
-            )
-        } else {
-            Step(state)
-        }
+        // The command's own question ends with its wait; the conversation's question, which may wait beside it, ends as it
+        // would without a command, on the same latest wait, and the command goes on (whole-plan review of plan 7D, M2).
+        is Event.AnswerWaitEnded -> keepOrLeave(state, event).then { commandWaitEnded(it, event.wait) }
         is Event.Heard -> heardDuringCommand(state, event)
-        // The owner starts to speak: a countdown holds until the transcript decides, and an answer gets the longer wait.
+        // The owner starts to speak: a countdown holds until the transcript decides, and an answer gets the longer wait,
+        // also the conversation's.
         Event.Speaking -> when {
             state.counting -> Step(state, listOf(Effect.HoldCommand(state.command, hold = true)))
             state.asking && !state.speaking -> waitForAnswer(state, answering = true)
-            else -> Step(state)
+            else -> keepOrLeave(state, event)
         }
         // An utterance without a transcript lets a held countdown go on, and gives an answer the whole wait again.
         Event.NothingHeard -> when {
             state.counting -> Step(state, listOf(Effect.HoldCommand(state.command, hold = false)))
             state.asking -> waitForAnswer(state)
-            else -> Step(state)
+            else -> keepOrLeave(state, event)
         }
         is Event.Spotted -> spottedDuringCommand(state, event.keyword)
         // The wait for the answer starts again when the question has been spoken.
@@ -923,6 +947,18 @@ object Rules {
         if (passOn == null) return step
         return step.then { heard(it, Event.Heard(passOn, named = false)) }
     }
+
+    // The end of wait number [wait] ends the command's question when it is the latest: the command hears no answer, and a
+    // number in the next transcript may be a late one (section 9.4).
+    private fun commandWaitEnded(state: State, wait: Int): Step =
+        if (state.asking && wait == state.wait) {
+            Step(
+                state.copy(asking = false, questionEnded = true),
+                listOf(Effect.AnswerCommand(state.command, null), Effect.TimeLateAnswers),
+            )
+        } else {
+            Step(state)
+        }
 
     // The question stays on the bar until the command ends. The wait for the answer starts now and again when the
     // question has been spoken.
@@ -1004,11 +1040,12 @@ object Rules {
         if (!state.speaking || state.mode == Mode.OFF || state.inCall) return Step(state)
         return when (keyword) {
             // As after a cancelled command, the transcript of the same word then names no button (design D2). The spotter's
-            // "stop" while Kestrel speaks stops the goal in every phase, also while Kestrel speaks a hand-over's sentence,
-            // and the conversation's own question (plan 7B's decision 10).
+            // "stop" while Kestrel speaks stops whatever is stoppable: the goal in every phase, also while Kestrel speaks a
+            // hand-over's sentence, the conversation's own question (plan 7B's decision 10) and Kestrel's own request that
+            // runs (design 6.4 of sub-project 7).
             Keyword.STOP, Keyword.CANCEL ->
-                if (state.goal != null || state.openQuestion != null) {
-                    stopGoal(state.copy(spottedStop = true))
+                if (state.stoppable) {
+                    stopWork(state.copy(spottedStop = true))
                 } else {
                     Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
                 }
@@ -1049,21 +1086,24 @@ object Rules {
         )
     }
 
-    // Whether a follow-up window may open or stay open: the conversation is open, and Kestrel is on and can hear the owner,
-    // with the screen on, outside a call and with a microphone that Android does not block.
+    // Whether a follow-up window may open or stay open: the conversation is open without a goal, because steering a goal by
+    // voice always needs the name (D9 of sub-project 7), and Kestrel is on and can hear the owner, with the screen on,
+    // outside a call and with a microphone that Android does not block.
     private fun followsUp(state: State): Boolean =
-        state.mode != Mode.OFF && !state.inCall && state.screenOn && !state.micBusy && state.conversation.open
+        state.mode != Mode.OFF && !state.inCall && state.screenOn && !state.micBusy && state.conversation.open && state.goal == null
 
     // Design 6.6 of sub-project 7: the window holds only while Kestrel can hear a command in it and the bar counts its
     // seconds down, so that the bar and the window never disagree (re-check of plan 7D's Task 4, N1). It ends when it can
-    // no longer be heard ([followsUp]: the screen turns off, a call rings, Kestrel turns off, Android blocks the microphone
-    // or the conversation closes), and when anything else takes the bar: Kestrel's next reply, spoken or shown, a change of
-    // mode or "Microphone blocked". Its timer and a transcript end it where they come.
+    // no longer be heard or a goal starts ([followsUp]: the screen turns off, a call rings, Kestrel turns off, Android
+    // blocks the microphone, the conversation closes or its goal starts), and when anything else takes the bar: Kestrel's
+    // next reply, spoken or shown, a change of mode, "Microphone blocked" or a failed start of the settings. Its timer and
+    // a transcript end it where they come. The step that opens a window numbers a new one, so its own countdown never
+    // counts as another text.
     private fun endFollowUp(before: State, step: Step): Step {
         val state = step.state
         if (state.work != Work.FOLLOWING_UP) return step
         val wasOpen = before.work == Work.FOLLOWING_UP && before.followUp == state.followUp
-        val barTaken = wasOpen && step.effects.any { it is Effect.Say || (it is Effect.Show && it.feedback !is Feedback.FollowUp) }
+        val barTaken = wasOpen && step.effects.any { it is Effect.Say || it is Effect.Show }
         return if (barTaken || !followsUp(state)) step.copy(state = state.copy(work = Work.IDLE)) else step
     }
 
@@ -1126,8 +1166,9 @@ object Rules {
     private fun waitForTask(state: State, vararg first: Effect, answering: Boolean = false): Step {
         val waiting = state.copy(work = Work.AWAITING_TASK, wait = state.wait + 1)
         val step = Step(waiting, first.toList() + Effect.WaitForTask(answering))
-        if (state.goal != null || state.openQuestion == null) return step
-        return step.then { answer(it, ChannelAnswer.Interrupted, null) }
+        val question = state.openQuestion
+        if (state.goal != null || question == null) return step
+        return step.then { answer(it, question, ChannelAnswer.Interrupted, null) }
     }
 
     // Design 5.5 of sub-project 7: the owner's [intent] for the conversation. It ends the time in which a number may be a
@@ -1135,9 +1176,10 @@ object Rules {
     private fun converse(state: State, intent: InputIntent, heard: Event.Heard?, vararg first: Effect): Step =
         Step(state.copy(questionEnded = false), first.toList() + Effect.Converse(intent, heard))
 
-    // "Stop" and "cancel" stop the goal in every phase, and withdraw the conversation's question: its answer wait ends,
-    // and the conversation gets Stop (plan 7B's decision 10).
-    private fun stopGoal(state: State, vararg first: Effect): Step = converse(
+    // "Stop" and "cancel" stop whatever is stoppable (State.stoppable): the goal in every phase and Kestrel's own request,
+    // and they withdraw the conversation's question: its answer wait ends, and the conversation gets Stop (plan 7B's
+    // decision 10; design 6.4 of sub-project 7).
+    private fun stopWork(state: State, vararg first: Effect): Step = converse(
         state.copy(work = Work.IDLE, voiceQuestion = null, voiceAnswers = true, answered = state.openQuestion?.number ?: state.answered),
         InputIntent.Stop,
         null,

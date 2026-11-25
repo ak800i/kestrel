@@ -34,9 +34,10 @@ sealed interface InputIntent {
     }
 
     /**
-     * The answer to the open question as the channel read it; [ChannelAnswer.Silence] when the voice's wait ended. A button
-     * on the conversation screen's copy of a card names its [question], and answers no other (plan 7F); the voice's and the
-     * typed words' answers name none and answer the open question.
+     * The answer to the open question as the channel read it; [ChannelAnswer.Silence] when the voice's wait ended. The
+     * voice's answers and a button on the conversation screen's copy of a card (plan 7F) name their [question], and answer
+     * no other, so that an answer that comes after its question ended never answers a newer one; the typed words' answers
+     * name none and answer the open question.
      */
     data class Answer(val answer: ChannelAnswer, val question: Int? = null) : InputIntent
 

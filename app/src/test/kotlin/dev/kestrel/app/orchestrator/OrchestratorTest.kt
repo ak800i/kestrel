@@ -317,7 +317,7 @@ class OrchestratorTest {
         assertFalse(performed.any { it is Effect.Converse })
         advanceTimeBy(2)
         runCurrent()
-        assertEquals(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence)), performed.last())
+        assertEquals(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence, question = 4)), performed.last())
 
         // The question ended on its card, and the voice channel withdrew it: its wait stops.
         orchestrator.send(Event.ChannelAsks(5, "Which account?", QuestionKind.FREE))

@@ -66,6 +66,9 @@ class ListeningTest {
     private val service = Any()
     private var settingsFailure: Exception? = null
     private var settingsOpening = SettingsOpening.OPENED
+
+    // While set, the settings' start waits for it, as Android's start may take up to 5 s.
+    private var settingsHeld: CompletableDeferred<Unit>? = null
     private val conditions = FakeConditions()
     private val notices = FakeNotices()
     private val memory = FakeMemory()
@@ -1060,6 +1063,31 @@ class ListeningTest {
         assertEquals("Opening the settings", reports.single().first)
         assertEquals(ListeningTexts.CANNOT_OPEN_SETTINGS, shown.last())
         assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+    // Fix-7d-n1 review, nit 1: the failure's text takes the bar through the Rules, so it ends a follow-up window that
+    // opened while the settings started, as every other text does.
+    @Test
+    fun settingsThatFailToOpenEndTheFollowUpWindow() = runTest {
+        settingsFailure = IllegalStateException("No activity")
+        settingsHeld = CompletableDeferred()
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        listening.send(Event.ConversationChanged(VoiceView(open = true)))
+        listening.send(Event.Heard("Kestrel, open settings.", named = true))
+        runCurrent()
+        assertEquals(listOf("open settings"), log.filter { it == "open settings" })
+
+        val said = async { listening.voicePath.say("Done.", final = true) }
+        runCurrent()
+        session.replies.last().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+        assertEquals(Work.FOLLOWING_UP, listening.state.value.work)
+        settingsHeld?.complete(Unit)
+        runCurrent()
+
+        assertEquals(ListeningTexts.CANNOT_OPEN_SETTINGS, shown.last())
+        assertEquals(Work.IDLE, listening.state.value.work)
     }
 
     @Test
@@ -2941,6 +2969,7 @@ class ListeningTest {
         report = { what, error -> reports += what to error },
         openSettings = {
             log += "open settings"
+            settingsHeld?.await()
             settingsFailure?.let { throw it }
             settingsOpening
         },

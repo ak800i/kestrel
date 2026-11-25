@@ -1151,7 +1151,7 @@ class Listening internal constructor(
                 throw e
             } catch (e: Exception) {
                 report("Opening the settings", e)
-                bar.show(ListeningTexts.CANNOT_OPEN_SETTINGS)
+                send(Event.SettingsFailed)
                 return@launch
             }
             when (opened) {
@@ -1250,6 +1250,7 @@ class Listening internal constructor(
         Feedback.CommandBusy -> ListeningTexts.BUSY
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
+        Feedback.SettingsFailed -> ListeningTexts.CANNOT_OPEN_SETTINGS
         is Feedback.ConversationText -> feedback.text
         is Feedback.FollowUp -> ListeningTexts.goOn(feedback.seconds)
     }

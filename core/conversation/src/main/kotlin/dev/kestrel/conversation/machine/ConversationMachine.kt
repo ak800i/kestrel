@@ -85,7 +85,8 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val answering = if (continuing) state.copy(continueAnswer = input) else state
         val typed = input.channel == InputChannel.TEXT
         return when (val intent = input.intent) {
-            // A screen button that names another question came late: the question that it answered has gone (plan 7F).
+            // An answer that names another question came late: the question that it answered has gone (the voice's answers;
+            // plan 7F's screen buttons).
             is InputIntent.Answer ->
                 if (intent.question != null && intent.question != open.number) {
                     MachineStep(state)
