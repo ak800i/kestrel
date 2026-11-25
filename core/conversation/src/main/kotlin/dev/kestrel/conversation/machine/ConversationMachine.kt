@@ -51,6 +51,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             is ConversationEvent.LocalEnded -> localEnded(state, event, now)
             is ConversationEvent.Switched -> switched(state, event, now)
             ConversationEvent.EndQuietTime -> if (state.quiet is QuietClock.Running) close(state) else MachineStep(state)
+            ConversationEvent.HistoryDeleted -> close(state, keep = false)
         }
         return persisted(QuietRules.settle(step, now), state)
     }

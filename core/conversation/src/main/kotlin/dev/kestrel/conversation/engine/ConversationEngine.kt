@@ -125,6 +125,17 @@ class ConversationEngine(
          * [failed]. [chosen] is the conversation that it opened as it was before, for a "stop" that came meanwhile.
          */
         class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
+
+        /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
+        class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
+
+        /**
+         * The page's deletion ended, [deleted] or not; [closing] is the conversation that the request closed. [settled] once
+         * the loop counted the end; only the loop reads and sets it.
+         */
+        class HistoryDeletionEnded(val deleted: Boolean, val closing: ConversationSnapshot?, val done: CompletableDeferred<HistoryDeletion>) : Message {
+            var settled = false
+        }
     }
 
     // What the writer does with the store, in the loop's order, beside the loop.
@@ -171,6 +182,12 @@ class ConversationEngine(
     // that came meanwhile can undo it; no copy of a conversation stays once the switch has ended.
     private var switching = false
     private var switchEnd: Message.Reopened? = null
+
+    // While the settings page's "Delete history" runs, no write reaches the writer, so that none comes between the writer's
+    // barrier that the deletion waits for and the deletion: the open conversation's changes wait as during a switch
+    // ([persist]), and the closes, the switches and their undoing wait in [heldWrites], in their order, until the deletion ended.
+    private var deletions = 0
+    private val heldWrites = mutableListOf<Write>()
 
     // The running round's newest step, which the view and the snapshot add to the goal's earlier steps (design 10.5).
     private var roundStep: Int? = null
@@ -274,6 +291,18 @@ class ConversationEngine(
     /** The hook `conversation-control do=expire` (design 14.4). */
     fun endQuietTime() = post(ConversationEvent.EndQuietTime)
 
+    /**
+     * The settings page's "Delete history" after the page's own question (design 9.7 of sub-project 7; plan 7D): deletes
+     * what a yes to "delete history" deletes and closes the open conversation, with no reply on a channel. While a goal is
+     * open or one of Kestrel's own requests runs, it leaves everything alone, as "delete history" by voice does. Waits for
+     * [restore].
+     */
+    suspend fun deleteHistory(): HistoryDeletion {
+        val done = CompletableDeferred<HistoryDeletion>()
+        inbox.send(Message.DeleteHistory(done))
+        return done.await()
+    }
+
     /** How command [command] ended, among the newest [MAX_OUTCOMES]. */
     fun outcome(command: Int): CommandOutcome? = synchronized(outcomes) { outcomes[command] }
 
@@ -300,11 +329,14 @@ class ConversationEngine(
                 is Message.Wake -> woken(message)
                 Message.SaveFailed -> dirty = true
                 is Message.Reopened -> reopened(message)
+                is Message.DeleteHistory -> deleteHistory(message.done)
+                is Message.HistoryDeletionEnded -> deletionEnded(message)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             report("The conversation", e)
+            settle(message)
         } finally {
             // A trace never waits for a save that a failure skipped.
             unsaved.forEach { it.complete(Unit) }
@@ -500,7 +532,7 @@ class ConversationEngine(
     private fun switchTo(id: ConversationId, before: ConversationState) {
         val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
         switching = true
-        writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
+        send(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
     }
 
     // The machine decides what the switch's end means (a "stop" may have cancelled it); the records of the conversation
@@ -525,8 +557,76 @@ class ConversationEngine(
     // one that was open, whose records the engine kept, open again.
     private fun undoSwitch() {
         val end = checkNotNull(switchEnd) { "Only a switch's end undoes it" }
-        end.chosen?.let { writes.trySend(Write.Save(it, emptyList())) }
-        end.closing?.let { writes.trySend(Write.Save(it.copy(open = true), emptyList())) }
+        end.chosen?.let { send(Write.Save(it, emptyList())) }
+        end.closing?.let { send(Write.Save(it.copy(open = true), emptyList())) }
+    }
+
+    // Design 9.7: the page's question stands for the conversation's. The open conversation closes unkept at once, and the
+    // deletion runs beside the loop, as "delete history" by voice does, after the writer's barrier ([stored]): so a save
+    // that still waits is deleted too. No write reaches the writer until it ended ([send]), so a command after the request
+    // opens a conversation that stays. A switch is the end of one of Kestrel's own requests, whose run lasts until the
+    // switch ended, so the request is refused then too. The job starts atomically, so that its end comes back on every path.
+    private fun deleteHistory(done: CompletableDeferred<HistoryDeletion>) {
+        if (state.goal != null || state.local != null) {
+            done.complete(HistoryDeletion.REFUSED)
+            return
+        }
+        try {
+            val closing = state.id?.takeIf { it == recordsOf }?.let { snapshot(state, open = false) }
+            process(ConversationEvent.HistoryDeleted)
+            deletions++
+            scope.launch(start = CoroutineStart.ATOMIC) {
+                var deleted = false
+                try {
+                    deleted = local.deleteAll(::stored)
+                } finally {
+                    inbox.trySend(Message.HistoryDeletionEnded(deleted, closing, done))
+                }
+            }
+        } catch (e: Throwable) {
+            done.complete(HistoryDeletion.FAILED)
+            throw e
+        }
+    }
+
+    // When nothing was deleted, the conversation that the request closed stays, closed, as any close keeps it. Then the
+    // writes that waited go to the writer in their order, and the open conversation's changes are written.
+    private fun deletionEnded(message: Message.HistoryDeletionEnded) {
+        if (message.settled) return
+        message.settled = true
+        deletions--
+        try {
+            if (!message.deleted) message.closing?.let { send(Write.Save(it, emptyList())) }
+            if (deletions == 0) {
+                heldWrites.forEach { writes.trySend(it) }
+                heldWrites.clear()
+            }
+        } finally {
+            message.done.complete(if (message.deleted) HistoryDeletion.DELETED else HistoryDeletion.FAILED)
+        }
+        persist()
+    }
+
+    // The page's request and the end of its deletion are settled also when their message failed before or while it was
+    // handled, so that the page never waits for ever and no write stays held.
+    private fun settle(message: Message) {
+        try {
+            when (message) {
+                is Message.DeleteHistory -> message.done.complete(HistoryDeletion.FAILED)
+                is Message.HistoryDeletionEnded -> deletionEnded(message)
+                else -> Unit
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            report("The conversation", e)
+        }
+    }
+
+    // A close, a switch or its undoing for the writer; while the settings page's "Delete history" runs, it waits in
+    // [heldWrites].
+    private fun send(write: Write) {
+        if (deletions > 0) heldWrites += write else writes.trySend(write)
     }
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
@@ -562,7 +662,7 @@ class ConversationEngine(
     // when a restore closed it at once, as the store holds it.
     private fun close(effect: ConversationEffect.Close, before: ConversationState) {
         if (effect.keep && recordsOf == effect.id) {
-            writes.trySend(if (before.id == effect.id) Write.Save(snapshot(before, open = false), emptyList()) else Write.CloseStored(effect.id))
+            send(if (before.id == effect.id) Write.Save(snapshot(before, open = false), emptyList()) else Write.CloseStored(effect.id))
         }
         if (recordsOf == effect.id) {
             records.clear()
@@ -675,14 +775,16 @@ class ConversationEngine(
     }
 
     // The open conversation's snapshot goes to the writer when it changed; the traces that wait for it are released once it
-    // is written, or at once when nothing is written. While a switch runs, the conversation that it closes is not saved.
+    // is written, or at once when nothing is written. While a switch runs, the conversation that it closes is not saved,
+    // and while the settings page's "Delete history" runs, nothing is saved until it ended.
     private fun persist() {
         val waiting = unsaved.toList()
         unsaved.clear()
         val current = state
         val id = current.id
-        if (!dirty || switching || id == null || recordsOf != id) {
-            if (!switching) dirty = false
+        val holding = switching || deletions > 0
+        if (!dirty || holding || id == null || recordsOf != id) {
+            if (!holding) dirty = false
             waiting.forEach { it.complete(Unit) }
             return
         }

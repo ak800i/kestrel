@@ -411,6 +411,128 @@ class ConversationEngineTest {
     }
 
     @Test
+    fun theSettingsPagesDeleteHistoryAsksNothingMoreAndLeavesAnOpenGoalAlone() = scope.runTest {
+        val engine = engine(environment(ScriptedModel.call("ask_user", null, null, null, "question" to "Which one?"), fail))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.ASKING, engine.view.value.goal)
+
+        assertEquals(HistoryDeletion.REFUSED, engine.deleteHistory())
+        assertTrue(archive.rows.isNotEmpty())
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        runCurrent()
+        assertNull(engine.view.value.goal)
+        val asked = text.asked.size + voice.asked.size
+        val shown = text.shown.size + voice.shown.size
+
+        assertEquals(HistoryDeletion.DELETED, engine.deleteHistory())
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(archive.keyErased)
+        // The page asked its own question, and shows the result itself.
+        assertEquals(asked, text.asked.size + voice.asked.size)
+        assertEquals(shown, text.shown.size + voice.shown.size)
+    }
+
+    // The engine's writer deletes after every write before the request: a save that waits for the store is deleted too,
+    // and a command after the request opens a conversation that stays.
+    @Test
+    fun theSettingsPagesDeleteHistoryComesAfterTheWritesBeforeItAndKeepsTheCommandsAfterIt() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val first = engine.view.value.id
+        assertNotNull(first)
+        val gate = CompletableDeferred<Unit>()
+        gated.gate = gate
+
+        // The close's save waits for the store, and the deletion waits behind it.
+        engine.submit(input(InputChannel.TEXT, InputIntent.NewConversation))
+        runCurrent()
+        var deletion: HistoryDeletion? = null
+        launch { deletion = engine.deleteHistory() }
+        runCurrent()
+        engine.submit(typed("Read my newest SMS"))
+        runCurrent()
+        assertNull(deletion)
+
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(HistoryDeletion.DELETED, deletion)
+        assertTrue(archive.keyErased)
+        val kept = store.open()!!
+        assertNotEquals(first, kept.id)
+        assertEquals(listOf("Read my newest SMS"), kept.records.map { it.request })
+        assertEquals(listOf(kept.id.value), archive.rows.keys.toList())
+    }
+
+    // A conversation that a command after the request opens, and that closes while the store still deletes, waits for the
+    // deletion with its close, and stays.
+    @Test
+    fun aConversationThatOpensAndClosesWhileTheHistoryIsDeletedStays() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val deleting = CompletableDeferred<Unit>()
+        gated.deleting = deleting
+        var deletion: HistoryDeletion? = null
+        launch { deletion = engine.deleteHistory() }
+        runCurrent()
+
+        engine.submit(typed("Read my newest SMS"))
+        runCurrent()
+        val newer = engine.view.value.id!!
+        engine.submit(input(InputChannel.TEXT, InputIntent.NewConversation))
+        runCurrent()
+        assertNull(deletion)
+
+        deleting.complete(Unit)
+        runCurrent()
+
+        assertEquals(HistoryDeletion.DELETED, deletion)
+        val kept = store.get(newer)!!
+        assertFalse(kept.open)
+        assertEquals(listOf("Read my newest SMS"), kept.records.map { it.request })
+    }
+
+    // A switch that "continue the conversation about …" asked for just before the request is that request's end, after
+    // the request itself has ended: the page's request is refused, and the switch ends with the conversation that it opened.
+    @Test
+    fun theSettingsPagesDeleteHistoryIsRefusedWhileASwitchRuns() = scope.runTest {
+        val gated = GatedStore(store)
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+        val reopening = CompletableDeferred<Unit>()
+        gated.reopenGate = reopening
+
+        engine.submit(input(InputChannel.VOICE, InputIntent.ContinuePast("latest SMS")))
+        runCurrent()
+        engine.submit(input(InputChannel.VOICE, InputIntent.Answer(ChannelAnswer.Yes)))
+        runCurrent()
+        assertEquals(HistoryDeletion.REFUSED, engine.deleteHistory())
+
+        reopening.complete(Unit)
+        runCurrent()
+        assertEquals(past, engine.view.value.id)
+        assertEquals(past, store.open()!!.id)
+        assertFalse(archive.keyErased)
+    }
+
+    @Test
     fun theQuietClockWaitsUntilTheSpokenReplyHasEnded() = scope.runTest {
         val speaking = CompletableDeferred<Unit>()
         voice.onShow = { if (it is ChannelOutput.Report) speaking.await() }
@@ -773,10 +895,12 @@ class ConversationEngineTest {
         assertNull(engine.view.value.id)
     }
 
-    // A store whose saves wait for [gate] while it is set; [calls] names each save and deletion once it is done.
+    // A store whose saves wait for [gate], whose switches wait for [reopenGate] and whose deletion waits for [deleting],
+    // while they are set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
         var gate: CompletableDeferred<Unit>? = null
         var reopenGate: CompletableDeferred<Unit>? = null
+        var deleting: CompletableDeferred<Unit>? = null
         val calls = mutableListOf<String>()
 
         override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? {
@@ -791,6 +915,7 @@ class ConversationEngineTest {
         }
 
         override suspend fun deleteAll() {
+            deleting?.await()
             inner.deleteAll()
             calls += "deleteAll"
         }

@@ -56,9 +56,11 @@
 
     <string name="logs_export">Export both logs</string>
     <string name="logs_delete">Delete history</string>
-    <string name="logs_delete_question">Delete the activity log and the network log? This cannot be undone.</string>
+    <string name="logs_delete_question">Delete the activity log, the network log and past conversations? This cannot be undone.</string>
     <string name="logs_delete_confirm">Delete</string>
     <string name="logs_delete_cancel">Cancel</string>
+    <string name="logs_delete_refused">Kestrel is working on a goal or one of your requests, so it deleted nothing. Stop it first, then delete the history.</string>
+    <string name="logs_delete_failed">Kestrel could not delete the history. The activity log says why.</string>
     <string name="logs_loading">Reading the log…</string>
     <string name="logs_empty">No entries in the last 7 days.</string>
     <string name="logs_exported">Kestrel exported both logs.</string>

@@ -70,4 +70,7 @@ sealed interface ConversationEvent {
 
     /** The hook `conversation-control do=expire` ends the running quiet time at once (design 14.4). */
     data object EndQuietTime : ConversationEvent
+
+    /** The settings page deleted the history after its own question (design 9.7): the open conversation closes, unkept. */
+    data object HistoryDeleted : ConversationEvent
 }

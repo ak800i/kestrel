@@ -20,6 +20,7 @@ import dev.kestrel.app.download.DownloadState
 import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.VoiceSuggestion
 import dev.kestrel.app.download.readHardware
+import dev.kestrel.conversation.engine.HistoryDeletion
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
@@ -83,8 +84,12 @@ interface SettingsData {
 
     suspend fun networkLog(): List<LogEntry<NetworkEvent>>
 
-    /** Wipes both logs (design spec, section 13.5). */
-    suspend fun deleteHistory()
+    /**
+     * Deletes the history after the page's own question (design spec, section 13.5; design 9.7 of sub-project 7): both
+     * logs, every past conversation with the archive's key, and the open conversation, through the conversation, which
+     * leaves everything alone while a goal is open or one of Kestrel's own requests runs.
+     */
+    suspend fun deleteHistory(): HistoryDeletion
 
     /** Kestrel's version name and code, such as "0.1.0 (1)". */
     val version: String
@@ -368,9 +373,7 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
 
     override suspend fun networkLog() = graph.logs.network()
 
-    override suspend fun deleteHistory() {
-        graph.logs.deleteHistory()
-    }
+    override suspend fun deleteHistory(): HistoryDeletion = graph.conversations.deleteHistory()
 
     override val version: String by lazy {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)

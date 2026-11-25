@@ -65,16 +65,25 @@ class LocalRequests(
     private suspend fun deleteHistory(dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome {
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
         if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
-        return try {
-            stored()
-            store.deleteAll()
-            LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            report("Deleting the history", e)
-            LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED)
-        }
+        return if (deleteAll(stored)) LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED) else LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED)
+    }
+
+    /**
+     * Deletes what "delete history" deletes once the owner said yes (design 9.7), after [stored] returned, so that every
+     * write of the conversation that the engine queued before is deleted too: through the store, both logs, every
+     * conversation and the index of past conversations in the archive's one transaction, and then the archive's key.
+     * False when it failed, which [report] gets. The settings page calls it through `ConversationEngine.deleteHistory`,
+     * after its own question (plan 7D).
+     */
+    suspend fun deleteAll(stored: suspend () -> Unit = {}): Boolean = try {
+        stored()
+        store.deleteAll()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report("Deleting the history", e)
+        false
     }
 
     private suspend fun continuePast(topic: String?, dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome {

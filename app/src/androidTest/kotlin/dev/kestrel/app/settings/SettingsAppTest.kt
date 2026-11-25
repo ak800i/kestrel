@@ -33,6 +33,7 @@ import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.providers.SignInState
+import dev.kestrel.conversation.engine.HistoryDeletion
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
@@ -213,6 +214,21 @@ class SettingsAppTest {
         compose.onNodeWithText(text(R.string.logs_delete_confirm)).performClick()
 
         compose.onNodeWithText(text(R.string.logs_empty)).assertIsDisplayed()
+        assertEquals(1, data.deletions)
+    }
+
+    @Test
+    fun aDeletionThatKestrelLeftAloneSaysWhyAndKeepsTheEntries() {
+        data.activity = listOf(LogEntry(1, 1_000, ActivityEvent(ActivityKind.NOTE, "Started")))
+        data.deletion = HistoryDeletion.REFUSED
+        show(NOTHING_SET_UP)
+        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+
+        compose.onNodeWithText(text(R.string.logs_delete)).performClick()
+        compose.onNodeWithText(text(R.string.logs_delete_confirm)).performClick()
+
+        compose.onNodeWithText(text(R.string.logs_delete_refused)).assertIsDisplayed()
+        compose.onNodeWithText("Started").assertIsDisplayed()
         assertEquals(1, data.deletions)
     }
 
@@ -817,6 +833,7 @@ class SettingsAppTest {
         var activity = emptyList<LogEntry<ActivityEvent>>()
         var network = emptyList<LogEntry<NetworkEvent>>()
         var deletions = 0
+        var deletion = HistoryDeletion.DELETED
         val opened = mutableListOf<Licence>()
 
         override suspend fun licenceText(licence: Licence): String {
@@ -857,10 +874,13 @@ class SettingsAppTest {
 
         override suspend fun networkLog() = network
 
-        override suspend fun deleteHistory() {
+        override suspend fun deleteHistory(): HistoryDeletion {
             deletions++
-            activity = emptyList()
-            network = emptyList()
+            if (deletion == HistoryDeletion.DELETED) {
+                activity = emptyList()
+                network = emptyList()
+            }
+            return deletion
         }
     }
 

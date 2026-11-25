@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.kestrel.app.R
+import dev.kestrel.conversation.engine.HistoryDeletion
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.LogStore
@@ -77,7 +78,10 @@ internal fun NetworkLogPage(data: SettingsData, onExport: () -> Unit, onBack: ()
     }
 }
 
-/** A log page: the Back button, buttons that export and delete both logs (design spec, section 13.5), and the entries. */
+/**
+ * A log page: the Back button, buttons that export both logs and delete the history (design spec, section 13.5; design 9.7
+ * of sub-project 7), why a deletion did not happen, and the entries.
+ */
 @Composable
 private fun <T> LogPage(
     @StringRes title: Int,
@@ -90,6 +94,7 @@ private fun <T> LogPage(
     var entries by remember { mutableStateOf<List<LogEntry<T>>?>(null) }
     var loads by remember { mutableIntStateOf(0) }
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
+    var deletion by rememberSaveable { mutableStateOf<HistoryDeletion?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(loads) { entries = load() }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
@@ -99,6 +104,11 @@ private fun <T> LogPage(
                 Button(onClick = onExport) { Text(stringResource(R.string.logs_export)) }
                 OutlinedButton(onClick = { confirmingDelete = true }) { Text(stringResource(R.string.logs_delete)) }
             }
+        }
+        when (deletion) {
+            HistoryDeletion.REFUSED -> item { Text(stringResource(R.string.logs_delete_refused)) }
+            HistoryDeletion.FAILED -> item { Text(stringResource(R.string.logs_delete_failed)) }
+            HistoryDeletion.DELETED, null -> Unit
         }
         // The page reads only the newest entries; the export holds them all (design D32 item 47 of sub-project 5).
         item { Text(stringResource(R.string.logs_newest, LogStore.DEFAULT_LIMIT)) }
@@ -118,7 +128,7 @@ private fun <T> LogPage(
                     onClick = {
                         confirmingDelete = false
                         scope.launch {
-                            data.deleteHistory()
+                            deletion = data.deleteHistory()
                             loads++
                         }
                     },
