@@ -11734,7 +11734,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 
 ### Task 8: The goal runner
 
-`GoalRunner` runs one round of a goal (design 7.1): it waits for the screen's turn, asks `GoalEnvironment` (`:app`'s `AppGoalEnvironment` in plan 7D) for the round's ports, builds the round's `TaskRequest` with `GoalRequests` (the records block, the owner's earlier words, the carried allowance, and for a resume the checklist and the ledger, exactly as plan 7A's "Interfaces for 7B" asks), runs `Agent.run` with the conversation's test mode, and hands the round's end to the goal's listener with its sentence. `RunningGoal` is the agent's `GoalPort` for one goal across its rounds: its `SteeringInbox`, its record's traces and its job, which a touch interrupts and "stop" cancels. Steering that came during the last step of a round that ended for good is named in the final reply (plan 7A); a held goal keeps it for its next round. The runner also keeps the newest finished goal's recording for "save that as" and makes the routine offer of design D23 of sub-project 5.
+`GoalRunner` runs one round of a goal (design 7.1): it waits for the screen's turn, asks `GoalEnvironment` (`:app`'s `AppGoalEnvironment` in plan 7D) for the round's ports, builds the round's `TaskRequest` with `GoalRequests` (the records block, the owner's earlier words, the carried allowance, and for a resume the checklist and the ledger, exactly as plan 7A's "Interfaces for 7B" asks), runs `Agent.run` with the conversation's test mode, and hands the round's end to the goal's listener with its sentence. `RunningGoal` is the agent's `GoalPort` for one goal across its rounds: its `SteeringInbox`, its record's traces and its job, which a touch interrupts and "stop" cancels. Steering that came during the last step of a round that ended for good is named in the final reply (plan 7A); a held goal keeps it for its next round. The runner also keeps the newest finished goal's recording for "save that as" and makes the routine offer of design D23 of sub-project 5. Every round that `run` starts gives its listener exactly one end, through one exit (`finish`): a round starts with `CoroutineStart.ATOMIC`, so that a touch or a stop that comes before its coroutine first runs still reaches its body, which then ends it at once and prepares nothing; a refused start ends there too, so the steering that waited is named as too late; the release runs inside that exit, so that not even a CancellationException of its own skips the end; and a round that was stopped makes no routine offer, while an offer that runs stays cancellable by "stop", a touch or the call backstop. A cancel's sentence (the call backstop's) belongs to the round that it ended, so each new round starts without one.
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalEnvironment.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/SteeringInbox.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/RunningGoal.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRequests.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/goal/GoalRunner.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeGoalEnvironment.kt`
@@ -11744,7 +11744,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 181 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 196, after Tasks 5a to 5d.
+Counts: `:core:conversation` 181 + 24 (`GoalRequestsTest` 4, `GoalRunnerTest` 20) = 205, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -11944,7 +11944,8 @@ class RunningGoal(
     @Volatile
     internal var job: Job? = null
 
-    // Kestrel's own sentence that replaces the report's reason, as the call backstop's.
+    // Kestrel's own sentence that replaces the report's reason, as the call backstop's, for the round that the cancel
+    // ended; each new round starts without one.
     @Volatile
     internal var stopSentence: String? = null
 
@@ -12193,6 +12194,7 @@ Create `core/conversation/src/test/kotlin/dev/kestrel/conversation/goal/GoalRunn
 ```kotlin
 package dev.kestrel.conversation.goal
 
+import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskReport
@@ -12203,9 +12205,11 @@ import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
+import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
@@ -12223,6 +12227,9 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.Category
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -12233,6 +12240,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class GoalRunnerTest {
     private class Listener : GoalListener {
         val steps = mutableListOf<Int>()
@@ -12284,12 +12292,41 @@ class GoalRunnerTest {
     private fun plan(record: CommandRecord, testMode: Boolean = false) =
         RoundPlan(record, emptyList(), record.request, null, testMode, null, GoalLimits(), emptyMap(), RecordRef(id, record.number), ManualConversationClock.BELGRADE)
 
-    private fun TestScope.runner(environment: FakeGoalEnvironment): GoalRunner {
+    private fun TestScope.runner(environment: GoalEnvironment, screen: ScreenTurn = ScreenTurn { }): GoalRunner {
         val clock = ManualConversationClock({ testScheduler.currentTime })
-        return GoalRunner(environment, ScreenTurn { }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { _, error -> throw error }
+        return GoalRunner(environment, screen, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { _, error -> throw error }
     }
 
     private fun environment(vararg replies: kotlinx.serialization.json.JsonObject) = FakeGoalEnvironment(replies.toList()).apply { data.answer("list_sms", sms) }
+
+    // A goal whose finish offers a routine (design D23 of sub-project 5): a finish with its signature came once before.
+    private fun offering(): FakeGoalEnvironment {
+        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
+        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
+        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
+        val done = ScriptedModel.call(
+            "finish", null, null, null,
+            "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))), "signature" to "fixtures.open.button",
+        )
+        return FakeGoalEnvironment(listOf(tap, done), first = start).apply {
+            offersRoutines = true
+            screen.onTap("Open", opened)
+            memory.signatures["fixtures.open.button"] = 1
+        }
+    }
+
+    // The fake environment, with each round's ports or release changed by [change].
+    private class Changed(private val inner: FakeGoalEnvironment, private val change: (RoundSetup.Ready) -> RoundSetup.Ready) : GoalEnvironment by inner {
+        override suspend fun prepare(start: RoundStart): RoundSetup = when (val setup = inner.prepare(start)) {
+            is RoundSetup.Ready -> change(setup)
+            is RoundSetup.Refused -> setup
+        }
+    }
+
+    private fun RoundSetup.Ready.with(log: TaskLog = ports.log, release: suspend () -> Unit = this.release) = RoundSetup.Ready(
+        AgentPorts(ports.screen, ports.eyes, ports.data, ports.owner, ports.model, ports.apps, ports.memory, log, ports.clock, ports.goal, ports.history),
+        settings, taskId, knownNames, touches, offersRoutines, release,
+    )
 
     private fun ChatRequest.text(): String = (listOf(context.orEmpty()) + messages.mapNotNull { message ->
         when (message) {
@@ -12444,17 +12481,8 @@ class GoalRunnerTest {
 
     @Test
     fun aRoutineOfferSaysTheReportFirstAndTheGoalKeepsItAsItsAnswer() = runTest {
-        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
-        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
-        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
-        val done = ScriptedModel.call(
-            "finish", null, null, null,
-            "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))), "signature" to "fixtures.open.button",
-        )
-        val environment = FakeGoalEnvironment(listOf(tap, done), first = start).apply { offersRoutines = true }
-        environment.screen.onTap("Open", opened)
-        // The second finish with this signature offers a routine (design D23 of sub-project 5); the owner gives no answer.
-        environment.memory.signatures["fixtures.open.button"] = 1
+        // The owner gives no answer to the offer.
+        val environment = offering()
         val owner = FakeOwner()
 
         runner(environment).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), owner)
@@ -12465,6 +12493,179 @@ class GoalRunnerTest {
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
         assertNull(end.reply)
         assertEquals(end.answer, owner.said.last())
+    }
+
+    // "Stop", a touch or the call backstop ends the offer too; the end keeps the report, which was said already.
+    @Test
+    fun aStopEndsTheRoutineOffer() = runTest {
+        val environment = offering()
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val owner = FakeOwner().apply { answers += Answer.Yes }
+        owner.onAsk = {
+            goal.cancel(EndReason.CANCELLED)
+            yield()
+        }
+
+        runner(environment).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertNull(end.reply)
+        assertEquals(1, owner.asked.size)
+        assertEquals(1, environment.released)
+    }
+
+    // The agent logs its end before it reports it, so a stop there comes after the report: the round ends as the agent
+    // reported, and a round that was stopped offers no routine.
+    @Test
+    fun aRoundStoppedAfterItsReportOffersNoRoutine() = runTest {
+        val environment = offering()
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val stopping = Changed(environment) { ready ->
+            ready.with(
+                log = object : TaskLog {
+                    override suspend fun write(kind: TaskLog.Kind, text: String) {
+                        environment.log.write(kind, text)
+                        if (kind == TaskLog.Kind.END) goal.cancel(EndReason.CANCELLED)
+                    }
+                },
+            )
+        }
+        val owner = FakeOwner().apply { answers += Answer.Yes }
+
+        runner(stopping).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertTrue(end.report.offerRoutine)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertEquals(end.answer, end.reply)
+        assertTrue(owner.asked.isEmpty())
+        assertTrue(owner.said.isEmpty())
+        assertEquals(1, environment.released)
+    }
+
+    // A touch or a stop can come before the round's coroutine first runs (the engine's loop and the round run on
+    // different threads): the round still ends, once, and prepares nothing.
+    @Test
+    fun aRoundInterruptedBeforeItRunsStillEndsOnce() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        goal.interrupt(Interruption.TOUCH)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.INTERRUPTED, end.report.end)
+        assertEquals(Interruption.TOUCH, end.report.interruption)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.reply)
+        assertTrue(environment.starts.isEmpty())
+        assertEquals(0, environment.released)
+    }
+
+    @Test
+    fun aRoundStoppedBeforeItRunsStillEndsOnceAndNamesItsSteering() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        goal.cancel(EndReason.CANCELLED)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertTrue(goal.inbox.pending().isEmpty())
+        assertTrue(environment.starts.isEmpty())
+        assertTrue(environment.model.requests.isEmpty())
+    }
+
+    @Test
+    fun aStopWhileTheRoundWaitsForTheScreenEndsItBeforeItsAgent() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment, ScreenTurn { awaitCancellation() }).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertTrue(listener.ends.isEmpty())
+        goal.cancel(EndReason.CANCELLED)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertTrue(environment.starts.isEmpty())
+        assertEquals(0, environment.released)
+    }
+
+    @Test
+    fun theCallBackstopsSentenceLeadsTheAnswer() = runTest {
+        val environment = environment(ScriptedModel.call("say", null, null, null, "text" to "On it."), listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val owner = FakeOwner()
+        owner.onSay = {
+            goal.cancel(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)
+            yield()
+        }
+
+        runner(environment).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals("${ConversationTexts.CALL_STARTED} ${ConversationTexts.NOTHING_CHANGED}", end.answer)
+        assertEquals(end.answer, end.reply)
+        assertEquals(1, environment.released)
+    }
+
+    // A cancel while no round runs (a held goal) cancels nothing, so its sentence must not reach the next round's end.
+    @Test
+    fun aStopSentenceWhileNoRoundRunsIsNotTheNextRoundsAnswer() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        goal.cancel(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+    }
+
+    // A refused round ends the goal for good, so the steering that waited for it is named as too late, as at every such end.
+    @Test
+    fun aRefusedStartNamesTheSteeringThatWaited() = runTest {
+        val environment = environment(listSms)
+        environment.refusal = RoundSetup.Refused("Set up a model in Settings first.", EndReason.NO_PROFILE)
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.NO_PROFILE, end.report.end)
+        assertEquals("Set up a model in Settings first." + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertEquals(end.answer, end.reply)
+        assertTrue(goal.inbox.pending().isEmpty())
+    }
+
+    // A release that throws a CancellationException of its own (a timeout in it) must not skip the end.
+    @Test
+    fun aCancelledReleaseStillEndsTheRound() = runTest {
+        val environment = environment(listSms, finish(1))
+        val cancelling = Changed(environment) { ready -> ready.with(release = { throw CancellationException("The release timed out") }) }
+
+        runner(cancelling).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
     }
 
     @Test
@@ -12634,8 +12835,11 @@ import dev.kestrel.safety.Vault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -12643,10 +12847,12 @@ import kotlinx.coroutines.withContext
  * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, prepares its ports through
  * [environment], builds its request with [GoalRequests], runs `Agent.run` with the conversation's test mode in its
  * settings (design 12.4), and gives its end to the goal's listener exactly once on every path, with Kestrel's sentence: the
- * environment's, or the call backstop's when it stopped the goal. A goal that ended for good names the steering that came
- * too late; a held goal (a pause at a limit, an interruption) keeps it for its next round. A finished goal's recording is
- * kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design D23 of sub-project 5 is made after its
- * report was said, when the environment allows it. [report] gets a failure by its class.
+ * environment's refusal, the call backstop's when it stopped the goal, or the environment's sentence. A goal that ended
+ * for good names the steering that came too late; a held goal (a pause at a limit, an interruption) keeps it for its next
+ * round. A finished goal's recording is kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design
+ * D23 of sub-project 5 is made after its report was said, when the environment allows it and the round was not stopped.
+ * [run] and the goal's `interrupt` and `cancel` are called from one coroutine, the conversation engine's. [report] gets a
+ * failure by its class.
  */
 class GoalRunner(
     private val environment: GoalEnvironment,
@@ -12659,11 +12865,16 @@ class GoalRunner(
     @Volatile
     private var kept: Pair<Recording, Long>? = null
 
-    /** Runs a round of [goal] in [scope]; it returns at once, and the goal's job is set before the round starts. */
+    /**
+     * Runs a round of [goal] in [scope]; it returns at once, with the goal's job set. The round starts atomically
+     * (`CoroutineStart.ATOMIC`, a delicate API because its body runs even when its job was cancelled before it was
+     * dispatched): a touch or a stop that comes before the round first runs still reaches its body, whose first act ends
+     * such a round, so that the round's one exit gives its listener exactly one end on that path too.
+     */
+    @OptIn(DelicateCoroutinesApi::class)
     fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort) {
-        val job = scope.launch(start = CoroutineStart.LAZY) { round(goal, plan, owner) }
-        goal.job = job
-        job.start()
+        goal.stopSentence = null
+        goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, plan, owner) }
     }
 
     /** The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). */
@@ -12686,7 +12897,7 @@ class GoalRunner(
                 is SaveResult.NotSaved -> saved.sentence
             }
         } finally {
-            withContext(NonCancellable) { release(ready) }
+            release(ready)
         }
     }
 
@@ -12695,26 +12906,20 @@ class GoalRunner(
         if (plan.resume == null) kept = null
         var ready: RoundSetup.Ready? = null
         var result: TaskReport? = null
-        // The round runs until its agent reports, fails or is cancelled; then its end reaches the listener once, below.
+        var refused: String? = null
+        // The round runs until its agent reports, it is refused, it fails or it is cancelled; then finish ends it, once.
         val cancellation = try {
+            // A round that a touch or a stop cancelled before it first ran prepares nothing.
+            currentCoroutineContext().ensureActive()
             screen.take()
-            val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))
-            if (setup is RoundSetup.Refused) {
-                goal.listener.ended(RoundEnd(goal.command, TaskReport(setup.end), setup.sentence, setup.sentence))
-                return
-            }
-            val prepared = setup as RoundSetup.Ready
-            ready = prepared
-            goal.knownNames = prepared.knownNames
-            if (plan.resume == null) goal.listener.allowed(TaskAllowance.from(plan.text, prepared.knownNames).categories)
-            val request = GoalRequests.request(plan, prepared.taskId, prepared.knownNames, ContextBlock.budget(prepared.ports.model.model))
-            val settings = prepared.settings.copy(safety = prepared.settings.safety.copy(testMode = plan.testMode))
-            coroutineScope {
-                val touches = launch { prepared.touches.collect { goal.listener.touched() } }
-                try {
-                    Agent(prepared.ports, settings).run(request) { result = it }
-                } finally {
-                    touches.cancel()
+            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))) {
+                is RoundSetup.Refused -> {
+                    result = TaskReport(setup.end)
+                    refused = setup.sentence
+                }
+                is RoundSetup.Ready -> {
+                    ready = setup
+                    act(goal, plan, setup) { result = it }
                 }
             }
             null
@@ -12726,29 +12931,44 @@ class GoalRunner(
             report("A goal's round", e)
             null
         }
-        val end = result ?: TaskReport(EndReason.KESTREL_ERROR)
-        if (cancellation == null) {
-            finish(goal, ready, owner, end)
-        } else {
-            withContext(NonCancellable) { finish(goal, ready, owner, end) }
-            throw cancellation
+        finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR), refused, stopped = cancellation != null)
+        if (cancellation != null) throw cancellation
+    }
+
+    // One run of the agent with the round's ports, its request and the conversation's test mode (design 12.4), while the
+    // touch watcher tells the goal's listener of the owner's touches.
+    private suspend fun act(goal: RunningGoal, plan: RoundPlan, ready: RoundSetup.Ready, reported: (TaskReport) -> Unit) {
+        goal.knownNames = ready.knownNames
+        if (plan.resume == null) goal.listener.allowed(TaskAllowance.from(plan.text, ready.knownNames).categories)
+        val request = GoalRequests.request(plan, ready.taskId, ready.knownNames, ContextBlock.budget(ready.ports.model.model))
+        val settings = ready.settings.copy(safety = ready.settings.safety.copy(testMode = plan.testMode))
+        coroutineScope {
+            val touches = launch { ready.touches.collect { goal.listener.touched() } }
+            try {
+                Agent(ready.ports, settings).run(request, reported)
+            } finally {
+                touches.cancel()
+            }
         }
     }
 
-    // The round lets go of the screen before its end reaches the listener (design D19 of sub-project 5): the end can start
-    // the next round at once, and a release after it would stop that round's touch watcher. The listener gets the end
-    // exactly once, on every path: when Kestrel's words for it fail, ConversationTexts.COULD_NOT stands in for them, and
-    // when the routine offer fails or a stop cancels it, the end keeps what was said.
-    private suspend fun finish(goal: RunningGoal, ready: RoundSetup.Ready?, owner: OwnerPort, result: TaskReport) {
-        ready?.let { withContext(NonCancellable) { release(it) } }
+    // The one exit of every round. It lets go of the screen before its end reaches the listener (design D19 of
+    // sub-project 5): the end can start the next round at once, and a release after it would stop that round's touch
+    // watcher. The listener gets the end exactly once, in the finally: when Kestrel's words for it fail,
+    // ConversationTexts.COULD_NOT stands in for them, and when the routine offer fails or a stop cancels it, the end keeps
+    // what was said. A round that was [stopped] makes no routine offer; the offer itself stays cancellable.
+    private suspend fun finish(goal: RunningGoal, ready: RoundSetup.Ready?, owner: OwnerPort, result: TaskReport, refused: String?, stopped: Boolean) {
         var end = RoundEnd(goal.command, result, ConversationTexts.COULD_NOT, ConversationTexts.COULD_NOT)
         try {
-            val answer = answer(goal, result)
-            end = RoundEnd(goal.command, result, answer, answer)
+            val answer = try {
+                answer(goal, result, refused).also { end = RoundEnd(goal.command, result, it, it) }
+            } finally {
+                ready?.let { release(it) }
+            }
             val recording = result.recording
             if (result.end in HELD || recording == null) return
             kept = recording to clock.wallMillis()
-            if (ready == null || !ready.offersRoutines || !result.offerRoutine) return
+            if (stopped || ready == null || !ready.offersRoutines || !result.offerRoutine) return
             // The offer follows the report, so the report is said first and is not said again; the record keeps it as the
             // goal's answer (D3).
             owner.say(answer)
@@ -12763,11 +12983,16 @@ class GoalRunner(
         }
     }
 
-    // Kestrel's words for a round's end: the call backstop's when it stopped the goal, else the environment's. A goal that
-    // ended for good names the steering that came too late; a held goal keeps it for its next round.
-    private fun answer(goal: RunningGoal, result: TaskReport): String {
+    // Kestrel's words for a round's end: the environment's refusal when the round could not start, the call backstop's
+    // when it stopped the goal, else the environment's sentence. A goal that ended for good names the steering that came
+    // too late; a held goal keeps it for its next round.
+    private fun answer(goal: RunningGoal, result: TaskReport, refused: String?): String {
         val stop = goal.stopSentence
-        val sentence = if (stop != null) "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}" else environment.sentence(result)
+        val sentence = when {
+            refused != null -> refused
+            stop != null -> "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
+            else -> environment.sentence(result)
+        }
         return if (result.end in HELD) sentence else sentence + ConversationTexts.tooLate(goal.inbox.drain().map { it.text })
     }
 
@@ -12790,10 +13015,11 @@ class GoalRunner(
         return TaskReport(end = cancellation?.reason ?: EndReason.CANCELLED, interruption = cancellation?.interruption)
     }
 
-    // A failed release must not hide the round's end, which the listener gets right after it.
+    // The round's ports go even when the round was cancelled, so the release runs under NonCancellable; a failed release
+    // must not hide the round's end, which the listener gets right after it.
     private suspend fun release(ready: RoundSetup.Ready) {
         try {
-            ready.release()
+            withContext(NonCancellable) { ready.release() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -12816,12 +13042,12 @@ class GoalRunner(
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.goal.*`
-Expected: PASS, 15 tests.
+Expected: PASS, 24 tests.
 
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 196`.
+Expected: BUILD SUCCESSFUL; `core\conversation 205`.
 
 - [ ] **Step 7: Commit**
 
@@ -12845,7 +13071,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
-Counts: `:core:conversation` 196 + 10 = 206.
+Counts: `:core:conversation` 205 + 10 = 215.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -13240,7 +13466,7 @@ Expected: PASS, 10 tests. The coroutines' stack-trace recovery may hand `report`
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 206`.
+Expected: BUILD SUCCESSFUL; `core\conversation 215`.
 
 - [ ] **Step 6: Commit**
 
@@ -13263,7 +13489,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 206 + 15 = 221. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 215 + 15 = 230. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -14397,7 +14623,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 221` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 230` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -14410,7 +14636,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 221, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 32, Task 8: 15, Task 9: 10, Task 10: 15).
+- `:core:conversation`: C₀ + 230, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 32, Task 8: 24, Task 9: 10, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
