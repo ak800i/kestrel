@@ -8,6 +8,10 @@ import dev.kestrel.commands.GlobalCommand
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.PhoneCommand
 import dev.kestrel.commands.Target
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.GoalPhase
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.listen.Recognition
 import org.junit.Assert.assertEquals
@@ -20,6 +24,19 @@ class RulesTest {
     private val paused = State(mode = Mode.PAUSED)
     private val runningCommand =
         listening.copy(work = Work.RUNNING_COMMAND, command = 1, running = Command.Tap(Target.Label("Send")), heard = "tap Send")
+
+    // What the voice reads of the conversation (design 5.5 of sub-project 7): an open conversation with a goal in [phase]
+    // or none.
+    private fun goal(phase: GoalPhase?, state: State = listening): State = state.copy(conversation = VoiceView(open = true, goal = phase))
+
+    private val acting = goal(GoalPhase.ACTING)
+
+    // The voice asked the conversation's question number 4 of [kind], and has spoken it; a goal that acted asks now.
+    private fun asked(kind: QuestionKind, from: State = acting, voice: Boolean = true): State {
+        val phase = if (from.goal == GoalPhase.ACTING) GoalPhase.ASKING else from.goal
+        val view = from.conversation.copy(goal = phase, asking = kind, question = 4)
+        return Rules.next(from.copy(conversation = view), Event.ChannelAsks(4, "Shall I?", kind, voice)).state.copy(speeches = 0)
+    }
 
     @Test
     fun theToggleStartsListeningThenPausesAndListensAgain() {
@@ -44,43 +61,46 @@ class RulesTest {
     }
 
     @Test
-    fun turningOffStopsTheSpeechAndTheTask() {
-        val busy = listening.copy(work = Work.RUNNING_TASK, speeches = 1, task = 3, micBusy = true)
+    fun turningOffStopsTheSpeechButNotTheGoal() {
+        val busy = acting.copy(speeches = 1, micBusy = true)
 
         val off = Rules.next(busy, Event.TurnOff)
 
-        assertEquals(
-            listOf(Effect.StopSaying, Effect.CancelTask, Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService),
-            off.effects,
-        )
+        // Plan 7B's decision 10: turning off changes only the mode, and the goal goes on.
+        assertEquals(listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService), off.effects)
+        assertEquals(GoalPhase.ACTING, off.state.goal)
         assertEquals(0, off.state.speeches)
         assertFalse(off.state.micBusy)
         assertEquals(Recognition.ALL, Rules.next(off.state, Event.Toggle).state.recognition)
     }
 
     @Test
-    fun aTaskWithTheNameRuns() {
-        val step = Rules.next(listening, Event.Heard("Kestrel, open the settings.", named = true))
+    fun aCommandWithTheNameGoesToTheConversation() {
+        val heard = Event.Heard("Kestrel, open the settings.", named = true)
 
-        assertEquals(Work.RUNNING_TASK, step.state.work)
-        assertEquals(1, step.state.task)
+        val step = Rules.next(listening, heard)
+
+        assertEquals(Work.IDLE, step.state.work)
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Kestrel, open the settings.")), Effect.RunTask(1, "open the settings.")),
+            listOf(Effect.Show(Feedback.Heard("Kestrel, open the settings.")), Effect.Converse(InputIntent.Command("open the settings."), heard)),
             step.effects,
         )
-        assertEquals(Recognition.ALL, step.state.recognition)
+        // Once its goal acts, every utterance is transcribed, so that "stop" counts without the name.
+        assertEquals(Recognition.ALL, Rules.next(step.state, Event.ConversationChanged(acting.conversation)).state.recognition)
     }
 
     @Test
-    fun aTaskWhilePausedRunsAndKestrelStaysPaused() {
+    fun aCommandWhilePausedGoesToTheConversationAndKestrelStaysPaused() {
         assertEquals(Recognition.NAMED, paused.recognition)
+        val heard = Event.Heard("Kestrel, open Viber", named = true)
 
-        val running = Rules.next(paused, Event.Heard("Kestrel, open Viber", named = true)).state
-        assertEquals(Mode.PAUSED, running.mode)
-        assertEquals(Recognition.ALL, running.recognition)
+        val step = Rules.next(paused, heard)
+        assertEquals(Mode.PAUSED, step.state.mode)
+        assertEquals(Effect.Converse(InputIntent.Command("open Viber"), heard), step.effects.last())
 
-        val done = Rules.next(running, Event.TaskEnded(task = 1, reply = null))
-        assertEquals(Work.IDLE, done.state.work)
+        val acts = Rules.next(step.state, Event.ConversationChanged(acting.conversation)).state
+        assertEquals(Recognition.ALL, acts.recognition)
+        val done = Rules.next(acts, Event.ConversationChanged(acting.conversation.copy(goal = null)))
         assertEquals(Recognition.NAMED, done.state.recognition)
     }
 
@@ -109,9 +129,10 @@ class RulesTest {
         val ready = spoken.state
         assertEquals(Recognition.ANSWER, ready.recognition)
 
-        val task = Rules.next(ready, Event.Heard("Open the settings.", named = false))
-        assertEquals(Effect.RunTask(1, "Open the settings."), task.effects.last())
-        assertEquals(Work.RUNNING_TASK, task.state.work)
+        val heard = Event.Heard("Open the settings.", named = false)
+        val task = Rules.next(ready, heard)
+        assertEquals(Effect.Converse(InputIntent.Command("Open the settings."), heard), task.effects.last())
+        assertEquals(Work.IDLE, task.state.work)
     }
 
     @Test
@@ -120,9 +141,9 @@ class RulesTest {
 
         assertEquals(Recognition.ANSWER, waiting.recognition)
         assertEquals(Recognition.ANSWER, paused.copy(work = Work.AWAITING_TASK, wait = 1).recognition)
-        // While "Yes?" is spoken, nothing is transcribed, and while a task runs, every utterance goes out at once.
+        // While "Yes?" is spoken, nothing is transcribed, and while a goal works, every utterance goes out at once.
         assertEquals(Recognition.NONE, waiting.copy(speeches = 1).recognition)
-        assertEquals(Recognition.ALL, listening.copy(work = Work.RUNNING_TASK, task = 1).recognition)
+        assertEquals(Recognition.ALL, goal(GoalPhase.ACTING, paused).recognition)
     }
 
     @Test
@@ -132,7 +153,7 @@ class RulesTest {
         // The end of an older wait changes nothing.
         assertEquals(Step(waiting), Rules.next(waiting, Event.WaitEnded(1)))
 
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1, wait = 2)
+        val running = acting.copy(wait = 2)
         assertEquals(Step(running), Rules.next(running, Event.WaitEnded(2)))
     }
 
@@ -178,48 +199,46 @@ class RulesTest {
     }
 
     @Test
-    fun whileATaskRunsOnlyStopAndCancelCount() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
+    fun whileAGoalWorksOnlyStopAndWhatFollowsTheNameCount() {
+        // Design D9 of sub-project 7: steering by voice needs "Kestrel".
+        assertEquals(Step(acting), Rules.next(acting, Event.Heard("Open Viber", named = false)))
+        val steering = Event.Heard("Kestrel, open Viber", named = true)
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Kestrel, open Viber")), Effect.Converse(InputIntent.Command("open Viber"), steering)),
+            Rules.next(acting, steering).effects,
+        )
 
-        assertEquals(Step(running), Rules.next(running, Event.Heard("Open Viber", named = false)))
-        assertEquals(Step(running), Rules.next(running, Event.Heard("Kestrel, open Viber", named = true)))
-
-        val stopped = Rules.next(running, Event.Heard("Stop.", named = false))
-        assertEquals(Work.IDLE, stopped.state.work)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.CancelTask), stopped.effects)
+        val stopped = Rules.next(acting, Event.Heard("Stop.", named = false))
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
     }
 
     @Test
-    fun aTaskAfterStopWhileATaskRunsCancelsItAndRunsTheNewOne() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1, speeches = 1)
+    fun stopThenACommandGivesTheConversationAStopAndThenTheCommand() {
+        val heard = Event.Heard("Stop. Kestrel, open Viber.", named = true)
 
-        val step = Rules.next(running, Event.Heard("Stop. Kestrel, open Viber.", named = true))
+        val step = Rules.next(acting.copy(speeches = 1), heard)
 
         assertEquals(
             listOf(
                 Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")),
                 Effect.StopSaying,
-                Effect.CancelTask,
-                Effect.RunTask(2, "open Viber."),
+                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Command("open Viber."), heard),
             ),
             step.effects,
         )
-        assertEquals(Work.RUNNING_TASK, step.state.work)
-        assertEquals(2, step.state.task)
-        // The new task drops the cancelled task's report.
-        assertFalse(step.state.cancelled)
+        assertEquals(Work.IDLE, step.state.work)
     }
 
     @Test
-    fun stopListeningWhileATaskRunsEndsTheTaskAndPauses() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
+    fun stopListeningWhileAGoalWorksOnlyPauses() {
+        val step = Rules.next(acting, Event.Heard("Stop listening.", named = false))
 
-        val step = Rules.next(running, Event.Heard("Stop listening.", named = false))
-
+        // Plan 7B's decision 10: the mode changes, and the conversation gets no input.
         assertEquals(Mode.PAUSED, step.state.mode)
-        assertEquals(Work.IDLE, step.state.work)
+        assertEquals(GoalPhase.ACTING, step.state.goal)
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop listening.")), Effect.CancelTask, Effect.Show(Feedback.ModeChanged(Mode.PAUSED))),
+            listOf(Effect.Show(Feedback.Heard("Stop listening.")), Effect.Show(Feedback.ModeChanged(Mode.PAUSED))),
             step.effects,
         )
     }
@@ -243,16 +262,15 @@ class RulesTest {
             Step(paused, listOf(Effect.Show(Feedback.Heard("Kestrel, sign up.")))),
             Rules.next(paused, Event.Heard("Kestrel, sign up.", named = true)),
         )
-        assertEquals(Work.RUNNING_TASK, Rules.next(listening, Event.Heard("Kestrel, sign up.", named = true)).state.work)
+        assertTrue(Rules.next(listening, Event.Heard("Kestrel, sign up.", named = true)).effects.last() is Effect.Converse)
         // The same in an answer to "Yes?" while paused: the wait ends, and no task starts.
         assertEquals(
             Step(paused.copy(wait = 1), listOf(Effect.Show(Feedback.Heard("Sign up.")))),
             Rules.next(paused.copy(work = Work.AWAITING_TASK, wait = 1), Event.Heard("Sign up.", named = false)),
         )
-        // After "Stop." while a task runs, the task stops and no new one starts.
-        val stopped = Rules.next(paused.copy(work = Work.RUNNING_TASK, task = 1), Event.Heard("Stop. Kestrel, sign up.", named = true))
-        assertEquals(Work.IDLE, stopped.state.work)
-        assertEquals(1, stopped.state.task)
+        // After "Stop." while a goal works, the goal stops and no command follows.
+        val stopped = Rules.next(goal(GoalPhase.ACTING, paused), Event.Heard("Stop. Kestrel, sign up.", named = true))
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, sign up.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
         // "Stop Kestrel" with a name further away turns Kestrel off when the spotter heard "stop" at its start.
         assertEquals(Mode.OFF, Rules.next(listening, Event.Heard("Stop Castral.", named = false, stopSpotted = true)).state.mode)
         assertEquals(Mode.LISTENING, Rules.next(listening, Event.Heard("Stop Castral.", named = false)).state.mode)
@@ -361,12 +379,17 @@ class RulesTest {
 
     @Test
     fun kestrelsOwnRequestsCancelTheCommandFirstAndThenAct() {
-        val task = Rules.next(runningCommand, Event.Heard("Kestrel, open Viber.", named = true))
+        val heard = Event.Heard("Kestrel, open Viber.", named = true)
+        val task = Rules.next(runningCommand, heard)
         assertEquals(
-            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Kestrel, open Viber.")), Effect.RunTask(1, "open Viber.")),
+            listOf(
+                Effect.CancelCommand,
+                Effect.Show(Feedback.Heard("Kestrel, open Viber.")),
+                Effect.Converse(InputIntent.Command("open Viber."), heard),
+            ),
             task.effects,
         )
-        assertEquals(Work.RUNNING_TASK, task.state.work)
+        assertEquals(Work.IDLE, task.state.work)
 
         val settings = Rules.next(runningCommand, Event.Heard("Kestrel, open settings.", named = true))
         assertEquals(
@@ -555,9 +578,10 @@ class RulesTest {
         assertFalse(runs(Rules.next(ended, Event.LateAnswersEnded(0)).state))
         assertTrue(runs(Rules.next(Rules.next(ended, Event.Pause).state, Event.Resume).state))
         assertTrue(runs(Rules.next(Rules.next(ended, Event.Screen(on = false)).state, Event.Screen(on = true)).state))
-        val task = Rules.next(ended, Event.Heard("Kestrel, what time is it?", named = true)).state
-        assertEquals(Work.RUNNING_TASK, task.work)
-        assertTrue(runs(Rules.next(task, Event.TaskEnded(task.task, reply = null)).state))
+        // A command for the conversation ends it, and so does a goal that works.
+        assertTrue(runs(Rules.next(ended, Event.Heard("Kestrel, what time is it?", named = true)).state))
+        val worked = Rules.next(ended, Event.ConversationChanged(acting.conversation)).state
+        assertTrue(runs(Rules.next(worked, Event.ConversationChanged(VoiceView())).state))
         val waiting = Rules.next(ended, Event.Heard("Kestrel.", named = true)).state
         assertEquals(Work.AWAITING_TASK, waiting.work)
         assertTrue(runs(Rules.next(waiting, Event.WaitEnded(waiting.wait)).state))
@@ -602,7 +626,9 @@ class RulesTest {
             Event.Toggle, Event.Start(), Event.Pause, Event.Resume, Event.TurnOff, Event.Heard("Scroll down", named = false),
             Event.Heard("Stop.", named = false), Event.Heard("", named = false), Event.Heard("Kestrel", named = true),
             Event.Speaking, Event.Spotted(Keyword.STOP), Event.Spotted(Keyword.CANCEL), Event.Spotted(Keyword.KESTREL),
-            Event.SpeechEnded, Event.TaskEnded(1, "Done."), Event.MicBusy(true), Event.MicBusy(false), Event.Screen(on = true),
+            Event.SpeechEnded, Event.ConversationChanged(acting.conversation), Event.ChannelSays(1, "Done."),
+            Event.ChannelShows("Got it."), Event.ChannelAsks(4, "Shall I?", QuestionKind.YES_NO), Event.ChannelHandsOver("Pay yourself."),
+            Event.MicBusy(true), Event.MicBusy(false), Event.Screen(on = true),
             Event.Screen(on = false), Event.WaitEnded(1), Event.SettingsUnavailable, Event.NothingHeard,
             Event.CallState(CallState.IDLE), Event.CallState(CallState.RINGING), Event.CallState(CallState.ACTIVE), Event.Assist,
             Event.Options(WakeUpMode.STAY_OFF, pauseAfterSilence = true, callCommands = true), Event.Silent(1),
@@ -662,13 +688,15 @@ class RulesTest {
     }
 
     @Test
-    fun stopWhileKestrelSpeaksEndsTheSpeechAndCancelsTheTask() {
-        val speaking = listening.copy(work = Work.RUNNING_TASK, task = 1, speeches = 1)
+    fun theSpottersStopWhileKestrelSpeaksEndsTheSpeechAndStopsTheGoal() {
+        val step = Rules.next(acting.copy(speeches = 1), Event.Spotted(Keyword.STOP))
 
-        val step = Rules.next(speaking, Event.Spotted(Keyword.STOP))
-
-        assertEquals(listOf(Effect.StopSaying, Effect.CancelTask), step.effects)
+        // Plan 7B's decision 10.
+        assertEquals(listOf(Effect.StopSaying, Effect.Converse(InputIntent.Stop)), step.effects)
         assertEquals(Work.IDLE, step.state.work)
+        // Also while Kestrel speaks a hand-over's sentence.
+        val handing = Rules.next(goal(GoalPhase.HANDED_OVER), Event.ChannelHandsOver("Pay yourself, then say 'Kestrel, continue'.")).state
+        assertEquals(listOf(Effect.StopSaying, Effect.Converse(InputIntent.Stop)), Rules.next(handing, Event.Spotted(Keyword.STOP)).effects)
     }
 
     @Test
@@ -688,8 +716,8 @@ class RulesTest {
         assertEquals(listOf(Effect.StopSaying), stopped.effects)
         assertEquals(Work.IDLE, stopped.state.work)
 
-        // "Kestrel" while a task runs only ends the speech; the task keeps running.
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1, speeches = 1)
+        // "Kestrel" while a goal works only ends the speech; the goal goes on.
+        val running = acting.copy(speeches = 1)
         assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Spotted(Keyword.KESTREL)))
 
         // No wait starts while the screen is off.
@@ -703,15 +731,20 @@ class RulesTest {
     }
 
     @Test
-    fun aTaskReplyIsSpokenAndTheEndOfAnOlderTaskChangesNothing() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 2)
+    fun theConversationsWordsAreSpokenAndShownAndWhileOffOnlyShown() {
+        val says = Rules.next(listening, Event.ChannelSays(3, "Done."))
 
-        val done = Rules.next(running, Event.TaskEnded(task = 2, reply = "Done."))
-
-        assertEquals(listOf(Effect.Say(Reply.Text("Done."))), done.effects)
-        assertEquals(1, done.state.speeches)
-        assertEquals(Step(running), Rules.next(running, Event.TaskEnded(task = 1, reply = "Late.")))
-        assertEquals(Step(done.state), Rules.next(done.state, Event.TaskEnded(task = 2, reply = "Again.")))
+        assertEquals(listOf(Effect.Show(Feedback.ConversationText("Done.")), Effect.Say(Reply.Channel(3, "Done."))), says.effects)
+        assertEquals(1, says.state.speeches)
+        // While Kestrel is off, the words are only shown, and the voice channel goes on at once.
+        assertEquals(
+            listOf(Effect.Show(Feedback.ConversationText("Done.")), Effect.EndReply(3)),
+            Rules.next(State(), Event.ChannelSays(3, "Done.")).effects,
+        )
+        assertEquals(
+            Step(listening, listOf(Effect.Show(Feedback.ConversationText("Got it.")))),
+            Rules.next(listening, Event.ChannelShows("Got it.")),
+        )
     }
 
     @Test
@@ -730,37 +763,24 @@ class RulesTest {
     @Test
     fun transcriptsThatFinishAfterTheScreenTurnedOffOnlyStopThings() {
         val dark = listening.copy(screenOn = false)
-        val darkAndRunning = listening.copy(screenOn = false, work = Work.RUNNING_TASK, task = 1)
+        val darkAndRunning = goal(GoalPhase.ACTING, dark)
 
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel, open the settings.", named = true)))
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Scroll down", named = false)))
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Stop.", named = false)))
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel?", named = true)))
-        // Design D2 of sub-project 5: "Stop." before the name still cancels the task, and nothing starts.
+        // Design D2 of sub-project 5: "Stop." before the name still stops the goal, and nothing starts.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.CancelTask),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.Converse(InputIntent.Stop)),
             Rules.next(darkAndRunning, Event.Heard("Stop. Kestrel, open Viber.", named = true)).effects,
         )
 
         val stopped = Rules.next(darkAndRunning, Event.Heard("Stop.", named = false))
         assertEquals(Work.IDLE, stopped.state.work)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.CancelTask), stopped.effects)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
         assertEquals(Mode.PAUSED, Rules.next(darkAndRunning, Event.Heard("Stop listening.", named = false)).state.mode)
         assertEquals(Mode.PAUSED, Rules.next(dark, Event.Heard("Stop listening.", named = false)).state.mode)
         assertEquals(Mode.OFF, Rules.next(darkAndRunning, Event.Heard("Stop Kestrel.", named = false)).state.mode)
-    }
-
-    @Test
-    fun aRunningTaskPausesWhenTheScreenTurnsOff() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
-
-        val dark = Rules.next(running, Event.Screen(on = false))
-
-        // Design D2 of sub-project 5 (section 14.4): the lock pauses the task instead of leaving it running.
-        assertEquals(listOf(Effect.PauseTask(1, PauseCause.LOCK), Effect.TimePause), dark.effects)
-        assertEquals(TaskPhase.PAUSED, dark.state.taskPhase)
-        assertEquals(Work.IDLE, dark.state.work)
-        assertFalse(dark.state.cancelled)
     }
 
     @Test
@@ -792,7 +812,10 @@ class RulesTest {
         fun heard(state: State, text: String, named: Boolean = false) = Rules.next(state, Event.Heard(text, named))
         fun shown(text: String) = Effect.Show(Feedback.Heard(text))
 
-        assertEquals(Effect.RunTask(1, "open the settings."), heard(waiting, "Kestrel, open the settings.", named = true).effects.last())
+        assertEquals(
+            Effect.Converse(InputIntent.Command("open the settings."), Event.Heard("Kestrel, open the settings.", named = true)),
+            heard(waiting, "Kestrel, open the settings.", named = true).effects.last(),
+        )
         assertEquals(Step(listening.copy(wait = 1), listOf(shown("Stop."))), heard(waiting, "Stop."))
         assertEquals(
             Step(paused.copy(wait = 1), listOf(shown("Stop listening."), Effect.Show(Feedback.ModeChanged(Mode.PAUSED)))),
@@ -817,28 +840,28 @@ class RulesTest {
     }
 
     @Test
-    fun whileATaskRunsKestrelsOwnRequests() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
-        val pausedAndRunning = paused.copy(work = Work.RUNNING_TASK, task = 1)
+    fun whileAGoalWorksKestrelsOwnRequests() {
+        val pausedAndActing = goal(GoalPhase.ACTING, paused)
 
-        val off = Rules.next(running, Event.Heard("Stop Kestrel.", named = false))
+        // Plan 7B's decision 10: "Stop Kestrel" turns Kestrel off, and the goal goes on.
+        val off = Rules.next(acting, Event.Heard("Stop Kestrel.", named = false))
         assertEquals(Mode.OFF, off.state.mode)
         assertEquals(
-            listOf(
-                Effect.Show(Feedback.Heard("Stop Kestrel.")),
-                Effect.CancelTask,
-                Effect.Show(Feedback.ModeChanged(Mode.OFF)),
-                Effect.StopService,
-            ),
+            listOf(Effect.Show(Feedback.Heard("Stop Kestrel.")), Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService),
             off.effects,
         )
-        assertEquals(Step(running), Rules.next(running, Event.Heard("Kestrel.", named = true)))
-        assertEquals(Step(pausedAndRunning), Rules.next(pausedAndRunning, Event.Heard("Kestrel, wake up.", named = true)))
-        // Already paused: the task ends, and the mode is not shown again.
+        assertEquals(Step(acting), Rules.next(acting, Event.Heard("Kestrel.", named = true)))
+        assertEquals(Step(pausedAndActing), Rules.next(pausedAndActing, Event.Heard("Kestrel, wake up.", named = true)))
+        // Already paused: only the transcript is shown.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop listening.")), Effect.CancelTask),
-            Rules.next(pausedAndRunning, Event.Heard("Stop listening.", named = false)).effects,
+            listOf(Effect.Show(Feedback.Heard("Stop listening."))),
+            Rules.next(pausedAndActing, Event.Heard("Stop listening.", named = false)).effects,
         )
+        // Kestrel's own requests reach the conversation, which runs them once the goal has ended.
+        val delete = Event.Heard("Kestrel, delete history", named = true)
+        assertEquals(Effect.Converse(InputIntent.DeleteHistory, delete), Rules.next(acting, delete).effects.last())
+        val continuing = Event.Heard("Kestrel, continue", named = true)
+        assertEquals(Effect.Converse(InputIntent.Continue, continuing), Rules.next(acting, continuing).effects.last())
     }
 
     @Test
@@ -859,25 +882,6 @@ class RulesTest {
             Step(listening, listOf(Effect.Show(Feedback.Heard("Kestrel, wake up.")))),
             Rules.next(listening, Event.Heard("Kestrel, wake up.", named = true)),
         )
-    }
-
-    @Test
-    fun aCancelledTaskStillReportsWhatItDid() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
-        val cancelled = Rules.next(running, Event.Heard("Stop.", named = false)).state
-
-        val report = Rules.next(cancelled, Event.TaskEnded(task = 1, reply = "Cancelled. I didn't send it."))
-        assertEquals(listOf(Effect.Say(Reply.Text("Cancelled. I didn't send it."))), report.effects)
-        assertEquals(Work.IDLE, report.state.work)
-        assertEquals(Step(report.state), Rules.next(report.state, Event.TaskEnded(task = 1, reply = "Again.")))
-        assertEquals(Step(cancelled), Rules.next(cancelled, Event.TaskEnded(task = 0, reply = "Older.")))
-
-        // A newer wait or task, or Off, drops the report.
-        val waiting = Rules.next(cancelled, Event.Heard("Kestrel?", named = true)).state
-        val idleAgain = Rules.next(waiting, Event.WaitEnded(waiting.wait)).state
-        assertEquals(Step(idleAgain), Rules.next(idleAgain, Event.TaskEnded(task = 1, reply = "Late.")))
-        val off = Rules.next(cancelled, Event.TurnOff).state
-        assertEquals(Step(off), Rules.next(off, Event.TaskEnded(task = 1, reply = "Late.")))
     }
 
     @Test
@@ -987,9 +991,9 @@ class RulesTest {
     }
 
     @Test
-    fun openSettingsEndsTheWaitForATaskAndIsIgnoredWhileATaskRuns() {
+    fun openSettingsEndsTheWaitForACommandAndIsIgnoredWhileAGoalWorks() {
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
+        val running = acting
 
         assertEquals(
             Step(listening.copy(wait = 1), listOf(Effect.Show(Feedback.Heard("Open settings.")), Effect.OpenSettings)),
@@ -999,17 +1003,14 @@ class RulesTest {
     }
 
     @Test
-    fun stopBeforeOpenSettingsCancelsTheRunningTask() {
-        val running = listening.copy(work = Work.RUNNING_TASK, task = 1)
-
-        val step = Rules.next(running, Event.Heard("Stop. Kestrel, open settings.", named = true))
+    fun stopBeforeOpenSettingsStopsTheGoal() {
+        val step = Rules.next(acting, Event.Heard("Stop. Kestrel, open settings.", named = true))
 
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.CancelTask, Effect.OpenSettings),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop), Effect.OpenSettings),
             step.effects,
         )
         assertEquals(Work.IDLE, step.state.work)
-        assertTrue(step.state.cancelled)
     }
 
     @Test
@@ -1030,25 +1031,16 @@ class RulesTest {
     }
 
     @Test
-    fun aCallThatRingsStopsTheSpeechAndPausesTheTask() {
-        val busy = listening.copy(work = Work.RUNNING_TASK, task = 2, speeches = 1)
+    fun aCallThatRingsStopsTheSpeech() {
+        val busy = acting.copy(speeches = 1)
 
         val ringing = Rules.next(busy, Event.CallState(CallState.RINGING))
 
-        // Design D2 of sub-project 5 (section 14.4): the call pauses the task, which asks "Continue the task?" afterwards.
-        assertEquals(
-            listOf(
-                Effect.StopSaying,
-                Effect.PauseTask(2, PauseCause.INCOMING_CALL),
-                Effect.TimePause,
-                Effect.Show(Feedback.ModeChanged(Mode.RINGING)),
-            ),
-            ringing.effects,
-        )
+        // The conversation pauses the goal itself, with listening on or off (design 6.5 of sub-project 7).
+        assertEquals(listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.RINGING))), ringing.effects)
         assertEquals(Work.IDLE, ringing.state.work)
-        assertEquals(TaskPhase.PAUSED, ringing.state.taskPhase)
-        assertFalse(ringing.state.cancelled)
-        // A wait for a task ends too, and nothing comes back after the call (section 14.4).
+        assertEquals(GoalPhase.ACTING, ringing.state.goal)
+        // A wait for a command ends too, and nothing comes back after the call (section 14.4).
         val waiting = listening.copy(work = Work.AWAITING_TASK, wait = 1)
         assertEquals(Work.IDLE, Rules.next(waiting, Event.CallState(CallState.RINGING)).state.work)
     }
@@ -1204,13 +1196,13 @@ class RulesTest {
     }
 
     @Test
-    fun theAssistantGestureOverKestrelsVoiceOrWhileATaskRunsActsLikeTheName() {
+    fun theAssistantGestureOverKestrelsVoiceOrWhileAGoalWorksActsLikeTheName() {
         // As after an interruption with "Kestrel": Kestrel stops speaking and waits for the task.
         assertEquals(
             listOf(Effect.StopSaying, Effect.Show(Feedback.AwaitingTask), Effect.WaitForTask()),
             Rules.next(listening.copy(speeches = 1), Event.Assist).effects,
         )
-        val running = paused.copy(work = Work.RUNNING_TASK, task = 1, speeches = 1)
+        val running = goal(GoalPhase.ACTING, paused).copy(speeches = 1)
         assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Assist))
         val silent = running.copy(speeches = 0)
         assertEquals(Step(silent), Rules.next(silent, Event.Assist))
@@ -1311,7 +1303,7 @@ class RulesTest {
     fun theSilenceTimerStartsAgainWhileKestrelIsBusyOrDoesNotRecord() {
         val timed = listening.copy(pauseAfterSilence = true, silence = 1)
 
-        for (busy in listOf(timed.copy(speeches = 1), timed.copy(work = Work.RUNNING_TASK, task = 1), timed.copy(screenOn = false))) {
+        for (busy in listOf(timed.copy(speeches = 1), goal(GoalPhase.ACTING, timed), timed.copy(screenOn = false))) {
             assertEquals(Step(busy.copy(silence = 2), listOf(Effect.TimeSilence)), Rules.next(busy, Event.Silent(1)))
         }
     }
@@ -1339,168 +1331,93 @@ class RulesTest {
         )
     }
 
-    // Design D2 of sub-project 5: the task's own state, its questions, touches and hand-overs.
-    private val runningTask = listening.copy(work = Work.RUNNING_TASK, task = 1, taskPhase = TaskPhase.RUNNING)
-
-    private fun asking(kind: TaskAsk, voice: Boolean = true): State =
-        Rules.next(runningTask, Event.TaskAsks(1, "Shall I?", kind, voice)).state
-
+    // Design 11 of sub-project 7: the goal's hand-over as the voice says it.
     private val handOverText = "Please enter your password, then say 'Kestrel, continue'."
 
-    // A hand-over whose sentence has been spoken.
-    private fun handedOver(from: State = runningTask): State =
-        Rules.next(Rules.next(from, Event.TaskHandsOver(1, handOverText)).state, Event.SpeechEnded).state
+    // A goal's hand-over whose sentence has been spoken.
+    private fun handedOver(from: State = goal(GoalPhase.HANDED_OVER)): State =
+        Rules.next(Rules.next(from, Event.ChannelHandsOver(handOverText)).state, Event.SpeechEnded).state
 
     private fun heard(state: State, text: String, named: Boolean = false) = Rules.next(state, Event.Heard(text, named))
 
     @Test
-    fun aTaskStartsInItsRunningPhaseAndEndsWithoutOne() {
-        val started = heard(listening, "Kestrel, open Viber.", named = true).state
-        assertEquals(TaskPhase.RUNNING, started.taskPhase)
-        assertTrue(started.taskExists)
+    fun theGoalComesFromTheConversationsView() {
+        val sent = heard(listening, "Kestrel, open Viber.", named = true).state
+        assertEquals(null, sent.goal)
 
-        val ended = Rules.next(started, Event.TaskEnded(1, "Done."))
-        assertEquals(null, ended.state.taskPhase)
-        assertFalse(ended.state.taskExists)
+        val acts = Rules.next(sent, Event.ConversationChanged(acting.conversation)).state
+        assertTrue(acts.goalWorks)
+        val ended = Rules.next(acts, Event.ConversationChanged(acting.conversation.copy(goal = null))).state
+        assertFalse(ended.goalWorks)
+        assertEquals(null, ended.goal)
     }
 
     @Test
-    fun aTaskSaysItsTextAndShowsIt() {
-        val step = Rules.next(runningTask, Event.TaskSays(1, "Android gave Kestrel only the photos that you selected."))
+    fun theConversationsQuestionIsSpokenKeptOnTheBarAndItsWaitEndsInSilence() {
+        val text = "I'm not getting anywhere. Should I keep trying?"
+        val step = Rules.next(acting, Event.ChannelAsks(4, text, QuestionKind.YES_NO))
 
         assertEquals(
-            listOf(
-                Effect.Show(Feedback.TaskText("Android gave Kestrel only the photos that you selected.")),
-                Effect.Say(Reply.Text("Android gave Kestrel only the photos that you selected.")),
-            ),
+            listOf(Effect.Show(Feedback.ConversationText(text, keep = true)), Effect.Say(Reply.Text(text, kept = true)), Effect.WaitForAnswer()),
             step.effects,
         )
-        // An older task says nothing.
-        assertEquals(Step(runningTask), Rules.next(runningTask, Event.TaskSays(0, "Late.")))
-    }
-
-    @Test
-    fun aTaskQuestionIsSpokenKeptOnTheBarAndWaitsForItsAnswer() {
-        val step = Rules.next(runningTask, Event.TaskAsks(1, "I'm not getting anywhere. Should I keep trying?", TaskAsk.YES_NO))
-
-        assertEquals(
-            listOf(
-                Effect.Show(Feedback.TaskText("I'm not getting anywhere. Should I keep trying?", keep = true)),
-                Effect.Say(Reply.Text("I'm not getting anywhere. Should I keep trying?", kept = true)),
-                Effect.WaitForAnswer(),
-            ),
-            step.effects,
-        )
-        assertEquals(TaskAsk.YES_NO, step.state.taskAsking)
-        assertEquals(Work.RUNNING_TASK, step.state.work)
+        assertEquals(VoiceQuestion(4, QuestionKind.YES_NO), step.state.voiceQuestion)
         // The wait starts again when the question has been spoken, and grows once the owner speaks.
         val spoken = Rules.next(step.state, Event.SpeechEnded)
         assertEquals(listOf(Effect.WaitForAnswer()), spoken.effects)
         assertEquals(Recognition.ALL, spoken.state.recognition)
         assertEquals(listOf(Effect.WaitForAnswer(answering = true)), Rules.next(spoken.state, Event.Speaking).effects)
-        // A second question while one is open is ignored: questions come one at a time.
-        assertEquals(Step(step.state), Rules.next(step.state, Event.TaskAsks(1, "Another?", TaskAsk.FREE)))
+        // Its end is the answer Silence; an older wait changes nothing.
+        val silent = Rules.next(spoken.state, Event.AnswerWaitEnded(spoken.state.wait))
+        assertEquals(listOf(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence))), silent.effects)
+        assertEquals(null, silent.state.voiceQuestion)
+        assertEquals(Step(spoken.state), Rules.next(spoken.state, Event.AnswerWaitEnded(spoken.state.wait - 1)))
+        // An answer on its card, or the conversation's withdrawal, ends the wait; an older question's end changes nothing.
+        assertEquals(Step(spoken.state), Rules.next(spoken.state, Event.ChannelWithdraws(3)))
+        assertEquals(null, Rules.next(spoken.state, Event.ChannelWithdraws(4)).state.voiceQuestion)
     }
 
     @Test
-    fun aYesOrNoQuestionTakesOnlyItsAnswers() {
-        val question = asking(TaskAsk.YES_NO)
+    fun theVoiceReadsTheAnswerOfTheQuestionsKind() {
+        val question = asked(QuestionKind.YES_NO)
 
         for (yes in listOf("Yes.", "Yes, please.", "Continue", "Go on.")) {
             val step = heard(question, yes)
-            assertEquals(yes, Effect.AnswerTask(1, TaskAnswers.YES), step.effects.last())
-            assertEquals(null, step.state.taskAsking)
+            assertEquals(yes, Effect.Converse(InputIntent.Answer(ChannelAnswer.Yes), Event.Heard(yes, named = false)), step.effects.last())
+            assertEquals(null, step.state.openQuestion)
         }
-        assertEquals(Effect.AnswerTask(1, TaskAnswers.YES), heard(question, "Kestrel, continue.", named = true).effects.last())
-        assertEquals(Effect.AnswerTask(1, TaskAnswers.NO), heard(question, "No.").effects.last())
+        assertEquals(InputIntent.Answer(ChannelAnswer.Yes), (heard(question, "Kestrel, continue.", named = true).effects.last() as Effect.Converse).intent)
+        assertEquals(InputIntent.Answer(ChannelAnswer.No), (heard(question, "No.").effects.last() as Effect.Converse).intent)
         // Other speech is only shown, and the question goes on.
         assertEquals(Step(question, listOf(Effect.Show(Feedback.Heard("Open Viber")))), heard(question, "Open Viber"))
     }
 
     @Test
-    fun aConfirmationGoesAheadOnConfirmYesOrSendIt() {
-        val question = asking(TaskAsk.CONFIRM)
-
-        for (yes in listOf("Confirm.", "Yes", "Send it!", "Kestrel, confirm")) {
-            assertEquals(yes, Effect.AnswerTask(1, TaskAnswers.YES), heard(question, yes, named = yes.startsWith("Kestrel")).effects.last())
-        }
-        assertEquals(Effect.AnswerTask(1, TaskAnswers.NO), heard(question, "No").effects.last())
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Go on."))), heard(question, "Go on.").effects)
-    }
-
-    @Test
-    fun theSilenceAfterATaskQuestionIsNoAnswer() {
-        val question = Rules.next(asking(TaskAsk.CONFIRM), Event.SpeechEnded).state
-
-        val ended = Rules.next(question, Event.AnswerWaitEnded(question.wait))
-
-        assertEquals(listOf(Effect.AnswerTask(1, null)), ended.effects)
-        assertEquals(null, ended.state.taskAsking)
-        // The end of an older wait changes nothing.
-        assertEquals(Step(question), Rules.next(question, Event.AnswerWaitEnded(question.wait - 1)))
-    }
-
-    @Test
-    fun stopAndCancelCancelTheTaskInEveryKindOfQuestion() {
-        for (kind in TaskAsk.entries) {
-            for (text in listOf("Stop.", "Cancel", "Okay, cancel that")) {
-                val step = heard(asking(kind), text)
-                assertTrue("$kind $text", Effect.CancelTask in step.effects)
-                assertEquals("$kind $text", null, step.state.taskPhase)
-                assertEquals("$kind $text", null, step.state.taskAsking)
-            }
-        }
-    }
-
-    @Test
-    fun aFreeQuestionTakesTheNextTranscriptAndANumberQuestionANumber() {
-        assertEquals(Effect.AnswerTask(1, "The blue one."), heard(asking(TaskAsk.FREE), "The blue one.").effects.last())
-        assertEquals(Effect.AnswerTask(1, "12"), heard(asking(TaskAsk.PICK_NUMBER), "12").effects.last())
-        val number = asking(TaskAsk.PICK_NUMBER)
-        assertEquals(Step(number, listOf(Effect.Show(Feedback.Heard("the red one")))), heard(number, "the red one"))
-    }
-
-    @Test
     fun whileOnlyTheCardMayAnswerSpokenAnswersDoNotCount() {
-        val question = Rules.next(asking(TaskAsk.CONFIRM, voice = false), Event.SpeechEnded).state
+        val question = asked(QuestionKind.CONFIRM, voice = false)
 
         assertEquals(Step(question, listOf(Effect.Show(Feedback.Heard("Confirm.")))), heard(question, "Confirm."))
-        assertTrue(Effect.CancelTask in heard(question, "Cancel.").effects)
-        assertEquals(listOf(Effect.AnswerTask(1, null)), Rules.next(question, Event.AnswerWaitEnded(question.wait)).effects)
-        // The card answered: the agent says that it acts again.
-        assertEquals(null, Rules.next(question, Event.TaskBusy(1)).state.taskAsking)
-    }
-
-    @Test
-    fun theOwnersTouchCancelsARunningTaskButNotAHandOver() {
-        assertEquals(listOf(Effect.CancelTask), Rules.next(runningTask, Event.OwnerTouched).effects)
-        assertTrue(Effect.CancelTask in Rules.next(asking(TaskAsk.CONFIRM), Event.OwnerTouched).effects)
-        val handed = handedOver()
-        assertEquals(Step(handed), Rules.next(handed, Event.OwnerTouched))
-        assertEquals(Step(listening), Rules.next(listening, Event.OwnerTouched))
-    }
-
-    @Test
-    fun aHandOverKeepsItsSentenceOnTheBarAndStartsItsThreeMinutes() {
-        val step = Rules.next(runningTask, Event.TaskHandsOver(1, "This is a payment. Please finish it yourself, then say 'Kestrel, continue'."))
-
+        assertTrue(Effect.Converse(InputIntent.Stop) in heard(question, "Cancel.").effects)
         assertEquals(
-            listOf(
-                Effect.Show(Feedback.TaskText("This is a payment. Please finish it yourself, then say 'Kestrel, continue'.", keep = true)),
-                Effect.Say(Reply.Text("This is a payment. Please finish it yourself, then say 'Kestrel, continue'.", kept = true)),
-                Effect.TimeHandOver,
-            ),
-            step.effects,
+            listOf(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence))),
+            Rules.next(question, Event.AnswerWaitEnded(question.wait)).effects,
         )
-        assertEquals(TaskPhase.HANDED_OVER, step.state.taskPhase)
+    }
+
+    @Test
+    fun aHandOverKeepsItsSentenceOnTheBar() {
+        val text = "This is a payment. Please finish it yourself, then say 'Kestrel, continue'."
+        val step = Rules.next(goal(GoalPhase.HANDED_OVER), Event.ChannelHandsOver(text))
+
+        assertEquals(listOf(Effect.Show(Feedback.ConversationText(text, keep = true)), Effect.Say(Reply.Text(text, kept = true))), step.effects)
         assertEquals(Work.IDLE, step.state.work)
-        assertEquals(1, step.state.handOver)
-        assertTrue(step.state.taskExists)
+        // While Kestrel is off, it is only shown; the conversation runs the hand-over's 3 minutes.
+        assertEquals(listOf(Effect.Show(Feedback.ConversationText(text, keep = true))), Rules.next(State(), Event.ChannelHandsOver(text)).effects)
     }
 
     @Test
     fun duringAHandOverTheInstantCommandsWorkAlsoInThePausedMode() {
-        for (from in listOf(runningTask, runningTask.copy(mode = Mode.PAUSED))) {
+        for (from in listOf(goal(GoalPhase.HANDED_OVER), goal(GoalPhase.HANDED_OVER, paused))) {
             val handed = handedOver(from)
             assertEquals(Recognition.ALL, handed.recognition)
             val command = heard(handed, "Scroll down")
@@ -1509,435 +1426,201 @@ class RulesTest {
             // The command's end leaves the hand-over open.
             val ended = Rules.next(command.state, Event.CommandEnded(command.state.command, CommandResult(Outcome.DONE)))
             assertEquals(Work.IDLE, ended.state.work)
-            assertEquals(TaskPhase.HANDED_OVER, ended.state.taskPhase)
+            assertEquals(GoalPhase.HANDED_OVER, ended.state.goal)
         }
-    }
-
-    @Test
-    fun kestrelContinueEndsAHandOverAndCancelEndsTheTask() {
-        val handed = handedOver()
-
-        val continued = heard(handed, "Kestrel, continue.", named = true)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Kestrel, continue.")), Effect.ContinueTask(1)), continued.effects)
-        assertEquals(TaskPhase.RUNNING, continued.state.taskPhase)
-        assertEquals(Work.RUNNING_TASK, continued.state.work)
-
-        for (text in listOf("Cancel.", "Stop", "Kestrel, cancel")) {
-            val cancelled = heard(handed, text, named = text.startsWith("Kestrel"))
-            assertTrue(text, Effect.CancelTask in cancelled.effects)
-            assertEquals(text, null, cancelled.state.taskPhase)
-            assertTrue(text, cancelled.state.cancelled)
-        }
-        // "Kestrel" and then "never mind" ends only the wait for a task; "Kestrel" and then "stop" ends the task.
-        val awaiting = heard(handed, "Kestrel", named = true).state
-        assertFalse(Effect.CancelTask in heard(awaiting, "Never mind.").effects)
-        assertTrue(Effect.CancelTask in heard(awaiting, "Stop.").effects)
-        assertTrue(Effect.CancelTask in heard(awaiting, "Kestrel, cancel.", named = true).effects)
     }
 
     @Test
     fun kestrelContinueDuringACommandOfAHandOverLeavesTheCommandAndContinues() {
         val command = heard(handedOver(), "Scroll down").state
+        val continuing = Event.Heard("Kestrel, continue", named = true)
 
-        val continued = heard(command, "Kestrel, continue", named = true)
-
-        assertEquals(listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Kestrel, continue")), Effect.ContinueTask(1)), continued.effects)
-        assertEquals(Work.RUNNING_TASK, continued.state.work)
-    }
-
-    @Test
-    fun aNewTaskDuringAHandOverWaitsAndStopFirstReplacesIt() {
-        val handed = handedOver()
+        val continued = Rules.next(command, continuing)
 
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Kestrel, open Viber.")), Effect.Show(Feedback.FinishHandOverFirst)),
-            heard(handed, "Kestrel, open Viber.", named = true).effects,
+            listOf(Effect.CancelCommand, Effect.Show(Feedback.Heard("Kestrel, continue")), Effect.Converse(InputIntent.Continue, continuing)),
+            continued.effects,
         )
-        val replaced = heard(handed, "Stop. Kestrel, open Viber.", named = true)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.CancelTask, Effect.RunTask(2, "open Viber.")), replaced.effects)
-        assertEquals(TaskPhase.RUNNING, replaced.state.taskPhase)
-        // After "Kestrel" on its own, "Yes?" takes "continue" for the hand-over, and refuses a new task.
-        val awaiting = heard(handed, "Kestrel", named = true).state
-        assertEquals(Effect.ContinueTask(1), heard(awaiting, "Continue.").effects.last())
-        assertEquals(Effect.Show(Feedback.FinishHandOverFirst), heard(awaiting, "Open Viber.").effects.last())
+        assertEquals(Work.IDLE, continued.state.work)
     }
 
-    @Test
-    fun kestrelContinueWithoutAHandOverSaysSo() {
-        val step = heard(listening, "Kestrel, continue, please.", named = true)
+    // Design 6.5 of sub-project 7: a goal that the lock paused, and "Continue the goal?" after the unlock, spoken.
+    private val pausedGoal = goal(GoalPhase.PAUSED).copy(screenOn = false)
 
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Kestrel, continue, please.")), Effect.Say(Reply.NoTaskToContinue)), step.effects)
-        // While the task runs, it is ignored.
-        assertEquals(Step(runningTask), heard(runningTask, "Kestrel, continue", named = true))
-    }
+    private fun continueAsked(): State = asked(QuestionKind.CONTINUE_GOAL, goal(GoalPhase.PAUSED))
 
     @Test
-    fun aHandOverThatLastsThreeMinutesEndsTheTaskWithItsReport() {
-        val handed = handedOver()
-
-        assertEquals(listOf(Effect.ExpireHandOver(1)), Rules.next(handed, Event.HandOverEnded(1)).effects)
-        // The timer of an older hand-over changes nothing.
-        assertEquals(Step(handed), Rules.next(handed, Event.HandOverEnded(0)))
-        // The task's report comes in every phase, also while a command runs.
-        val report = Rules.next(handed, Event.TaskEnded(1, "I stopped because the hand-over took too long."))
-        assertEquals(null, report.state.taskPhase)
-        assertEquals(Effect.Say(Reply.Text("I stopped because the hand-over took too long.")), report.effects.last())
-        val command = heard(handed, "Scroll down").state
-        val late = Rules.next(command, Event.TaskEnded(1, "Report."))
-        assertEquals(Work.RUNNING_COMMAND, late.state.work)
-        assertEquals(null, late.state.taskPhase)
-        assertEquals(Effect.Say(Reply.Text("Report.")), late.effects.last())
-    }
-
-    @Test
-    fun aHandOverThatEndedByItselfRunsTheTaskAgain() {
-        val busy = Rules.next(handedOver(), Event.TaskBusy(1))
-
-        assertEquals(TaskPhase.RUNNING, busy.state.taskPhase)
-        assertEquals(Work.RUNNING_TASK, busy.state.work)
-        assertEquals(Step(runningTask), Rules.next(runningTask, Event.TaskBusy(0)))
-    }
-
-    @Test
-    fun theSpottersStopCancelsATaskDuringItsHandOverSentence() {
-        val speaking = Rules.next(runningTask, Event.TaskHandsOver(1, handOverText)).state
-
-        val step = Rules.next(speaking, Event.Spotted(Keyword.STOP))
-
-        assertEquals(listOf(Effect.StopSaying, Effect.CancelTask), step.effects)
-        assertEquals(null, step.state.taskPhase)
-    }
-
-    @Test
-    fun turningOffEndsATaskInEveryPhase() {
-        for (state in listOf(runningTask, asking(TaskAsk.FREE), handedOver())) {
-            val off = Rules.next(state, Event.TurnOff)
-            assertTrue(Effect.CancelTask in off.effects)
-            assertEquals(null, off.state.taskPhase)
-            assertEquals(null, off.state.taskAsking)
-        }
-    }
-
-    @Test
-    fun theTaskEventsAndEffectsPrintNoWords() {
-        val printed = listOf(
-            Event.TaskSays(1, "secret"),
-            Event.TaskAsks(1, "secret", TaskAsk.FREE),
-            Event.TaskHandsOver(1, "secret"),
-            Effect.AnswerTask(1, "secret"),
-            Feedback.TaskText("secret"),
-        ).joinToString()
-
-        assertFalse(printed, printed.contains("secret"))
-    }
-
-
-    // Design D2 of sub-project 5 (section 14.4): the pause for a call or the lock, "Continue the task?" and its timers.
-    private fun pausedByLock(from: State = runningTask): State = Rules.next(from, Event.Screen(on = false)).state
-
-    // "Continue the task?" after the unlock, spoken.
-    private fun continueAsked(from: State = pausedByLock()): State =
-        Rules.next(Rules.next(from.copy(screenSeen = true), Event.Screen(on = true)).state, Event.SpeechEnded).state
-
-    @Test
-    fun theUnlockAsksContinueTheTask() {
-        val unlocked = Rules.next(pausedByLock().copy(screenSeen = true), Event.Screen(on = true))
-
-        assertEquals(
-            listOf(Effect.Show(Feedback.ContinueQuestion), Effect.Say(Reply.ContinueQuestion), Effect.WaitForAnswer(), Effect.ArmTouches),
-            unlocked.effects,
-        )
-        assertEquals(TaskAsk.CONTINUE, unlocked.state.taskAsking)
-        assertEquals(TaskPhase.PAUSED, unlocked.state.taskPhase)
-        assertEquals(Recognition.ALL, Rules.next(unlocked.state, Event.SpeechEnded).state.recognition)
-    }
-
-    @Test
-    fun yesResumesThePausedTaskAndNoSilenceOrStopCancelIt() {
-        val asked = continueAsked()
-
-        val resumed = heard(asked, "Yes, please.")
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Yes, please.")), Effect.ResumeTask(1)), resumed.effects)
-        assertEquals(TaskPhase.RUNNING, resumed.state.taskPhase)
-        assertEquals(Work.RUNNING_TASK, resumed.state.work)
-        assertEquals(Effect.ResumeTask(1), heard(asked, "Kestrel, continue", named = true).effects.last())
-
-        for (no in listOf(heard(asked, "No."), heard(asked, "Stop"), Rules.next(asked, Event.AnswerWaitEnded(asked.wait)))) {
-            assertTrue(Effect.CancelTask in no.effects)
-            assertEquals(null, no.state.taskPhase)
-            assertTrue(no.state.cancelled)
-        }
-        // Other speech is ignored during the question.
-        assertEquals(Step(asked, listOf(Effect.Show(Feedback.Heard("Scroll down")))), heard(asked, "Scroll down"))
-    }
-
-    @Test
-    fun aTouchAnswersContinueTheTaskOnlyOnceASecondHasPassed() {
-        val asked = continueAsked()
-
-        assertEquals(Step(asked), Rules.next(asked, Event.OwnerTouched))
-        val armed = Rules.next(asked, Event.TouchesArmed(asked.continueAsked)).state
-        assertTrue(armed.touchesArmed)
-        assertTrue(Effect.CancelTask in Rules.next(armed, Event.OwnerTouched).effects)
-        // An older question's second changes nothing, and a paused task without the question ignores touches.
-        assertEquals(Step(asked), Rules.next(asked, Event.TouchesArmed(asked.continueAsked - 1)))
-        assertEquals(Step(pausedByLock()), Rules.next(pausedByLock(), Event.OwnerTouched))
-    }
-
-    @Test
-    fun kestrelOverContinueTheTaskLeavesTheQuestionOpen() {
-        // The spotter hears "Kestrel" while Kestrel still speaks "Continue the task?".
-        val speaking = Rules.next(pausedByLock().copy(screenSeen = true), Event.Screen(on = true)).state
+    fun kestrelOverContinueTheGoalLeavesTheQuestionOpen() {
+        // The spotter hears "Kestrel" while Kestrel still speaks "Continue the goal?".
+        val paused = goal(GoalPhase.PAUSED)
+        val view = paused.conversation.copy(asking = QuestionKind.CONTINUE_GOAL, question = 4)
+        val speaking = Rules.next(paused.copy(conversation = view), Event.ChannelAsks(4, "Continue the goal?", QuestionKind.CONTINUE_GOAL)).state
 
         val spotted = Rules.next(speaking, Event.Spotted(Keyword.KESTREL)).state
-        assertEquals(TaskAsk.CONTINUE, spotted.taskAsking)
+        assertEquals(VoiceQuestion(4, QuestionKind.CONTINUE_GOAL), spotted.openQuestion)
         assertEquals(Work.IDLE, spotted.work)
-        assertEquals(Effect.ResumeTask(1), heard(Rules.next(spotted, Event.SpeechEnded).state, "Kestrel, continue.", named = true).effects.last())
+        val yes = heard(Rules.next(spotted, Event.SpeechEnded).state, "Kestrel, continue.", named = true)
+        assertEquals(InputIntent.Answer(ChannelAnswer.Yes), (yes.effects.last() as Effect.Converse).intent)
     }
 
     @Test
-    fun aPausedTaskLetsTheInstantCommandsRunAndRefusesANewTask() {
+    fun aPausedGoalLetsTheInstantCommandsRunAndTakesACommandAsItsAnswer() {
         val asked = continueAsked()
-        val replaced = heard(asked, "Stop. Kestrel, open Viber.", named = true)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.CancelTask, Effect.RunTask(2, "open Viber.")), replaced.effects)
+        val replacing = Event.Heard("Stop. Kestrel, open Viber.", named = true)
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Kestrel, open Viber.")), Effect.Show(Feedback.AnswerContinueFirst)),
-            heard(asked, "Kestrel, open Viber.", named = true).effects,
+            listOf(
+                Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")),
+                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Command("open Viber."), replacing),
+            ),
+            Rules.next(asked, replacing).effects,
         )
+        // A command after the name answers "Continue the goal?" as steering (design 6.5 of sub-project 7).
+        val steering = Event.Heard("Kestrel, open Viber.", named = true)
+        assertEquals(Effect.Converse(InputIntent.Command("open Viber."), steering), Rules.next(asked, steering).effects.last())
         // Without the question, as during a call with the phone unlocked, an instant command runs.
-        val paused = pausedByLock().copy(screenOn = true)
-        assertTrue(heard(paused, "Scroll down").effects.last() is Effect.RunCommand)
+        assertTrue(heard(goal(GoalPhase.PAUSED), "Scroll down").effects.last() is Effect.RunCommand)
     }
 
     @Test
-    fun aCallDuringAQuestionWithdrawsItAndTheEndOfTheCallAsksToContinue() {
-        val question = asking(TaskAsk.CONFIRM)
+    fun stayOffAfterAnUnlockWaitsUntilTheGoalAndItsFinalReplyHaveEnded() {
+        val locked = goal(GoalPhase.PAUSED, listening.copy(onWakeUp = WakeUpMode.STAY_OFF, screenOn = false, screenSeen = true))
 
-        val ringing = Rules.next(question, Event.CallState(CallState.RINGING))
-        assertTrue(Effect.PauseTask(1, PauseCause.INCOMING_CALL) in ringing.effects)
-        assertEquals(null, ringing.state.taskAsking)
-        val active = Rules.next(ringing.state, Event.CallState(CallState.ACTIVE)).state
-        assertEquals(TaskPhase.PAUSED, active.taskPhase)
+        val unlocked = Rules.next(locked, Event.Screen(on = true))
+        assertEquals(Mode.LISTENING, unlocked.state.mode)
+        assertTrue(unlocked.state.offAfterGoal)
 
-        val ended = Rules.next(active, Event.CallState(CallState.IDLE))
-        assertEquals(Mode.LISTENING, ended.state.mode)
-        assertTrue(Effect.Say(Reply.ContinueQuestion) in ended.effects)
-        assertEquals(TaskAsk.CONTINUE, ended.state.taskAsking)
-        // After a call that ended while the phone was locked, the question waits for the unlock.
-        val locked = Rules.next(Rules.next(active, Event.Screen(on = false)).state, Event.CallState(CallState.IDLE))
-        assertEquals(null, locked.state.taskAsking)
-    }
-
-    @Test
-    fun aCallThatBecomesActiveWithoutRingingPausesForTheBackstop() {
-        val active = Rules.next(runningTask, Event.CallState(CallState.ACTIVE))
-
-        assertTrue(Effect.PauseTask(1, PauseCause.OUTGOING_CALL) in active.effects)
-        assertEquals(Mode.IN_CALL, active.state.mode)
-    }
-
-    @Test
-    fun aCallDuringAHandOverDoesNotPauseIt() {
-        val handed = handedOver()
-
-        val ringing = Rules.next(handed, Event.CallState(CallState.RINGING))
-
-        assertEquals(TaskPhase.HANDED_OVER, ringing.state.taskPhase)
-        assertFalse(ringing.effects.any { it is Effect.PauseTask })
-        assertEquals(TaskPhase.HANDED_OVER, Rules.next(handed, Event.Screen(on = false)).state.taskPhase)
-    }
-
-    @Test
-    fun aLockDuringContinueTheTaskWithdrawsTheQuestionUntilTheNextUnlock() {
-        val asked = continueAsked()
-
-        val dark = Rules.next(asked, Event.Screen(on = false))
-
-        assertEquals(null, dark.state.taskAsking)
-        assertEquals(TaskPhase.PAUSED, dark.state.taskPhase)
-        assertFalse(dark.effects.any { it is Effect.PauseTask })
-        assertTrue(Effect.Say(Reply.ContinueQuestion) in Rules.next(dark.state, Event.Screen(on = true)).effects)
-    }
-
-    @Test
-    fun aPauseOfThirtyMinutesEndsTheTaskAndItsReportWaitsForTheUnlock() {
-        val paused = pausedByLock()
-
-        val expired = Rules.next(paused, Event.PauseExpired(paused.pause))
-        assertEquals(listOf(Effect.ExpirePause(1)), expired.effects)
-        assertEquals(null, expired.state.taskPhase)
-        assertEquals(Step(paused), Rules.next(paused, Event.PauseExpired(paused.pause - 1)))
-
-        val report = "I stopped the task because it was paused for a long time. I opened Viber."
-        val held = Rules.next(expired.state, Event.TaskEnded(1, report))
-        assertEquals(emptyList<Effect>(), held.effects)
-        assertEquals(report, held.state.heldReport)
-
-        val unlocked = Rules.next(held.state.copy(screenSeen = true), Event.Screen(on = true))
-        assertEquals(listOf(Effect.Say(Reply.Text(report))), unlocked.effects)
-        assertEquals(null, unlocked.state.heldReport)
-    }
-
-    @Test
-    fun stayOffAfterAnUnlockWaitsUntilThePausedTaskHasEnded() {
-        val paused = pausedByLock(runningTask.copy(onWakeUp = WakeUpMode.STAY_OFF))
-
-        val asked = Rules.next(paused.copy(screenSeen = true), Event.Screen(on = true))
-        assertEquals(Mode.LISTENING, asked.state.mode)
-        assertTrue(asked.state.offAfterTask)
-        assertTrue(Effect.Say(Reply.ContinueQuestion) in asked.effects)
-
-        val no = heard(Rules.next(asked.state, Event.SpeechEnded).state, "No.")
-        val reported = Rules.next(no.state, Event.TaskEnded(1, "Cancelled. I didn't change anything."))
-        assertEquals(Mode.LISTENING, reported.state.mode)
-        val off = Rules.next(reported.state, Event.SpeechEnded)
+        // The goal ends, and the conversation holds its quiet clock while its final reply is spoken.
+        val open = VoiceView(open = true)
+        val replying = Rules.next(unlocked.state, Event.ConversationChanged(open.copy(replying = true))).state
+        assertEquals(Mode.LISTENING, replying.mode)
+        val says = Rules.next(replying, Event.ChannelSays(1, "Cancelled. I didn't change anything.")).state
+        val spoken = Rules.next(says, Event.SpeechEnded).state
+        assertEquals(Mode.LISTENING, spoken.mode)
+        val off = Rules.next(spoken, Event.ConversationChanged(open))
         assertEquals(Mode.OFF, off.state.mode)
         assertTrue(Effect.StopService in off.effects)
 
-        // An expired pause's report is spoken first, and then Kestrel turns off.
-        val expired = Rules.next(paused, Event.PauseExpired(paused.pause)).state
-        val held = Rules.next(expired, Event.TaskEnded(1, "Report.")).state
-        val spoken = Rules.next(held.copy(screenSeen = true), Event.Screen(on = true))
-        assertEquals(listOf(Effect.Say(Reply.Text("Report."))), spoken.effects)
-        assertEquals(Mode.OFF, Rules.next(spoken.state, Event.SpeechEnded).state.mode)
+        // Without a goal or a reply, Kestrel turns off at once.
+        val idle = listening.copy(onWakeUp = WakeUpMode.STAY_OFF, screenOn = false, screenSeen = true)
+        assertEquals(Mode.OFF, Rules.next(idle, Event.Screen(on = true)).state.mode)
     }
 
     @Test
-    fun theAssistantGestureAndLateAnswersCountAPausedTaskAsATask() {
-        val paused = pausedByLock().copy(screenOn = true, speeches = 1)
+    fun theAssistantGestureAndLateAnswersCountAPausedGoalAsAWorkingOne() {
+        val paused = goal(GoalPhase.PAUSED).copy(speeches = 1)
 
         assertEquals(Step(paused, listOf(Effect.StopSaying)), Rules.next(paused, Event.Assist))
+        assertFalse(Rules.next(paused.copy(questionEnded = true), Event.MicBusy(busy = false)).state.questionEnded)
     }
 
     @Test
-    fun deleteHistoryAsksAndOnlyYesDeletes() {
-        val asked = heard(listening, "Kestrel, delete the history.", named = true)
+    fun deleteHistoryGoesToTheConversationAndItsQuestionTakesASpokenYes() {
+        val delete = Event.Heard("Kestrel, delete the history.", named = true)
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Kestrel, delete the history.")), Effect.Say(Reply.DeleteHistoryQuestion), Effect.WaitForAnswer()),
-            asked.effects,
+            listOf(Effect.Show(Feedback.Heard("Kestrel, delete the history.")), Effect.Converse(InputIntent.DeleteHistory, delete)),
+            Rules.next(listening, delete).effects,
         )
-        assertTrue(asked.state.deleteAsking)
-
-        val yes = heard(asked.state, "Yes.")
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Yes.")), Effect.DeleteHistory), yes.effects)
-        assertFalse(yes.state.deleteAsking)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Go on"))), heard(asked.state, "Go on").effects)
-        val spoken = Rules.next(asked.state, Event.SpeechEnded).state
-        assertFalse(Rules.next(spoken, Event.AnswerWaitEnded(spoken.wait)).state.deleteAsking)
-        assertEquals(Effect.Say(Reply.HistoryDeleted(true)), Rules.next(listening, Event.HistoryDeleted(true)).effects.last())
-        // While a task exists, it is ignored (section 11.10).
-        assertEquals(Step(runningTask), heard(runningTask, "Kestrel, clear history", named = true))
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Kestrel, delete history"))), heard(handedOver(), "Kestrel, delete history", named = true).effects)
+        // Its question is the conversation's own, which the voice answers as any yes-or-no question.
+        val question = asked(QuestionKind.YES_NO, listening.copy(conversation = VoiceView(open = true)))
+        assertEquals(InputIntent.Answer(ChannelAnswer.Yes), (heard(question, "Yes.").effects.last() as Effect.Converse).intent)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Go on"))), heard(question, "Go on").effects.dropLast(1))
+        // While a goal works or waits, the conversation decides what it means.
+        val clear = Event.Heard("Kestrel, clear history", named = true)
+        assertEquals(Effect.Converse(InputIntent.DeleteHistory, clear), Rules.next(acting, clear).effects.last())
+        assertEquals(Effect.Converse(InputIntent.DeleteHistory, clear), Rules.next(handedOver(), clear).effects.last())
     }
 
     @Test
-    fun rememberForgetAndSaveThatAsRunAsKestrelsOwnTask() {
-        val remember = heard(listening, "Kestrel, remember that the gate code is blue.", named = true)
-        assertEquals(Effect.RunMemoryTask(1, Request.Remember("the gate code", "blue")), remember.effects.last())
-        assertEquals(TaskPhase.RUNNING, remember.state.taskPhase)
-        assertEquals(Effect.RunMemoryTask(1, Request.Forget("the gate code")), heard(listening, "Kestrel, forget the gate code", named = true).effects.last())
-        assertEquals(Effect.RunMemoryTask(1, Request.SaveRoutine("test routine")), heard(listening, "Kestrel, save that as test routine.", named = true).effects.last())
-        // A form that the parser does not take runs as a task.
-        assertEquals(Effect.RunTask(1, "remember to buy milk"), heard(listening, "Kestrel, remember to buy milk", named = true).effects.last())
-        // During a hand-over it waits, as a task does.
-        assertEquals(Effect.Show(Feedback.FinishHandOverFirst), heard(handedOver(), "Kestrel, forget the gate code", named = true).effects.last())
+    fun rememberForgetAndSaveThatAsGoToTheConversation() {
+        fun intent(state: State, text: String) = (heard(state, text, named = true).effects.last() as Effect.Converse).intent
+
+        assertEquals(InputIntent.Remember("the gate code", "blue"), intent(listening, "Kestrel, remember that the gate code is blue."))
+        assertEquals(InputIntent.Forget("the gate code"), intent(listening, "Kestrel, forget the gate code"))
+        assertEquals(InputIntent.SaveRoutine("test routine"), intent(listening, "Kestrel, save that as test routine."))
+        // A form that the parser does not take is a command.
+        assertEquals(InputIntent.Command("remember to buy milk"), intent(listening, "Kestrel, remember to buy milk"))
+        // During a hand-over too: the conversation decides when it runs.
+        assertEquals(InputIntent.Forget("the gate code"), intent(handedOver(), "Kestrel, forget the gate code"))
     }
 
     @Test
     fun theWaitForAnAnswerDoesNotEndWhileKestrelStillSpeaksTheQuestion() {
-        // A confirmation may take longer to say than the wait to start the answer (design D14 of sub-project 5).
-        val question = asking(TaskAsk.CONFIRM)
-        assertTrue(question.speaking)
-        assertEquals(Step(question), Rules.next(question, Event.AnswerWaitEnded(question.wait)))
-        // The whole wait starts again once the question has been spoken.
-        val spoken = Rules.next(question, Event.SpeechEnded)
-        assertEquals(listOf(Effect.WaitForAnswer()), spoken.effects)
-        assertEquals(listOf(Effect.AnswerTask(1, null)), Rules.next(spoken.state, Event.AnswerWaitEnded(spoken.state.wait)).effects)
-        // "Continue the task?" and the question before deleting the history wait in the same way.
-        val continuing = Rules.next(pausedByLock().copy(screenSeen = true), Event.Screen(on = true)).state
-        assertEquals(Step(continuing), Rules.next(continuing, Event.AnswerWaitEnded(continuing.wait)))
-        val deleting = heard(listening, "Kestrel, delete history", named = true).state
-        assertEquals(Step(deleting), Rules.next(deleting, Event.AnswerWaitEnded(deleting.wait)))
+        // A confirmation may take longer to say than the wait to start the answer (design D14 of sub-project 5); "Continue
+        // the goal?" and Kestrel's own questions wait in the same way.
+        for (kind in listOf(QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.YES_NO)) {
+            val question = Rules.next(acting, Event.ChannelAsks(4, "Shall I send it?", kind)).state
+            assertTrue(question.speaking)
+            assertEquals(Step(question), Rules.next(question, Event.AnswerWaitEnded(question.wait)))
+            // The whole wait starts again once the question has been spoken.
+            val spoken = Rules.next(question, Event.SpeechEnded)
+            assertEquals(listOf(Effect.WaitForAnswer()), spoken.effects)
+            assertEquals(
+                listOf(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence))),
+                Rules.next(spoken.state, Event.AnswerWaitEnded(spoken.state.wait)).effects,
+            )
+        }
     }
 
     @Test
-    fun aStopBeforeKestrelsOwnRequestsCancelsTheTaskFirst() {
-        val forget = heard(runningTask, "Stop. Kestrel, forget the gate code.", named = true)
+    fun aStopBeforeKestrelsOwnRequestsGivesTheStopFirst() {
+        val forget = Event.Heard("Stop. Kestrel, forget the gate code.", named = true)
         assertEquals(
             listOf(
                 Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code.")),
-                Effect.CancelTask,
-                Effect.RunMemoryTask(2, Request.Forget("the gate code")),
+                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Forget("the gate code"), forget),
             ),
-            forget.effects,
+            Rules.next(acting, forget).effects,
         )
-        assertEquals(TaskPhase.RUNNING, forget.state.taskPhase)
-        // Once the task has gone, "delete history" asks as it does without a task.
-        assertEquals(
-            listOf(
-                Effect.Show(Feedback.Heard("Stop. Kestrel, delete history")),
-                Effect.CancelTask,
-                Effect.Say(Reply.DeleteHistoryQuestion),
-                Effect.WaitForAnswer(),
-            ),
-            heard(runningTask, "Stop. Kestrel, delete history", named = true).effects,
-        )
-        // In every phase: while the task asks, while it is paused, during "Continue the task?" and during a hand-over.
-        for (state in listOf(asking(TaskAsk.CONFIRM), pausedByLock().copy(screenOn = true), continueAsked(), handedOver())) {
-            val step = heard(state, "Stop. Kestrel, remember that the gate code is blue.", named = true)
-            assertTrue("$state", Effect.CancelTask in step.effects)
-            assertEquals("$state", Effect.RunMemoryTask(2, Request.Remember("the gate code", "blue")), step.effects.last())
+        // In every phase: while the goal asks, while it is paused, during "Continue the goal?" and during a hand-over.
+        val remember = Event.Heard("Stop. Kestrel, remember that the gate code is blue.", named = true)
+        for (state in listOf(asked(QuestionKind.CONFIRM), goal(GoalPhase.PAUSED), continueAsked(), handedOver())) {
+            val step = Rules.next(state, remember)
+            assertTrue("$state", Effect.Converse(InputIntent.Stop) in step.effects)
+            assertEquals("$state", Effect.Converse(InputIntent.Remember("the gate code", "blue"), remember), step.effects.last())
         }
-        assertTrue(Effect.RunMemoryTask(2, Request.SaveRoutine("test routine")) in heard(runningTask, "Stop. Kestrel, save that as test routine", named = true).effects)
-        // During "Continue the task?" every request after "Stop." cancels the task first.
-        val asked = continueAsked()
+        // "Stop. Kestrel, open settings." stops the goal and opens them.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.CancelTask, Effect.OpenSettings),
-            heard(asked, "Stop. Kestrel, open settings.", named = true).effects,
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop), Effect.OpenSettings),
+            heard(continueAsked(), "Stop. Kestrel, open settings.", named = true).effects,
         )
+        // With the screen off nothing may start, but the stop still stops the goal.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, continue.")), Effect.CancelTask, Effect.Say(Reply.NoTaskToContinue)),
-            heard(asked, "Stop. Kestrel, continue.", named = true).effects,
-        )
-        // With the screen off nothing may start, but the stop still cancels the task.
-        assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code")), Effect.CancelTask),
-            heard(pausedByLock(), "Stop. Kestrel, forget the gate code", named = true).effects,
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code")), Effect.Converse(InputIntent.Stop)),
+            heard(pausedGoal, "Stop. Kestrel, forget the gate code", named = true).effects,
         )
     }
 
-    @Test
-    fun aLateTaskBusyLeavesAPausedTaskAndItsQuestionAlone() {
-        val asked = continueAsked()
-
-        assertEquals(Step(asked), Rules.next(asked, Event.TaskBusy(1)))
-        assertEquals(Step(pausedByLock()), Rules.next(pausedByLock(), Event.TaskBusy(1)))
+    // Kestrel's own question, "Delete the history?", spoken by the voice (design 11 of sub-project 7).
+    private fun ownQuestion(): State {
+        val view = VoiceView(open = true, asking = QuestionKind.DELETE_HISTORY, question = 4)
+        return Rules.next(listening.copy(conversation = view), Event.ChannelAsks(4, "Delete the history?", QuestionKind.DELETE_HISTORY)).state
     }
 
     @Test
-    fun duringTheDeleteQuestionTurningOffPausingAndStoppingKeepTheirMeaning() {
-        val speaking = heard(listening, "Kestrel, delete history", named = true).state
+    fun duringKestrelsOwnQuestionTurningOffPausingAndStoppingKeepTheirMeaning() {
+        val speaking = ownQuestion()
         val asked = Rules.next(speaking, Event.SpeechEnded).state
+        val withdrawn = Effect.Converse(InputIntent.Answer(ChannelAnswer.Interrupted))
 
         val off = heard(asked, "Stop Kestrel")
         assertEquals(Mode.OFF, off.state.mode)
-        assertFalse(off.state.deleteAsking)
+        assertTrue(withdrawn in off.effects)
         val paused = heard(asked, "Stop listening")
         assertEquals(Mode.PAUSED, paused.state.mode)
-        assertFalse(paused.state.deleteAsking)
-        assertFalse(Effect.DeleteHistory in paused.effects)
-        // "Stop" ends the question and Kestrel's voice, and the spotter's "stop" over the question ends it too.
-        val stopped = heard(speaking, "Stop.")
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.StopSaying), stopped.effects)
-        assertFalse(stopped.state.deleteAsking)
-        val spotted = Rules.next(speaking, Event.Spotted(Keyword.STOP))
-        assertEquals(listOf(Effect.StopSaying), spotted.effects)
-        assertFalse(spotted.state.deleteAsking)
+        assertTrue(withdrawn in paused.effects)
+        // "Stop" ends the question and Kestrel's voice, and so does the spotter's "stop" over the question.
+        assertEquals(
+            listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.StopSaying, Effect.Converse(InputIntent.Stop)),
+            heard(speaking, "Stop.").effects,
+        )
+        assertEquals(listOf(Effect.StopSaying, Effect.Converse(InputIntent.Stop)), Rules.next(speaking, Event.Spotted(Keyword.STOP)).effects)
     }
 
     @Test
-    fun kestrelOrTheAssistantGestureDuringTheDeleteQuestionWaitsForTheTask() {
-        val speaking = heard(listening, "Kestrel, delete history", named = true).state
+    fun kestrelOrTheAssistantGestureDuringKestrelsOwnQuestionWithdrawsItAndWaitsForACommand() {
+        val speaking = ownQuestion()
         val asked = Rules.next(speaking, Event.SpeechEnded).state
 
         val waits = listOf(
@@ -1948,20 +1631,25 @@ class RulesTest {
         )
         for (wait in waits) {
             assertEquals(Work.AWAITING_TASK, wait.state.work)
-            assertFalse(wait.state.deleteAsking)
-            // The question ended without deleting anything, and the task that the owner then says runs.
-            assertFalse(Effect.DeleteHistory in wait.effects)
-            assertEquals(Effect.RunTask(1, "Open Viber."), heard(wait.state, "Open Viber.").effects.last())
+            assertTrue(Effect.Converse(InputIntent.Answer(ChannelAnswer.Interrupted)) in wait.effects)
+            // The command that the owner then says reaches the conversation.
+            val command = Event.Heard("Open Viber.", named = false)
+            assertEquals(Effect.Converse(InputIntent.Command("Open Viber."), command), Rules.next(wait.state, command).effects.last())
         }
     }
 
     @Test
-    fun thePauseEventsAndEffectsPrintNoWords() {
+    fun theConversationsEventsAndEffectsPrintNoWords() {
         val printed = listOf(
-            Effect.RunMemoryTask(1, Request.Remember("secret", "secret")),
+            Event.ChannelSays(1, "secret"),
+            Event.ChannelShows("secret"),
+            Event.ChannelAsks(4, "secret", QuestionKind.FREE),
+            Event.ChannelHandsOver("secret"),
+            Effect.Converse(InputIntent.Command("secret"), Event.Heard("secret", named = false)),
+            Reply.Channel(1, "secret"),
+            Feedback.ConversationText("secret"),
             Request.Forget("secret"),
-            Request.SaveRoutine("secret"),
-            pausedByLock().copy(heldReport = "secret"),
+            asked(QuestionKind.FREE),
         ).joinToString()
 
         assertFalse(printed, printed.contains("secret"))

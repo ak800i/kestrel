@@ -12,6 +12,7 @@ import dev.kestrel.app.debug.TestHooks
 import dev.kestrel.app.debug.VoiceHooks
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -105,10 +106,10 @@ class VoiceHookTest {
                     "detail=none said=\\S+ shown=\\S+ read=other latest=\\d+",
             )
             assertTrue(own, line.matches(own))
-            // AgentRunner takes a task's options when the task starts, so the test records what each take handed over.
-            val take = listening.taskOptions ?: error("The tag did not set Listening.taskOptions")
-            val handed = CopyOnWriteArrayList<Pair<Int, Map<String, String>>>()
-            listening.taskOptions = { number -> take(number).also { handed += number to it } }
+            // The tag's options go with the input that its transcript gives the conversation, so the test records each input.
+            val take = listening.inputs ?: error("The tag did not set Listening.inputs")
+            val handed = CopyOnWriteArrayList<OwnerInput>()
+            listening.inputs = { heard, input -> take(heard, input).also { handed += it } }
             try {
                 assertEquals(
                     HookReply(HookReply.FAILED, "error: the tag $tag is in use; give each transcript a new tag"),
@@ -117,7 +118,7 @@ class VoiceHookTest {
                 assertEquals(HookReply(HookReply.FAILED, "error: no transcript has the tag never-sent"), hook("VOICE_STATE", "tag" to "never-sent"))
                 assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
 
-                // A tagged transcript that starts a task gets the task's number, and its extras reach the task's runner once.
+                // A tagged transcript that starts a goal gets its command's number, and its extras go with its input once.
                 val taskTag = "task-${System.nanoTime()}"
                 val sent = hook("VOICE", "event" to "heard", "text" to "Kestrel, open the settings.", "tag" to taskTag, "model" to "test-model", named = true)
                 assertEquals("sent heard tag=$taskTag", sent.text)
@@ -125,12 +126,10 @@ class VoiceHookTest {
                 val taskLine = hook("VOICE_STATE", "tag" to taskTag).text
                 val task = Regex(" task=(\\d+) ").find(taskLine)?.groupValues?.get(1)?.toInt() ?: 0
                 assertTrue(taskLine, task > 0 && taskLine.contains(" command=0 ") && taskLine.contains(" read=task "))
-                assertTrue("The task's runner did not take its options", VoiceTests.waitUntil(10_000) { handed.any { it.first == task } })
                 assertTrue("Kestrel still speaks", VoiceTests.waitUntil(20_000) { !listening.state.value.speaking })
-                assertEquals(listOf(mapOf("model" to "test-model")), handed.filter { it.first == task }.map { it.second })
-                assertEquals(emptyMap<String, String>(), take(task))
+                assertEquals(listOf(mapOf("model" to "test-model")), handed.map { it.options }.filter { it.isNotEmpty() })
             } finally {
-                listening.taskOptions = take
+                listening.inputs = take
             }
 
             assertEquals("sent off", hook("VOICE", "event" to "off").text)

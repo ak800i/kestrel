@@ -19,18 +19,9 @@ internal object AgentTexts {
     const val NO_PROFILE = "No provider profile is set up. Open Kestrel to add one."
     const val NO_WATCHER = "I can't watch the screen for your touches, so I won't run the task. Turn Kestrel's accessibility " +
         "service off and on."
-    const val CALL_STARTED = "I stopped the task because a call started right after my last action."
     const val CANCELLED = "Cancelled."
     const val DONE = "Done."
     const val NOTHING_CHANGED = "I didn't change anything."
-
-    // Kestrel's own memory requests (design D2 of sub-project 5).
-    const val REMEMBERED = "I'll remember that."
-    const val FORGOTTEN = "I've forgotten it."
-    const val NOT_SAVED = "I didn't change anything."
-    const val NOTHING_TO_SAVE = "There's nothing to save: no task finished in the last 10 minutes."
-
-    fun noFact(key: String): String = "There's no fact named $key."
 
     /** "I couldn't start the task." or, with a [reason], "I couldn't start the task: <reason>" (D32 item 2). */
     fun couldNotStart(reason: String? = null): String = if (reason == null) COULD_NOT_START else "I couldn't start the task: $reason"
@@ -42,9 +33,6 @@ internal object AgentTexts {
             report.summary?.let { "I think it's done, but I couldn't check it: ${it.trimEnd('.')}." } ?: "I think it's done, but I couldn't check it."
         else -> "${reason(report, provider)} ${done(report)}"
     }
-
-    /** "Cancelled: <what the task did>", for the bar when a newer task replaced it (D32 item 4). */
-    fun replaced(report: TaskReport): String = "Cancelled: ${ledger(report)}"
 
     /** What the task did, in Kestrel's words: "I opened Viber, typed the message and sent it." */
     fun ledger(report: TaskReport): String = Ledger.sentence(report.ledger) ?: NOTHING_CHANGED

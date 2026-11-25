@@ -13,14 +13,29 @@ import dev.kestrel.agent.memory.RouteNote
 import dev.kestrel.agent.memory.Routine
 import dev.kestrel.agent.port.EyesPort
 import dev.kestrel.agent.port.NoEyes
-import dev.kestrel.app.agent.AgentEnvironment
-import dev.kestrel.app.agent.AgentRunner
-import dev.kestrel.app.agent.AppAgentEnvironment
+import dev.kestrel.app.agent.AppGoalEnvironment
 import dev.kestrel.app.agent.AppModels
 import dev.kestrel.app.agent.CacheState
 import dev.kestrel.app.agent.CallBackstop
 import dev.kestrel.app.agent.PermissionActivity
+import dev.kestrel.app.agent.Permissions
+import dev.kestrel.app.agent.RoundModels
 import dev.kestrel.app.agent.SettingsMemoryStore
+import dev.kestrel.app.conversation.AndroidOwnerSupport
+import dev.kestrel.app.conversation.ConversationSignals
+import dev.kestrel.app.conversation.PermissionDialog
+import dev.kestrel.app.conversation.storedConversationSettings
+import dev.kestrel.app.conversation.VoiceChannel
+import dev.kestrel.app.orchestrator.Event
+import dev.kestrel.conversation.engine.ConversationEngine
+import dev.kestrel.conversation.goal.GoalRunner
+import dev.kestrel.conversation.local.LocalRequests
+import dev.kestrel.conversation.machine.ConversationEvent
+import dev.kestrel.conversation.machine.ConversationState
+import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.store.HistorySearch
+import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.app.assist.KestrelAssistantService
 import dev.kestrel.app.commands.CommandEnvironment
 import dev.kestrel.app.commands.CommandOptions
@@ -65,6 +80,7 @@ import dev.kestrel.app.download.downloadBlockedBy
 import dev.kestrel.app.download.gatewayDownloader
 import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.orchestrator.forVoice
 import dev.kestrel.app.phone.AndroidScreenSource
 import dev.kestrel.app.phone.PhoneSignals
 import dev.kestrel.app.providers.ProviderAllowlist
@@ -107,6 +123,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -357,7 +374,7 @@ class AppGraph(context: Context) {
     // Plan 4C: provider graph
 
     // sub-project 5B: agent
-    /** The agent's eyes for look_closer (design D20): NoEyes until plan 5C's block below sets them. AgentRunner reads it at each task. */
+    /** The agent's eyes for look_closer (design D20): NoEyes until plan 5C's block below sets them. Each round reads it. */
     internal var agentEyes: EyesPort = NoEyes
 
     /**
@@ -376,58 +393,129 @@ class AppGraph(context: Context) {
         SettingsMemoryStore(settings, { app, provider -> screenshotApproved(app, provider) }, { app, provider -> approveScreenshots(app, provider) })
     }
 
-    /** What each task needs from Kestrel's parts (design D1 of sub-project 5); built at the first task. */
-    private val agentEnvironment: AgentEnvironment by lazy {
-        AppAgentEnvironment(
+    /**
+     * What the conversation and a goal's rounds need from Android (design 5.5 of sub-project 7): the confirmation card,
+     * the bar, the touch watcher, the other apps' audio, the hand-overs that end by themselves and Android's permission
+     * dialog. Kestrel's own pages for the owner open through the screen session, as notification access during its
+     * hand-over; the agent's launches go only through the launch check and AppScreenPort.
+     */
+    private val ownerSupport: AndroidOwnerSupport by lazy {
+        AndroidOwnerSupport(
+            context = appContext,
+            session = { screen.value },
+            open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
+            calls = { phoneSignals.callStates() },
+        )
+    }
+
+    /** The backstop against a call that the agent placed (design D13 of sub-project 5): the rounds and the signals share it. */
+    private val callBackstop: CallBackstop by lazy { CallBackstop(AndroidCallApi(appContext), SystemClock::elapsedRealtime) }
+
+    private val debuggable: Boolean get() = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+
+    /** How a round's model is chosen (design D28 of sub-project 5); the debug hooks install a test script here. */
+    internal val roundModels: RoundModels by lazy {
+        val models = AppModels(
+            { providers },
+            appliedProviders,
+            { profileId -> settings.get(SettingKeys.providerModels(profileId)).models },
+            CacheState { settings.get(SettingKeys.AGENT_CACHE_FIELDS) },
+            reportFailure,
+        )
+        RoundModels(debuggable, { settings.get(SettingKeys.AGENT_LIVE_SESSION) }, models::port)
+    }
+
+    /** What each round of a goal needs from Kestrel's parts (design 5.5 and 7.1 of sub-project 7); the debug hooks read it. */
+    internal val goalEnvironment: AppGoalEnvironment by lazy {
+        AppGoalEnvironment(
             context = appContext,
             session = { screen.value },
             settings = settings,
             memory = memory,
             appendLog = { logs.append(it) },
-            models = AppModels(
-                { providers },
-                appliedProviders,
-                { profileId -> settings.get(SettingKeys.providerModels(profileId)).models },
-                CacheState { settings.get(SettingKeys.AGENT_CACHE_FIELDS) },
-                reportFailure,
-            ),
-            send = { listening.send(it) },
-            states = listening.state,
+            models = roundModels,
+            watcher = ownerSupport,
+            backstop = callBackstop,
             eyes = { agentEyes },
             showBadges = { session, badges -> showAgentBadges(session, badges) },
             hideBadges = { session -> hideAgentBadges(session) },
-            askAndroid = { permissions -> PermissionActivity.ask(context, permissions) },
             knownNames = { contacts.contacts().orEmpty().flatMap { it.names }.toSet() },
+            debuggable = debuggable,
             report = reportFailure,
         )
+    }
+
+    /** The Conversations page's choices as stored (design 13 of sub-project 7): the conversation's restore waits for them. */
+    private val storedSettings: Flow<ConversationSettings>
+        get() = storedConversationSettings(settings.observe(SettingKeys.CONVERSATIONS), reportFailure)
+
+    /** The same choices as a value, for the search's retention and the follow-up window, which read them at once. */
+    private val conversationSettings: StateFlow<ConversationSettings> by lazy {
+        storedSettings.stateIn(scope, SharingStarted.Eagerly, ConversationSettings())
+    }
+
+    /** The search over past conversations (design 9.5 of sub-project 7), within the owner's retention. */
+    private val conversationSearch: HistorySearch by lazy {
+        HistorySearch(conversationStore, { conversationSettings.value.keptDays }, AndroidConversationClock)
+    }
+
+    private val goalRunner: GoalRunner by lazy {
+        GoalRunner(goalEnvironment, screenTurns, conversationSearch, AndroidConversationClock, reportFailure)
+    }
+
+    /** The conversation's voice (design 11 of sub-project 7), over the Orchestrator. */
+    private val voiceChannel: VoiceChannel by lazy {
+        VoiceChannel(listening.voicePath, ownerSupport, ownerSupport, ownerSupport, PermissionDialog { permissions -> PermissionActivity.ask(appContext, permissions) })
     }
 
     /**
-     * Runs Kestrel's tasks and memory requests (design D2 of sub-project 5): Listening's [Listening.runTask],
-     * [Listening.runMemory] and [Listening.steerTask] go to it. Built at the first task; it reaches Listening only
-     * through lambdas, because Listening is built first.
+     * Debug builds only: the hooks' watcher of the conversation's steps (design 14.4 of sub-project 7), which CommandTags
+     * reads. Null, and so nothing, outside the debug hooks.
      */
-    internal val agent: AgentRunner by lazy {
-        AgentRunner(
+    @Volatile
+    internal var conversationSteps: ((ConversationEvent, ConversationState, MachineStep) -> Unit)? = null
+
+    /**
+     * The conversation (design 5 and 5.6 of sub-project 7): it takes the owner's spoken inputs from Listening, runs goals
+     * and Kestrel's own requests, speaks through the voice channel and keeps the archive. KestrelApplication restores it
+     * once at the process start; inputs wait for the restore. It reaches Listening only through lambdas and flows, because
+     * Listening is built first. Until plan 7F the voice is its only channel.
+     */
+    internal val conversations: ConversationEngine by lazy {
+        ConversationEngine(
             scope = scope,
-            environment = { agentEnvironment.prepare(it) },
-            send = { listening.send(it) },
-            latestTask = { listening.state.value.task },
-            options = { task -> listening.taskOptions?.invoke(task).orEmpty() },
-            debuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
-            liveSession = { settings.get(SettingKeys.AGENT_LIVE_SESSION) },
-            deleteHistory = { logs.deleteHistory() },
-            showOnBar = { text -> scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text, false) } },
-            backstop = CallBackstop(AndroidCallApi(appContext), SystemClock::elapsedRealtime),
+            store = conversationStore,
+            goals = goalRunner,
+            local = LocalRequests(
+                memory,
+                conversationStore,
+                conversationSearch,
+                goalRunner::saveRoutine,
+                AndroidConversationClock,
+                reportFailure,
+            ),
+            channels = mapOf(InputChannel.VOICE to voiceChannel),
+            permissions = { permissions -> Permissions.granted(appContext, permissions) },
+            settings = storedSettings,
+            testMode = settings.observe(SettingKeys.SAFETY).map { it.testMode },
+            voiceOn = listening.state.map { it.mode != Mode.OFF }.distinctUntilChanged(),
+            clock = AndroidConversationClock,
             report = reportFailure,
-            nowMillis = System::currentTimeMillis,
-        )
+            onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
+        ).also(::followConversation)
     }
 
-    private fun runTasks(listening: Listening) {
-        listening.runTask = { task, text -> agent.run(task, text) }
-        listening.runMemory = { task, request -> agent.runMemory(task, request) }
-        listening.steerTask = { effect -> agent.steer(effect) }
+    // The voice reads the conversation's view, and the phone's lock and calls reach the conversation while it is open
+    // (design 5.5 and 6.5 of sub-project 7).
+    private fun followConversation(engine: ConversationEngine) {
+        scope.launch { engine.view.forVoice().collect { view -> listening.send(Event.ConversationChanged(view)) } }
+        scope.launch { ConversationSignals(phoneSignals, callBackstop, scope, engine::signal, reportFailure).follow(engine.view) }
+    }
+
+    // Listening gives the conversation the owner's spoken inputs and its wait for a command after "Yes?".
+    private fun converse(listening: Listening) {
+        listening.converse = { input -> conversations.submit(input) }
+        listening.awaitingCommand = { active -> conversations.awaitingCommand(active) }
     }
 
     // sub-project 5C: eyes
@@ -644,7 +732,7 @@ class AppGraph(context: Context) {
                 MicCapture(appContext, earbud = { listening.currentOptions.value.earbudMicrophone }).also { latestMicrophone = it }
             },
             timeline = timeline,
-        ).also(::keepScreenFresh).also(::runTasks)
+        ).also(::keepScreenFresh).also(::converse)
     }
 
     /**

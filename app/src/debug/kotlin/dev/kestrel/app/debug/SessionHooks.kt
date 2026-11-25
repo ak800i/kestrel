@@ -19,8 +19,6 @@ import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.StopReason
-import dev.kestrel.app.orchestrator.Event
-import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.voice.KeywordTuning
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceChoice
@@ -43,12 +41,13 @@ import kotlin.math.roundToInt
 
 /**
  * The hooks of the A71 session (plan 2D, design D8), which scripts\a71-session.ps1 uses. VOICE_COUNTS answers the number
- * of Kestrel's latest wait for a task, which rises with each wait and also when a wait starts again, how many tasks
- * Kestrel has started in its process, how many words the last slow task had, and how many keyword hits its voice sessions
- * reported, so that the session counts Kestrel's reactions and the spotter's hits, also false ones, without reading what
- * Kestrel heard. VOICE_TASK makes each
- * task take some seconds and then say a given reply, in place of the task that ends at once, so that the owner can
- * interrupt a long reply or say "stop" while a task runs; a task that Kestrel cancelled meanwhile ends without its reply.
+ * of Kestrel's latest wait for a task, which rises with each wait and also when a wait starts again, the newest command
+ * of the conversation in its process, how many words the newest goal had since the first voice-task or tagged transcript,
+ * and how many keyword hits its voice sessions reported, so that the session counts Kestrel's reactions and the spotter's
+ * hits, also false ones, without reading what Kestrel heard. VOICE_TASK makes each goal's round a stand-in
+ * ([StandInRound]) that takes some seconds and then gives up with a given reply, in place of a round that ends at once
+ * without a script, so that the owner can interrupt a long reply or say "stop" while a goal works; a goal that the owner
+ * stopped meanwhile ends with the report of a stop, as any goal does.
  * VOICE_ECHO plays a text in one of Kestrel's voices through the speaker while the real microphone feeds the keyword
  * spotter, and counts the keyword hits and those that the echo filter takes for Kestrel's own voice (design spec, section
  * 8.4), with the loudest sample that the microphone heard and whether Android silenced it, so that a run that heard
@@ -69,8 +68,8 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "VOICE_COUNTS" -> graph.listening.state.value.let {
             val counts = graph.listening.voiceCounts.describe()
-            "waits=${it.wait} tasks=${it.task} lastTaskWords=$lastTaskWords hits=${graph.listening.keywordHits}" +
-                if (counts.isEmpty()) "" else " $counts"
+            "waits=${it.wait} tasks=${graph.conversations.view.value.command} lastTaskWords=${VoiceHooks.tags.lastGoalWords} " +
+                "hits=${graph.listening.keywordHits}" + if (counts.isEmpty()) "" else " $counts"
         }
         "VOICE_TIMES" -> times()
         "VOICE_ROUTE" -> "earbud=${if (graph.listening.currentOptions.value.earbudMicrophone) "on" else "off"} " +
@@ -251,31 +250,17 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         val seconds = intent.getIntExtra(EXTRA_SECONDS, 0)
         if (seconds !in 1..MAX_TASK_SECONDS) throw HookError("add --ei seconds with 1 to $MAX_TASK_SECONDS")
         val reply = intent.getStringExtra(EXTRA_REPLY)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es reply <text>")
-        val listening = graph.listening
-        synchronized(lock) {
-            if (replacedTask == null) replacedTask = listening.runTask
-            listening.runTask = { task, text ->
-                // A count, never the words, so that the session can tell a dictated task that was split.
-                lastTaskWords = text.split(Regex("\\s+")).count { it.isNotEmpty() }
-                graph.scope.launch {
-                    delay(seconds * 1_000L)
-                    // A task that Kestrel cancelled meanwhile ends in silence, so that the next try starts quiet.
-                    val state = listening.state.value
-                    val running = state.task == task && state.work == Work.RUNNING_TASK
-                    listening.send(Event.TaskEnded(task, reply.takeIf { running }))
-                }
-            }
-        }
-        return "each task now takes $seconds s and then says a reply of ${reply.length} characters, until voice-task -Clear " +
-            "or the end of Kestrel's process"
+        // The goal's words are counted as a count, never kept, so that the session can tell a dictated goal that was split.
+        VoiceHooks.install(graph)
+        val standIn = StandInRound(seconds, reply)
+        graph.goalEnvironment.standIn = standIn::prepare
+        return "each goal's round now takes $seconds s and then gives up with a reply of ${reply.length} characters, until " +
+            "voice-task -Clear or the end of Kestrel's process"
     }
 
     private fun clearTask(): String {
-        synchronized(lock) {
-            replacedTask?.let { graph.listening.runTask = it }
-            replacedTask = null
-        }
-        return "each task ends at once again"
+        graph.goalEnvironment.standIn = null
+        return "each goal's round runs on the phone again"
     }
 
     private fun startEcho(intent: Intent): String {
@@ -410,12 +395,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
 
         private val lock = Any()
 
-        // The task that VOICE_TASK replaced, which VOICE_TASK --ez clear true puts back.
-        private var replacedTask: ((Int, String) -> Unit)? = null
         private var echo: Echo? = null
-
-        @Volatile
-        private var lastTaskWords = 0
 
         private const val MAX_TASK_SECONDS = 120
         private const val EXTRA_SECONDS = "seconds"

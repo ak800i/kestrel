@@ -83,9 +83,11 @@ internal class VoiceHooks(private val graph: AppGraph) {
         val number = tagged.command
         val (kind, outcome) = kindAndOutcome(graph, number)
         val runningNow = number > 0 && number == state.command && state.work == Work.RUNNING_COMMAND
-        val taskNow = tagged.task > 0 && tagged.task == state.task && state.work == Work.RUNNING_TASK
+        // The conversation's command runs until it has its outcome (design 14.4 of sub-project 7).
+        val taskNow = tagged.task > 0 && graph.conversations.outcome(tagged.task) == null
         val phase = when {
-            tagged.role == CommandTags.Role.PENDING -> "pending"
+            // A transcript that the conversation has not yet taken waits, as one that the Orchestrator has not read.
+            tagged.role == CommandTags.Role.PENDING || tagged.role == CommandTags.Role.CONVERSE -> "pending"
             tagged.task > 0 -> if (taskNow) "running" else "ended"
             number == 0 -> "none"
             runningNow && state.counting -> "countdown"
@@ -250,8 +252,6 @@ internal class VoiceHooks(private val graph: AppGraph) {
         /** The tags of plan 4D's checks, one record for the whole process. */
         val tags: CommandTags by lazy { CommandTags() }
 
-        /** The options of the tasks that tagged transcripts started, for sub-project 5's AgentRunner (Listening.taskOptions). */
-        val tasks: TaskOptions by lazy { TaskOptions() }
 
         const val YES_CALL_REFUSED = "only the emulator may answer \"yes, call\""
 
@@ -264,28 +264,37 @@ internal class VoiceHooks(private val graph: AppGraph) {
         fun refused(text: String, hardware: String): Boolean = !emulator(hardware) && EmergencyGuard.confirmed(text)
 
         /**
-         * Links [tag] and [options] to [event] before Kestrel handles it, and starts the record of the Orchestrator's steps
-         * (plan 4D, H1): a task that a tagged transcript starts gets its options in [tasks] before it runs, and
-         * Listening.taskOptions reads them from there.
+         * Links [tag] and [options] to [event] before Kestrel handles it, and starts the record of the steps ([install]):
+         * the input that a tagged transcript gives the conversation carries its options, and the round that it starts reads
+         * them.
          */
         fun tag(graph: AppGraph, tag: String, event: Event.Heard, options: Map<String, String> = emptyMap()) {
             if (!TAG.matches(tag)) throw HookError("add --es tag with 1 to 32 letters, digits, '-' and '_'")
-            val listening = graph.listening
-            if (listening.steps == null) {
-                listening.steps = { heard, before, step -> tags.onStep(heard, before, step)?.let { tasks.put(it.task, it.options) } }
-                listening.taskOptions = tasks::take
-                // Each task's witness keeps what it said and watches its data tools for the run's marker (plan 6B-basefix).
-                graph.agent.witnesses = { options -> DebugTaskWitness.open(options) }
-            }
+            install(graph)
             if (!tags.register(tag, event, readOf(event.text, event.named), options)) {
                 throw HookError("the tag $tag is in use; give each transcript a new tag")
             }
         }
 
         /**
-         * The options that a tagged transcript passes to the task that it starts, from the hook's extras: --es model and
-         * --ez live, which sub-project 5's AgentRunner reads (its design's "Shared files and anchors", item 2), and --es
-         * marker, a run's marker, which the task's [DebugTaskWitness] watches for (plan 6B-basefix).
+         * Starts the record of the Orchestrator's and the conversation's steps (plan 4D, H1; design 14.4 of sub-project 7),
+         * once per process: a tagged transcript's input gets its options, and each round's witness keeps what it said and
+         * watches its data tools for the run's marker (plan 6B-basefix).
+         */
+        @Synchronized
+        fun install(graph: AppGraph) {
+            val listening = graph.listening
+            if (listening.steps != null) return
+            listening.inputs = tags::input
+            graph.conversationSteps = tags::onConversationStep
+            graph.goalEnvironment.witnesses = { options -> DebugTaskWitness.open(options) }
+            listening.steps = tags::onStep
+        }
+
+        /**
+         * The options that a tagged transcript passes to the round that it starts, from the hook's extras: --es model and
+         * --ez live, which RoundModels reads (sub-project 5's design, "Shared files and anchors", item 2), and --es marker,
+         * a run's marker, which the round's [DebugTaskWitness] watches for (plan 6B-basefix).
          */
         fun taskOptions(model: String?, live: Boolean?, marker: String? = null): Map<String, String> = buildMap {
             model?.let { put("model", it) }

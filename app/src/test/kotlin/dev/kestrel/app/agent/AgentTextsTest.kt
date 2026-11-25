@@ -33,8 +33,7 @@ class AgentTextsTest {
     }
 
     @Test
-    fun aReplacedTasksReportForTheBarStartsWithCancelled() {
-        assertEquals("Cancelled: I opened Viber.", AgentTexts.replaced(TaskReport(EndReason.CANCELLED, ledger = listOf("opened Viber"))))
+    fun aRoundThatCannotStartSaysWhy() {
         assertEquals("I couldn't start the task: ${AgentTexts.NO_PROFILE}", AgentTexts.couldNotStart(AgentTexts.NO_PROFILE))
     }
 

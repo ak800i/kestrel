@@ -1,9 +1,9 @@
 package dev.kestrel.app.debug
 
-import dev.kestrel.agent.port.AnswerKind
-import dev.kestrel.app.agent.AgentRunner
-import dev.kestrel.app.orchestrator.TaskAsk
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.app.agent.TaskEvidence
 import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
@@ -20,6 +20,23 @@ import java.util.Locale
  */
 internal object AgentHookAnswers {
     /**
+     * How the conversation's command ended, for agent-task -Result (design 14.4 of sub-project 7): its report, Kestrel's
+     * final words ([spoken], which the command's outcome and record keep), the owner's touches that the watcher reported
+     * during its round ([touches]) and the signals without a finger among them ([signals]), and what the round's witness
+     * observed ([evidence]; empty in a release build and for Kestrel's own requests).
+     */
+    data class Ended(
+        val report: TaskReport,
+        val spoken: String?,
+        val touches: Int = 0,
+        val signals: Int = 0,
+        val evidence: TaskEvidence = TaskEvidence(),
+    ) {
+        override fun toString(): String =
+            "Ended(report=$report, spoken=${spoken?.length}, touches=$touches, signals=$signals, evidence=$evidence)"
+    }
+
+    /**
      * agent-task -Result's answer for a task that [ended]: its report's end and counts; `marker=1` when the sentence that
      * Kestrel said at the end or one of its `say` texts holds [marker]'s words in order, because the owner hears both
      * (design D29); the owner's touches that the watcher reported (`ownerTouches=`) and the signals among them
@@ -27,10 +44,10 @@ internal object AgentHookAnswers {
      * a data tool's result held the run's marker (none when the task had none); and with [digits] (agent-task -Digits),
      * `digits=1|0` at its end, for the end's sentence and the `say` texts alike (plan 6B-basefix).
      */
-    fun result(ended: AgentRunner.Ended, marker: String?, recipient: String?, digits: String? = null): String {
+    fun result(ended: Ended, marker: String?, recipient: String?, digits: String? = null): String {
         val report = ended.report
         val said = ended.evidence.said
-        val texts = said + listOfNotNull(ended.evidence.spoken)
+        val texts = said + listOfNotNull(ended.spoken)
         val inData = ended.evidence.markerInData?.let { seen -> if (seen) "1" else "0" } ?: "none"
         return "state=done end=${report.end} steps=${report.steps} workMs=${report.workMillis} " +
             "credits=${String.format(Locale.ROOT, "%.2f", report.credits)} confirmed=${report.confirmed} " +
@@ -119,13 +136,34 @@ internal object AgentHookAnswers {
     fun hostList(hosts: Collection<String>): String = hosts.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted().joinToString(",").ifEmpty { "none" }
 
     /**
+     * agent-state's `asking=`: the open question's kind in sub-project 5's words, which :tools:eval reads (design 14.4 of
+     * sub-project 7): `yes-no` (also a limit's "Continue?", the switch to a past conversation and "Delete the history?"),
+     * `confirm`, `free` (also
+     * look_closer's screenshot question), `pick-number` and `continue` ("Continue the goal?").
+     */
+    fun asking(kind: QuestionKind): String = when (kind) {
+        QuestionKind.YES_NO, QuestionKind.LIMIT, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "yes-no"
+        QuestionKind.CONFIRM -> "confirm"
+        QuestionKind.FREE, QuestionKind.SCREENSHOT -> "free"
+        QuestionKind.PICK -> "pick-number"
+        QuestionKind.CONTINUE_GOAL -> "continue"
+    }
+
+    /**
      * agent-state's `question=`: the kind that the agent asked the open question with, `yes-no`, `free` (the model's
      * `ask_user`, or a routine's name), `pick-number` (look_closer's "Which number should I use?"), `screenshot`
-     * (look_closer's screenshot question, which the Orchestrator asks as a free question) or `limit` (a round's "Continue?"
-     * at a limit, which the Orchestrator asks as a yes-or-no question; plan 7A), so that :tools:eval answers each as the
-     * owner decided (plan 6B-basefix).
+     * (look_closer's screenshot question, which the voice asks as a free question) or `limit` (a round's "Continue?"), so
+     * that :tools:eval answers each as the owner decided (plan 6B-basefix); `none` for a confirmation and the
+     * conversation's own questions.
      */
-    fun question(kind: AnswerKind): String = kind.name.lowercase().replace('_', '-')
+    fun question(kind: QuestionKind): String = when (kind) {
+        QuestionKind.YES_NO -> "yes-no"
+        QuestionKind.FREE -> "free"
+        QuestionKind.PICK -> "pick-number"
+        QuestionKind.SCREENSHOT -> "screenshot"
+        QuestionKind.LIMIT -> "limit"
+        QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"
+    }
 
     /** Whether one of the task's confirmed [recipients] is [wanted], compared folded: match, other, or none without either. */
     fun recipient(recipients: List<String>, wanted: String?): String = when {
@@ -155,9 +193,9 @@ internal object AgentHookAnswers {
      * category, so that an answer meant for one confirmation never reaches the next one. Without it, a confirmation takes
      * only "no" and "cancel", so that no word that confirms reaches a confirmation whose category the script did not read.
      */
-    fun answerRefusal(asking: TaskAsk?, words: String, open: Category?, expected: String?): String? = when {
-        expected != null && (asking != TaskAsk.CONFIRM || open?.wire != expected) -> "the task asks no confirmation of $expected now"
-        expected == null && asking == TaskAsk.CONFIRM && words !in DECLINING -> "add --es confirming with the open confirmation's category"
+    fun answerRefusal(asking: QuestionKind?, words: String, open: Category?, expected: String?): String? = when {
+        expected != null && (asking != QuestionKind.CONFIRM || open?.wire != expected) -> "the task asks no confirmation of $expected now"
+        expected == null && asking == QuestionKind.CONFIRM && words !in DECLINING -> "add --es confirming with the open confirmation's category"
         else -> null
     }
 

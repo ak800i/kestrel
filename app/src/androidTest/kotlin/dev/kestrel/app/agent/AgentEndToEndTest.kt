@@ -14,11 +14,13 @@ import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.app.SettingKeys
-import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.app.voice.VoiceTests
+import dev.kestrel.conversation.ConversationTexts
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.CommandOutcome
 import dev.kestrel.safety.SelfChats
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.runBlocking
@@ -74,7 +76,7 @@ class AgentEndToEndTest {
         ))
 
         val task = AgentTests.run("delete my chat with Ana", model)
-        AgentTests.awaitAsking(task, TaskAsk.CONFIRM)
+        AgentTests.awaitAsking(task, QuestionKind.CONFIRM)
         check(VoiceTests.waitUntil(5_000) { screen.showsWindow("Kestrel confirmation") }) { "The card did not show" }
         assertEquals(emptyList<String>(), AgentTests.presses(screen))
         AgentTests.say("confirm")
@@ -94,9 +96,8 @@ class AgentEndToEndTest {
             val task = AgentTests.run("read my newest message from Ana", model)
             // Each question is answered "cancel", as :tools:eval answers the injection fixtures (design D28).
             check(VoiceTests.waitUntil(30_000) {
-                val state = AgentTests.graph.listening.state.value
-                if (state.task == task && state.taskAsking != null) AgentTests.say("cancel")
-                AgentTests.graph.agent.ended(task) != null && !AgentTests.graph.agent.running(task)
+                if (AgentTests.graph.listening.state.value.openQuestion != null) AgentTests.say("cancel")
+                AgentTests.graph.conversations.outcome(task) != null
             }) { "The task did not end" }
             val ended = AgentTests.ended(task)
 
@@ -117,13 +118,13 @@ class AgentEndToEndTest {
         )
         val graph = AgentTests.graph
         val safety = graph.settings.get(SettingKeys.SAFETY)
-        val aliases = graph.agent.selfChatAliases
+        val aliases = graph.goalEnvironment.selfChatAliases
         val photo = addPhoto()
         try {
             // Test mode lets the share go only to the owner's WhatsApp-like self-chat, which the select form opens in a new
             // activity (final review of plan 5B, part A, M1).
             graph.settings.set(SettingKeys.SAFETY, safety.copy(whatsappOwnName = OWNER))
-            graph.agent.selfChatAliases = mapOf(FIXTURES to SelfChats.WHATSAPP)
+            graph.goalEnvironment.selfChatAliases = mapOf(FIXTURES to SelfChats.WHATSAPP)
             screen.open("MessengerActivity", "Chats", "--es shareForm select")
             val model = ScriptedModel(listOf(
                 call("find_media", null, null, null, "day" to "today", "kinds" to "photos"),
@@ -137,9 +138,8 @@ class AgentEndToEndTest {
 
             val task = AgentTests.run("share today's photo with my own WhatsApp chat", model)
             check(VoiceTests.waitUntil(60_000) {
-                val state = AgentTests.graph.listening.state.value
-                if (state.task == task && state.taskAsking == TaskAsk.CONFIRM) AgentTests.say("confirm")
-                AgentTests.graph.agent.ended(task) != null && !AgentTests.graph.agent.running(task)
+                if (AgentTests.graph.listening.state.value.openQuestion?.kind == QuestionKind.CONFIRM) AgentTests.say("confirm")
+                AgentTests.graph.conversations.outcome(task) != null
             }) { "The task did not end" }
             val ended = AgentTests.ended(task)
 
@@ -150,7 +150,7 @@ class AgentEndToEndTest {
             assertEquals(EndReason.FINISHED, ended.report.end)
         } finally {
             graph.settings.set(SettingKeys.SAFETY, safety)
-            graph.agent.selfChatAliases = aliases
+            graph.goalEnvironment.selfChatAliases = aliases
             context.contentResolver.delete(photo, null, null)
         }
     }
@@ -186,7 +186,7 @@ class AgentEndToEndTest {
         context.contentResolver.delete(ContactsContract.RawContacts.CONTENT_URI, "${ContactsContract.RawContacts.DISPLAY_NAME_PRIMARY} = ?", arrayOf(CONTACT))
     }
 
-    private fun addThenDelete(answer: String): Pair<AgentRunner.Ended, Int> {
+    private fun addThenDelete(answer: String): Pair<CommandOutcome, Int> {
         screen.open("MessengerActivity", "Chats")
         val add = ScriptedModel(listOf(
             call("add_contact", null, null, null, "name" to CONTACT, "number" to CONTACT_NUMBER),
@@ -202,7 +202,7 @@ class AgentEndToEndTest {
             call("finish", null, null, null, "summary" to "I deleted the contact.", "evidence" to listOf(mapOf("step" to 2))),
         ))
         val task = AgentTests.run("delete the contact $CONTACT", delete)
-        AgentTests.awaitAsking(task, TaskAsk.CONFIRM)
+        AgentTests.awaitAsking(task, QuestionKind.CONFIRM)
         // kestrel-api37's contacts sync to the owner's Google account: the test answers only when find_contact found the
         // test contact alone, so that the question names it and a yes can delete nothing else.
         val found = AgentTests.texts(delete).lines().filter { FOUND_LINE.containsMatchIn(it) }
@@ -251,6 +251,10 @@ class AgentEndToEndTest {
         assertEquals(EndReason.INTERRUPTED, first.report.end)
         assertEquals(Interruption.KESTREL_SCREEN, first.report.interruption)
         assertTrue(settings.requests.isEmpty())
+        // The goal is held, and Kestrel says how to go on (design 10.2 of sub-project 7).
+        check(VoiceTests.waitUntil(10_000) { AgentTests.spoken().joinToString(" ").contains(ConversationTexts.LEAVE_KESTREL) }) {
+            "Kestrel did not say how to go on"
+        }
 
         // open_app refuses Kestrel: the fixture stays in front.
         screen.open("MessengerActivity", "Chats")

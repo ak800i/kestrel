@@ -3,6 +3,7 @@ package dev.kestrel.app.listen
 import dev.kestrel.app.commands.CommandConversation
 import dev.kestrel.app.commands.CommandReport
 import dev.kestrel.app.commands.CommandRunner
+import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.orchestrator.Effect
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Feedback
@@ -12,10 +13,13 @@ import dev.kestrel.app.orchestrator.Reply
 import dev.kestrel.app.orchestrator.Request
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.app.orchestrator.Step
-import dev.kestrel.app.orchestrator.TaskAsk
-import dev.kestrel.app.orchestrator.TaskPhase
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
+import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
@@ -36,12 +40,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /** Starts and stops ListeningService. Any thread may call it. */
 internal interface ServiceControl {
@@ -117,9 +125,6 @@ internal enum class SettingsOpening {
 /** What Kestrel says and shows while it listens, and why it stopped (design spec, sections 8.9 and 14.6). */
 internal object ListeningTexts {
     const val YES = "Yes?"
-    const val TASK_FAILED = "I couldn't start the task."
-    // The same text as AgentTexts.CANCELLED, for a task that was cancelled before AgentRunner had it.
-    const val TASK_CANCELLED = "Cancelled."
     const val LISTENING = "Listening"
     const val PAUSED = "Paused"
     const val OFF = "Off"
@@ -167,17 +172,6 @@ internal object ListeningTexts {
         "assistant app. Tap my listening notification, or open Kestrel from the launcher."
     const val SETTINGS_BLOCKED = "Android did not let me open my settings. Tap my notification, or open Kestrel from " +
         "the launcher."
-
-    // A task's hand-over (design D2 of sub-project 5).
-    const val NO_TASK_TO_CONTINUE = "There's no task to continue."
-    const val FINISH_HAND_OVER_FIRST = "Say 'Kestrel, continue' or 'cancel' first."
-
-    // A task's pause and Kestrel's history (design D2 of sub-project 5).
-    const val CONTINUE_TASK = "Continue the task?"
-    const val ANSWER_CONTINUE_FIRST = "Answer 'Continue the task?' first, or say 'cancel'."
-    const val DELETE_HISTORY_QUESTION = "Delete the activity log and the network log? Say yes or no."
-    const val HISTORY_DELETED = "I deleted the history."
-    const val HISTORY_NOT_DELETED = "I couldn't delete the history."
 }
 
 /**
@@ -264,8 +258,9 @@ internal interface StopNotices {
  * voice session is open (section 8.6). [options] are the owner's choices for listening (section 15); Listening collects
  * them on [thread], passes them to the Orchestrator, and keeps the newest in [currentOptions].
  * [commands] runs the instant commands (sections 7.3 and 9.5): one job at a time in [scope]. A cancelled job holds the
- * screen in [turns], and a new command, a task or the settings wait until it has completed, for at most 3 s, so that two
- * parts of Kestrel never drive the screen at once. Every command that started gets one report in [commandReports].
+ * screen in [turns], and a new command or the settings wait until it has completed, for at most 3 s, as a goal's round
+ * does through the same turns, so that two parts of Kestrel never drive the screen at once. Commands, answers, stops and
+ * Kestrel's own requests go to the conversation through [converse], and the conversation speaks through [voicePath]. Every command that started gets one report in [commandReports].
  * [timeline] records on the phone's clock when a session opened, when Kestrel reacted to speech and why it turned itself
  * off, and [voiceCounts] counts what the sessions heard, as times and counts only, for the A71 session (plan 2E).
  */
@@ -304,28 +299,18 @@ class Listening internal constructor(
     internal var sessions: VoiceSessions = sessions
 
     /**
-     * Runs task number `task`, and must send [Event.TaskEnded] for it once it ends: sub-project 5's AgentRunner, which
-     * the app graph sets. Until it is set, every task ends at once with [ListeningTexts.TASK_FAILED], or Kestrel would
-     * wait for it for ever. The debug hooks replace it with a task that takes its time. Called on the controller's
-     * thread; it must not block.
+     * Where the owner's spoken inputs go (design 5.5 of sub-project 7): the conversation's engine, which the app graph
+     * sets. Called on the controller's thread; it must not block.
      */
     @Volatile
-    internal var runTask: (task: Int, text: String) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.TASK_FAILED)) }
+    internal var converse: (OwnerInput) -> Unit = {}
 
     /**
-     * Where the effects that steer a running task go, such as an answer to its question or the end of its hand-over
-     * (design D2 of sub-project 5): sub-project 5's AgentRunner. Called on the controller's thread; it must not block.
+     * Whether Kestrel waits for a command after "Yes?", which holds the conversation's quiet clock (design 6.2 of
+     * sub-project 7): the app graph passes it to the engine. Called on the controller's thread at every change.
      */
     @Volatile
-    internal var steerTask: (Effect) -> Unit = {}
-
-    /**
-     * Runs task number `task`, which is Kestrel's own memory request (design D2 of sub-project 5), and must send
-     * [Event.TaskEnded] for it once it ends. Sub-project 5's AgentRunner runs it; until the app graph sets it, it ends
-     * at once, as a task does. Called on the controller's thread; it must not block.
-     */
-    @Volatile
-    internal var runMemory: (task: Int, request: Request.Memory) -> Unit = { task, _ -> send(Event.TaskEnded(task, ListeningTexts.TASK_FAILED)) }
+    internal var awaitingCommand: (Boolean) -> Unit = {}
 
     // Only [thread] uses these. [requested]: the service was asked to start since the last stop; start(),
     // onStartAction() and shutdown() change it together with [serviceState], so it always equals
@@ -377,8 +362,6 @@ class Listening internal constructor(
     private var newestCommand = 0
     private var cancelledCommand = 0
 
-    // Only [thread] uses it: the newest pause of a task, for a task whose start waited for a cancelled command.
-    private var lastPause: Effect.PauseTask? = null
 
     // The number of the newest command whose job started. Written on [thread] and read by the jobs, so that a stuck job
     // that completes late never releases a text that a newer command keeps on the bar.
@@ -427,12 +410,48 @@ class Listening internal constructor(
     internal val currentOptions: StateFlow<ListeningOptions> = chosenOptions.asStateFlow()
 
     /**
-     * The options that a debug hook passed with the transcript that started task number `task`, such as `model` and
-     * `live` (plan 4D, for sub-project 5's AgentRunner, which reads them once per task); the read removes them. Null, and
-     * so no options, outside the debug hooks, which alone set it.
+     * The debug hooks' seam for each spoken input (plan 4D): it gets the transcript that gave the input, or null, and the
+     * input, and returns the input to send, with the options that a debug hook passed with the transcript, such as
+     * `model` and `live`. Null, and so the input as it is, outside the debug hooks, which alone set it.
      */
     @Volatile
-    internal var taskOptions: ((task: Int) -> Map<String, String>)? = null
+    internal var inputs: ((Event.Heard?, OwnerInput) -> OwnerInput)? = null
+
+    // The conversation's replies that wait for their speech's end, by their numbers (design 11 of sub-project 7).
+    private val replies = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
+    private val replyNumbers = AtomicInteger()
+
+    // How many times the Orchestrator stopped Kestrel's speech; the voice channel drops the spoken outputs that waited for
+    // their turn across a stop (decision 10 of sub-project 7).
+    private val stopsOfSpeech = AtomicLong()
+
+    /** The voice channel's way to the Orchestrator (design 11 of sub-project 7). Any thread may use it. */
+    internal val voicePath: VoicePath = object : VoicePath {
+        override val ready: StateFlow<Boolean> get() = sessionOpen
+
+        override suspend fun say(text: String) {
+            val reply = replyNumbers.incrementAndGet()
+            val ended = CompletableDeferred<Unit>()
+            replies[reply] = ended
+            try {
+                send(Event.ChannelSays(reply, text))
+                ended.await()
+            } finally {
+                replies.remove(reply)
+            }
+        }
+
+        override fun show(text: String) = send(Event.ChannelShows(text))
+
+        override fun ask(question: Int, text: String, kind: QuestionKind, voice: Boolean) =
+            send(Event.ChannelAsks(question, text, kind, voice))
+
+        override fun handOver(text: String) = send(Event.ChannelHandsOver(text))
+
+        override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
+
+        override val speechStops: Long get() = stopsOfSpeech.get()
+    }
 
     /**
      * The debug hooks' watcher of the Orchestrator's steps (plan 4D, hook H1): each event with the state before it and the
@@ -455,12 +474,7 @@ class Listening internal constructor(
         perform = ::perform,
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
-        taskFailed = ListeningTexts.TASK_FAILED,
-        onStep = { event, before, step ->
-            // "Continue the task?" fades from the bar once it has ended, before the step's own texts show.
-            if (before.taskAsking == TaskAsk.CONTINUE && step.state.taskAsking != TaskAsk.CONTINUE) bar.release()
-            steps?.invoke(event, before, step)
-        },
+        onStep = { event, before, step -> steps?.invoke(event, before, step) },
     )
 
     /** The Orchestrator's state after the last event. */
@@ -468,6 +482,9 @@ class Listening internal constructor(
 
     init {
         scope.launch(thread) { orchestrator.state.collect { followSafely(it) } }
+        scope.launch(thread) {
+            orchestrator.state.map { it.work == Work.AWAITING_TASK }.distinctUntilChanged().collect { awaitingCommand(it) }
+        }
         // Section 15: a change counts at once. A failure to read the options is reported, and the last ones stay.
         scope.launch(thread) {
             options
@@ -1036,14 +1053,17 @@ class Listening internal constructor(
     private fun performUnguarded(effect: Effect) {
         when (effect) {
             is Effect.Say -> say(effect.reply)
-            Effect.StopSaying -> session?.stopSpeaking()
-            is Effect.RunTask -> {
-                timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) {
-                    startTask(effect.task) { runTask(effect.task, effect.text) }
-                }
+            Effect.StopSaying -> {
+                stopsOfSpeech.incrementAndGet()
+                session?.stopSpeaking()
             }
-            Effect.CancelTask -> steerTask(effect)
+            // The conversation takes the screen's turn itself before a goal acts (design 7.1 of sub-project 7).
+            is Effect.Converse -> {
+                if (effect.intent is InputIntent.Command) timeline.reacted("task")
+                val input = OwnerInput(InputIds.next(), InputChannel.VOICE, effect.intent, clock())
+                converse(inputs?.invoke(effect.heard, input) ?: input)
+            }
+            is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
             is Effect.RunCommand -> {
                 newestCommand = effect.command
                 timeline.reacted("command")
@@ -1072,27 +1092,14 @@ class Listening internal constructor(
                     // stays on until Android stops the service, if it does, when destroyed() names the battery.
                     stopBecause(StopReason.BATTERY_RESTRICTED)
                 } else {
-                    // "Continue the task?" stays until it has its answer (design D2 of sub-project 5).
+                    // The conversation's question and a hand-over's sentence stay until the voice channel releases them.
                     val keep = (effect.feedback as? Feedback.CommandText)?.keep == true ||
-                        (effect.feedback as? Feedback.TaskText)?.keep == true || effect.feedback == Feedback.ContinueQuestion
+                        (effect.feedback as? Feedback.ConversationText)?.keep == true
                     bar.show(text(effect.feedback), keep = keep)
                 }
             }
             // The Orchestrator runs the timers itself.
-            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, Effect.TimeHandOver,
-            Effect.TimePause, Effect.ArmTouches -> Unit
-            is Effect.AnswerTask, is Effect.ContinueTask, is Effect.ExpireHandOver, is Effect.ResumeTask,
-            is Effect.ExpirePause, Effect.DeleteHistory -> steerTask(effect)
-            is Effect.PauseTask -> {
-                lastPause = effect
-                steerTask(effect)
-            }
-            is Effect.RunMemoryTask -> {
-                timeline.reacted("task")
-                afterStopping({ send(Event.TaskEnded(effect.task, ListeningTexts.TASK_FAILED)) }) {
-                    startTask(effect.task) { runMemory(effect.task, effect.request) }
-                }
-            }
+            is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers -> Unit
             Effect.StopService -> shutdown()
             Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
@@ -1162,18 +1169,19 @@ class Listening internal constructor(
             Reply.SettingsBlocked -> ListeningTexts.SETTINGS_BLOCKED
             is Reply.Text -> reply.text
             is Reply.Command -> reply.text
-            Reply.NoTaskToContinue -> ListeningTexts.NO_TASK_TO_CONTINUE
-            Reply.ContinueQuestion -> ListeningTexts.CONTINUE_TASK
-            Reply.DeleteHistoryQuestion -> ListeningTexts.DELETE_HISTORY_QUESTION
-            is Reply.HistoryDeleted -> if (reply.deleted) ListeningTexts.HISTORY_DELETED else ListeningTexts.HISTORY_NOT_DELETED
+            is Reply.Channel -> reply.text
         }
-        // A command's say() waits for this reply, and returns once it has ended in any way.
-        val ended = (reply as? Reply.Command)?.let { conversation?.takeSpoken(it.command) }
+        // A command's say() and the voice channel's say() wait for this reply, and return once it has ended in any way.
+        val ended = when (reply) {
+            is Reply.Command -> conversation?.takeSpoken(reply.command)
+            is Reply.Channel -> replies[reply.reply]
+            else -> null
+        }
         // Section 14.6: a reply that Kestrel cannot speak, or that Android interrupted, goes to the bar, except "Yes?",
         // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask), and the texts that
-        // the Rules showed already and keep on the bar: a command's text, a task's question or hand-over, and "Continue
-        // the task?" (design D2 of sub-project 5).
-        val kept = reply is Reply.Command || (reply as? Reply.Text)?.kept == true || reply == Reply.ContinueQuestion
+        // the Rules showed already: a command's text, and what the conversation says, asks or hands over (design 11 of
+        // sub-project 7).
+        val kept = reply is Reply.Command || reply is Reply.Channel || (reply as? Reply.Text)?.kept == true
         val showInstead = { if (reply != Reply.Yes && !kept) bar.show(text) }
         val current = session
         if (current == null) {
@@ -1225,10 +1233,7 @@ class Listening internal constructor(
         Feedback.CommandBusy -> ListeningTexts.BUSY
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
-        is Feedback.TaskText -> feedback.text
-        Feedback.FinishHandOverFirst -> ListeningTexts.FINISH_HAND_OVER_FIRST
-        Feedback.ContinueQuestion -> ListeningTexts.CONTINUE_TASK
-        Feedback.AnswerContinueFirst -> ListeningTexts.ANSWER_CONTINUE_FIRST
+        is Feedback.ConversationText -> feedback.text
     }
 
     private fun privateInput(): Boolean = try {
@@ -1242,21 +1247,6 @@ class Listening internal constructor(
      * Runs [action] at once, or, while a cancelled command's job holds the screen, on [thread] once [turns] gives the
      * screen back (section 7.3). A deferred action that throws is reported, and then [failed] runs.
      */
-    // Design D2 of sub-project 5: a task whose start waited for a cancelled command starts only while the Orchestrator
-    // still has it, and a pause that came during the wait reaches it at once (AgentRunner keeps a pause that comes before
-    // the task can take it). A task that the owner cancelled in the meantime ends with "Cancelled.", as AgentRunner's
-    // early cancels do; one that a newer task replaced ends without a reply.
-    private fun startTask(task: Int, start: () -> Unit) {
-        val now = state.value
-        if (now.task != task || !now.taskExists || now.cancelled) {
-            val cancelled = now.task == task && now.cancelled
-            send(Event.TaskEnded(task, reply = if (cancelled) ListeningTexts.TASK_CANCELLED else null))
-            return
-        }
-        start()
-        if (now.taskPhase == TaskPhase.PAUSED) lastPause?.takeIf { it.task == task }?.let(steerTask)
-    }
-
     private fun afterStopping(failed: () -> Unit = {}, action: () -> Unit) {
         // A cancelled job is no longer active, but it may still run until it completes.
         if (!turns.held()) {

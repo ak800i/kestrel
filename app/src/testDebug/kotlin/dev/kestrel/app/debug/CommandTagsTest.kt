@@ -6,6 +6,13 @@ import dev.kestrel.app.orchestrator.Rules
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
+import dev.kestrel.conversation.machine.ConversationEffect
+import dev.kestrel.conversation.machine.ConversationEvent
+import dev.kestrel.conversation.machine.ConversationState
+import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
+import dev.kestrel.conversation.model.OwnerInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -101,22 +108,40 @@ class CommandTagsTest {
     }
 
     @Test
-    fun aTaggedTranscriptThatStartsATaskGetsTheTasksNumberAndPassesItsOptionsBeforeTheTaskRuns() {
+    fun aTaggedTranscriptsInputCarriesItsOptionsAndTheTagGetsTheCommandThatItStarted() {
         step(Event.Toggle)
         val task = Event.Heard("Kestrel, open the maps.", named = true)
         assertTrue(tags.register("task", task, VoiceHooks.readOf(task.text, named = true), mapOf("model" to "test-model")))
+        step(task)
+        assertEquals(CommandTags.Tagged(CommandTags.Role.CONVERSE, 0, "task"), tags.tagged("task"))
 
-        val before = state
-        val step = Rules.next(before, task)
-        state = step.state
-        val started = tags.onStep(task, before, step)
+        // Listening makes the input of the transcript; the tag's options go with it.
+        val input = tags.input(task, OwnerInput(7, InputChannel.VOICE, InputIntent.Command("open the maps."), 0))
+        assertEquals(mapOf("model" to "test-model"), input.options)
+        // The conversation starts the goal as command 3, here on the input's own step.
+        val started = ConversationEffect.StartGoal(3, 1, input, "open the maps.")
+        tags.onConversationStep(ConversationEvent.Input(input), ConversationState(), MachineStep(ConversationState(), listOf(started)))
+        assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "task", task = 3), tags.tagged("task"))
+        assertEquals(3, tags.lastGoalWords)
 
-        assertEquals(CommandTags.StartedTask(1, mapOf("model" to "test-model")), started)
-        assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "task", task = 1), tags.tagged("task"))
-        // An untagged task passes nothing.
-        step(Event.TaskEnded(1, reply = null))
+        // An untagged transcript's input carries nothing.
         val other = Event.Heard("Kestrel, open the settings.", named = true)
-        val next = Rules.next(state, other)
-        assertNull(tags.onStep(other, state, next))
+        step(other)
+        val plain = OwnerInput(8, InputChannel.VOICE, InputIntent.Command("open the settings."), 0)
+        assertEquals(plain, tags.input(other, plain))
+    }
+
+    @Test
+    fun aTaggedInputThatStartsNothingAndWaitsForNothingDidNothing() {
+        step(Event.Toggle)
+        val stop = Event.Heard("Kestrel, continue", named = true)
+        assertTrue(tags.register("go-on", stop, VoiceHooks.readOf(stop.text, named = true)))
+        step(stop)
+        val input = tags.input(stop, OwnerInput(9, InputChannel.VOICE, InputIntent.Continue, 0))
+
+        // The conversation took it, as steering or an answer, without starting work for it.
+        tags.onConversationStep(ConversationEvent.Input(input), ConversationState(), MachineStep(ConversationState()))
+
+        assertEquals(CommandTags.Role.NONE, tags.tagged("go-on")?.role)
     }
 }

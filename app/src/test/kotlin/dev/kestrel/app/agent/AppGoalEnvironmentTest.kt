@@ -10,10 +10,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** The touch watcher of a goal's round (design D19 of sub-project 5), which AppGoalEnvironment starts (plan 7D). */
 @OptIn(ExperimentalCoroutinesApi::class)
-class AppAgentEnvironmentTest {
+class AppGoalEnvironmentTest {
     @Test
-    fun aTaskThatIsCancelledWhileTheWatcherStartsStopsTheWatcherAgain() = runTest {
+    fun aRoundThatIsCancelledWhileTheWatcherStartsStopsTheWatcherAgain() = runTest {
         var stopped = 0
         val adding = CompletableDeferred<Boolean>()
         val start = launch {

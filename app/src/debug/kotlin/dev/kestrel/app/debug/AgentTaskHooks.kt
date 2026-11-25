@@ -11,10 +11,12 @@ import dev.kestrel.agent.port.MediaKinds
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.agent.RoundEvidences
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.orchestrator.Event
-import dev.kestrel.app.orchestrator.TaskAsk
-import dev.kestrel.app.orchestrator.TaskPhase
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.datatools.AndroidDataPort
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.EmergencyGuard
@@ -43,16 +45,17 @@ import java.time.LocalDate
  * :tools:eval (sub-project 6) and plan 5C's sittings use: a tagged task's result and state, its answers, the scripted model,
  * the cache fields, the touch rule, test mode's names, test aliases, one data tool's counts, test mode's recogniser, the
  * screen's structure and a script's own tap. Each answers one line of `name=value` pairs, never screen text, a prompt,
- * a reply, a name or a tool's arguments; [AgentHookAnswers] builds the lines.
+ * a reply, a name or a tool's arguments; [AgentHookAnswers] builds the lines. A tag names the conversation's command that
+ * its transcript started (plan 7D): a goal's round or Kestrel's own request, whose outcome the engine keeps.
  */
 internal class AgentTaskHooks(private val graph: AppGraph, private val context: Context) {
     // agent-task -Result -Tag k [--es marker] [--es recipient] [--es digits]
     fun task(intent: Intent): String {
         if (!intent.getBooleanExtra(EXTRA_RESULT, false)) throw HookError("add --ez result true")
         val (_, number) = taggedTask(intent)
-        val runner = graph.agent
-        val ended = runner.ended(number)
-        if (ended == null || runner.running(number)) return "state=running"
+        val outcome = graph.conversations.outcome(number) ?: return "state=running"
+        val round = graph.goalEnvironment.evidences.of(number) ?: RoundEvidences.Evidence()
+        val ended = AgentHookAnswers.Ended(outcome.report, outcome.answer, round.touches, round.signals, round.witness)
         return AgentHookAnswers.result(ended, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS))
     }
 
@@ -63,12 +66,12 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val reply = intent.getStringExtra(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
         val words = AgentHookAnswers.words(reply) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
         if (VoiceHooks.refused(words, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
-        val state = graph.listening.state.value
-        val asking = state.taskAsking.takeIf { state.task == number }
-        val handedOver = state.task == number && state.taskPhase == TaskPhase.HANDED_OVER
+        val view = graph.conversations.view.value
+        val asking = view.asking.takeIf { view.command == number }
+        val handedOver = view.command == number && view.goal == GoalPhase.HANDED_OVER
         // A script never answers another task's question (design D28; review C2-I3).
         if (asking == null && !handedOver) throw HookError("the task of tag $tag asks nothing")
-        val confirming = graph.agent.confirming(number)?.takeIf { asking == TaskAsk.CONFIRM }
+        val confirming = graph.conversations.owner.confirming?.takeIf { asking == QuestionKind.CONFIRM }
         AgentHookAnswers.answerRefusal(asking, words, confirming, intent.getStringExtra(EXTRA_CONFIRMING))?.let { throw HookError(it) }
         val event = if (asking == null) {
             // A hand-over is not a question: it ends with "Kestrel, continue" or "cancel" (design D2).
@@ -81,13 +84,13 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             Event.Heard(words, named = false)
         }
         graph.listening.send(event)
-        return "answered tag=$tag asking=${asking?.let(::kind) ?: "hand-over"}"
+        return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"}"
     }
 
     // agent-script --es file <name> | --ez clear true
     suspend fun script(intent: Intent): String {
         if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
-            graph.agent.modelOverride = null
+            graph.roundModels.modelOverride = null
             return "script=none"
         }
         val name = intent.getStringExtra(EXTRA_FILE)?.takeIf { SCRIPT_NAME.matches(it) }
@@ -101,7 +104,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             throw HookError("the script is not a JSON array of replies")
         }
         val model = ScriptedModel(replies)
-        graph.agent.modelOverride = model
+        graph.roundModels.modelOverride = model
         return "script=installed replies=${model.left}"
     }
 
@@ -109,18 +112,17 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     fun state(intent: Intent): String {
         val (_, number) = taggedTask(intent)
         val state = graph.listening.state.value
-        val current = state.task == number && state.taskPhase != null && graph.agent.running(number)
-        val phase = if (!current) "ended" else when (state.taskPhase) {
-            TaskPhase.HANDED_OVER -> "handed-over"
-            TaskPhase.PAUSED -> "paused"
-            else -> "running"
-        }
-        val asking = state.taskAsking?.takeIf { current }?.let(::kind) ?: "none"
-        val handOver = graph.agent.handOver(number)?.takeIf { current }?.name ?: "none"
+        val view = graph.conversations.view.value
+        val owner = graph.conversations.owner
+        // The tag's command is the goal's current round, or the conversation's own request that asks now.
+        val current = view.command == number && (view.goal != null || view.asking != null)
+        val phase = if (!current) "ended" else phaseOf(view)
+        val asking = view.asking?.takeIf { current }?.let(AgentHookAnswers::asking) ?: "none"
+        val handOver = owner.handOverKind?.takeIf { current }?.name ?: "none"
         // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
-        val confirming = graph.agent.confirming(number)?.takeIf { current }?.wire ?: "none"
+        val confirming = owner.confirming?.takeIf { current }?.wire ?: "none"
         // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
-        val question = graph.agent.asking(number)?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
+        val question = owner.asking?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
         return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question"
     }
 
@@ -180,9 +182,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         intent.getStringExtra(KEY_VIBER)?.let { safety = safety.copy(viberSelfChatName = it.trim().ifEmpty { VIBER_DEFAULT }) }
         intent.getStringExtra(KEY_WHATSAPP)?.let { safety = safety.copy(whatsappOwnName = it.trim().ifEmpty { null }) }
         graph.settings.set(SettingKeys.SAFETY, safety)
-        aliases?.let { graph.agent.selfChatAliases = it }
+        aliases?.let { graph.goalEnvironment.selfChatAliases = it }
         return "ownerEmails=${safety.ownerEmails.size} viberSelfChatName=${if (safety.viberSelfChatName != VIBER_DEFAULT) "set" else "unset"} " +
-            "whatsappOwnName=${if (safety.whatsappOwnName != null) "set" else "unset"} selfChatAliases=${graph.agent.selfChatAliases.size}"
+            "whatsappOwnName=${if (safety.whatsappOwnName != null) "set" else "unset"} selfChatAliases=${graph.goalEnvironment.selfChatAliases.size}"
     }
 
     // agent-memory --ez add true --es key k --es text v | --ez remove true --es key k | --ez has true --es key k: a test alias,
@@ -243,7 +245,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     suspend fun selfChat(): String {
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val snapshot = session.snapshots.current().snapshot
-        val aliases = graph.agent.selfChatAliases
+        val aliases = graph.goalEnvironment.selfChatAliases
         val yes = SelfChats.recognise(snapshot, null, graph.settings.get(SettingKeys.SAFETY), aliases = aliases)
         val front = ScreenTree.frontWindow(snapshot)?.packageName
         val rule = aliases[front]?.takeIf { front == SelfChats.FIXTURES } ?: front
@@ -328,7 +330,14 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         return tag to number
     }
 
-    private fun kind(ask: TaskAsk): String = ask.name.lowercase().replace('_', '-')
+    // A goal's phase in agent-state's words; the conversation's own question has no goal and counts as running.
+    private fun phaseOf(view: ConversationView): String = when (view.goal) {
+        GoalPhase.HANDED_OVER -> "handed-over"
+        GoalPhase.PAUSED -> "paused"
+        GoalPhase.PAUSED_AT_LIMIT -> "paused-at-limit"
+        GoalPhase.INTERRUPTED -> "interrupted"
+        GoalPhase.ACTING, GoalPhase.ASKING, null -> "running"
+    }
 
     private fun signs(rule: String?): String = when (rule) {
         SelfChats.TELEGRAM, SelfChats.TELEGRAM_WEB -> "telegram-title,telegram-toolbar"

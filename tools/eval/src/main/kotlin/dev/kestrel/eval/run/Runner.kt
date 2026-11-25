@@ -189,7 +189,7 @@ class Runner(
         if (answer != null) state.markers = quietly { hooks.agentTask(tag, marker = scope.values.marker) }
         var checked = false
         if (answer != null) {
-            if (answer["end"] == "NO_PROFILE") state.refusal = Refusals.kind(hooks, tag)
+            if (answer["end"] in Refusals.ENDS) state.refusal = Refusals.kind(hooks, tag)
             checked = task.check.all { it.passes(scope, answer) }
         }
         if (state.stalled) {

@@ -47,8 +47,8 @@ class ConversationTest {
         val pause = VoiceTests.speech("Stop listening.")
         val wakeUp = VoiceTests.speech("Kestrel, wake up.")
         val off = VoiceTests.speech("Stop Kestrel.")
-        // The task counter belongs to the process, so other tests may have run tasks before this one.
-        val expectedTask = listening.state.value.task + 1
+        // The command counter belongs to the process, so other tests may have run commands before this one.
+        val expectedTask = VoiceTests.graph.conversations.view.value.command + 1
         val started = SystemClock.elapsedRealtime()
 
         runBlocking {
@@ -68,7 +68,7 @@ class ConversationTest {
                 // A test build runs no task without a test script, so the task ends at once with a spoken sentence that
                 // says so (design D28 of sub-project 5).
                 awaitState("the task's reply") {
-                    it.task == expectedTask && it.work == Work.IDLE && !it.speaking && replies().size == 2
+                    VoiceTests.graph.conversations.outcome(expectedTask) != null && it.work == Work.IDLE && !it.speaking && replies().size == 2
                 }
 
                 // The speech detector can miss the short first word of a clip, such as "Stop", and the keyword spotter

@@ -148,7 +148,7 @@ class PermissionFlowTest {
         // Android's dialog, which the owner answers by touch: the test taps "Allow all" (or "Allow") through UiAutomation.
         assertTrue(awaitAllow().performAction(AccessibilityNodeInfo.ACTION_CLICK))
         val answered = SystemClock.elapsedRealtime()
-        check(VoiceTests.waitUntil(5_000) { AgentTests.graph.agent.handOver(task) == null && !showsPermissionActivities() }) {
+        check(VoiceTests.waitUntil(5_000) { AgentTests.graph.conversations.owner.handOverKind == null && !showsPermissionActivities() }) {
             "The request did not end within 5 s of the answer"
         }
         screen.awaitElement(timeoutMillis = 15_000) { it.packageName == FIXTURES && it.label == "Share with" }

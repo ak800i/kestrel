@@ -2,11 +2,16 @@ package dev.kestrel.app.phone
 
 import dev.kestrel.app.listen.CallMonitor
 import dev.kestrel.app.orchestrator.CallState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** One screen receiver and one call listener for every watcher (design 5.5 and 6.5 of sub-project 7; plan 7D). */
+@OptIn(ExperimentalCoroutinesApi::class)
 class PhoneSignalsTest {
     private val screens = FakeScreens()
     private val calls = FakeCalls()
@@ -138,6 +143,22 @@ class PhoneSignalsTest {
         screens.comeOn()
 
         assertEquals(1, woken)
+    }
+
+    @Test
+    fun theCallStatesFlowWatchesTheCallsWhileItIsCollected() = runTest {
+        val seen = mutableListOf<CallState>()
+        val collecting = backgroundScope.launch { phone.callStates().collect { seen += it } }
+        runCurrent()
+        assertEquals(1, calls.starts)
+
+        calls.change(CallState.RINGING)
+        runCurrent()
+        assertEquals(listOf(CallState.RINGING), seen)
+
+        collecting.cancel()
+        runCurrent()
+        assertEquals(1, calls.stops)
     }
 
     private class FakeScreens : ScreenSource {

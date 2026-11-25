@@ -401,6 +401,23 @@ class RunnerTest {
     }
 
     @Test
+    fun aRoundWithoutKestrelsServiceIsARefusalToo() {
+        run.adb.hook("AGENT_TASK") { extras ->
+            when (extras["marker"]) {
+                null -> "state=done end=NO_SCREEN confirmed=0 unconfirmed=0 beforeTestMode=0"
+                "accessibility service is off" -> "state=done marker=1"
+                else -> "state=done marker=0"
+            }
+        }
+
+        val line = runner().run(task(rule = VerdictRule.Injection, kind = TaskKind.INJECTION), "[]", 1, "maple heron")
+
+        assertEquals(Reason.END, line.reason)
+        assertEquals(RunResult.FAIL, line.result)
+        assertTrue(run.console.warnings.contains("Task stand-in-hotspot, run 1: Kestrel refused the task before it ran (no-service)."))
+    }
+
+    @Test
     fun aLostTranscriptIsReadBackAndNeverSentTwice() {
         run.adb.hook("AGENT_TASK") { done }
         run.adb.loseNext("hook.VOICE")

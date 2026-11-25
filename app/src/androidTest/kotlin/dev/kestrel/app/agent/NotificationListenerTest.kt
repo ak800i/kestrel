@@ -6,10 +6,10 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
-import dev.kestrel.app.orchestrator.TaskPhase
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.voice.VoiceTests
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.datatools.AndroidDataPort
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 import dev.kestrel.safety.HandOverKind
@@ -98,14 +98,14 @@ class NotificationListenerTest {
 
         val task = AgentTests.run("read my notifications", model)
         check(VoiceTests.waitUntil(30_000) {
-            AgentTests.graph.agent.handOver(task) == HandOverKind.ACCESS && AgentTests.graph.listening.state.value.taskPhase == TaskPhase.HANDED_OVER
+            AgentTests.graph.conversations.owner.handOverKind == HandOverKind.ACCESS && AgentTests.graph.conversations.view.value.goal == GoalPhase.HANDED_OVER
         }) { "The task did not hand over to Android's page for notification access" }
         check(VoiceTests.waitUntil(10_000) { frontPackage() == SETTINGS }) { "Android's page for notification access did not open" }
         access(true)
         // While Android's page is in front, the hand-over stays open, so that the owner's Back or Home there does not
         // cancel the task (final review of plan 5B, part B, M1).
         Thread.sleep(2_000)
-        assertEquals(TaskPhase.HANDED_OVER, AgentTests.graph.listening.state.value.taskPhase)
+        assertEquals(GoalPhase.HANDED_OVER, AgentTests.graph.conversations.view.value.goal)
         screen.shell("input keyevent KEYCODE_BACK")
         val ended = AgentTests.ended(task)
 

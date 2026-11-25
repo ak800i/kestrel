@@ -2,6 +2,9 @@ package dev.kestrel.app.phone
 
 import dev.kestrel.app.listen.CallMonitor
 import dev.kestrel.app.orchestrator.CallState
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** A watch of the phone that one part of Kestrel holds; [stop] ends it, and a second stop changes nothing. */
@@ -94,6 +97,15 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
         return once {
             synchronized(lock) { if (callWatchers.remove(watcher) && callWatchers.isEmpty()) calls.stop() }
         }
+    }
+
+    /**
+     * The call states while the flow is collected (design D15 of sub-project 5): a call hand-over ends by itself when the
+     * owner places the call, with listening on or off. The flow fails with what [watchCalls] throws.
+     */
+    fun callStates(): Flow<CallState> = callbackFlow {
+        val watch = watchCalls { state -> trySend(state) }
+        awaitClose { watch.stop() }
     }
 
     /**

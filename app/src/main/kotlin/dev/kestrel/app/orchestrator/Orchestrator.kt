@@ -17,15 +17,14 @@ import kotlinx.coroutines.launch
  * Applies [Rules] to Kestrel's events one at a time, so that two parts of Kestrel never act at once (design spec,
  * section 7.3). [perform] runs each effect in order on the Orchestrator's coroutine, so it must return quickly. An effect
  * that throws, even with a CancellationException, goes to [onError] and counts as not started: for a [Effect.Say] the
- * Orchestrator then handles [Event.SpeechEnded], and for a [Effect.RunTask] [Event.TaskEnded] with [taskFailed]. The next
- * effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
+ * Orchestrator then handles [Event.SpeechEnded]. The next effects and events still run. [onError] must not throw. An [Error] from [perform], such as the NotImplementedError
  * that TODO() throws, is not caught and ends the Orchestrator's loop. The timer that ends the wait for a task after
  * "Yes?" runs here: [waitMillis] for the owner to start the answer, and [answerMillis] once the owner has started it. So
  * does the timer of the pause after [silenceMillis] without speech (section 8.5), and the timer of the answer to an
  * instant command's question: [questionMillis] for the owner to start the answer, and [answerMillis] once the owner has
  * started it; after a question without an answer, a number counts as a late answer for [lateMillis] (section 9.4). The
- * answer to a task's question has the same waits, a task's hand-over ends after [handOverMillis], its pause after
- * [pauseMillis], and a touch answers "Continue the task?" only [armMillis] after it began (design D2 of sub-project 5). A
+ * answer to a question of the conversation that the voice asked has the same waits, and the end of its wait is the
+ * answer `Silence` (design 11 of sub-project 7); the conversation runs a goal's hand-over and pauses itself. A
  * [Effect.RunCommand] that throws counts as a command that ended as failed,
  * and the bar shows [commandFailed], so that Kestrel never fails silently (section 14). [onStep] sees each event with the
  * state before it and the step that it caused, on the Orchestrator's coroutine, after the new state is set and before the
@@ -40,11 +39,7 @@ class Orchestrator(
     private val silenceMillis: Long = SILENCE_MILLIS,
     private val questionMillis: Long = QUESTION_MILLIS,
     private val lateMillis: Long = LATE_MILLIS,
-    private val handOverMillis: Long = HAND_OVER_MILLIS,
-    private val pauseMillis: Long = PAUSE_MILLIS,
-    private val armMillis: Long = ARM_MILLIS,
     private val commandFailed: String? = null,
-    private val taskFailed: String? = null,
     private val onStep: (Event, State, Step) -> Unit = { _, _, _ -> },
 ) {
     // Each event with the check that decides, when its turn comes, whether the Orchestrator still handles it.
@@ -54,9 +49,6 @@ class Orchestrator(
     private var silence: Job? = null
     private var answer: Job? = null
     private var late: Job? = null
-    private var handOver: Job? = null
-    private var pause: Job? = null
-    private var arm: Job? = null
 
     /** The state after the last event. */
     val state: StateFlow<State> = current.asStateFlow()
@@ -97,25 +89,13 @@ class Orchestrator(
             silence?.cancel()
             silence = null
         }
-        if (!step.state.asking && step.state.taskAsking == null && !step.state.deleteAsking) {
+        if (!step.state.asking && step.state.voiceQuestion == null) {
             answer?.cancel()
             answer = null
         }
         if (!step.state.questionEnded) {
             late?.cancel()
             late = null
-        }
-        if (step.state.taskPhase != TaskPhase.HANDED_OVER) {
-            handOver?.cancel()
-            handOver = null
-        }
-        if (step.state.taskPhase != TaskPhase.PAUSED) {
-            pause?.cancel()
-            pause = null
-        }
-        if (step.state.taskAsking != TaskAsk.CONTINUE) {
-            arm?.cancel()
-            arm = null
         }
         val notStarted = mutableListOf<Event>()
         for (effect in step.effects) {
@@ -142,27 +122,6 @@ class Orchestrator(
                     delay(lateMillis)
                     send(Event.LateAnswersEnded(number))
                 }
-            } else if (effect == Effect.TimeHandOver) {
-                val number = step.state.handOver
-                handOver?.cancel()
-                handOver = scope.launch {
-                    delay(handOverMillis)
-                    send(Event.HandOverEnded(number))
-                }
-            } else if (effect == Effect.TimePause) {
-                val number = step.state.pause
-                pause?.cancel()
-                pause = scope.launch {
-                    delay(pauseMillis)
-                    send(Event.PauseExpired(number))
-                }
-            } else if (effect == Effect.ArmTouches) {
-                val number = step.state.continueAsked
-                arm?.cancel()
-                arm = scope.launch {
-                    delay(armMillis)
-                    send(Event.TouchesArmed(number))
-                }
             } else if (effect == Effect.TimeSilence) {
                 val number = step.state.silence
                 silence?.cancel()
@@ -179,8 +138,6 @@ class Orchestrator(
                     onError(e)
                     when (effect) {
                         is Effect.Say -> notStarted += Event.SpeechEnded
-                        is Effect.RunTask -> notStarted += Event.TaskEnded(effect.task, taskFailed)
-                        is Effect.RunMemoryTask -> notStarted += Event.TaskEnded(effect.task, taskFailed)
                         is Effect.RunCommand ->
                             notStarted += Event.CommandEnded(effect.command, CommandResult(Outcome.FAILED, show = commandFailed))
                         else -> {}
@@ -212,14 +169,5 @@ class Orchestrator(
         // Section 9.4: a late answer began before the question's wait ran out, so its transcript comes within a few
         // seconds of the end of the question.
         const val LATE_MILLIS = 10_000L
-
-        // Section 12.4: a hand-over ends after 3 minutes without "Kestrel, continue" or "cancel".
-        const val HAND_OVER_MILLIS = 180_000L
-
-        // Section 14.4: a task paused for more than 30 minutes ends.
-        const val PAUSE_MILLIS = 1_800_000L
-
-        // Design D2 of sub-project 5: the unlock's own touches come just before "Continue the task?".
-        const val ARM_MILLIS = 1_000L
     }
 }

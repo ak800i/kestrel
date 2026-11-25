@@ -1,22 +1,22 @@
 package dev.kestrel.app.listen
 
-import dev.kestrel.app.agent.AgentTexts
 import dev.kestrel.app.commands.CommandConversation
 import dev.kestrel.app.commands.CommandReport
 import dev.kestrel.app.commands.CommandRunner
 import dev.kestrel.app.orchestrator.CallState
-import dev.kestrel.app.orchestrator.Effect
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
-import dev.kestrel.app.orchestrator.PauseCause
 import dev.kestrel.app.orchestrator.Request
-import dev.kestrel.app.orchestrator.TaskAsk
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.Command
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Direction
 import dev.kestrel.commands.Outcome
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
+import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.Keyword
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceChoice
@@ -166,6 +166,8 @@ class ListeningTest {
         runCurrent()
 
         assertEquals(listOf("stop speaking"), log)
+        // The voice channel drops the spoken outputs that waited for their turn (decision 10 of sub-project 7).
+        assertEquals(1L, listening.voicePath.speechStops)
     }
 
     @Test
@@ -224,28 +226,67 @@ class ListeningTest {
     }
 
     @Test
-    fun aTaskWithoutTheAgentSaysThatItCouldNotStart() = runTest {
+    fun aCommandReachesTheConversationAsTheVoicesInput() = runTest {
         val listening = listeningWithSession()
+        val inputs = mutableListOf<OwnerInput>()
+        listening.converse = { inputs += it }
 
         listening.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
-        assertEquals(listOf(ListeningTexts.TASK_FAILED), sessions.opened.single().said)
+        assertEquals(InputChannel.VOICE, inputs.single().channel)
+        assertEquals(InputIntent.Command("open the settings."), inputs.single().intent)
+        assertEquals(emptyList<String>(), sessions.opened.single().said)
         assertEquals(Work.IDLE, listening.state.value.work)
-        assertEquals(1, listening.state.value.task)
+    }
+
+    @Test
+    fun theVoicePathReturnsOnceItsWordsHaveBeenSpokenOrWhileOffShown() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+
+        val said = async { listening.voicePath.say("Done.") }
+        runCurrent()
+        assertEquals(listOf("Done."), session.said)
+        assertEquals("Done.", shown.last())
+        assertFalse(said.isCompleted)
+        session.replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+
+        listening.send(Event.TurnOff)
+        runCurrent()
+        val shownOnly = async { listening.voicePath.say("Later.") }
+        runCurrent()
+        assertTrue(shownOnly.isCompleted)
+        assertEquals("Later.", shown.last())
+    }
+
+    @Test
+    fun theWaitForACommandAfterYesReachesTheConversation() = runTest {
+        val listening = listeningWithSession()
+        val awaiting = mutableListOf<Boolean>()
+        listening.awaitingCommand = { awaiting += it }
+
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        listening.send(Event.Heard("Open Viber.", named = false))
+        runCurrent()
+
+        assertEquals(listOf(true, false), awaiting.dropWhile { !it })
     }
 
     @Test
     fun aReplyThatCannotBeSpokenIsShownOnTheBar() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        listening.send(Event.SettingsUnavailable)
         runCurrent()
         shown.clear()
 
         session.replies[0].complete(Spoke.REFUSED)
         runCurrent()
-        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        listening.send(Event.SettingsUnavailable)
         runCurrent()
         session.replies[1].completeExceptionally(IllegalStateException("The voice failed"))
         runCurrent()
@@ -257,7 +298,7 @@ class ListeningTest {
         // A refused and a failed reply go to the bar (section 14.6). "Yes?" shows at the start of the wait for the
         // task, and a failed "Yes?" is not shown a second time.
         assertEquals(
-            listOf(ListeningTexts.TASK_FAILED, "Kestrel, open the settings.", ListeningTexts.TASK_FAILED, "Kestrel", ListeningTexts.YES),
+            listOf(ListeningTexts.SETTINGS_NEED_SERVICE, ListeningTexts.SETTINGS_NEED_SERVICE, "Kestrel", ListeningTexts.YES),
             shown,
         )
         assertEquals(listOf("A reply", "A reply"), reports.map { it.first })
@@ -268,7 +309,7 @@ class ListeningTest {
     fun aReplyThatAndroidInterruptsIsShownOnTheBar() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        listening.send(Event.SettingsUnavailable)
         runCurrent()
         shown.clear()
 
@@ -276,7 +317,7 @@ class ListeningTest {
         session.replies.single().complete(Spoke.INTERRUPTED)
         runCurrent()
 
-        assertEquals(listOf(ListeningTexts.TASK_FAILED), shown)
+        assertEquals(listOf(ListeningTexts.SETTINGS_NEED_SERVICE), shown)
         assertFalse(listening.state.value.speaking)
     }
 
@@ -297,10 +338,10 @@ class ListeningTest {
         // again.
         assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel", ListeningTexts.YES), shown)
 
-        // The answer is a task, and its reply goes to the bar, because there is no voice (section 14.6).
-        listening.send(Event.Heard("Open the settings.", named = false))
+        // Any other reply goes to the bar, because there is no voice (section 14.6).
+        listening.send(Event.SettingsUnavailable)
         runCurrent()
-        assertEquals(ListeningTexts.TASK_FAILED, shown.last())
+        assertEquals(ListeningTexts.SETTINGS_NEED_SERVICE, shown.last())
     }
 
     @Test
@@ -448,7 +489,7 @@ class ListeningTest {
     }
 
     @Test
-    fun aTaskWaitsUntilTheCancelledCommandHasCompleted() = runTest {
+    fun aCommandReachesTheConversationAtOnceWhileTheCancelledCommandStillHoldsTheScreen() = runTest {
         val listening = listeningWithSession()
         val gate = CompletableDeferred<Unit>()
         runner.action = {
@@ -457,136 +498,43 @@ class ListeningTest {
         }
         listening.send(Event.Heard("Scroll down", named = false))
         runCurrent()
-        val tasks = mutableListOf<Int>()
-        listening.runTask = { task, _ -> tasks += task }
+        val inputs = mutableListOf<InputIntent>()
+        listening.converse = { inputs += it.intent }
 
-        // The request cancels the command first; the task runs only once its job has completed.
+        // The request cancels the command first; the goal's round takes the screen's turn itself (design 7.1 of
+        // sub-project 7), so the input does not wait for the command's job.
         listening.send(Event.Heard("Kestrel, open Viber.", named = true))
         runCurrent()
-        assertEquals(emptyList<Int>(), tasks)
+        assertEquals(listOf<InputIntent>(InputIntent.Command("open Viber.")), inputs)
 
         gate.complete(Unit)
         runCurrent()
-        assertEquals(listOf(1), tasks)
+        assertEquals(1, inputs.size)
     }
 
     @Test
-    fun aTaskThatIsStoppedWhileItWaitsForTheCancelledCommandNeverStarts() = runTest {
-        val listening = listeningWithSession()
-        val gate = CompletableDeferred<Unit>()
-        runner.action = {
-            withContext(NonCancellable) { gate.await() }
-            CommandResult(Outcome.DONE)
-        }
-        listening.send(Event.Heard("Scroll down", named = false))
-        runCurrent()
-        val tasks = mutableListOf<Int>()
-        listening.runTask = { task, _ -> tasks += task }
-        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
-        runCurrent()
-
-        listening.send(Event.Heard("Stop.", named = false))
-        runCurrent()
-        gate.complete(Unit)
-        runCurrent()
-
-        assertEquals(emptyList<Int>(), tasks)
-        // The task that never started ended for the Orchestrator, with the "Cancelled." of every other early cancel.
-        assertEquals(listOf(AgentTexts.CANCELLED), sessions.opened.single().said)
-        assertFalse(listening.state.value.cancelled)
-        assertEquals(Work.IDLE, listening.state.value.work)
-    }
-
-    @Test
-    fun aPauseWhileTheTaskWaitsForTheCancelledCommandReachesItWhenItStarts() = runTest {
-        val listening = listeningWithSession()
-        val gate = CompletableDeferred<Unit>()
-        runner.action = {
-            withContext(NonCancellable) { gate.await() }
-            CommandResult(Outcome.DONE)
-        }
-        listening.send(Event.Heard("Scroll down", named = false))
-        runCurrent()
-        val calls = mutableListOf<Any>()
-        listening.runTask = { task, _ -> calls += "run $task" }
-        listening.steerTask = { calls += it }
-        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
-        runCurrent()
-        listening.send(Event.Screen(on = false))
-        runCurrent()
-        calls.clear()
-
-        gate.complete(Unit)
-        runCurrent()
-
-        assertEquals(listOf("run 1", Effect.PauseTask(1, PauseCause.LOCK)), calls)
-    }
-
-    @Test
-    fun aTaskQuestionAHandOverAndContinueTheTaskThatCannotBeSpokenStayKeptOnTheBar() = runTest {
+    fun theConversationsQuestionAndHandOverThatCannotBeSpokenStayKeptOnTheBar() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.runTask = { _, _ -> }
         listening.send(Event.Screen(on = true))
-        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
         runCurrent()
 
-        listening.send(Event.TaskAsks(1, "Shall I send it?", TaskAsk.CONFIRM))
+        listening.send(Event.ChannelAsks(4, "Shall I send it?", QuestionKind.CONFIRM))
         runCurrent()
         var before = shown.size
         session.replies.last().complete(Spoke.REFUSED)
         runCurrent()
         assertEquals(before, shown.size)
 
-        listening.send(Event.Heard("Yes.", named = false))
-        listening.send(Event.TaskHandsOver(1, "Please pay yourself, then say 'Kestrel, continue'."))
+        listening.send(Event.ChannelHandsOver("Please pay yourself, then say 'Kestrel, continue'."))
         runCurrent()
         before = shown.size
         session.replies.last().complete(Spoke.INTERRUPTED)
         runCurrent()
         assertEquals(before, shown.size)
-
-        listening.send(Event.Heard("Kestrel, continue.", named = true))
-        listening.send(Event.Screen(on = false))
-        listening.send(Event.Screen(on = true))
-        runCurrent()
-        before = shown.size
-        session.replies.last().complete(Spoke.REFUSED)
-        runCurrent()
-        assertEquals(before, shown.size)
-        assertEquals(
-            listOf("Shall I send it?", "Please pay yourself, then say 'Kestrel, continue'.", ListeningTexts.CONTINUE_TASK),
-            kept,
-        )
+        assertEquals(listOf("Shall I send it?", "Please pay yourself, then say 'Kestrel, continue'."), kept)
+        // The voice channel lets them go when they end (VoiceChannelTest).
         assertEquals(0, releases)
-
-        // "Continue the task?" fades once it has its answer.
-        listening.send(Event.Heard("No.", named = false))
-        runCurrent()
-        assertEquals(1, releases)
-    }
-
-    @Test
-    fun aDeferredTaskThatThrowsIsReportedAndSaysThatItCouldNotStart() = runTest {
-        val listening = listeningWithSession()
-        val gate = CompletableDeferred<Unit>()
-        runner.action = {
-            withContext(NonCancellable) { gate.await() }
-            CommandResult(Outcome.DONE)
-        }
-        listening.send(Event.Heard("Scroll down", named = false))
-        runCurrent()
-        listening.runTask = { _, _ -> throw IllegalStateException("No agent") }
-        listening.send(Event.Heard("Kestrel, open Viber.", named = true))
-        runCurrent()
-        assertEquals(Work.RUNNING_TASK, listening.state.value.work)
-
-        gate.complete(Unit)
-        runCurrent()
-
-        assertEquals("An effect", reports.single().first)
-        assertEquals(Work.IDLE, listening.state.value.work)
-        assertEquals(ListeningTexts.TASK_FAILED, sessions.opened.single().said.last())
     }
 
     @Test
@@ -2050,6 +1998,8 @@ class ListeningTest {
     fun eventsFromAClosedSessionAreIgnored() = runTest {
         val listening = listeningWithSession()
         val old = sessions.opened.single().listener
+        val inputs = mutableListOf<OwnerInput>()
+        listening.converse = { inputs += it }
         listening.send(Event.TurnOff)
         runCurrent()
         listening.send(Event.Toggle)
@@ -2058,23 +2008,25 @@ class ListeningTest {
         old.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
-        assertEquals(0, listening.state.value.task)
+        assertEquals(emptyList<OwnerInput>(), inputs)
     }
 
     @Test
     fun anEventThatAClosingSessionSendsAsKestrelTurnsOffNeverActsOnTheNextState() = runTest {
         val listening = listeningWithSession()
         val old = sessions.opened.single().listener
+        val inputs = mutableListOf<OwnerInput>()
+        listening.converse = { inputs += it }
 
         // The owner turns Kestrel off and on again, and the old session's transcript arrives before the controller has
-        // handled either: it must not run as a task in the new state.
+        // handled either: it must not reach the conversation in the new state.
         listening.send(Event.TurnOff)
         listening.send(Event.Toggle)
         old.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
         assertEquals(Mode.LISTENING, listening.state.value.mode)
-        assertEquals(0, listening.state.value.task)
+        assertEquals(emptyList<OwnerInput>(), inputs)
     }
 
     @Test
@@ -2481,9 +2433,10 @@ class ListeningTest {
     fun eachOfTwoOverlappingRepliesEndsOnce() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
+        listening.converse = { launch { listening.voicePath.say("Opened.") } }
         listening.send(Event.Heard("Kestrel", named = true))
         runCurrent()
-        // A transcript that arrives while "Yes?" still plays is the task, and the stub's reply queues behind "Yes?".
+        // A transcript that arrives while "Yes?" still plays goes to the conversation, whose reply queues behind "Yes?".
         listening.send(Event.Heard("Open the settings.", named = false))
         runCurrent()
         assertEquals(2, listening.state.value.speeches)
@@ -2624,7 +2577,7 @@ class ListeningTest {
     fun aReplyThatACallStopsIsShownOnTheBar() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        listening.send(Event.SettingsUnavailable)
         runCurrent()
         shown.clear()
 
@@ -2635,7 +2588,7 @@ class ListeningTest {
         runCurrent()
 
         // Section 14.6: the reply's text goes to the bar after the call's mode.
-        assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.TASK_FAILED), shown)
+        assertEquals(listOf(ListeningTexts.RINGING, ListeningTexts.SETTINGS_NEED_SERVICE), shown)
     }
 
     @Test

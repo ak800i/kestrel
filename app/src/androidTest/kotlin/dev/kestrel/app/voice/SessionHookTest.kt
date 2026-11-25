@@ -10,12 +10,12 @@ import dev.kestrel.app.debug.ClipMicrophone
 import dev.kestrel.app.debug.HookReply
 import dev.kestrel.app.debug.TestHooks
 import dev.kestrel.app.orchestrator.Event
-import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.voice.models.Engine
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,35 +31,37 @@ class SessionHookTest {
     }
 
     @Test
-    fun aSlowTaskRunsForItsTimeIsCountedAndClearBringsBackTheTaskThatEndsAtOnce() {
+    fun aSlowGoalRunsForItsTimeIsCountedAndClearBringsBackTheRoundsOnThePhone() {
         VoiceTests.assumeModels(Engine.VAD, Engine.KWS, Engine.ASR, Engine.TTS)
         VoiceTests.grantListeningPermissions()
-        val stub = listening.runTask
+        val conversations = VoiceTests.graph.conversations
 
         // Kestrel is in front, so that Android lets it start its foreground service of the type microphone.
         ActivityScenario.launch(MainActivity::class.java).use {
             VoiceTests.startListening(ClipMicrophone())
             val reply = hook("VOICE_TASK", "reply" to "The task is done.", ints = mapOf("seconds" to 3))
             assertEquals(reply.text, Activity.RESULT_OK, reply.code)
-            assertTrue(reply.text, reply.text.startsWith("each task now takes 3 s and then says a reply of 17 characters"))
-            val tasks = listening.state.value.task
+            assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then gives up with a reply of 17 characters"))
+            conversations.endQuietTime()
+            val tasks = conversations.view.value.command
 
             listening.send(Event.Heard("Kestrel, open the window.", named = true))
 
-            assertTrue("No task ran", VoiceTests.waitUntil(5_000) { listening.state.value.work == Work.RUNNING_TASK })
-            // The counts name the waits, the tasks, the words of the last task and the keyword hits, never the words
+            assertTrue("No goal ran", VoiceTests.waitUntil(5_000) { conversations.view.value.goal == GoalPhase.ACTING })
+            // The counts name the waits, the commands, the words of the last goal and the keyword hits, never the words
             // themselves.
             val counts = hook("VOICE_COUNTS").text
             // From plan 2E on, the counts that are above 0 follow, by name.
             val expected = Regex("waits=\\d+ tasks=${tasks + 1} lastTaskWords=3 hits=\\d+( [A-Za-z-]+=\\d+)*")
             assertTrue(counts, expected.matches(counts))
-            // The task is still running a second later, unlike the task that ends at once.
+            // The goal still works a second later, unlike a round that ends at once.
             Thread.sleep(1_000)
-            assertEquals(Work.RUNNING_TASK, listening.state.value.work)
-            assertTrue("The task did not end", VoiceTests.waitUntil(10_000) { listening.state.value.work == Work.IDLE })
+            assertEquals(GoalPhase.ACTING, conversations.view.value.goal)
+            assertTrue("The goal did not end", VoiceTests.waitUntil(10_000) { conversations.view.value.goal == null })
+            assertEquals("I couldn't do it: The task is done. I didn't change anything.", conversations.outcome(tasks + 1)?.answer)
         }
-        assertEquals("each task ends at once again", hook("VOICE_TASK", flags = setOf("clear")).text)
-        assertSame(stub, listening.runTask)
+        assertEquals("each goal's round runs on the phone again", hook("VOICE_TASK", flags = setOf("clear")).text)
+        assertNull(VoiceTests.graph.goalEnvironment.standIn)
     }
 
     @Test

@@ -1,25 +1,18 @@
 package dev.kestrel.app.agent
 
 import dev.kestrel.app.listen.CallApi
-import dev.kestrel.app.orchestrator.Mode
-import dev.kestrel.app.orchestrator.PauseCause
-import dev.kestrel.app.orchestrator.State
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 
 /**
  * The backstop against a call that an action of the agent placed (design D13 of sub-project 5; review B3-I1). The agent
- * hands every call over, so no action of its own should start one, and this backstop needs no list of apps: when a pause
- * of the Orchestrator comes from a call that became active without ringing ([PauseCause.OUTGOING_CALL]) within
- * [WINDOW_MILLIS] after the agent's last action, the task stops at once ([Verdict.STOP]) and, with Android's permission
- * for calls, Kestrel ends that call. A call that rang is an incoming call: Kestrel never ends it, and the task only pauses
- * (section 14.4). The Orchestrator pauses only a running task, never a hand-over or a paused task, so a call that the
- * owner places himself then never reaches the backstop. Android reports the call state only with `READ_PHONE_STATE`, so
- * without it nothing reaches the backstop either. [clock] is monotonic, such as `SystemClock.elapsedRealtime`.
+ * hands every call over, so no action of its own should start one, and this backstop needs no list of apps: when a call
+ * becomes active without ringing while a goal acts or asks, and within [WINDOW_MILLIS] after the agent's last action
+ * ([stops]), the conversation ends the goal at once and, with Android's permission for calls, Kestrel ends that call
+ * ([endCall]). `ConversationSignals` decides which call it is (plan 7D): a call that rang is an incoming call, which
+ * Kestrel never ends, and a call that the owner places during a hand-over or a pause never reaches the backstop. Android
+ * reports the call state only with `READ_PHONE_STATE`, so without it nothing reaches the backstop either. [clock] is
+ * monotonic, such as `SystemClock.elapsedRealtime`.
  */
 internal class CallBackstop(private val calls: CallApi, private val clock: () -> Long) {
-    enum class Verdict { PAUSE, STOP }
-
     @Volatile
     private var lastAction: Long? = null
 
@@ -28,27 +21,26 @@ internal class CallBackstop(private val calls: CallApi, private val clock: () ->
         lastAction = clock()
     }
 
-    /** A new task starts: an action of an earlier task never counts. */
+    /** A new round starts: an action of an earlier round never counts. */
     fun forget() {
         lastAction = null
     }
 
-    /** What the pause of the running task for [cause] means; after [Verdict.STOP] the caller ends the call with [endCall]. */
-    fun onPause(cause: PauseCause): Verdict {
-        val last = lastAction ?: return Verdict.PAUSE
-        if (cause != PauseCause.OUTGOING_CALL || clock() - last > WINDOW_MILLIS) return Verdict.PAUSE
-        return Verdict.STOP
+    /** Whether a call that became active without ringing just now is the agent's: its last action was within the window. */
+    fun stops(): Boolean {
+        val last = lastAction ?: return false
+        return clock() - last <= WINDOW_MILLIS
     }
 
     /**
-     * Ends the call that [onPause] stopped the task for, with Android's permission for calls. These are binder calls, so
-     * the caller runs it off the controller's thread; it throws what [CallApi] throws, except a SecurityException.
+     * Ends the call that [stops] found, with Android's permission for calls. These are binder calls, so the caller runs it
+     * off Android's thread; it throws what [CallApi] throws, except a SecurityException.
      */
     fun endCall() {
         try {
             if (calls.allowed()) calls.end()
         } catch (e: SecurityException) {
-            // The owner took the permission back meanwhile; the task stops all the same.
+            // The owner took the permission back meanwhile; the goal stops all the same.
         }
     }
 
@@ -56,22 +48,5 @@ internal class CallBackstop(private val calls: CallApi, private val clock: () ->
 
     companion object {
         const val WINDOW_MILLIS = 5_000L
-    }
-}
-
-/**
- * Returns when [states] show a call that became active without ringing first, which is a call that the owner placed (the
- * CALL hand-over of design D15 then ends by itself). A call that rang is an incoming call and does not count; once it is
- * over, the next call counts again.
- */
-internal suspend fun awaitOutgoingCall(states: Flow<State>) {
-    var rang = false
-    states.first { state ->
-        when (state.mode) {
-            Mode.RINGING -> rang = true
-            Mode.IN_CALL -> {}
-            else -> rang = false
-        }
-        state.mode == Mode.IN_CALL && !rang
     }
 }

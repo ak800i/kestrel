@@ -1,5 +1,8 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.voice.listen.Recognition
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,7 +31,7 @@ class OrchestratorTest {
         orchestrator.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
-        assertEquals(listOf(Effect.RunTask(1, "open the settings.")), performed.filterIsInstance<Effect.RunTask>())
+        assertEquals(listOf(InputIntent.Command("open the settings.")), performed.filterIsInstance<Effect.Converse>().map { it.intent })
     }
 
     @Test
@@ -62,12 +65,12 @@ class OrchestratorTest {
         orchestrator.send(Event.Heard("Kestrel, open the settings.", named = true))
         runCurrent()
 
-        assertEquals(Work.RUNNING_TASK, orchestrator.state.value.work)
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
         assertEquals(
             listOf(
                 Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
                 Effect.Show(Feedback.Heard("Kestrel, open the settings.")),
-                Effect.RunTask(1, "open the settings."),
+                Effect.Converse(InputIntent.Command("open the settings."), Event.Heard("Kestrel, open the settings.", named = true)),
             ),
             performed,
         )
@@ -144,7 +147,7 @@ class OrchestratorTest {
     }
 
     @Test
-    fun aTaskInTimeEndsTheWait() = runTest {
+    fun aCommandInTimeEndsTheWait() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
 
         orchestrator.send(Event.Toggle)
@@ -156,7 +159,8 @@ class OrchestratorTest {
         advanceTimeBy(10_000)
         runCurrent()
 
-        assertEquals(Work.RUNNING_TASK, orchestrator.state.value.work)
+        assertEquals(Work.IDLE, orchestrator.state.value.work)
+        assertTrue(Effect.Converse(InputIntent.Command("Open the settings."), Event.Heard("Open the settings.", named = false)) in performed)
     }
 
     @Test
@@ -248,8 +252,14 @@ class OrchestratorTest {
         runCurrent()
 
         assertEquals(listOf("The feedback bar failed"), errors.map { it.message })
-        // RunTask comes after the failed effect in the same step.
-        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)), Effect.RunTask(1, "open the settings.")), performed)
+        // The input comes after the failed effect in the same step.
+        assertEquals(
+            listOf(
+                Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
+                Effect.Converse(InputIntent.Command("open the settings."), Event.Heard("Kestrel, open the settings.", named = true)),
+            ),
+            performed,
+        )
     }
 
     @Test
@@ -269,15 +279,15 @@ class OrchestratorTest {
         runCurrent()
 
         assertEquals(listOf("Not the Orchestrator's own"), errors.map { it.message })
-        assertEquals(Effect.RunTask(1, "open the settings."), performed.last())
+        assertEquals(InputIntent.Command("open the settings."), (performed.last() as Effect.Converse).intent)
     }
 
     @Test
-    fun aReplyOrTaskThatCannotStartDoesNotLeaveKestrelWaitingForIt() = runTest {
+    fun aReplyOrAnInputThatCannotStartDoesNotLeaveKestrelWaitingForIt() = runTest {
         val orchestrator = Orchestrator(
             backgroundScope,
             { effect ->
-                if (effect is Effect.Say || effect is Effect.RunTask) throw IllegalStateException("No voice")
+                if (effect is Effect.Say || effect is Effect.Converse) throw IllegalStateException("No voice")
                 performed += effect
             },
             { errors += it },
@@ -296,72 +306,27 @@ class OrchestratorTest {
     }
 
     @Test
-    fun aTaskThatCannotStartSaysSo() = runTest {
-        val orchestrator = Orchestrator(
-            backgroundScope,
-            { effect ->
-                if (effect is Effect.RunTask) throw IllegalStateException("No agent")
-                performed += effect
-            },
-            { errors += it },
-            taskFailed = "I couldn't start the task.",
-        )
-
-        orchestrator.send(Event.Toggle)
-        orchestrator.send(Event.Heard("Kestrel, open the settings.", named = true))
-        runCurrent()
-
-        assertEquals(Work.IDLE, orchestrator.state.value.work)
-        assertEquals(Effect.Say(Reply.Text("I couldn't start the task.")), performed.last())
-    }
-
-    @Test
-    fun aTaskQuestionEndsAfterItsWaitAndAHandOverAfterThreeMinutes() = runTest {
+    fun theConversationsQuestionEndsInSilenceAfterItsWaitUnlessItEndedOnItsCard() = runTest {
         val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
         orchestrator.send(Event.Toggle)
-        orchestrator.send(Event.Heard("Kestrel, pay the bill.", named = true))
-        orchestrator.send(Event.TaskAsks(1, "Which account?", TaskAsk.FREE))
+        orchestrator.send(Event.ChannelAsks(4, "Which account?", QuestionKind.FREE))
         orchestrator.send(Event.SpeechEnded)
         runCurrent()
-        advanceTimeBy(15_001)
+        advanceTimeBy(14_999)
         runCurrent()
-        assertEquals(Effect.AnswerTask(1, null), performed.last())
+        assertFalse(performed.any { it is Effect.Converse })
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence)), performed.last())
 
-        orchestrator.send(Event.TaskHandsOver(1, "This is a payment. Please finish it yourself, then say 'Kestrel, continue'."))
+        // The question ended on its card, and the voice channel withdrew it: its wait stops.
+        orchestrator.send(Event.ChannelAsks(5, "Which account?", QuestionKind.FREE))
         orchestrator.send(Event.SpeechEnded)
+        orchestrator.send(Event.ChannelWithdraws(5))
         runCurrent()
-        advanceTimeBy(179_999)
+        advanceTimeBy(36_000)
         runCurrent()
-        assertFalse(Effect.ExpireHandOver(1) in performed)
-        advanceTimeBy(2)
-        runCurrent()
-        assertEquals(Effect.ExpireHandOver(1), performed.last())
-        assertEquals(emptyList<Exception>(), errors)
-    }
-
-
-    @Test
-    fun aPauseEndsAfterThirtyMinutesAndTouchesAnswerOneSecondAfterTheQuestion() = runTest {
-        val orchestrator = Orchestrator(backgroundScope, { performed += it }, { errors += it })
-        orchestrator.send(Event.Toggle)
-        orchestrator.send(Event.Screen(on = true))
-        orchestrator.send(Event.Heard("Kestrel, open Viber.", named = true))
-        orchestrator.send(Event.Screen(on = false))
-        orchestrator.send(Event.Screen(on = true))
-        runCurrent()
-        assertEquals(TaskAsk.CONTINUE, orchestrator.state.value.taskAsking)
-        advanceTimeBy(999)
-        runCurrent()
-        assertFalse(orchestrator.state.value.touchesArmed)
-        advanceTimeBy(2)
-        runCurrent()
-        assertTrue(orchestrator.state.value.touchesArmed)
-
-        orchestrator.send(Event.Screen(on = false))
-        runCurrent()
-        advanceTimeBy(1_800_001)
-        runCurrent()
-        assertEquals(Effect.ExpirePause(1), performed.last())
+        assertEquals(1, performed.count { it is Effect.Converse })
         assertEquals(emptyList<Exception>(), errors)
     }
 }

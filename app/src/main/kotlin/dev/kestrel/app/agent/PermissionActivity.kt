@@ -61,9 +61,9 @@ class PermissionActivity : ComponentActivity() {
         const val EXTRA_REQUEST = "dev.kestrel.app.extra.PERMISSION_REQUEST"
 
         /**
-         * Asks Android for [permissions] through this activity and returns what Android granted afterwards (the
-         * `askAndroid` of AppOwnerPort, which keeps the task handed over meanwhile). Kestrel's accessibility service lets
-         * it start the activity from the background.
+         * Asks Android for [permissions] through this activity and returns what Android granted afterwards (the voice
+         * channel's `PermissionDialog`, which keeps the goal handed over meanwhile). Kestrel's accessibility service lets it
+         * start the activity from the background.
          */
         suspend fun ask(context: Context, permissions: List<String>): PermissionEnd = PermissionRequests.ask(
             start = { id ->

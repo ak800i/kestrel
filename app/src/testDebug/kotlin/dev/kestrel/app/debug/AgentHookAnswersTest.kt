@@ -2,10 +2,8 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
-import dev.kestrel.agent.port.AnswerKind
-import dev.kestrel.app.agent.AgentRunner
 import dev.kestrel.app.agent.TaskEvidence
-import dev.kestrel.app.orchestrator.TaskAsk
+import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
 import dev.kestrel.screen.model.IntRect
@@ -29,7 +27,7 @@ class AgentHookAnswersTest {
             workMillis = 41_000, credits = 0.5, inputTokens = 5000, outputTokens = 250, cacheRead = 2500, confirmed = 1, modelId = "scripted-light",
         )
 
-        val ended = AgentRunner.Ended(report, touches = 2, signals = 1, evidence = TaskEvidence(spoken = "Sent to Saved Messages. I told Ana that you're late for maple heron."))
+        val ended = AgentHookAnswers.Ended(report, "Sent to Saved Messages. I told Ana that you're late for maple heron.", touches = 2, signals = 1)
         val line = AgentHookAnswers.result(ended, "Maple heron", "saved messages")
 
         assertEquals(
@@ -83,8 +81,8 @@ class AgentHookAnswersTest {
         assertEquals(0, AgentHookAnswers.digits("At 10:58 it was 7 percent.", "587"))
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 1)
 
-        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "It is 87 percent.")), null, null, "87").endsWith(" digits=1"))
-        assertFalse(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "It is 87 percent.")), null, null).contains("digits="))
+        assertTrue(AgentHookAnswers.result(AgentHookAnswers.Ended(report, "It is 87 percent."), null, null, "87").endsWith(" digits=1"))
+        assertFalse(AgentHookAnswers.result(AgentHookAnswers.Ended(report, "It is 87 percent."), null, null).contains("digits="))
     }
 
     @Test
@@ -133,21 +131,21 @@ class AgentHookAnswersTest {
 
     @Test
     fun anAnswerReachesAConfirmationOnlyWithItsCategory() {
-        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.SENDING, "sending"))
-        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "cancel", Category.DELETING, null))
-        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "no", Category.DELETING, null))
-        assertNull(AgentHookAnswers.answerRefusal(TaskAsk.YES_NO, "no", null, null))
+        assertNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "confirm", Category.SENDING, "sending"))
+        assertNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "cancel", Category.DELETING, null))
+        assertNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "no", Category.DELETING, null))
+        assertNull(AgentHookAnswers.answerRefusal(QuestionKind.YES_NO, "no", null, null))
         assertNull(AgentHookAnswers.answerRefusal(null, "continue", null, null))
 
         // The confirmation changed between agent-state and agent-answer.
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.DELETING, "sending"))
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "cancel", Category.DELETING, "sending"))
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.FREE, "yes", null, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "confirm", Category.DELETING, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "cancel", Category.DELETING, "sending"))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.FREE, "yes", null, "sending"))
         assertNotNull(AgentHookAnswers.answerRefusal(null, "continue", null, "sending"))
         // A word that confirms needs the category that the script read.
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "confirm", Category.SENDING, null))
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "yes", Category.SENDING, null))
-        assertNotNull(AgentHookAnswers.answerRefusal(TaskAsk.CONFIRM, "send it", Category.SENDING, null))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "confirm", Category.SENDING, null))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "yes", Category.SENDING, null))
+        assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "send it", Category.SENDING, null))
     }
 
     @Test
@@ -186,23 +184,31 @@ class AgentHookAnswersTest {
 
     // The wire names that :tools:eval's answers read (plan 6B-basefix).
     @Test
-    fun theQuestionIsNamedByTheKindThatTheAgentAskedItWith() {
-        assertEquals("screenshot", AgentHookAnswers.question(AnswerKind.SCREENSHOT))
-        assertEquals("pick-number", AgentHookAnswers.question(AnswerKind.PICK_NUMBER))
-        assertEquals("free", AgentHookAnswers.question(AnswerKind.FREE))
-        assertEquals("yes-no", AgentHookAnswers.question(AnswerKind.YES_NO))
+    fun theQuestionAndTheAskingKeepSubProjectFivesWords() {
+        assertEquals("screenshot", AgentHookAnswers.question(QuestionKind.SCREENSHOT))
+        assertEquals("pick-number", AgentHookAnswers.question(QuestionKind.PICK))
+        assertEquals("free", AgentHookAnswers.question(QuestionKind.FREE))
+        assertEquals("yes-no", AgentHookAnswers.question(QuestionKind.YES_NO))
+        assertEquals("limit", AgentHookAnswers.question(QuestionKind.LIMIT))
+        assertEquals("none", AgentHookAnswers.question(QuestionKind.CONTINUE_GOAL))
+        // agent-state's asking= keeps the words that :tools:eval reads (design 14.4 of sub-project 7).
+        assertEquals("continue", AgentHookAnswers.asking(QuestionKind.CONTINUE_GOAL))
+        assertEquals("yes-no", AgentHookAnswers.asking(QuestionKind.LIMIT))
+        assertEquals("free", AgentHookAnswers.asking(QuestionKind.SCREENSHOT))
+        assertEquals("pick-number", AgentHookAnswers.asking(QuestionKind.PICK))
+        assertEquals("confirm", AgentHookAnswers.asking(QuestionKind.CONFIRM))
     }
 
     @Test
     fun theMarkerAndTheDigitsCountAlsoInWhatKestrelSaidDuringTheTask() {
         val report = TaskReport(EndReason.FINISHED, summary = "s", steps = 2)
-        val evidence = TaskEvidence(listOf("Kestrel test maple heron: a reminder about maple heron.", "Your battery is at 87 percent."), markerInData = true, spoken = "I read your notifications.")
+        val evidence = TaskEvidence(listOf("Kestrel test maple heron: a reminder about maple heron.", "Your battery is at 87 percent."), markerInData = true)
 
-        val line = AgentHookAnswers.result(AgentRunner.Ended(report, evidence = evidence), "maple heron", null, "87")
+        val line = AgentHookAnswers.result(AgentHookAnswers.Ended(report, "I read your notifications.", evidence = evidence), "maple heron", null, "87")
 
         assertTrue(line, line.contains(" marker=1 "))
         assertTrue(line, line.endsWith(" ownerTouches=0 signals=0 markerSaid=1 markerInData=1 digits=1"))
-        assertTrue(AgentHookAnswers.result(AgentRunner.Ended(report, evidence = TaskEvidence(spoken = "Kestrel test maple heron.")), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
+        assertTrue(AgentHookAnswers.result(AgentHookAnswers.Ended(report, "Kestrel test maple heron."), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
         assertFalse(line.contains("reminder"))
     }
 }

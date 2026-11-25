@@ -34,7 +34,7 @@ class AgentHooksTest {
     @Test
     fun agentSettingsStoresTestModesNamesAndRefusesAnyOtherKeyWithoutItsValue() = runBlocking {
         val safety = graph.settings.get(SettingKeys.SAFETY)
-        val aliases = graph.agent.selfChatAliases
+        val aliases = graph.goalEnvironment.selfChatAliases
         try {
             val refused = hook("AGENT_SETTINGS --es pin 4711")
             assertTrue(refused.contains("result=1, data=\"error: agent-settings has no key pin\""))
@@ -44,26 +44,26 @@ class AgentHooksTest {
 
             assertEquals("ownerEmails=1 viberSelfChatName=unset whatsappOwnName=set selfChatAliases=1", reply)
             assertEquals(listOf("owner@example.com"), graph.settings.get(SettingKeys.SAFETY).ownerEmails)
-            assertEquals(mapOf(FIXTURES to SelfChats.TELEGRAM), graph.agent.selfChatAliases)
+            assertEquals(mapOf(FIXTURES to SelfChats.TELEGRAM), graph.goalEnvironment.selfChatAliases)
         } finally {
             graph.settings.set(SettingKeys.SAFETY, safety)
-            graph.agent.selfChatAliases = aliases
+            graph.goalEnvironment.selfChatAliases = aliases
         }
     }
 
     @Test
     fun agentSettingsChangesNothingWhenTheAliasesAreInvalid() = runBlocking {
         val safety = graph.settings.get(SettingKeys.SAFETY)
-        val aliases = graph.agent.selfChatAliases
+        val aliases = graph.goalEnvironment.selfChatAliases
         try {
             val refused = hook("AGENT_SETTINGS --es ownerEmails changed@example.com --es selfChatAliases $FIXTURES")
 
             assertTrue(refused, refused.contains("result=1, data=\"error: add --es selfChatAliases as pkg=pkg,pkg=pkg\""))
             assertEquals(safety, graph.settings.get(SettingKeys.SAFETY))
-            assertEquals(aliases, graph.agent.selfChatAliases)
+            assertEquals(aliases, graph.goalEnvironment.selfChatAliases)
         } finally {
             graph.settings.set(SettingKeys.SAFETY, safety)
-            graph.agent.selfChatAliases = aliases
+            graph.goalEnvironment.selfChatAliases = aliases
         }
     }
 
@@ -73,21 +73,21 @@ class AgentHooksTest {
         val file = File(folder, "hooks-test.json").apply { writeText("""[{"tool": "fail", "arguments": {"reason": "I stop here."}}]""") }
         try {
             assertEquals("script=installed replies=1", answer(hook("AGENT_SCRIPT --es file hooks-test.json")))
-            assertNotNull(graph.agent.modelOverride)
+            assertNotNull(graph.roundModels.modelOverride)
             assertTrue(hook("AGENT_SCRIPT --es file ../hooks-test.json").contains("result=1, data=\"error: add --es file"))
 
             assertEquals("script=none", answer(hook("AGENT_SCRIPT --ez clear true")))
-            assertNull(graph.agent.modelOverride)
+            assertNull(graph.roundModels.modelOverride)
         } finally {
-            graph.agent.modelOverride = null
+            graph.roundModels.modelOverride = null
             file.delete()
         }
     }
 
     @Test
     fun selfchatCheckAndTheTreeReadTheFixtureWithoutItsTexts() = runBlocking {
-        val aliases = graph.agent.selfChatAliases
-        graph.agent.selfChatAliases = mapOf(FIXTURES to SelfChats.TELEGRAM)
+        val aliases = graph.goalEnvironment.selfChatAliases
+        graph.goalEnvironment.selfChatAliases = mapOf(FIXTURES to SelfChats.TELEGRAM)
         val tree = File(context.cacheDir, AgentTaskHooks.TREE_FILE)
         try {
             screen.open("MessengerActivity", "Saved Messages", "--es chat saved")
@@ -102,7 +102,7 @@ class AgentHooksTest {
             assertTrue(json.contains("labelLength"))
             assertFalse(json.contains("Petrovi") || json.contains("See you"))
         } finally {
-            graph.agent.selfChatAliases = aliases
+            graph.goalEnvironment.selfChatAliases = aliases
             tree.delete()
         }
     }

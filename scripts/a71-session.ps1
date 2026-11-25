@@ -1297,7 +1297,8 @@ function Invoke-VoiceStep {
         Wait-Mode paused 10 | Out-Null
     }
     Measure-Tries voice '"Kestrel, wake up" while paused' c043 5 $paused { param($Counts, $State) $Counts -and $State.mode -eq 'listening' } 10
-    # Each task now takes a second and then reads a long reply without any of Kestrel's keywords, which the owner
+    # Each goal's round now takes a second and then gives up with a long reply without any of Kestrel's keywords, which
+    # Kestrel reads in its final reply and which the owner
     # interrupts. A pause shorter than the speech detector's 0.7 s joins the request to Kestrel's own voice, which the
     # pipeline drops after an interruption (analysis, item 8), so the pauses start at 1 s.
     $story = 'Here is a long reply, so that you can interrupt it. ' + ('The news of the day comes one sentence after another, at an even pace. ' * 6)

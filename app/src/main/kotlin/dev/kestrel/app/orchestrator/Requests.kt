@@ -1,5 +1,7 @@
 package dev.kestrel.app.orchestrator
 
+import dev.kestrel.conversation.model.InputIntent
+
 /** What a transcript asks of Kestrel itself (design spec, sections 8.3, 8.5 and 11.10, and Appendix A). */
 sealed interface Request {
     /**
@@ -218,6 +220,22 @@ object Requests {
         val words = words(transcript)
         val limit = if (spotted) SPOTTED_LIMIT else HEARD_LIMIT
         return words.isNotEmpty() && nameStart(words, spotted, limit) == 1 && words[0].text in STOP_WORDS
+    }
+
+    /**
+     * What [request] asks of the conversation (design 5.5 of sub-project 7): a command, "stop", "continue" or one of
+     * Kestrel's own requests, which the conversation runs; null for the requests that only the voice handles, such as the
+     * name, the modes, the settings and the instant commands.
+     */
+    fun intent(request: Request): InputIntent? = when (request) {
+        is Request.Task -> InputIntent.Command(request.text)
+        is Request.Stop -> InputIntent.Stop
+        Request.Continue -> InputIntent.Continue
+        Request.DeleteHistory -> InputIntent.DeleteHistory
+        is Request.Remember -> InputIntent.Remember(request.key, request.value)
+        is Request.Forget -> InputIntent.Forget(request.key)
+        is Request.SaveRoutine -> InputIntent.SaveRoutine(request.name)
+        Request.Name, Request.WakeUp, Request.PauseListening, Request.TurnOff, Request.OpenSettings, is Request.Call, is Request.Other -> null
     }
 
     private fun words(transcript: String): List<Word> =

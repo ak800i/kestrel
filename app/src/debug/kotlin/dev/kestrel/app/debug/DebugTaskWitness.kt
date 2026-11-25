@@ -5,17 +5,14 @@ import dev.kestrel.app.agent.TaskEvidence
 import dev.kestrel.app.agent.TaskWitness
 
 /**
- * The debug build's witness of one task (plan 6B-basefix): it keeps the newest [MAX_SAID] texts that Kestrel said with
- * `say` and the sentence of the task's end, for agent-task's marker and digits, and, when the task's options carry a
- * run's [marker] (`voice -Send heard --es marker`), it watches the task's data tools for it ([MarkerWatch]). VoiceHooks
- * installs [open] as AgentRunner.witnesses beside Listening.taskOptions. The texts stay in memory, with the newest tasks'
- * ends that AgentRunner keeps.
+ * The debug build's witness of one round of a goal (plan 6B-basefix): it keeps the newest [MAX_SAID] texts that Kestrel
+ * said with `say`, for agent-task's marker and digits, and, when the round's options carry a run's [marker] (`voice -Send
+ * heard --es marker`), it watches the round's data tools for it ([MarkerWatch]). VoiceHooks installs [open] as
+ * AppGoalEnvironment.witnesses beside Listening.inputs. The texts stay in memory, with the newest rounds' evidence that
+ * AppGoalEnvironment keeps.
  */
 internal class DebugTaskWitness(private val marker: String?) : TaskWitness {
     private val texts = ArrayDeque<String>()
-
-    @Volatile
-    private var end: String? = null
 
     @Volatile
     private var watched: MarkerWatch? = null
@@ -27,14 +24,10 @@ internal class DebugTaskWitness(private val marker: String?) : TaskWitness {
         }
     }
 
-    override fun ended(sentence: String) {
-        end = sentence
-    }
-
     override fun watch(data: DataPort): DataPort = marker?.let { MarkerWatch(data, it).also { watch -> watched = watch } } ?: data
 
     override val evidence: TaskEvidence
-        get() = TaskEvidence(synchronized(texts) { texts.toList() }, marker?.let { watched?.seen ?: false }, end)
+        get() = TaskEvidence(synchronized(texts) { texts.toList() }, marker?.let { watched?.seen ?: false })
 
     override fun toString(): String = "DebugTaskWitness(marker=${marker != null})"
 

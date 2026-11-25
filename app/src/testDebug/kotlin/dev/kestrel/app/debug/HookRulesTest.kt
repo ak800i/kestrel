@@ -44,18 +44,9 @@ class HookRulesTest {
     }
 
     @Test
-    fun aTasksOptionsAreTheGivenExtrasAndAreReadOnce() {
+    fun aTasksOptionsAreTheGivenExtras() {
         assertEquals(emptyMap<String, String>(), VoiceHooks.taskOptions(model = null, live = null))
         assertEquals(mapOf("model" to "test-model", "live" to "false"), VoiceHooks.taskOptions(model = "test-model", live = false))
         assertEquals(mapOf(DebugTaskWitness.MARKER to "maple heron"), VoiceHooks.taskOptions(model = null, live = null, marker = "maple heron"))
-
-        val store = TaskOptions()
-        store.put(3, mapOf("live" to "true"))
-        assertEquals(mapOf("live" to "true"), store.take(3))
-        assertEquals(emptyMap<String, String>(), store.take(3))
-        // It keeps only the newest tasks' options.
-        for (task in 1..TaskOptions.MAX_TASKS + 1) store.put(task, mapOf("model" to "m$task"))
-        assertEquals(emptyMap<String, String>(), store.take(1))
-        assertEquals(mapOf("model" to "m2"), store.take(2))
     }
 }
