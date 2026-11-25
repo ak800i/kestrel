@@ -117,7 +117,8 @@ object Normalizer {
             type == Character.COMBINING_SPACING_MARK.toInt()
     }
 
-    private val APOSTROPHES = setOf('\'', '\u2019', '\u2018', '\u02BC')
+    /** The apostrophes that the fold deletes, so that "can't" stays one word; a host's reading of the owner's words shares them. */
+    val APOSTROPHES: Set<Char> = setOf('\'', '\u2019', '\u2018', '\u02BC')
 
     private val EXPLICIT = mapOf('đ' to "dj", 'ł' to "l", 'ø' to "o", 'æ' to "ae", 'œ' to "oe", 'ß' to "ss")
 

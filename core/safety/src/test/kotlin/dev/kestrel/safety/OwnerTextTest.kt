@@ -41,6 +41,18 @@ class OwnerTextTest {
             case("open 192.168.1.1", "https://192.168.1.1/page?id=7", named = true),
             // Labels that two of his texts hold apart do not count.
             Case(listOf("open kestrel", "example.com"), "https://kestrel.example.com/page?id=7", named = false),
+            // An apostrophe is part of its word, as the fold reads it, never a break between two labels.
+            case("it's me", "https://s.me/page?id=7", named = false),
+            case("Open Ana's app", "https://s.app/page?id=7", named = false),
+            case("I can't. Me and Mila are late", "https://t.me/share?url=late", named = false),
+            // Words join into a host only across a dot or a spoken "dot", and a host is named only up to where his ends:
+            // ordinary words, a typed link's path and a part of a longer host name none.
+            case("Open the news app", "https://news.app/page?id=7", named = false),
+            case("open https://kestrel.example/page?id=7", "https://example.page/x?id=7", named = false),
+            case("open https://kestrel.example/page?id=7", "https://page.id/x?id=7", named = false),
+            case("open www.bbc.co.uk", "https://bbc.co/news?id=7", named = false),
+            case("open www.bbc.co.uk", "https://bbc.co.uk/news?id=7", named = true),
+            case("open kestrel.example dot com", "https://kestrel.example.com/page?id=7", named = true),
         )
 
         for (case in cases) assertEquals("${case.owner} → ${case.link}", case.named, LinkCheck.fromOwner(case.link, OwnerText.of(case.owner)))
