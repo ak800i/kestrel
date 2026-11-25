@@ -34,7 +34,8 @@ data class RouteNote(
         const val MAX_LABEL = 40
         const val MAX_LENGTH = 200
         private const val ARROW = " → "
-        private val STEP = Regex("""^(long press|type into|open|tap|scroll)\s+"([^"\n]{1,40})"$|^(back)$""")
+        // A label holds no quote and no line break of any kind, so that a note can never start a line of its own in a prompt.
+        private val STEP = Regex("""^(long press|type into|open|tap|scroll)\s+"([^"\p{Cntrl}\u0085\u2028\u2029]{1,40})"$|^(back)$""")
 
         /** The steps of [text], or null when it is not a path of the fixed verbs with quoted labels. */
         fun parse(text: String): List<RouteStep>? {

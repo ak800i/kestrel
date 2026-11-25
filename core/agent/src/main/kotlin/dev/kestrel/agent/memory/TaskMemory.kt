@@ -1,5 +1,6 @@
 package dev.kestrel.agent.memory
 
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.AgentClock
 import dev.kestrel.agent.port.AppsPort
 import dev.kestrel.agent.port.LauncherApp
@@ -53,7 +54,7 @@ class TaskMemory(
         used.clear()
         used += facts.filter { names(words, it.key) }.take(MAX_FACTS)
         val parts = mutableListOf<String>()
-        if (used.isNotEmpty()) parts += "Facts the owner saved:\n" + used.joinToString("\n") { "- ${it.key} = ${it.value}" }
+        if (used.isNotEmpty()) parts += "Facts the owner saved:\n" + used.joinToString("\n") { "- ${ScreenText.quoteWhole(it.key)} = ${ScreenText.quoteWhole(it.value)}" }
         val named = launcher.filter { names(words, it.label) }
         val notes = named.flatMap { app -> activeNotes(app).map { app to it } }.take(MAX_CONTEXT_NOTES)
         if (notes.isNotEmpty()) {
@@ -132,8 +133,8 @@ class TaskMemory(
     private suspend fun activeNotes(app: LauncherApp): List<RouteNote> = store.notes(app.packageName).filter { it.active && it.strikes < MAX_STRIKES }
 
     private fun line(app: LauncherApp, note: RouteNote): String {
-        val version = note.version?.takeIf { it != app.versionName }?.let { " (written for version $it)" }.orEmpty()
-        return "- ${app.label}: ${note.path}$version"
+        val version = note.version?.takeIf { it != app.versionName }?.let { " (written for version ${ScreenText.quote(it, ScreenText.LABEL_LIMIT)})" }.orEmpty()
+        return "- ${ScreenText.quote(app.label, ScreenText.LABEL_LIMIT)}: ${note.path}$version"
     }
 
     private fun appFor(name: String): LauncherApp? =

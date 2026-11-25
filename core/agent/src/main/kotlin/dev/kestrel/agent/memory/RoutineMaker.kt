@@ -1,5 +1,6 @@
 package dev.kestrel.agent.memory
 
+import dev.kestrel.agent.observe.ScreenText
 import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.MemoryStore
@@ -95,17 +96,18 @@ class RoutineMaker(
     }
 
     // The steps as the model sees them: numbered, with each label as the task's observation showed it (redacted there with
-    // its neighbours and the task's vault, which is gone by now, so it is never redacted again here) and the texts and
-    // arguments redacted once here; the title after a step comes from the observation, which redacted it already.
+    // its neighbours and the task's vault, which is gone by now, so it is never redacted again here, and quoted there) and
+    // the texts and arguments redacted once here. The request, the typed texts and the titles are quoted and escaped as
+    // data, so that a line break in them cannot start a line of its own; the arguments are JSON, which escapes its strings.
     private fun describe(recording: Recording): String = buildString {
-        append("The owner's request: ").append(recording.request).append("\nThe recorded steps:\n")
+        append("The owner's request: ").append(ScreenText.quoteWhole(recording.request)).append("\nThe recorded steps:\n")
         recording.steps.forEachIndexed { index, step ->
             append(index + 1).append(". ").append(step.tool)
             step.label?.let { append(' ').append(it) }
-            step.className?.let { append(" (").append(it.substringAfterLast('.')).append(')') }
-            step.text?.let { append(" text \"").append(redactor.redact(it)).append('"') }
+            step.className?.let { append(" (").append(ScreenText.shortClass(it)).append(')') }
+            step.text?.let { append(" text ").append(ScreenText.quoteWhole(redactor.redact(it))) }
             step.arguments?.let { append(" arguments ").append(redactor.redact(it.toString())) }
-            step.title?.let { append(" → screen \"").append(it).append('"') }
+            step.title?.let { append(" → screen ").append(ScreenText.quoteWhole(it)) }
             append('\n')
         }
     }

@@ -157,7 +157,7 @@ class AgentGoalTest {
 
         harness.run(TaskRequest(Harness.ID, "What is the gate code?", conversation = records))
 
-        assertEquals("${TaskText.TEST_MODE_NOTE}\n\n${records.text}\n\nFacts the owner saved:\n- gate code = blue", harness.model.requests.single().context)
+        assertEquals("${TaskText.TEST_MODE_NOTE}\n\n${records.text}\n\nFacts the owner saved:\n- \"gate code\" = \"blue\"", harness.model.requests.single().context)
         assertTrue(firstMessage(harness), firstMessage(harness).startsWith("The owner's new command: \"What is the gate code?\"\nToday is "))
     }
 
