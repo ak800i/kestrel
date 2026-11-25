@@ -64,6 +64,8 @@ import dev.kestrel.app.download.downloadBlockedBy
 import dev.kestrel.app.download.gatewayDownloader
 import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.phone.AndroidScreenSource
+import dev.kestrel.app.phone.PhoneSignals
 import dev.kestrel.app.providers.ProviderAllowlist
 import dev.kestrel.app.providers.StoredCredentials
 import dev.kestrel.conversation.model.ConversationSettings
@@ -624,8 +626,8 @@ class AppGraph(context: Context) {
             exits = AndroidExitRecords(appContext),
             // The wall clock, as in Android's exit records.
             clock = System::currentTimeMillis,
-            // Section 8.7: the call state, while a voice session is open.
-            calls = AndroidCallMonitor(appContext),
+            // Section 8.7: the call state, while a voice session is open, from the signals that the conversation shares.
+            calls = phoneSignals.callMonitor(),
             // The call commands: Android's call API with ANSWER_PHONE_CALLS, otherwise the phone app's controls through
             // the accessibility service while it runs. Listening runs them on Dispatchers.IO.
             callActions = CallActions(AndroidCallApi(appContext)) {
@@ -642,6 +644,12 @@ class AppGraph(context: Context) {
             timeline = timeline,
         ).also(::keepScreenFresh).also(::runTasks)
     }
+
+    /**
+     * The phone's screen, lock and calls (design 5.5 and 6.5 of sub-project 7): one receiver and one call listener for
+     * ListeningService, Listening and, from plan 7D's switch-over, the conversation.
+     */
+    internal val phoneSignals: PhoneSignals by lazy { PhoneSignals(AndroidScreenSource(appContext), AndroidCallMonitor(appContext)) }
 
     /** The microphone of the newest voice session, for the debug hook voice-route (plan 2E). */
     @Volatile

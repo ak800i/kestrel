@@ -1,26 +1,23 @@
 package dev.kestrel.app.listen
 
 import android.annotation.SuppressLint
-import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.PowerManager
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.phone.PhoneWatch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,7 +32,8 @@ import kotlinx.coroutines.launch
  * media playback, because Android lets Kestrel record and play audio in the background only while such a service runs
  * (B5). [Listening] starts and stops it, and holds the voice session while it runs. The service shows the notification
  * with Pause or Resume and Stop, with only Stop during a call, or without actions once Kestrel is turning off, and
- * tells [Listening] whether the screen is on and the phone unlocked. The actions are broadcasts to
+ * tells [Listening] whether the screen is on and the phone unlocked, from the app graph's
+ * [dev.kestrel.app.phone.PhoneSignals], which the conversation shares (plan 7D). The actions are broadcasts to
  * [NotificationActionReceiver], so they need no new start of the service. Since Android 14 the owner can swipe the
  * notification away while the phone is unlocked; it comes back with the next change of mode. The service stops itself
  * when [Listening] asks, unless Android gave it a start that Listening has not seen yet. Android calls every callback
@@ -47,17 +45,9 @@ class ListeningService : Service() {
     private var foreground = false
     private lateinit var notifications: NotificationManager
 
-    // The owner unlocked the phone since the screen last went off (USER_PRESENT). Only the main thread uses it.
-    private var unlocked = false
-    private val screen = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                Intent.ACTION_USER_PRESENT -> unlocked = true
-                Intent.ACTION_SCREEN_OFF -> unlocked = false
-            }
-            reportScreen()
-        }
-    }
+    // The service's watch of the screen and the lock (section 8.5), from its creation to its end. Only the main thread
+    // uses it.
+    private var screenWatch: PhoneWatch? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -68,16 +58,9 @@ class ListeningService : Service() {
         notifications.createNotificationChannel(
             NotificationChannel(CHANNEL, getString(R.string.listening_channel), NotificationManager.IMPORTANCE_LOW),
         )
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_OFF)
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_USER_PRESENT)
-        }
-        // SCREEN_ON and SCREEN_OFF come from the system, but USER_PRESENT comes from SystemUI, and Android gives another
-        // app's broadcasts only to an exported receiver. All three are protected broadcasts, which other apps cannot send.
-        registerReceiver(screen, filter, Context.RECEIVER_EXPORTED)
-        // Before the voice session opens, and so before the microphone's first frame.
-        reportScreen()
+        // The reading at once, before the voice session opens, and so before the microphone's first frame; then every
+        // change.
+        screenWatch = (application as KestrelApplication).graph.phoneSignals.watchScreen { on -> listening.send(Event.Screen(on)) }
         scope.launch {
             listening.state.map { it.mode }.distinctUntilChanged().collect { mode ->
                 // Off: the notification says that Kestrel is turning off, without actions, until the service stops.
@@ -128,23 +111,13 @@ class ListeningService : Service() {
     override fun onDestroy() {
         if (current === this) current = null
         scope.cancel()
-        unregisterReceiver(screen)
+        screenWatch?.stop()
+        screenWatch = null
         // After this, no update of the notification can bring it back.
         foreground = false
         stopForeground(STOP_FOREGROUND_REMOVE)
         listening.onServiceDestroyed(this)
         super.onDestroy()
-    }
-
-    /**
-     * Section 8.5: Kestrel records only while the screen is on and the phone unlocked. After USER_PRESENT the phone counts
-     * as unlocked until the screen goes off, because KeyguardManager can learn of the unlock a moment later, and a
-     * SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock.
-     */
-    private fun reportScreen() {
-        val interactive = getSystemService(PowerManager::class.java).isInteractive
-        val locked = getSystemService(KeyguardManager::class.java).isKeyguardLocked
-        listening.send(Event.Screen(on = interactive && (unlocked || !locked)))
     }
 
     /**
