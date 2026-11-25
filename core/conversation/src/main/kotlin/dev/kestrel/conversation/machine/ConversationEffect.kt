@@ -1,0 +1,102 @@
+package dev.kestrel.conversation.machine
+
+import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
+import dev.kestrel.agent.goal.ResumeCause
+import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.conversation.channel.ChannelOutput
+import dev.kestrel.conversation.local.LocalRequest
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.LineKind
+import dev.kestrel.conversation.model.OwnerInput
+
+/** What the engine does for the machine, in order (design 6.3 of sub-project 7). toString prints no words. */
+sealed interface ConversationEffect {
+    /** Creates record [record] for [text] and runs the goal's first round as [command]. */
+    data class StartGoal(val command: Int, val record: Int, val input: OwnerInput, val text: String) : ConversationEffect {
+        override fun toString(): String = "StartGoal(command=$command, record=$record, input=$input, text=${text.length} chars)"
+    }
+
+    /**
+     * Runs a held goal's next round as [command], after [cause], with [steer] as its first steering. [input] is the owner's
+     * input that resumed it, whose options the round takes; null when he answered "Continue the goal?" on its card.
+     */
+    data class ResumeGoal(val command: Int, val cause: ResumeCause, val steer: Steering?, val input: OwnerInput?) : ConversationEffect
+
+    /** The owner's steering of the acting goal (design 7.3). */
+    data class SteerGoal(val text: String, val channel: InputChannel) : ConversationEffect {
+        override fun toString(): String = "SteerGoal(${text.length} chars, channel=$channel)"
+    }
+
+    /** A lock or a call: the owner port withdraws the goal's question and closes its gate. */
+    data object PauseGoal : ConversationEffect
+
+    /** The paused round goes on with a fresh look. */
+    data object ResumePausedGoal : ConversationEffect
+
+    /** Cancels the round's job as interrupted: the goal stays open and held (D13). */
+    data class InterruptGoal(val cause: Interruption) : ConversationEffect
+
+    /** Cancels the round's job with [reason]; [sentence] replaces the report's reason, as the call backstop's does. */
+    data class CancelGoal(val reason: EndReason, val sentence: String? = null) : ConversationEffect {
+        override fun toString(): String = "CancelGoal(reason=$reason, sentence=${sentence?.length})"
+    }
+
+    /** Ends a held goal, whose round has ended already, with [reason] and its partial report. */
+    data class EndHeldGoal(val reason: EndReason) : ConversationEffect
+
+    /** Answers question [number]; [leftScreen] when the owner gave the answer on Kestrel's own screen, a typed input (design 10.3). */
+    data class AnswerQuestion(val number: Int, val answer: ChannelAnswer, val leftScreen: Boolean = false) : ConversationEffect
+
+    data class EndHandOver(val number: Int, val end: HandOverEnd) : ConversationEffect
+
+    /** Asks "Continue the goal?" (design 6.5 and 6.7). */
+    data object AskContinueGoal : ConversationEffect
+
+    /** Withdraws "Continue the goal?". */
+    data object CancelContinueQuestion : ConversationEffect
+
+    data class Output(val output: ChannelOutput) : ConversationEffect
+
+    /** Adds a line to record [record]; an owner's line is redacted into its record's form first. */
+    data class AddLine(val record: Int, val kind: LineKind, val text: String, val channel: InputChannel?) : ConversationEffect {
+        override fun toString(): String = "AddLine(record=$record, kind=$kind, text=${text.length} chars, channel=$channel)"
+    }
+
+    /** Record [record]'s goal or request ended with [end] and its final words [answer]. */
+    data class EndRecord(val record: Int, val end: EndReason, val answer: String?) : ConversationEffect {
+        override fun toString(): String = "EndRecord(record=$record, end=$end, answer=${answer?.length})"
+    }
+
+    /** Runs Kestrel's own [request] as [command] for the owner's [input]; [record] is a memory request's new record. */
+    data class RunLocal(val command: Int, val record: Int?, val request: LocalRequest, val input: OwnerInput) : ConversationEffect
+
+    data object CancelLocal : ConversationEffect
+
+    /** Makes the closed conversation [id] the open one as [command] for the owner's [input], closing the open one (D23). */
+    data class SwitchTo(val command: Int, val id: ConversationId, val input: OwnerInput) : ConversationEffect
+
+    data class StartTimer(val timer: Timer, val number: Int, val millis: Long) : ConversationEffect
+
+    /** Closes conversation [id]: stored closed when [keep], else forgotten, because "delete history" deleted it. */
+    data class Close(val id: ConversationId, val keep: Boolean = true) : ConversationEffect
+
+    /** Saves the open conversation's snapshot. */
+    data object Persist : ConversationEffect
+
+    /** A steering message that resumes a held goal. */
+    data class Steering(val text: String, val channel: InputChannel) {
+        override fun toString(): String = "Steering(${text.length} chars, channel=$channel)"
+    }
+}
+
+/** One step of the machine: the new state and the effects that the engine performs in order. */
+data class MachineStep(val state: ConversationState, val effects: List<ConversationEffect> = emptyList()) {
+    /** This step followed by what [next] makes of its state. */
+    fun then(next: (ConversationState) -> MachineStep): MachineStep {
+        val after = next(state)
+        return MachineStep(after.state, effects + after.effects)
+    }
+}

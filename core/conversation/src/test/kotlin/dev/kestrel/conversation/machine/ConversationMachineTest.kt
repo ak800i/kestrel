@@ -1,0 +1,404 @@
+package dev.kestrel.conversation.machine
+
+import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.Interruption
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.goal.ResumeCause
+import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.conversation.ConversationTexts
+import dev.kestrel.conversation.channel.ChannelOutput
+import dev.kestrel.conversation.channel.DialogueEvent
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.local.LocalOutcome
+import dev.kestrel.conversation.local.LocalRequest
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.CommandRecord
+import dev.kestrel.conversation.model.ConversationSettings
+import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.GoalHold
+import dev.kestrel.conversation.model.GoalPhase
+import dev.kestrel.conversation.model.GoalState
+import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
+import dev.kestrel.conversation.model.LineKind
+import dev.kestrel.conversation.model.PhoneSignal
+import dev.kestrel.conversation.model.ProcessEnd
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** What an input does in each situation (design 6.4 of sub-project 7), the conversation's open and close, restore and switch. */
+class ConversationMachineTest : MachineTesting() {
+    @Test
+    fun aCommandOpensAConversationWithTheCurrentTestModeAndStartsAGoal() {
+        val first = step(idle.copy(safetyTestMode = true), typed("Turn on Wi-Fi"))
+
+        assertEquals(id, first.state.id)
+        assertTrue(first.state.testMode)
+        assertEquals(1, first.state.commands)
+        val start = first.effect<ConversationEffect.StartGoal>()
+        assertEquals(1, start.command)
+        assertEquals(1, start.record)
+        assertEquals("Turn on Wi-Fi", start.text)
+        assertEquals(GoalPhase.ACTING, first.state.goal!!.phase)
+        assertTrue(first.has<ConversationEffect.Persist>())
+
+        val second = step(step(ended(first.state).state, ConversationEvent.ReplyShown(1)).state, spoken("And Bluetooth"))
+        assertEquals(2, second.effect<ConversationEffect.StartGoal>().record)
+        assertEquals(id, second.state.id)
+    }
+
+    @Test
+    fun stopAndContinueWithoutAGoal() {
+        assertTrue(step(idle, typed(InputIntent.Stop)).effects.isEmpty())
+        val nothing = step(idle, typed(InputIntent.Continue))
+        assertEquals(listOf(ChannelOutput.Said(ConversationTexts.NOTHING_TO_CONTINUE)), nothing.outputs())
+        assertNull(nothing.state.id)
+
+        val open = idleOpen()
+        assertTrue(step(open, typed(InputIntent.Stop)).effects.isEmpty())
+        assertEquals(listOf(ChannelOutput.Said(ConversationTexts.NOTHING_TO_CONTINUE)), step(open, typed(InputIntent.Continue)).outputs())
+    }
+
+    @Test
+    fun aCommandWhileTheGoalActsSteersIt() {
+        val steered = step(acting(), spoken("Make it 7:30 instead"))
+
+        assertEquals(ConversationEffect.SteerGoal("Make it 7:30 instead", InputChannel.VOICE), steered.effect<ConversationEffect.SteerGoal>())
+        assertEquals(listOf(ChannelOutput.Shown(ConversationTexts.GOT_IT)), steered.outputs())
+        assertFalse(steered.has<ConversationEffect.StartGoal>())
+    }
+
+    @Test
+    fun aCommandWhileTheGoalAsksAnswersIt() {
+        val asking = asked(acting(), 4, QuestionKind.FREE)
+        assertEquals(GoalPhase.ASKING, asking.goal!!.phase)
+
+        assertEquals(ConversationEffect.AnswerQuestion(4, ChannelAnswer.Text("Mila"), leftScreen = true), step(asking, typed("Mila")).effect<ConversationEffect.AnswerQuestion>())
+        assertEquals(ConversationEffect.AnswerQuestion(4, ChannelAnswer.Yes, leftScreen = true), step(asking, typed(InputIntent.Answer(ChannelAnswer.Yes))).effect<ConversationEffect.AnswerQuestion>())
+        assertEquals(
+            ConversationEffect.AnswerQuestion(4, ChannelAnswer.Silence),
+            step(asking, spoken(InputIntent.Answer(ChannelAnswer.Silence))).effect<ConversationEffect.AnswerQuestion>(),
+        )
+        assertTrue(step(asking, typed(InputIntent.Continue)).effects.isEmpty())
+
+        val answered = step(asking, ConversationEvent.Dialogue(DialogueEvent.Answered(4))).state
+        assertEquals(GoalPhase.ACTING, answered.goal!!.phase)
+        assertNull(answered.question)
+    }
+
+    @Test
+    fun duringAHandOverACommandWaitsContinueEndsItAndStopEndsTheGoal() {
+        val handed = step(acting(), ConversationEvent.Dialogue(DialogueEvent.HandedOver(7))).state
+        assertEquals(GoalPhase.HANDED_OVER, handed.goal!!.phase)
+
+        assertEquals(listOf(ChannelOutput.Said(ConversationTexts.FINISH_HAND_OVER_TYPED)), step(handed, typed("Send it")).outputs())
+        assertEquals(listOf(ChannelOutput.Said(ConversationTexts.FINISH_HAND_OVER_SPOKEN)), step(handed, spoken("Send it")).outputs())
+        val continued = step(handed, spoken(InputIntent.Continue))
+        assertEquals(ConversationEffect.EndHandOver(7, HandOverEnd.CONTINUED), continued.effect<ConversationEffect.EndHandOver>())
+        assertEquals(
+            ConversationEffect.AddLine(1, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, InputChannel.VOICE),
+            continued.effect<ConversationEffect.AddLine>(),
+        )
+        assertEquals(GoalPhase.ACTING, step(continued.state, ConversationEvent.Dialogue(DialogueEvent.HandOverDone(7))).state.goal!!.phase)
+        assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED), step(handed, typed(InputIntent.Stop)).effect<ConversationEffect.CancelGoal>())
+    }
+
+    @Test
+    fun whilePausedACommandIsToldToAnswerFirstAndContinueResumesWithAFreshLook() {
+        val back = step(step(acting(), ConversationEvent.Signal(PhoneSignal.LOCKED)).state, ConversationEvent.Signal(PhoneSignal.UNLOCKED)).state
+
+        assertEquals(listOf(ChannelOutput.Said(ConversationTexts.ANSWER_CONTINUE_FIRST)), step(back, typed("Send it")).outputs())
+        val resumed = step(back, spoken(InputIntent.Continue))
+        assertTrue(resumed.has<ConversationEffect.ResumePausedGoal>())
+        assertTrue(resumed.has<ConversationEffect.CancelContinueQuestion>())
+        assertEquals(GoalPhase.ACTING, resumed.state.goal!!.phase)
+        assertNull(resumed.state.goal!!.hold)
+    }
+
+    @Test
+    fun aGoalHeldAtALimitOrInterruptedResumesInANewRound() {
+        val limited = ended(acting(), TaskReport(EndReason.PAUSED_AT_LIMIT, steps = 500), "I stopped at the limit because you didn't answer.").state
+        assertEquals(GoalPhase.PAUSED_AT_LIMIT, limited.goal!!.phase)
+        assertEquals(500, limited.goal!!.stepsBefore)
+
+        val go = typed(InputIntent.Continue)
+        val byContinue = step(limited, go)
+        assertEquals(ConversationEffect.ResumeGoal(2, ResumeCause.LIMIT, null, go.input), byContinue.effect<ConversationEffect.ResumeGoal>())
+        assertEquals(2, byContinue.state.goal!!.rounds)
+        assertEquals(2, byContinue.state.goal!!.command)
+        assertEquals(500, byContinue.state.goal!!.stepsBefore)
+
+        val interrupted = ended(acting(), TaskReport(EndReason.INTERRUPTED, interruption = Interruption.TOUCH), "I stopped.").state
+        val also = typed("Also send it to Mila")
+        val byCommand = step(interrupted, also)
+        assertEquals(
+            ConversationEffect.ResumeGoal(2, ResumeCause.INTERRUPTION, ConversationEffect.Steering("Also send it to Mila", InputChannel.TEXT), also.input),
+            byCommand.effect<ConversationEffect.ResumeGoal>(),
+        )
+        assertFalse(byCommand.has<ConversationEffect.AddLine>())
+    }
+
+    @Test
+    fun stopEndsTheGoalInEveryPhaseWithItsReport() {
+        val cancel = ConversationEffect.CancelGoal(EndReason.CANCELLED)
+        assertEquals(cancel, step(acting(), typed(InputIntent.Stop)).effect<ConversationEffect.CancelGoal>())
+        assertEquals(cancel, step(asked(acting(), 2, QuestionKind.FREE), typed(InputIntent.Stop)).effect<ConversationEffect.CancelGoal>())
+        assertEquals(cancel, step(step(acting(), ConversationEvent.Signal(PhoneSignal.LOCKED)).state, spoken(InputIntent.Stop)).effect<ConversationEffect.CancelGoal>())
+
+        val held = ended(acting(), TaskReport(EndReason.PAUSED_AT_LIMIT), "Limit.").state
+        val stopped = step(held, typed(InputIntent.Stop))
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), stopped.effect<ConversationEffect.EndHeldGoal>())
+
+        val report = ended(stopped.state, TaskReport(EndReason.CANCELLED), "Cancelled. I opened Viber.")
+        assertEquals(listOf(ChannelOutput.Report(1, "Cancelled. I opened Viber.")), report.outputs())
+        assertEquals(ConversationEffect.EndRecord(1, EndReason.CANCELLED, "Cancelled. I opened Viber."), report.effect<ConversationEffect.EndRecord>())
+        assertNull(report.state.goal)
+    }
+
+    @Test
+    fun newConversationAndContinuingAreRefusedWhileAGoalIsOpen() {
+        val goal = acting()
+        val own = listOf(
+            InputIntent.NewConversation,
+            InputIntent.ContinuePast("the trip"),
+            InputIntent.ContinueConversation(other),
+            InputIntent.Remember("the gate code", "4321"),
+            InputIntent.Forget("the gate code"),
+            InputIntent.SaveRoutine("evening"),
+        )
+
+        for (intent in own) assertEquals(intent.toString(), listOf(ChannelOutput.Said(ConversationTexts.STOP_GOAL_FIRST)), step(goal, typed(intent)).outputs())
+        assertTrue(step(goal, typed(InputIntent.DeleteHistory)).effects.isEmpty())
+    }
+
+    @Test
+    fun theEndOfAnOlderCommandsGoalChangesNothing() {
+        val second = step(idleOpen(), typed("Turn on Bluetooth")).state
+        assertEquals(2, second.goal!!.command)
+
+        val late = step(second, ConversationEvent.GoalEnded(1, TaskReport(EndReason.CANCELLED), "Cancelled.", "Cancelled."))
+
+        assertTrue(late.effects.isEmpty())
+        assertEquals(second, late.state)
+    }
+
+    @Test
+    fun newConversationClosesTheOpenOne() {
+        val fresh = step(idleOpen(), typed(InputIntent.NewConversation))
+
+        assertEquals(ConversationEffect.Close(id), fresh.effect<ConversationEffect.Close>())
+        assertNull(fresh.state.id)
+        assertEquals(listOf(ChannelOutput.Report(2, ConversationTexts.NEW_CONVERSATION)), fresh.outputs())
+        assertEquals(listOf(ChannelOutput.Report(1, ConversationTexts.NEW_CONVERSATION)), step(idle, spoken(InputIntent.NewConversation)).outputs())
+    }
+
+    @Test
+    fun stopThenACommandRunsTheNewOneAfterTheOldOneEnds() {
+        val stopped = step(acting(), spoken(InputIntent.Stop)).state
+        val waiting = step(stopped, spoken("Turn on Bluetooth"))
+        assertFalse(waiting.has<ConversationEffect.StartGoal>())
+
+        val next = ended(waiting.state, TaskReport(EndReason.CANCELLED), "Cancelled. I opened Settings.")
+
+        assertEquals(listOf(ChannelOutput.Shown("Cancelled. I opened Settings.")), next.outputs())
+        val start = next.effect<ConversationEffect.StartGoal>()
+        assertEquals(2, start.record)
+        assertEquals("Turn on Bluetooth", start.text)
+    }
+
+    @Test
+    fun stopThenKestrelsOwnRequestRunsItAfterTheGoalEnds() {
+        val stopped = step(acting(), spoken(InputIntent.Stop)).state
+
+        val forgetting = step(stopped, spoken(InputIntent.Forget("the gate code")))
+        assertTrue(forgetting.effects.none { it is ConversationEffect.Output || it is ConversationEffect.RunLocal })
+        val forgot = ended(forgetting.state, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertEquals(LocalRequest.Forget("the gate code"), forgot.effect<ConversationEffect.RunLocal>().request)
+
+        val deleting = step(stopped, spoken(InputIntent.DeleteHistory))
+        assertEquals(LocalRequest.DeleteHistory, ended(deleting.state, TaskReport(EndReason.CANCELLED), "Cancelled.").effect<ConversationEffect.RunLocal>().request)
+    }
+
+    @Test
+    fun deleteHistoryRunsWithoutAGoalAndClosesTheConversationAfterYes() {
+        val deleting = step(idleOpen(), typed(InputIntent.DeleteHistory))
+        val run = deleting.effect<ConversationEffect.RunLocal>()
+        assertEquals(LocalRequest.DeleteHistory, run.request)
+        assertNull(run.record)
+        assertTrue(step(deleting.state, typed(InputIntent.Stop)).has<ConversationEffect.CancelLocal>())
+
+        val deleted = step(deleting.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)))
+
+        assertEquals(ConversationEffect.Close(id, keep = false), deleted.effect<ConversationEffect.Close>())
+        assertNull(deleted.state.id)
+        assertEquals(listOf(ChannelOutput.Report(run.command, ConversationTexts.HISTORY_DELETED)), deleted.outputs())
+    }
+
+    @Test
+    fun aMemoryRequestOpensAConversationAndGetsARecord() {
+        val remembering = step(idle, spoken(InputIntent.Remember("the gate code", "4321")))
+        val run = remembering.effect<ConversationEffect.RunLocal>()
+        assertEquals(id, remembering.state.id)
+        assertEquals(1, run.record)
+        assertEquals(LocalRequest.Remember("the gate code", "4321"), run.request)
+
+        val waiting = step(remembering.state, spoken("Turn on Wi-Fi"))
+        assertFalse(waiting.has<ConversationEffect.StartGoal>())
+
+        val done = step(waiting.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+        assertEquals(ConversationEffect.EndRecord(1, EndReason.FINISHED, ConversationTexts.REMEMBERED), done.effect<ConversationEffect.EndRecord>())
+        assertEquals(listOf(ChannelOutput.Report(run.command, ConversationTexts.REMEMBERED)), done.outputs())
+        assertEquals(2, done.effect<ConversationEffect.StartGoal>().record)
+    }
+
+    @Test
+    fun continuingAPastConversationFromNoneAndFromAnOpenOne() {
+        val about = spoken(InputIntent.ContinuePast("the trip"))
+        val asking = step(idle, about)
+        val run = asking.effect<ConversationEffect.RunLocal>()
+        assertEquals(LocalRequest.ContinuePast("the trip"), run.request)
+        assertEquals(about.input, run.input)
+        assertNull(asking.state.id)
+
+        val switching = step(asking.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Switch(other)))
+        assertEquals(ConversationEffect.SwitchTo(run.command, other, about.input), switching.effect<ConversationEffect.SwitchTo>())
+        val past = ConversationSnapshot(
+            other, 5_000, now, open = true, testMode = true,
+            records = listOf(CommandRecord(1, 5_000, InputChannel.TEXT, "Plan the trip")), continuedAtWall = now,
+        )
+        val back = "We're back in the conversation from Friday, 20 November."
+        val switched = step(switching.state, ConversationEvent.Switched(past, back))
+
+        assertEquals(other, switched.state.id)
+        assertFalse(switched.state.testMode)
+        assertEquals(now, switched.state.continuedAtWall)
+        assertEquals(1, switched.state.commands)
+        assertEquals(listOf(ChannelOutput.Report(run.command, back)), switched.outputs())
+
+        val chosen = typed(InputIntent.ContinueConversation(other))
+        val fromOpen = step(idleOpen(), chosen)
+        assertEquals(ConversationEffect.SwitchTo(2, other, chosen.input), fromOpen.effect<ConversationEffect.SwitchTo>())
+        assertFalse(fromOpen.has<ConversationEffect.Close>())
+    }
+
+    @Test
+    fun aConversationThatIsGoneCannotBeContinued() {
+        val switching = step(idle, typed(InputIntent.ContinueConversation(other)))
+
+        val gone = step(switching.state, ConversationEvent.Switched(null, ConversationTexts.GONE))
+
+        assertNull(gone.state.id)
+        assertEquals(listOf(ChannelOutput.Report(1, ConversationTexts.GONE)), gone.outputs())
+    }
+
+    @Test
+    fun aChangeOfTestModeClosesTheConversationAfterEndingItsGoal() {
+        val closed = step(idleOpen(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true))
+        assertEquals(ConversationEffect.Close(id), closed.effect<ConversationEffect.Close>())
+
+        val stopping = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true))
+        assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED), stopping.effect<ConversationEffect.CancelGoal>())
+        assertTrue(stopping.state.closeAfterGoal)
+
+        val final = ended(stopping.state, TaskReport(EndReason.CANCELLED), "Cancelled.")
+        assertEquals(listOf(ChannelOutput.Report(1, "Cancelled.")), final.outputs())
+        assertEquals(ConversationEffect.Close(id), final.effect<ConversationEffect.Close>())
+        assertNull(final.state.id)
+        assertTrue(step(final.state, typed("Turn on Wi-Fi")).state.testMode)
+    }
+
+    @Test
+    fun aCommandThatWaitedForTheTestModesStopRunsInANewConversation() {
+        val stopping = step(acting(), ConversationEvent.SettingsChanged(ConversationSettings(), testMode = true)).state
+        val waiting = step(stopping, spoken("Turn on Bluetooth")).state
+
+        val next = ended(waiting, TaskReport(EndReason.CANCELLED), "Cancelled.")
+
+        assertTrue(next.has<ConversationEffect.Close>())
+        val start = next.effect<ConversationEffect.StartGoal>()
+        assertEquals("Turn on Bluetooth", start.text)
+        assertEquals(1, start.record)
+        assertTrue(next.state.testMode)
+        assertNull(next.state.next)
+    }
+
+    @Test
+    fun aRestoreWithoutAGoalKeepsTheConversationOpenOnlyWithinTheQuietTime() {
+        val snapshot = ConversationSnapshot(
+            id, now - 120_000, now - 40_000, open = true, testMode = true,
+            records = listOf(CommandRecord(1, now - 120_000, InputChannel.VOICE, "Turn on Wi-Fi")), quietSinceWall = now - 40_000,
+        )
+
+        val open = step(idle, ConversationEvent.Restored(snapshot))
+        assertEquals(id, open.state.id)
+        assertEquals(1, open.state.commands)
+        assertTrue(open.state.testMode)
+        assertEquals(QuietClock.Running(1, now - 40_000), open.state.quiet)
+        assertEquals(ConversationEffect.StartTimer(Timer.QUIET, 1, 20_000), open.effect<ConversationEffect.StartTimer>())
+
+        val late = step(idle, ConversationEvent.Restored(snapshot.copy(quietSinceWall = now - 61_000)))
+        assertEquals(ConversationEffect.Close(id), late.effect<ConversationEffect.Close>())
+        assertNull(late.state.id)
+        assertTrue(step(idle, ConversationEvent.Restored(null)).effects.isEmpty())
+    }
+
+    @Test
+    fun aRestoreWithAGoalHoldsItAsInterruptedAndAsksToContinue() {
+        val snapshot = ConversationSnapshot(
+            id, now - 600_000, now - 60_000, open = true, testMode = false,
+            records = listOf(CommandRecord(1, now - 600_000, InputChannel.TEXT, "Archive the newsletters")),
+            goal = GoalState(1, GoalPhase.ACTING, now - 60_000, stepsBefore = 7),
+        )
+
+        val held = step(idle, ConversationEvent.Restored(snapshot))
+        assertEquals(GoalPhase.INTERRUPTED, held.state.goal!!.phase)
+        assertEquals(GoalHold.RESTART, held.state.goal!!.hold)
+        assertEquals(7, held.state.goal!!.stepsBefore)
+        assertEquals(ConversationEffect.StartTimer(Timer.HOLD, 1, GoalRules.HOLD_MILLIS - 60_000), held.effect<ConversationEffect.StartTimer>())
+        assertTrue(held.has<ConversationEffect.AskContinueGoal>())
+
+        val yes = step(held.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
+        assertEquals(ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, null), yes.effect<ConversationEffect.ResumeGoal>())
+
+        // A yes that the owner said or typed resumes the goal for his input; only the card's yes has none.
+        val said = spoken(InputIntent.Answer(ChannelAnswer.Yes))
+        val answering = step(asked(held.state, 2, QuestionKind.CONTINUE_GOAL), said)
+        assertEquals(ConversationEffect.AnswerQuestion(2, ChannelAnswer.Yes), answering.effect<ConversationEffect.AnswerQuestion>())
+        val resumed = step(answering.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
+        assertEquals(ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, said.input), resumed.effect<ConversationEffect.ResumeGoal>())
+        assertNull(resumed.state.continueAnswer)
+
+        val late = step(idle, ConversationEvent.Restored(snapshot.copy(goal = GoalState(1, GoalPhase.ACTING, now - GoalRules.HOLD_MILLIS - 1))))
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.PAUSED_TOO_LONG), late.effect<ConversationEffect.EndHeldGoal>())
+    }
+
+    @Test
+    fun theOwnersStopOfKestrelEndsTheRestoredGoalAsStopDoesAndAsksNothing() {
+        val snapshot = ConversationSnapshot(
+            id, now - 600_000, now - 60_000, open = true, testMode = false,
+            records = listOf(CommandRecord(1, now - 600_000, InputChannel.TEXT, "Archive the newsletters")),
+            goal = GoalState(1, GoalPhase.ACTING, now - 60_000),
+        )
+
+        // Plan 7E: the owner's stop in Android's "Active apps" after the snapshot ends the goal as "stop" does.
+        val stopped = step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.OwnerStopped(now - 30_000)))
+        assertEquals(ConversationEffect.EndHeldGoal(EndReason.CANCELLED), stopped.effect<ConversationEffect.EndHeldGoal>())
+        assertFalse(stopped.has<ConversationEffect.AskContinueGoal>())
+        assertFalse(stopped.has<ConversationEffect.StartTimer>())
+
+        // A stop before the snapshot ended an older process, and any other end holds the goal and asks.
+        assertTrue(step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.OwnerStopped(now - 90_000))).has<ConversationEffect.AskContinueGoal>())
+        assertTrue(step(idle, ConversationEvent.Restored(snapshot, ProcessEnd.Other)).has<ConversationEffect.AskContinueGoal>())
+    }
+
+    @Test
+    fun theLatestInputChoosesTheReplyChannel() {
+        val goal = acting()
+
+        assertEquals(InputChannel.VOICE, step(goal, spoken("Make it 8")).state.replyChannel)
+        assertEquals(InputChannel.TEXT, step(step(goal, spoken("Make it 8")).state, typed("No, 9")).state.replyChannel)
+    }
+}
