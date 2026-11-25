@@ -79,18 +79,22 @@ object LinkCheck {
         // Data in the query or the fragment of a link that the screen or a data tool gave leaves the phone with it. A
         // fragment counts only when it holds "=", "&" or a digit, because a section anchor ("#History") is a word.
         val data = text.substringAfter('?', "").substringBefore('#').isNotEmpty() || fragmentHoldsData(text)
-        val reads = !data || fromOwner(text, scheme, task.owner) || searchesKnownWords(text, scheme, targetPackage, task.knownWords)
+        val reads = !data || fromOwner(text, task.owner) || searchesKnownWords(text, scheme, targetPackage, task.knownWords)
         return LinkVerdict.Allowed(if (reads) Category.READING else Category.SENDING)
     }
 
     /**
-     * Whether the owner named [text] himself (D32 item 12; spec 12.3): its host, or for a link of another [scheme] the whole
-     * link, is in his own words, which never hold a text of the screen, a data tool or the model. Only an https link has a
-     * host that names a place: in `whatsapp://send?…`, `viber://forward?…` or `tg://share?…` the "host" is an action word
-     * that most messaging requests hold (D12).
+     * Whether the owner named [link] himself (D32 item 12; spec 12.3), in his own words, which never hold a text of the
+     * screen, a data tool or the model: an https link by its host's labels ([OwnerText.namesHost]), the host that `URI`
+     * reads after any userinfo; any other link as a whole ([OwnerText.names]), because in `whatsapp://send?…`,
+     * `viber://forward?…` or `tg://share?…` the "host" is an action word that most messaging requests hold (D12).
      */
-    private fun fromOwner(text: String, scheme: String, owner: OwnerText): Boolean =
-        owner.names((if (scheme == "https") hostOf(text) else null) ?: text)
+    internal fun fromOwner(link: String, owner: OwnerText): Boolean {
+        val text = link.trim()
+        val https = SCHEME.find(text)?.groupValues?.get(1).equals("https", ignoreCase = true)
+        val host = if (https) hostOf(text) else null
+        return if (host != null) owner.namesHost(host) else owner.names(text)
+    }
 
     /**
      * A `geo:` or https link that no messenger opens, whose every parameter is one of [SEARCH_KEYS] and whose every value,
