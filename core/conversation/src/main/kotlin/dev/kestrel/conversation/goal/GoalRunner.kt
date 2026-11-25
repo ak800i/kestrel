@@ -23,8 +23,11 @@ import dev.kestrel.safety.Vault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -32,10 +35,12 @@ import kotlinx.coroutines.withContext
  * Runs a goal's rounds (design 7.1 of sub-project 7). Each round waits for the screen's turn, prepares its ports through
  * [environment], builds its request with [GoalRequests], runs `Agent.run` with the conversation's test mode in its
  * settings (design 12.4), and gives its end to the goal's listener exactly once on every path, with Kestrel's sentence: the
- * environment's, or the call backstop's when it stopped the goal. A goal that ended for good names the steering that came
- * too late; a held goal (a pause at a limit, an interruption) keeps it for its next round. A finished goal's recording is
- * kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design D23 of sub-project 5 is made after its
- * report was said, when the environment allows it. [report] gets a failure by its class.
+ * environment's refusal, the call backstop's when it stopped the goal, or the environment's sentence. A goal that ended
+ * for good names the steering that came too late; a held goal (a pause at a limit, an interruption) keeps it for its next
+ * round. A finished goal's recording is kept for "save that as" for [RECORDING_MILLIS], and the routine offer of design
+ * D23 of sub-project 5 is made after its report was said, when the environment allows it and the round was not stopped.
+ * [run] and the goal's `interrupt` and `cancel` are called from one coroutine, the conversation engine's. [report] gets a
+ * failure by its class.
  */
 class GoalRunner(
     private val environment: GoalEnvironment,
@@ -48,11 +53,16 @@ class GoalRunner(
     @Volatile
     private var kept: Pair<Recording, Long>? = null
 
-    /** Runs a round of [goal] in [scope]; it returns at once, and the goal's job is set before the round starts. */
+    /**
+     * Runs a round of [goal] in [scope]; it returns at once, with the goal's job set. The round starts atomically
+     * (`CoroutineStart.ATOMIC`, a delicate API because its body runs even when its job was cancelled before it was
+     * dispatched): a touch or a stop that comes before the round first runs still reaches its body, whose first act ends
+     * such a round, so that the round's one exit gives its listener exactly one end on that path too.
+     */
+    @OptIn(DelicateCoroutinesApi::class)
     fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort) {
-        val job = scope.launch(start = CoroutineStart.LAZY) { round(goal, plan, owner) }
-        goal.job = job
-        job.start()
+        goal.stopSentence = null
+        goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, plan, owner) }
     }
 
     /** The end of a held goal, whose round has ended already: [reason] and the partial report of [record] (design 6.4). */
@@ -75,7 +85,7 @@ class GoalRunner(
                 is SaveResult.NotSaved -> saved.sentence
             }
         } finally {
-            withContext(NonCancellable) { release(ready) }
+            release(ready)
         }
     }
 
@@ -84,26 +94,20 @@ class GoalRunner(
         if (plan.resume == null) kept = null
         var ready: RoundSetup.Ready? = null
         var result: TaskReport? = null
-        // The round runs until its agent reports, fails or is cancelled; then its end reaches the listener once, below.
+        var refused: String? = null
+        // The round runs until its agent reports, it is refused, it fails or it is cancelled; then finish ends it, once.
         val cancellation = try {
+            // A round that a touch or a stop cancelled before it first ran prepares nothing.
+            currentCoroutineContext().ensureActive()
             screen.take()
-            val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))
-            if (setup is RoundSetup.Refused) {
-                goal.listener.ended(RoundEnd(goal.command, TaskReport(setup.end), setup.sentence, setup.sentence))
-                return
-            }
-            val prepared = setup as RoundSetup.Ready
-            ready = prepared
-            goal.knownNames = prepared.knownNames
-            if (plan.resume == null) goal.listener.allowed(TaskAllowance.from(plan.text, prepared.knownNames).categories)
-            val request = GoalRequests.request(plan, prepared.taskId, prepared.knownNames, ContextBlock.budget(prepared.ports.model.model))
-            val settings = prepared.settings.copy(safety = prepared.settings.safety.copy(testMode = plan.testMode))
-            coroutineScope {
-                val touches = launch { prepared.touches.collect { goal.listener.touched() } }
-                try {
-                    Agent(prepared.ports, settings).run(request) { result = it }
-                } finally {
-                    touches.cancel()
+            when (val setup = environment.prepare(RoundStart(goal.command, plan.options, owner, goal, history.port(plan.self), RoundPurpose.GOAL))) {
+                is RoundSetup.Refused -> {
+                    result = TaskReport(setup.end)
+                    refused = setup.sentence
+                }
+                is RoundSetup.Ready -> {
+                    ready = setup
+                    act(goal, plan, setup) { result = it }
                 }
             }
             null
@@ -115,29 +119,44 @@ class GoalRunner(
             report("A goal's round", e)
             null
         }
-        val end = result ?: TaskReport(EndReason.KESTREL_ERROR)
-        if (cancellation == null) {
-            finish(goal, ready, owner, end)
-        } else {
-            withContext(NonCancellable) { finish(goal, ready, owner, end) }
-            throw cancellation
+        finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR), refused, stopped = cancellation != null)
+        if (cancellation != null) throw cancellation
+    }
+
+    // One run of the agent with the round's ports, its request and the conversation's test mode (design 12.4), while the
+    // touch watcher tells the goal's listener of the owner's touches.
+    private suspend fun act(goal: RunningGoal, plan: RoundPlan, ready: RoundSetup.Ready, reported: (TaskReport) -> Unit) {
+        goal.knownNames = ready.knownNames
+        if (plan.resume == null) goal.listener.allowed(TaskAllowance.from(plan.text, ready.knownNames).categories)
+        val request = GoalRequests.request(plan, ready.taskId, ready.knownNames, ContextBlock.budget(ready.ports.model.model))
+        val settings = ready.settings.copy(safety = ready.settings.safety.copy(testMode = plan.testMode))
+        coroutineScope {
+            val touches = launch { ready.touches.collect { goal.listener.touched() } }
+            try {
+                Agent(ready.ports, settings).run(request, reported)
+            } finally {
+                touches.cancel()
+            }
         }
     }
 
-    // The round lets go of the screen before its end reaches the listener (design D19 of sub-project 5): the end can start
-    // the next round at once, and a release after it would stop that round's touch watcher. The listener gets the end
-    // exactly once, on every path: when Kestrel's words for it fail, ConversationTexts.COULD_NOT stands in for them, and
-    // when the routine offer fails or a stop cancels it, the end keeps what was said.
-    private suspend fun finish(goal: RunningGoal, ready: RoundSetup.Ready?, owner: OwnerPort, result: TaskReport) {
-        ready?.let { withContext(NonCancellable) { release(it) } }
+    // The one exit of every round. It lets go of the screen before its end reaches the listener (design D19 of
+    // sub-project 5): the end can start the next round at once, and a release after it would stop that round's touch
+    // watcher. The listener gets the end exactly once, in the finally: when Kestrel's words for it fail,
+    // ConversationTexts.COULD_NOT stands in for them, and when the routine offer fails or a stop cancels it, the end keeps
+    // what was said. A round that was [stopped] makes no routine offer; the offer itself stays cancellable.
+    private suspend fun finish(goal: RunningGoal, ready: RoundSetup.Ready?, owner: OwnerPort, result: TaskReport, refused: String?, stopped: Boolean) {
         var end = RoundEnd(goal.command, result, ConversationTexts.COULD_NOT, ConversationTexts.COULD_NOT)
         try {
-            val answer = answer(goal, result)
-            end = RoundEnd(goal.command, result, answer, answer)
+            val answer = try {
+                answer(goal, result, refused).also { end = RoundEnd(goal.command, result, it, it) }
+            } finally {
+                ready?.let { release(it) }
+            }
             val recording = result.recording
             if (result.end in HELD || recording == null) return
             kept = recording to clock.wallMillis()
-            if (ready == null || !ready.offersRoutines || !result.offerRoutine) return
+            if (stopped || ready == null || !ready.offersRoutines || !result.offerRoutine) return
             // The offer follows the report, so the report is said first and is not said again; the record keeps it as the
             // goal's answer (D3).
             owner.say(answer)
@@ -152,11 +171,16 @@ class GoalRunner(
         }
     }
 
-    // Kestrel's words for a round's end: the call backstop's when it stopped the goal, else the environment's. A goal that
-    // ended for good names the steering that came too late; a held goal keeps it for its next round.
-    private fun answer(goal: RunningGoal, result: TaskReport): String {
+    // Kestrel's words for a round's end: the environment's refusal when the round could not start, the call backstop's
+    // when it stopped the goal, else the environment's sentence. A goal that ended for good names the steering that came
+    // too late; a held goal keeps it for its next round.
+    private fun answer(goal: RunningGoal, result: TaskReport, refused: String?): String {
         val stop = goal.stopSentence
-        val sentence = if (stop != null) "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}" else environment.sentence(result)
+        val sentence = when {
+            refused != null -> refused
+            stop != null -> "$stop ${Ledger.sentence(result.ledger) ?: ConversationTexts.NOTHING_CHANGED}"
+            else -> environment.sentence(result)
+        }
         return if (result.end in HELD) sentence else sentence + ConversationTexts.tooLate(goal.inbox.drain().map { it.text })
     }
 
@@ -179,10 +203,11 @@ class GoalRunner(
         return TaskReport(end = cancellation?.reason ?: EndReason.CANCELLED, interruption = cancellation?.interruption)
     }
 
-    // A failed release must not hide the round's end, which the listener gets right after it.
+    // The round's ports go even when the round was cancelled, so the release runs under NonCancellable; a failed release
+    // must not hide the round's end, which the listener gets right after it.
     private suspend fun release(ready: RoundSetup.Ready) {
         try {
-            ready.release()
+            withContext(NonCancellable) { ready.release() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

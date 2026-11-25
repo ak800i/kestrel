@@ -76,7 +76,8 @@ class RunningGoal(
     @Volatile
     internal var job: Job? = null
 
-    // Kestrel's own sentence that replaces the report's reason, as the call backstop's.
+    // Kestrel's own sentence that replaces the report's reason, as the call backstop's, for the round that the cancel
+    // ended; each new round starts without one.
     @Volatile
     internal var stopSentence: String? = null
 

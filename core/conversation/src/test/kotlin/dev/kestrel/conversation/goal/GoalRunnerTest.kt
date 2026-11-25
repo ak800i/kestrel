@@ -1,5 +1,6 @@
 package dev.kestrel.conversation.goal
 
+import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskReport
@@ -10,9 +11,11 @@ import dev.kestrel.agent.goal.ItemState
 import dev.kestrel.agent.goal.Steer
 import dev.kestrel.agent.goal.SteerChannel
 import dev.kestrel.agent.goal.TraceEntry
+import dev.kestrel.agent.port.Answer
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
@@ -30,7 +33,9 @@ import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.Category
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -93,12 +98,41 @@ class GoalRunnerTest {
     private fun plan(record: CommandRecord, testMode: Boolean = false) =
         RoundPlan(record, emptyList(), record.request, null, testMode, null, GoalLimits(), emptyMap(), RecordRef(id, record.number), ManualConversationClock.BELGRADE)
 
-    private fun TestScope.runner(environment: FakeGoalEnvironment): GoalRunner {
+    private fun TestScope.runner(environment: GoalEnvironment, screen: ScreenTurn = ScreenTurn { }): GoalRunner {
         val clock = ManualConversationClock({ testScheduler.currentTime })
-        return GoalRunner(environment, ScreenTurn { }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { _, error -> throw error }
+        return GoalRunner(environment, screen, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { _, error -> throw error }
     }
 
     private fun environment(vararg replies: kotlinx.serialization.json.JsonObject) = FakeGoalEnvironment(replies.toList()).apply { data.answer("list_sms", sms) }
+
+    // A goal whose finish offers a routine (design D23 of sub-project 5): a finish with its signature came once before.
+    private fun offering(): FakeGoalEnvironment {
+        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
+        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
+        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
+        val done = ScriptedModel.call(
+            "finish", null, null, null,
+            "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))), "signature" to "fixtures.open.button",
+        )
+        return FakeGoalEnvironment(listOf(tap, done), first = start).apply {
+            offersRoutines = true
+            screen.onTap("Open", opened)
+            memory.signatures["fixtures.open.button"] = 1
+        }
+    }
+
+    // The fake environment, with each round's ports or release changed by [change].
+    private class Changed(private val inner: FakeGoalEnvironment, private val change: (RoundSetup.Ready) -> RoundSetup.Ready) : GoalEnvironment by inner {
+        override suspend fun prepare(start: RoundStart): RoundSetup = when (val setup = inner.prepare(start)) {
+            is RoundSetup.Ready -> change(setup)
+            is RoundSetup.Refused -> setup
+        }
+    }
+
+    private fun RoundSetup.Ready.with(log: TaskLog = ports.log, release: suspend () -> Unit = this.release) = RoundSetup.Ready(
+        AgentPorts(ports.screen, ports.eyes, ports.data, ports.owner, ports.model, ports.apps, ports.memory, log, ports.clock, ports.goal, ports.history),
+        settings, taskId, knownNames, touches, offersRoutines, release,
+    )
 
     private fun ChatRequest.text(): String = (listOf(context.orEmpty()) + messages.mapNotNull { message ->
         when (message) {
@@ -253,17 +287,8 @@ class GoalRunnerTest {
 
     @Test
     fun aRoutineOfferSaysTheReportFirstAndTheGoalKeepsItAsItsAnswer() = runTest {
-        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
-        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
-        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
-        val done = ScriptedModel.call(
-            "finish", null, null, null,
-            "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))), "signature" to "fixtures.open.button",
-        )
-        val environment = FakeGoalEnvironment(listOf(tap, done), first = start).apply { offersRoutines = true }
-        environment.screen.onTap("Open", opened)
-        // The second finish with this signature offers a routine (design D23 of sub-project 5); the owner gives no answer.
-        environment.memory.signatures["fixtures.open.button"] = 1
+        // The owner gives no answer to the offer.
+        val environment = offering()
         val owner = FakeOwner()
 
         runner(environment).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), owner)
@@ -274,6 +299,179 @@ class GoalRunnerTest {
         assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
         assertNull(end.reply)
         assertEquals(end.answer, owner.said.last())
+    }
+
+    // "Stop", a touch or the call backstop ends the offer too; the end keeps the report, which was said already.
+    @Test
+    fun aStopEndsTheRoutineOffer() = runTest {
+        val environment = offering()
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val owner = FakeOwner().apply { answers += Answer.Yes }
+        owner.onAsk = {
+            goal.cancel(EndReason.CANCELLED)
+            yield()
+        }
+
+        runner(environment).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertNull(end.reply)
+        assertEquals(1, owner.asked.size)
+        assertEquals(1, environment.released)
+    }
+
+    // The agent logs its end before it reports it, so a stop there comes after the report: the round ends as the agent
+    // reported, and a round that was stopped offers no routine.
+    @Test
+    fun aRoundStoppedAfterItsReportOffersNoRoutine() = runTest {
+        val environment = offering()
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val stopping = Changed(environment) { ready ->
+            ready.with(
+                log = object : TaskLog {
+                    override suspend fun write(kind: TaskLog.Kind, text: String) {
+                        environment.log.write(kind, text)
+                        if (kind == TaskLog.Kind.END) goal.cancel(EndReason.CANCELLED)
+                    }
+                },
+            )
+        }
+        val owner = FakeOwner().apply { answers += Answer.Yes }
+
+        runner(stopping).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertTrue(end.report.offerRoutine)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertEquals(end.answer, end.reply)
+        assertTrue(owner.asked.isEmpty())
+        assertTrue(owner.said.isEmpty())
+        assertEquals(1, environment.released)
+    }
+
+    // A touch or a stop can come before the round's coroutine first runs (the engine's loop and the round run on
+    // different threads): the round still ends, once, and prepares nothing.
+    @Test
+    fun aRoundInterruptedBeforeItRunsStillEndsOnce() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        goal.interrupt(Interruption.TOUCH)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.INTERRUPTED, end.report.end)
+        assertEquals(Interruption.TOUCH, end.report.interruption)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.reply)
+        assertTrue(environment.starts.isEmpty())
+        assertEquals(0, environment.released)
+    }
+
+    @Test
+    fun aRoundStoppedBeforeItRunsStillEndsOnceAndNamesItsSteering() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        goal.cancel(EndReason.CANCELLED)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report) + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertTrue(goal.inbox.pending().isEmpty())
+        assertTrue(environment.starts.isEmpty())
+        assertTrue(environment.model.requests.isEmpty())
+    }
+
+    @Test
+    fun aStopWhileTheRoundWaitsForTheScreenEndsItBeforeItsAgent() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner(environment, ScreenTurn { awaitCancellation() }).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertTrue(listener.ends.isEmpty())
+        goal.cancel(EndReason.CANCELLED)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+        assertTrue(environment.starts.isEmpty())
+        assertEquals(0, environment.released)
+    }
+
+    @Test
+    fun theCallBackstopsSentenceLeadsTheAnswer() = runTest {
+        val environment = environment(ScriptedModel.call("say", null, null, null, "text" to "On it."), listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val owner = FakeOwner()
+        owner.onSay = {
+            goal.cancel(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)
+            yield()
+        }
+
+        runner(environment).run(this, goal, plan(record()), owner)
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.CANCELLED, end.report.end)
+        assertEquals("${ConversationTexts.CALL_STARTED} ${ConversationTexts.NOTHING_CHANGED}", end.answer)
+        assertEquals(end.answer, end.reply)
+        assertEquals(1, environment.released)
+    }
+
+    // A cancel while no round runs (a held goal) cancels nothing, so its sentence must not reach the next round's end.
+    @Test
+    fun aStopSentenceWhileNoRoundRunsIsNotTheNextRoundsAnswer() = runTest {
+        val environment = environment(listSms, finish(1))
+        val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        goal.cancel(EndReason.CANCELLED, ConversationTexts.CALL_STARTED)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
+    }
+
+    // A refused round ends the goal for good, so the steering that waited for it is named as too late, as at every such end.
+    @Test
+    fun aRefusedStartNamesTheSteeringThatWaited() = runTest {
+        val environment = environment(listSms)
+        environment.refusal = RoundSetup.Refused("Set up a model in Settings first.", EndReason.NO_PROFILE)
+        val goal = RunningGoal(1, 1, emptyMap(), listOf(Steer("Make it 7:30", SteerChannel.SPOKEN)), listener)
+
+        runner(environment).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.NO_PROFILE, end.report.end)
+        assertEquals("Set up a model in Settings first." + ConversationTexts.tooLate(listOf("Make it 7:30")), end.answer)
+        assertEquals(end.answer, end.reply)
+        assertTrue(goal.inbox.pending().isEmpty())
+    }
+
+    // A release that throws a CancellationException of its own (a timeout in it) must not skip the end.
+    @Test
+    fun aCancelledReleaseStillEndsTheRound() = runTest {
+        val environment = environment(listSms, finish(1))
+        val cancelling = Changed(environment) { ready -> ready.with(release = { throw CancellationException("The release timed out") }) }
+
+        runner(cancelling).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
+        advanceUntilIdle()
+
+        val end = listener.ends.single()
+        assertEquals(EndReason.FINISHED, end.report.end)
+        assertEquals(FakeGoalEnvironment.sentenceOf(end.report), end.answer)
     }
 
     @Test
