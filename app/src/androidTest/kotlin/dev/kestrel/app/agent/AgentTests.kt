@@ -6,6 +6,7 @@ import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.commands.TextSessions
+import dev.kestrel.app.conversation.ConversationTests
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
@@ -14,7 +15,6 @@ import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.engine.CommandOutcome
-import dev.kestrel.conversation.machine.QuietClock
 import dev.kestrel.providers.chat.ChatMessage
 import dev.kestrel.providers.chat.Part
 
@@ -47,21 +47,13 @@ internal object AgentTests {
     /** Stops a goal that is still open, turns Kestrel off, removes the scripted model, and puts the voice sessions back. */
     fun stop() {
         try {
-            endGoal()
+            ConversationTests.endWork()
             turnOff()
         } finally {
             graph.roundModels.modelOverride = null
             previous?.let { graph.listening.sessions = it }
             previous = null
         }
-    }
-
-    // Plan 7B's decision 10: turning off leaves a goal running, so "stop" ends it first.
-    private fun endGoal() {
-        val conversations = graph.conversations
-        if (conversations.view.value.goal == null) return
-        say("stop")
-        check(VoiceTests.waitUntil(30_000) { conversations.view.value.goal == null }) { "The goal did not end" }
     }
 
     /** Turns Kestrel off; a goal that works goes on (plan 7B's decision 10). */
@@ -78,25 +70,14 @@ internal object AgentTests {
     fun run(request: String, model: ModelPort): Int {
         // After a task, Kestrel speaks its report first; a transcript counts as a command again once the work is idle.
         check(VoiceTests.waitUntil(30_000) { graph.listening.state.value.work == Work.IDLE }) { "Kestrel was still busy" }
-        endGoal()
-        closeConversation()
+        // A new command in the open conversation would be a follow-up (design 6.2 of sub-project 7).
+        ConversationTests.close()
         val conversations = graph.conversations
         graph.roundModels.modelOverride = model
         val before = conversations.view.value.command
         graph.listening.send(Event.Heard("Kestrel, $request", named = false))
         check(VoiceTests.waitUntil(5_000) { conversations.view.value.command > before }) { "The transcript started no command" }
         return conversations.view.value.command
-    }
-
-    // A new command in the open conversation would be a follow-up (design 6.2 of sub-project 7). The quiet time ends only
-    // while it runs, not while Kestrel still speaks the earlier reply, which holds it.
-    private fun closeConversation() {
-        val conversations = graph.conversations
-        check(VoiceTests.waitUntil(30_000) { !graph.listening.state.value.speaking && conversations.view.value.quiet !is QuietClock.Held }) {
-            "The conversation's quiet time stayed held"
-        }
-        conversations.endQuietTime()
-        check(VoiceTests.waitUntil(5_000) { conversations.view.value.id == null }) { "The conversation did not close" }
     }
 
     /** Waits until command [command]'s goal asks a question of [kind], and the voice reads its answer. */

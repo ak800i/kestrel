@@ -4,9 +4,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
+import dev.kestrel.app.conversation.ConversationTests
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.app.voice.VoiceTests
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -24,7 +26,7 @@ import org.junit.runners.model.Statement
  * Kestrel's Orchestrator as a transcript without the name, and the test waits for the command's report. The voice session
  * is [TextSessions], so the tests need no speech models. Every command test skips itself unless the instrumentation
  * argument [ARGUMENT] is true, which only scripts\command-test.ps1 passes, because only that script puts back what the
- * tests change on the device.
+ * tests change on the device. Each test starts with no conversation open ([ConversationTests.close]).
  */
 internal object CommandTests {
     const val ARGUMENT = "kestrelCommands"
@@ -75,6 +77,9 @@ internal object CommandTests {
         val listening = graph.listening
         // An earlier test that failed may have left Kestrel on.
         if (listening.state.value.mode != Mode.OFF) turnOff()
+        // The conversation that the device keeps, also from the :app device tests before this suite, must not take a
+        // command's transcript: through the follow-up window, "Continue the goal?" or a report kept for the owner.
+        ConversationTests.close()
         val text = TextSessions()
         if (previousSessions == null) previousSessions = listening.sessions
         listening.sessions = text
@@ -83,9 +88,13 @@ internal object CommandTests {
         while (reports.tryReceive().isSuccess) continue
         collector = graph.scope.launch(start = CoroutineStart.UNDISPATCHED) { listening.commandReports.collect { reports.send(it) } }
         listening.send(Event.Start())
-        check(VoiceTests.waitUntil(15_000) { listening.sessionOpen.value && listening.state.value.mode == Mode.LISTENING }) {
-            "Listening did not start; the mode is ${listening.state.value.mode}"
-        }
+        // Kestrel listens idle, and the Orchestrator reads no open conversation, so no follow-up window can open.
+        check(
+            VoiceTests.waitUntil(15_000) {
+                val state = listening.state.value
+                listening.sessionOpen.value && state.mode == Mode.LISTENING && state.work == Work.IDLE && !state.conversation.open
+            },
+        ) { "Listening did not start idle; the state is ${listening.state.value}" }
     }
 
     /** Turns Kestrel off, waits until the session has closed and the service has stopped, and puts the sessions back. */
