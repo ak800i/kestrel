@@ -44,7 +44,10 @@ interface ConversationStore {
 
     suspend fun delete(id: ConversationId)
 
-    /** Deletes every conversation, the open one too, the index and the archive's key (design 9.7). */
+    /**
+     * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). When
+     * it throws, it has marked nothing, and every conversation stays as the archive has it.
+     */
     suspend fun deleteAll()
 
     /**

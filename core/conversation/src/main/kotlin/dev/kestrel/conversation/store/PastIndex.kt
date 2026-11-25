@@ -15,9 +15,19 @@ data class PastConversation(val id: ConversationId, val openedAtWall: Long, val 
 
 /**
  * A closed row that this version cannot read, because its format is newer (design 9.2): the index counts it, so that it
- * stays in step with the table, and retention purges it by its last change.
+ * stays in step with the table, and retention purges it by its last change. Its id is at most [MAX_ID_LENGTH] characters,
+ * so that a kept row adds little to its shard; the store keeps only rows whose id is a conversation's.
  */
-data class KeptRow(val id: String, val lastWall: Long)
+data class KeptRow(val id: String, val lastWall: Long) {
+    init {
+        require(id.length <= MAX_ID_LENGTH) { "A kept row's id is too long" }
+    }
+
+    companion object {
+        /** The length of a conversation's id. */
+        const val MAX_ID_LENGTH = 32
+    }
+}
 
 /**
  * What an index counts of the table's closed rows (design 9.2): how many there are, their newest last change and the sum of
@@ -31,8 +41,10 @@ data class IndexStamp(val closed: Int, val newest: Long, val total: Long)
  * what the list shows ([conversations], the newest last change first) and its records' words for the search ([searches]);
  * and the closed rows that it cannot read ([kept]). The open conversation is never in it. It is made of [shards], which
  * the archive keeps encrypted, each in a row of its own. A conversation that closes goes into the newest shard, and a new
- * shard starts when the newest holds [shardPositions] word positions or more, so that every change of the closed
- * conversations writes only the few shards that it changed ([changesFrom]), in the same transaction. The store keeps the
+ * shard starts when the newest holds [shardPositions] word positions or more, or [SHARD_BYTES] bytes before Deflate, so
+ * that every change of the closed conversations writes only the few shards that it changed ([changesFrom]), in the same
+ * transaction, and every shard decodes again: a conversation or a kept row enters a shard one at a time, and adds at most
+ * `PastIndexCodec.MOST_CONVERSATION_BYTES` to it. The store keeps the
  * index in memory. An index never changes: [with], [keeping] and [without] give a new one, which shares the shards that did
  * not change, or this one when nothing changes. toString prints only counts.
  */
@@ -68,16 +80,11 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
     operator fun contains(id: ConversationId): Boolean = id in known
 
     /** This index with [snapshots], each a closed conversation that replaces its earlier entry, in the newest shard. */
-    fun with(snapshots: List<ConversationSnapshot>): PastIndex {
-        if (snapshots.isEmpty()) return this
-        return into(snapshots.map { it.id.value }) { it.with(snapshots) }
-    }
+    fun with(snapshots: List<ConversationSnapshot>): PastIndex =
+        snapshots.fold(this) { index, snapshot -> index.into(snapshot.id.value) { it.with(listOf(snapshot)) } }
 
     /** This index with [rows] kept, each replacing its earlier entry, in the newest shard. */
-    fun keeping(rows: List<KeptRow>): PastIndex {
-        if (rows.isEmpty()) return this
-        return into(rows.map { it.id }) { it.keeping(rows) }
-    }
+    fun keeping(rows: List<KeptRow>): PastIndex = rows.fold(this) { index, row -> index.into(row.id) { it.keeping(listOf(row)) } }
 
     /** This index without the conversations and kept rows [ids]. */
     fun without(ids: Set<String>): PastIndex {
@@ -98,11 +105,11 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
 
     override fun toString(): String = "PastIndex(shards=${shards.size}, conversations=${conversations.size}, kept=${kept.size})"
 
-    // This index with the entries [ids] taken out of the shards that hold them and [added] to the newest shard, or to a new
-    // one when the newest is full.
-    private fun into(ids: List<String>, added: (IndexShard) -> IndexShard): PastIndex {
-        val left = without(ids.toSet()).shards
-        val newest = left.firstOrNull()?.takeIf { it.positions < shardPositions } ?: IndexShard.empty((left.firstOrNull()?.number ?: -1) + 1)
+    // This index with the entry [id] taken out of the shard that holds it and [added] to the newest shard, or to a new one
+    // when the newest is full.
+    private fun into(id: String, added: (IndexShard) -> IndexShard): PastIndex {
+        val left = without(setOf(id)).shards
+        val newest = left.firstOrNull()?.takeIf { !full(it.positions, it.plainBytes, shardPositions) } ?: IndexShard.empty((left.firstOrNull()?.number ?: -1) + 1)
         return PastIndex(left.filter { it.number != newest.number } + added(newest), shardPositions)
     }
 
@@ -118,6 +125,11 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
             val search = SearchIndex.Builder(words)
             val kept = ArrayList<KeptRow>()
             var positions = 0
+
+            // The shard's plain bytes but its words' and records', which its search counts.
+            var listedBytes = PastIndexCodec.SHARD_HEADER_BYTES
+
+            val full: Boolean get() = full(positions, listedBytes + search.plainBytes, shardPositions)
         }
 
         private val words = HashMap<String, String>()
@@ -125,17 +137,21 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
 
         fun add(snapshot: ConversationSnapshot) {
             val shard = newest()
-            shard.conversations += IndexShard.listed(snapshot)
+            val listed = IndexShard.listed(snapshot)
+            shard.conversations += listed
+            shard.listedBytes += PastIndexCodec.conversationBytes(listed)
             shard.positions += shard.search.add(snapshot)
         }
 
         fun keep(row: KeptRow) {
-            newest().kept += row
+            val shard = newest()
+            shard.kept += row
+            shard.listedBytes += PastIndexCodec.keptBytes(row)
         }
 
         fun build(): PastIndex = PastIndex(shards.map { IndexShard.built(it.number, it.conversations, it.search.build(), it.kept) }, shardPositions)
 
-        private fun newest(): Shard = shards.last().takeIf { it.positions < shardPositions } ?: Shard(shards.size).also { shards += it }
+        private fun newest(): Shard = shards.last().takeIf { !it.full } ?: Shard(shards.size).also { shards += it }
 
         override fun toString(): String = "PastIndex.Builder(shards=${shards.size})"
     }
@@ -147,7 +163,17 @@ class PastIndex private constructor(shards: Collection<IndexShard>, val shardPos
         /** The word positions at which the newest shard is full: about 200 KB encoded, a close's whole work (design R3). */
         const val SHARD_POSITIONS = 100_000
 
+        /**
+         * The bytes before Deflate (`IndexShard.plainBytes`) at which the newest shard is full, whatever its positions: long
+         * words fill a shard by their letters before they fill it by their positions. A shard of 30 heavy days' words is
+         * full by its positions at about 0.85 MB, so this bound only splits the shards of unusual text.
+         */
+        const val SHARD_BYTES = 2_000_000
+
         val EMPTY = PastIndex(emptyList(), SHARD_POSITIONS)
+
+        // Whether a shard with [positions] and [plainBytes] takes no more conversations or kept rows.
+        private fun full(positions: Int, plainBytes: Long, shardPositions: Int): Boolean = positions >= shardPositions || plainBytes >= SHARD_BYTES
 
         /** An index without conversations whose shards are full at [shardPositions]. */
         fun empty(shardPositions: Int): PastIndex = PastIndex(emptyList(), shardPositions)

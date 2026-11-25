@@ -57,9 +57,11 @@ enum class ArchiveNote {
  * changed the archive, so the memory is dropped and the next call reads the archive again; an index that has failed stays
  * failed until its next try, because it holds nothing of the archive. A conversation that this process
  * deleted is never written again, also when its deletion did not complete, because the owner asked for it (design 9.7): an
- * older snapshot that a holder saves, or closes in [reopen], after "delete history" or a deletion of the conversation is
- * left out, and when the store reads the archive again and finds such a conversation, it deletes it again before it shows
- * anything.
+ * older snapshot that a holder saves, or closes in [reopen], after a deletion of the conversation is left out, and when the
+ * store reads the archive again and finds such a conversation, it deletes it again before it shows anything. "Delete
+ * history" ([deleteAll]) works on the archive alone, every row and the index in one transaction and then the key, so it has
+ * one outcome whatever the store holds: after it completed, no snapshot of a conversation that this process held is written
+ * again; when it did not complete, it marks nothing, and every conversation stays as the archive has it.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -104,13 +106,14 @@ class ArchivedConversationStore(
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val mutex = Mutex()
 
-    // Both are null until a call reads the archive, and again after a change that did not complete; they are set and
-    // dropped together, under the lock.
+    // Both are null until a call reads the archive, and again after a change that did not complete, under the lock; a
+    // failed index stays with its next try (forget).
     private var opened: Opened? = null
     private var past: Past? = null
 
     // Every conversation that this process read from the archive or wrote to it, so that a snapshot of it may be held
-    // outside the store; and those of them that it deleted, which it never writes or shows again.
+    // outside the store; and those that it deleted, one by one or by a "delete history" that completed, which it never
+    // writes or shows again.
     private val held = mutableSetOf<ConversationId>()
     private val deleted = mutableSetOf<ConversationId>()
 
@@ -155,7 +158,6 @@ class ArchivedConversationStore(
 
     override suspend fun deleteAll() = mutex.withLock {
         generation++
-        deleted += held
         stopWork()
         try {
             archive.deleteAll()
@@ -163,6 +165,8 @@ class ArchivedConversationStore(
             forget()
             throw e
         }
+        // Only now that every row is gone: a snapshot that a holder keeps of one of them is never written back.
+        deleted += held
         (past as? Past.Failed)?.retry?.cancel()
         opened = Opened(null, null)
         past = ready(PastIndex.EMPTY)
@@ -286,7 +290,7 @@ class ArchivedConversationStore(
      */
     private suspend fun loaded(): Opened {
         opened?.let { return it }
-        val entry = archive.readOpen()
+        val entry = archive.readOpen()?.let(::checked)
         var snapshot: ConversationSnapshot? = null
         var unknown: ArchiveHeader? = null
         when (entry) {
@@ -404,7 +408,7 @@ class ArchivedConversationStore(
         val failed = HashSet<String>()
         try {
             for (page in archive.closedIds().chunked(REBUILD_PAGE)) {
-                for (entry in archive.read(page)) {
+                for (entry in archive.read(page).map(::checked)) {
                     if (entry.header.open) continue
                     when (entry) {
                         is ArchiveEntry.Unknown -> builder.keep(KeptRow(entry.header.id, entry.header.lastMillis))
@@ -459,7 +463,7 @@ class ArchivedConversationStore(
         val closed = wanted.filter { it != open?.id }
         if (closed.isEmpty()) return found
         val failed = HashSet<String>()
-        for (entry in archive.read(closed.map { it.value })) {
+        for (entry in archive.read(closed.map { it.value }).map(::checked)) {
             when (entry) {
                 is ArchiveEntry.Unknown -> Unit
                 is ArchiveEntry.Unreadable -> failed += entry.header.id
@@ -499,6 +503,18 @@ class ArchivedConversationStore(
         if (changes.isEmpty) IndexWrite.Keep else IndexWrite.Update(encoded(changes.put), changes.gone.mapTo(HashSet()) { it.toString() })
 
     private fun encoded(shards: List<IndexShard>): Map<String, ByteArray> = shards.associate { it.number.toString() to PastIndexCodec.encode(it) }
+
+    // A row that this version cannot read is kept for a later version only when its id is a conversation's; any other comes
+    // only from a write from outside Kestrel, and fails as a row that does not decode, so that a kept row's id is bounded.
+    private fun checked(entry: ArchiveEntry): ArchiveEntry =
+        if (entry is ArchiveEntry.Unknown && !isConversationId(entry.header.id)) ArchiveEntry.Unreadable(entry.header) else entry
+
+    private fun isConversationId(id: String): Boolean = try {
+        ConversationId(id)
+        true
+    } catch (e: IllegalArgumentException) {
+        false
+    }
 
     // The row's plain fields are the truth for whether the conversation is open and for its times, which the stamp and
     // retention count, so that a rebuilt index is always in step with the rows that it read.

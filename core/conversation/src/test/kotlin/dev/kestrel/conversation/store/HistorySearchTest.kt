@@ -14,6 +14,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -24,6 +25,7 @@ import org.junit.Test
 import java.io.IOException
 import java.time.LocalDate
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HistorySearchTest {
     private val clock = ManualConversationClock()
     private val day = ArchivedConversationStore.DAY_MILLIS

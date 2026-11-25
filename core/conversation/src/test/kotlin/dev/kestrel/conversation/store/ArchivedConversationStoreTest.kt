@@ -9,6 +9,7 @@ import dev.kestrel.conversation.testing.MemoryArchive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -23,6 +24,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ArchivedConversationStoreTest {
     private val archive = MemoryArchive()
     private val notes = mutableListOf<ArchiveNote>()
@@ -305,9 +307,10 @@ class ArchivedConversationStoreTest {
         assertEquals(before + 1, watched.generation)
     }
 
-    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back.
+    // A "stop" can cancel "delete history" after the archive deleted the rows: Room's call then throws on its way back. The
+    // store marks nothing, as after any "delete history" that did not complete, and shows what the archive holds.
     @Test
-    fun aDeleteAllCancelledAfterTheArchiveDeletedLeavesNothingInMemoryAndNothingComesBack() = test {
+    fun aDeleteAllCancelledAfterTheArchiveDeletedMarksNothingAndShowsWhatTheArchiveHolds() = test {
         store.save(conversation(1, now - 2_000))
         val open = conversation(2, now - 1_000, open = true)
         store.save(open)
@@ -317,12 +320,70 @@ class ArchivedConversationStoreTest {
 
         assertTrue(store.list().isEmpty())
         assertNull(store.open())
-        assertNull(store.reopen(id(1), open, now, testMode = true))
+        assertNull(store.reopen(id(1), null, now, testMode = true))
+        // The owner was told that the history was not deleted, so the conversation that he goes on with is saved again.
         store.save(open.copy(lastWall = now))
-        assertTrue(archive.rows.isEmpty())
-        store.save(conversation(3, now, open = true))
-        assertEquals(setOf(id(3).value), archive.rows.keys)
+        assertEquals(setOf(id(2).value), archive.rows.keys)
+        assertEquals(id(2), fresh().open()!!.id)
     }
+
+    // Design 9.7: "delete history" works on the archive alone. One that fails before the index is ready, while the store
+    // has read only some of the conversations, marks none of them, and every conversation stays as it was.
+    @Test
+    fun aDeleteHistoryThatFailsBeforeTheIndexIsReadyLeavesEveryConversationAsItWas() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        store.save(conversation(3, now - 1_000, open = true))
+        archive.readShardsGate = CompletableDeferred()
+        val fresh = fresh()
+        assertEquals(id(3), fresh.open()!!.id)
+        assertEquals(id(1), fresh.get(id(1))!!.id)
+        archive.failures["deleteAll"] = IOException("the disk failed")
+
+        assertTrue(runCatching { fresh.deleteAll() }.exceptionOrNull() is IOException)
+
+        archive.failures.clear()
+        archive.readShardsGate = null
+        assertEquals(id(3), fresh.open()!!.id)
+        assertEquals(listOf(id(2), id(1)), fresh.list().map { it.id })
+        assertEquals(id(1), fresh.get(id(1))!!.id)
+        assertEquals(setOf(id(1).value, id(2).value, id(3).value), archive.rows.keys)
+        assertFalse(archive.keyErased)
+        assertTrue(notes.isEmpty())
+    }
+
+    // Design 9.2 and 9.4: whatever a conversation holds, the index keeps at most SearchIndex's bounds of it: no word longer
+    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first records
+    // first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
+    @Test
+    fun aHugeConversationOfLongWordsIsIndexedWithinItsBoundsAndTheNextStartTrustsItsShard() = test {
+        fun letters(n: Int) = (0 until 3).map { 'a' + n / pow26(it) % 26 }.joinToString("")
+        val common = List(100) { "com" + letters(it) }
+        val records = List(120) { r ->
+            val own = List(150) { "own" + letters(r) + letters(it) }
+            val long = List(70) { "lng" + letters(r) + letters(it) + "q".repeat(2_000) }
+            CommandRecord(r + 1, now - 1_000 + r, InputChannel.TEXT, (common + own).joinToString(" "), answer = long.joinToString(" "))
+        }
+
+        store.save(ConversationSnapshot(id(1), now - 1_000, now, open = false, testMode = true, records = records))
+
+        val shard = archive.past()!!.shards.single()
+        val words = shard.search.words.toSet()
+        assertEquals(SearchIndex.CONVERSATION_WORDS, words.size)
+        assertEquals(SearchIndex.CONVERSATION_POSITIONS, shard.positions)
+        assertTrue(words.all { it.length <= SearchIndex.MAX_WORD_LENGTH })
+        assertTrue("com" + letters(0) in words && "own" + letters(0) + letters(0) in words)
+        assertFalse("own" + letters(119) + letters(0) in words)
+        archive.calls.clear()
+
+        val started = fresh()
+
+        assertEquals(listOf(id(1)), started.list().map { it.id })
+        assertEquals(listOf("readOpen", "readShards", "readStamp"), archive.calls)
+        assertTrue(notes.isEmpty())
+    }
+
+    private fun pow26(exponent: Int): Int = (0 until exponent).fold(1) { power, _ -> power * 26 }
 
     @Test
     fun anOlderSnapshotOfADeletedConversationIsNeverWrittenBack() = test {
@@ -817,13 +878,16 @@ class ArchivedConversationStoreTest {
     }
 
     // An id that is not one of Kestrel's can come only from a write from outside Kestrel; its row fails as a row that does
-    // not decode fails.
+    // not decode fails, also when it is in a format that this version cannot read, so that the index never keeps its id.
     @Test
     fun aRowWhoseIdIsNotAConversationsIdIsDeletedAndNotedAsARowThatFailed() = test {
         store.save(conversation(1, now - 1_000))
         val payload = "{}".encodeToByteArray()
         archive.rows["not an id"] = ArchiveRow(ArchiveHeader("not an id", now - 3_000, now - 2_000, open = false, commands = 1), payload)
         archive.rows["open, not an id"] = ArchiveRow(ArchiveHeader("open, not an id", now - 3_000, now - 500, open = true, commands = 1), payload)
+        val later = "later, not an id " + "x".repeat(10_000)
+        archive.rows[later] = ArchiveRow(ArchiveHeader(later, now - 3_000, now - 1_500, open = false, commands = 1), payload)
+        archive.unknown += later
         val fresh = fresh()
 
         assertNull(fresh.open())
@@ -831,6 +895,7 @@ class ArchivedConversationStoreTest {
 
         assertEquals(setOf(id(1).value), archive.rows.keys)
         assertEquals(listOf(id(1)), pastIds())
-        assertEquals(listOf(ArchiveNote.CONVERSATION_DELETED, ArchiveNote.CONVERSATION_DELETED, ArchiveNote.INDEX_REBUILT), notes)
+        assertTrue(archive.past()!!.kept.isEmpty())
+        assertEquals(List(3) { ArchiveNote.CONVERSATION_DELETED } + ArchiveNote.INDEX_REBUILT, notes)
     }
 }

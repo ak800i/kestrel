@@ -112,6 +112,8 @@ class PastIndexTest {
             "conversations out of order" to Plain().words("ana", "call").number(2)
                 .conversation(ana, 10, "Call Ana", listOf(0, 0)).conversation(id(2).value, 20, null, listOf(1)).number(0),
             "an id twice" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept(ana, 7),
+            "more records than commands" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0), listOf(1), commands = 1).number(0),
+            "a kept id longer than a conversation's" to Plain().words("ana", "call").number(1).conversation(ana, 10, "Call Ana", listOf(0, 0)).number(1).kept("x".repeat(33), 7),
             "a byte after the kept rows" to valid().raw(0),
         )
         for ((damage, plain) in damaged) {
@@ -208,8 +210,46 @@ class PastIndexTest {
         assertTrue("${bytes.map { it.size }} bytes", bytes.sumOf { it.size } < 550_000 && bytes.all { it.size < 300_000 })
         assertEquals(300, shards.zip(bytes).sumOf { (shard, encoded) -> PastIndexCodec.decode(shard.number, encoded).conversations.size })
         assertTrue("${bytes.map { plainSize(it) }} plain bytes", bytes.all { plainSize(it) * 20 < PastIndexCodec.MAX_PLAIN_BYTES })
+        assertTrue("${shards.map { it.plainBytes }} bounds", shards.all { it.plainBytes < PastIndex.SHARD_BYTES })
         assertFalse(PastIndex.EMPTY.toString().contains("w0"))
     }
+
+    // Design 9.2: long words fill a shard by their letters before they fill it by their positions, so a shard is full by its
+    // bytes too, and every shard, made by a rebuild or by the changes one at a time, decodes again, far under its decoder's
+    // bound.
+    @Test
+    fun conversationsAtTheirBoundsFillShardsByTheirBytesAndEveryShardDecodesAgain() {
+        fun word(n: Int) = (0 until 4).map { 'a' + n / pow26(it) % 26 }.joinToString("").padEnd(SearchIndex.MAX_WORD_LENGTH, 'q')
+        val conversations = List(5) { n ->
+            val words = List(SearchIndex.CONVERSATION_WORDS) { word(n * SearchIndex.CONVERSATION_WORDS + it) }
+            val records = words.chunked(100).mapIndexed { r, chunk -> CommandRecord(r + 1, n * 10L, InputChannel.TEXT, chunk.joinToString(" ")) }
+            ConversationSnapshot(id(n + 1), n * 10L, n * 10L + 1, testMode = true, records = records)
+        }
+
+        val built = PastIndex.of(conversations, emptyList())
+        val folded = conversations.fold(PastIndex.EMPTY) { index, conversation -> index.with(listOf(conversation)) }
+
+        assertTrue(built.shards.sumOf { it.positions } < PastIndex.SHARD_POSITIONS)
+        assertEquals(2, built.shards.size)
+        assertEquals(built.shards.map { shard -> shard.conversations.map { it.id } }, folded.shards.map { shard -> shard.conversations.map { it.id } })
+        for (shard in built.shards) {
+            val bytes = PastIndexCodec.encode(shard)
+            assertTrue("${plainSize(bytes)} of ${shard.plainBytes}", plainSize(bytes) <= shard.plainBytes)
+            assertTrue("${shard.plainBytes}", shard.plainBytes * 4 <= PastIndexCodec.MAX_PLAIN_BYTES)
+            assertEquals(shard.conversations, PastIndexCodec.decode(shard.number, bytes).conversations)
+        }
+    }
+
+    // The encoder refuses a shard that its decoder would refuse, a fault of Kestrel's code, before the archive stores it.
+    @Test
+    fun theEncoderRefusesAShardThatItsDecoderWouldRefuse() {
+        val huge = PastConversation(id(1), 1, 10, 0, "a".repeat(PastIndexCodec.MAX_PLAIN_BYTES))
+        val shard = IndexShard.restored(0, listOf(huge), SearchIndex.EMPTY, emptyList())
+
+        assertThrows(IllegalStateException::class.java) { PastIndexCodec.encode(shard) }
+    }
+
+    private fun pow26(exponent: Int): Int = (0 until exponent).fold(1) { power, _ -> power * 26 }
 
     private fun plainSize(encoded: ByteArray): Int =
         InflaterInputStream(ByteArrayInputStream(encoded, 1, encoded.size - 1)).use { it.readBytes().size }
@@ -238,10 +278,12 @@ class PastIndexTest {
 
         fun words(vararg words: String) = apply { number(words.size).also { words.forEach { text(it) } } }
 
-        // A conversation that closed at [lastWall], with one record per list of distances between its words' positions.
-        fun conversation(id: String, lastWall: Long, firstRequest: String?, vararg records: List<Int>) = apply {
+        // A conversation that closed at [lastWall], with one record per list of distances between its words' positions, and
+        // [commands] commands, as many as it has records unless it is given.
+        fun conversation(id: String, lastWall: Long, firstRequest: String?, vararg records: List<Int>, commands: Int = records.size) = apply {
             text(id).long(lastWall - 9).long(lastWall)
             if (firstRequest == null) number(0) else firstRequest.encodeToByteArray().let { number(it.size + 1).out.write(it) }
+            number(commands)
             number(records.size)
             records.forEachIndexed { index, distances ->
                 number(index + 1).long(lastWall - 5).number(distances.size)

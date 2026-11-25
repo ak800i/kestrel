@@ -8,7 +8,8 @@ import dev.kestrel.conversation.model.ConversationSnapshot
  * what the list shows of each conversation ([conversations], the newest last change first), its records' words ([search])
  * and the kept rows ([kept]). The archive keeps each shard encrypted in a row of its own, named by its [number], so that a
  * close re-encodes and re-encrypts only the newest shard, which holds at most about [PastIndex.SHARD_POSITIONS] word
- * positions, however long the retention and however heavy the use. A shard never changes: [with], [keeping] and [without]
+ * positions and [PastIndex.SHARD_BYTES] bytes before Deflate, and one conversation more, however long the retention and
+ * however heavy the use. A shard never changes: [with], [keeping] and [without]
  * give a new one, or this one when nothing changes. toString prints only counts.
  */
 class IndexShard private constructor(val number: Int, val conversations: List<PastConversation>, val search: SearchIndex, val kept: List<KeptRow>) {
@@ -20,6 +21,11 @@ class IndexShard private constructor(val number: Int, val conversations: List<Pa
 
     /** How many word positions the shard's records hold, which its size follows. */
     val positions: Int by lazy { search.records.sumOf { it.words.size } }
+
+    /** The most bytes that the shard takes in `PastIndexCodec`'s format before Deflate; a shard is full by it too. */
+    val plainBytes: Long by lazy {
+        PastIndexCodec.SHARD_HEADER_BYTES + search.plainBytes + conversations.sumOf(PastIndexCodec::conversationBytes) + kept.sumOf(PastIndexCodec::keptBytes)
+    }
 
     /** Whether the shard holds nothing, so that the archive keeps no row for it. */
     val isEmpty: Boolean get() = conversations.isEmpty() && kept.isEmpty()
@@ -61,18 +67,19 @@ class IndexShard private constructor(val number: Int, val conversations: List<Pa
 
         /**
          * A shard read back from the archive (`PastIndexCodec`): its conversations must come the newest last change first,
-         * each id once, with as many records in [search] as each counts commands, and no record of another conversation;
-         * otherwise it throws [IllegalArgumentException].
+         * each id once, with no more records in [search] than each counts commands, each record once, and no record of
+         * another conversation; otherwise it throws [IllegalArgumentException].
          */
         fun restored(number: Int, conversations: List<PastConversation>, search: SearchIndex, kept: List<KeptRow>): IndexShard {
             require(number >= 0) { "A shard's number is negative" }
             require((1 until conversations.size).all { conversations[it - 1].lastWall >= conversations[it].lastWall }) { "The conversations are not in order" }
             val ids = conversations.map { it.id.value } + kept.map { it.id }
             require(ids.toSet().size == ids.size) { "A conversation is in the shard twice" }
+            require(search.records.map { it.ref }.toSet().size == search.records.size) { "A record is in the shard twice" }
             val records = search.records.groupingBy { it.ref.conversation }.eachCount()
             val known = conversations.mapTo(HashSet()) { it.id }
             require(records.keys.all { it in known }) { "A record belongs to no conversation of the shard" }
-            require(conversations.all { (records[it.id] ?: 0) == it.commands }) { "A conversation's records are not all in the shard" }
+            require(conversations.all { (records[it.id] ?: 0) <= it.commands }) { "A conversation has more records than commands" }
             return IndexShard(number, conversations, search, kept)
         }
 

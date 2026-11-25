@@ -16,8 +16,9 @@ class IndexedRecord(val ref: RecordRef, val atWall: Long, val words: IntArray) {
 
 /**
  * The folded words of some records (design 9.2 and 9.4 of sub-project 7): [words], each folded word once and in ascending
- * order, and one [IndexedRecord] per record, whose positions point into [words]. A record's texts are folded once, when it
- * enters an index, so a search folds only its query, finds the positions of the words that count for each query word once
+ * order, and one [IndexedRecord] per record that holds a word, whose positions point into [words]. A record's texts are
+ * folded once, when it enters an index, within the bounds of one conversation ([Builder.add]), so a search folds only its
+ * query, finds the positions of the words that count for each query word once
  * per index, and then compares positions. The folded words are the owner's words and Kestrel's, so an index lives in memory
  * or encrypted in the archive, never in a log. An index never changes: [plus] and [without] give a new one. toString prints
  * only counts.
@@ -35,6 +36,9 @@ class SearchIndex private constructor(val words: List<String>, val records: List
 
     /** The folded words of [record], one of this index's records. */
     fun wordsOf(record: IndexedRecord): List<String> = record.words.map { words[it] }
+
+    /** The most plain bytes that this index's words and records take in a shard (`PastIndexCodec`). */
+    val plainBytes: Long by lazy { words.sumOf(PastIndexCodec::wordBytes) + records.sumOf { PastIndexCodec.recordBytes(it.words.size) } }
 
     /** This index with [other]'s records, which replace this index's records of the same conversations. */
     operator fun plus(other: SearchIndex): SearchIndex {
@@ -65,13 +69,34 @@ class SearchIndex private constructor(val words: List<String>, val records: List
         private val numbers = HashMap<String, Int>()
         private val records = ArrayList<IndexedRecord>()
 
-        /** Adds [conversation]'s records; returns how many word positions they hold. */
+        /** The most plain bytes that the words and records added so far take in a shard, as [SearchIndex.plainBytes] counts them. */
+        var plainBytes = 0L
+            private set
+
+        /**
+         * Adds [conversation]'s records within the bounds of one conversation (design 9.2 and 9.4): its records in order,
+         * each record's words in the order of its texts, at most [CONVERSATION_WORDS] different words and at most
+         * [CONVERSATION_POSITIONS] positions in all. A word that would pass a bound is left out, and so is a record that is
+         * left without words, because it can match no query. Returns how many word positions the conversation holds.
+         */
         fun add(conversation: ConversationSnapshot): Int {
+            val own = HashSet<String>()
             var positions = 0
             for (record in conversation.records) {
-                val found = folded(record).map { word -> numbers.getOrPut(shared.getOrPut(word) { word }) { numbers.size } }
+                if (positions == CONVERSATION_POSITIONS) break
+                val found = ArrayList<Int>()
+                for (word in folded(record)) {
+                    if (positions == CONVERSATION_POSITIONS) break
+                    if (word !in own) {
+                        if (own.size == CONVERSATION_WORDS) continue
+                        own += word
+                    }
+                    found += number(word)
+                    positions++
+                }
+                if (found.isEmpty()) continue
                 records += IndexedRecord(RecordRef(conversation.id, record.number), record.atWall, found.toIntArray())
-                positions += found.size
+                plainBytes += PastIndexCodec.recordBytes(found.size)
             }
             return positions
         }
@@ -85,6 +110,11 @@ class SearchIndex private constructor(val words: List<String>, val records: List
         }
 
         override fun toString(): String = "SearchIndex.Builder(words=${numbers.size}, records=${records.size})"
+
+        private fun number(word: String): Int = numbers[word] ?: shared.getOrPut(word) { word }.let { kept ->
+            plainBytes += PastIndexCodec.wordBytes(kept)
+            numbers.size.also { numbers[kept] = it }
+        }
     }
 
     // This index's records with their positions in [to], a list in order that holds every word of this index; the
@@ -97,6 +127,27 @@ class SearchIndex private constructor(val words: List<String>, val records: List
     private fun lowerBound(key: String): Int = words.binarySearch(key).let { if (it >= 0) it else -it - 1 }
 
     companion object {
+        /**
+         * The longest folded word that the index holds, in characters: no name or topic is longer, and the longer runs of
+         * letters and digits are tokens, codes and numbers, of which a near miss cannot be judged anyway. A longer word is
+         * not searchable (design 9.4). With [CONVERSATION_WORDS] and [CONVERSATION_POSITIONS], it bounds what one
+         * conversation adds to a shard, so that every shard stays far under the bound that its decoder allows (design 9.2).
+         */
+        const val MAX_WORD_LENGTH = 40
+
+        /**
+         * The most different words that the index holds of one conversation: about 30 commands of heavy use (design R3).
+         * The words of a longer conversation that come after them are not searchable; those that it already holds are.
+         */
+        const val CONVERSATION_WORDS = 10_000
+
+        /**
+         * The most word positions that the index holds of one conversation, a fifth of a shard: about 65 commands of heavy
+         * use. The records after them are not searchable. Without it, a conversation continued again and again would carry
+         * its shard past its decoder's bound by its records alone.
+         */
+        const val CONVERSATION_POSITIONS = 20_000
+
         val EMPTY = SearchIndex(emptyList(), emptyList())
 
         /** The index of the records of [conversations]: the folded words of every text that each record holds. */
@@ -121,9 +172,10 @@ class SearchIndex private constructor(val words: List<String>, val records: List
         }
 
         /**
-         * The folded words of every text that [record] holds: its request and answer, its apps' labels, its data notes, its
-         * lines, its ledger and its checklist's items, folded with `Normalizer.words`, so that letter case, diacritics and the
-         * two Serbian scripts fold as the matcher folds them.
+         * The folded words of every text that [record] holds, each once, in the order of its texts: its request and answer,
+         * its apps' labels, its data notes, its lines, its ledger and its checklist's items, folded with `Normalizer.words`,
+         * so that letter case, diacritics and the two Serbian scripts fold as the matcher folds them. A word longer than
+         * [MAX_WORD_LENGTH] is left out.
          */
         fun folded(record: CommandRecord): Set<String> {
             val texts = listOfNotNull(record.request, record.answer) +
@@ -132,7 +184,9 @@ class SearchIndex private constructor(val words: List<String>, val records: List
                 record.lines.map { it.text } +
                 record.ledger +
                 record.checklist?.items?.map { it.text }.orEmpty()
-            return texts.flatMapTo(HashSet()) { Normalizer.words(it) }
+            val words = LinkedHashSet<String>()
+            for (text in texts) Normalizer.words(text).filterTo(words) { it.length <= MAX_WORD_LENGTH }
+            return words
         }
 
         // The positions of [positions] in [used], which holds all of them in order.
