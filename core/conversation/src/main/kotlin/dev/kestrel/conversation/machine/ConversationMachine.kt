@@ -143,11 +143,11 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             GoalPhase.HANDED_OVER -> MachineStep(
                 state,
                 listOfNotNull(
-                    goal.handOver?.let { ConversationEffect.EndHandOver(it, HandOverEnd.CONTINUED) },
+                    goal.handOver?.let { ConversationEffect.EndHandOver(it, HandOverEnd.CONTINUED, OwnerAct(input)) },
                     ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel),
                 ),
             )
-            GoalPhase.PAUSED -> GoalRules.resumePaused(state, goal, channel, now)
+            GoalPhase.PAUSED -> GoalRules.resumePaused(state, goal, OwnerAct(input), channel, now)
             GoalPhase.PAUSED_AT_LIMIT, GoalPhase.INTERRUPTED -> GoalRules.resume(state, goal, input, steer = null, now = now)
         }
     }

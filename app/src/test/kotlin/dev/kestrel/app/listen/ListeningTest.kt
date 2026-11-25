@@ -3,6 +3,7 @@ package dev.kestrel.app.listen
 import dev.kestrel.app.commands.CommandConversation
 import dev.kestrel.app.commands.CommandReport
 import dev.kestrel.app.commands.CommandRunner
+import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Mode
@@ -530,10 +531,11 @@ class ListeningTest {
         assertEquals(listOf(Outcome.CANCELLED, Outcome.DONE), commandReports.map { it.outcome })
     }
 
-    // Whole-plan re-review of plan 7D, N1: a goal's round that takes the screen's turn while an instant command runs has the
-    // Orchestrator cancel the command, and gets the screen only once the command's job has really ended.
+    // Whole-plan re-review of plan 7D, N1, and its round 2: a goal's round that takes the screen's turn for an owner's input
+    // that came after the instant command started has the Orchestrator cancel the command, and gets the screen only once
+    // the command's job has really ended.
     @Test
-    fun aRoundThatTakesTheScreenHasTheRunningCommandCancelledAndWaitsForItsJob() = runTest {
+    fun aRoundThatTakesTheScreenForANewerInputHasTheRunningCommandCancelledAndWaitsForItsJob() = runTest {
         val listening = listeningWithSession()
         collectReports(listening)
         val gate = CompletableDeferred<Unit>()
@@ -545,7 +547,7 @@ class ListeningTest {
         runCurrent()
         assertEquals(Work.RUNNING_COMMAND, listening.state.value.work)
 
-        val taken = async { turns.take() }
+        val taken = async { turns.take(after = InputIds.next()) }
         runCurrent()
         assertEquals(Work.IDLE, listening.state.value.work)
         assertEquals(ListeningTexts.CANCELLED, shown.last())
@@ -555,6 +557,33 @@ class ListeningTest {
 
         assertTrue(taken.await())
         assertEquals(listOf(Outcome.CANCELLED), commandReports.map { it.outcome })
+    }
+
+    // Re-review round 2, R2-1: a round that goes on by itself, as after a hand-over that ended by itself, never cancels the
+    // owner's command, also one that he started before the round's own input; it waits until the command has ended.
+    @Test
+    fun aRoundThatGoesOnByItselfWaitsForTheOwnersCommandWithoutCancellingIt() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        val ended = CompletableDeferred<Unit>()
+        runner.action = {
+            ended.await()
+            CommandResult(Outcome.DONE)
+        }
+        val before = InputIds.next()
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+
+        val taken = async { turns.take(after = before) }
+        advanceTimeBy(60_000)
+        runCurrent()
+        assertEquals(Work.RUNNING_COMMAND, listening.state.value.work)
+        assertFalse(taken.isCompleted)
+        ended.complete(Unit)
+        runCurrent()
+
+        assertTrue(taken.await())
+        assertEquals(listOf(Outcome.DONE), commandReports.map { it.outcome })
     }
 
     @Test

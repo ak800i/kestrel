@@ -526,6 +526,21 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
         }
     }
 
+    /**
+     * The pause gate, then the goal's screen turn (design 6.5 of sub-project 7), before every step that may act on the
+     * screen or open an app; true when either held the run, so that the step does not act on a screen that the run has not
+     * observed since. The owner's talk passes only the pause gate: it needs no screen.
+     */
+    suspend fun screenGate(): Boolean {
+        val resumed = gate()
+        if (!limits.waiting { ports.goal.takeScreen() }) return resumed
+        if (!resumed) {
+            talk.countAgain()
+            resumePending = true
+        }
+        return true
+    }
+
     // A resume that a gate inside a step saw (in `say`, `ask_user` or a yes/no question), until an observation shows it.
     private var resumePending = false
 

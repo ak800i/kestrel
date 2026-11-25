@@ -7,4 +7,7 @@ internal object InputIds {
     private val last = AtomicLong()
 
     fun next(): Long = last.incrementAndGet()
+
+    /** The newest number given so far, 0 before the first. */
+    fun newest(): Long = last.get()
 }

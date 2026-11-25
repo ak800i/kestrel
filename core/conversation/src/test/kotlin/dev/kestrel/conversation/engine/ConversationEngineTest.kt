@@ -98,13 +98,14 @@ class ConversationEngineTest {
         store: ConversationStore = this@ConversationEngineTest.store,
         onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
         report: (String, Throwable) -> Unit = { _, error -> throw error },
+        screen: ScreenTurn = ScreenTurn { false },
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
-        val goals = GoalRunner(environment, ScreenTurn { false }, search, clock) { _, error -> throw error }
+        val goals = GoalRunner(environment, screen, search, clock) { _, error -> throw error }
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, voiceOn, clock, report, onStep = onStep,
+            settings, testMode, voiceOn, clock, report, { ++inputs }, onStep = onStep,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -241,6 +242,73 @@ class ConversationEngineTest {
         assertTrue(resumed.contains("What Kestrel did so far, in its own notes: \"opened Gmail\"\n"))
         assertTrue(resumed.contains("The owner added (typed) before the first step: \"only the ones from 2025\""))
         assertNull(engine.view.value.goal)
+    }
+
+    // Re-review round 2, R2-1: each round's screen turn names the owner's input that lets it act: the command that started
+    // the goal, and the Continue that resumed it after a touch, so that only an instant command that he started before that
+    // input is cancelled.
+    @Test
+    fun aRoundsScreenTurnNamesTheInputThatStartedOrResumedIt() = scope.runTest {
+        val speaking = CompletableDeferred<Unit>()
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
+        val afters = mutableListOf<Long?>()
+        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = ScreenTurn { after -> afters += after; false })
+        engine.restore()
+        val command = typed("Read my latest SMS")
+        engine.submit(command)
+        runCurrent()
+        assertEquals(command.id, afters.first())
+
+        engine.touched()
+        runCurrent()
+        afters.clear()
+        val continued = input(InputChannel.TEXT, InputIntent.Continue)
+        engine.submit(continued)
+        runCurrent()
+
+        assertEquals(continued.id, afters.first())
+        assertTrue(afters.drop(1).all { it == null })
+    }
+
+    // A goal that waited behind the stop of the one before it starts for its own input, which is older than an instant
+    // command that the owner started meanwhile, so that command is not cancelled.
+    @Test
+    fun aGoalFromTheQueueNamesItsOwnInput() = scope.runTest {
+        val speaking = CompletableDeferred<Unit>()
+        text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
+        val afters = mutableListOf<Long?>()
+        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = ScreenTurn { after -> afters += after; false })
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        val queued = typed("Read it again")
+        engine.submit(queued)
+        runCurrent()
+
+        assertEquals(listOf(1L, queued.id), afters.filterNotNull())
+        assertEquals(2, engine.view.value.records.size)
+    }
+
+    // A yes on the card of "Continue the goal?" comes without an input; it gets the next input number, as the owner's act.
+    @Test
+    fun aYesOnTheCardOfContinueTheGoalNamesTheOwnersActAsANewInput() = scope.runTest {
+        val now = ManualConversationClock.BASE
+        val record = CommandRecord(1, now - 60_000, InputChannel.TEXT, "Archive my newsletters", ledger = listOf("opened Gmail"))
+        store.save(ConversationSnapshot(
+            ConversationId("0123456789abcdef0123456789abcdef"), now - 60_000, now - 30_000, open = true, testMode = false,
+            records = listOf(record), goal = GoalState(1, GoalPhase.ACTING, now - 30_000),
+        ))
+        text.answers += ChannelAnswer.Yes
+        val afters = mutableListOf<Long?>()
+        val engine = engine(environment(fail), ArchivedConversationStore(archive, backgroundScope) {}, screen = ScreenTurn { after -> afters += after; false })
+
+        assertEquals(RestoreResult.GOAL_HELD, engine.restore())
+        runCurrent()
+
+        assertEquals(1L, afters.first())
+        assertEquals(1L, inputs)
     }
 
     @Test

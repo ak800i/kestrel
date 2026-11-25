@@ -122,8 +122,10 @@ class ConversationMachineTest : MachineTesting() {
 
         assertEquals(listOf(ChannelOutput.Said(ConversationTexts.FINISH_HAND_OVER_TYPED)), step(handed, typed("Send it")).outputs())
         assertEquals(listOf(ChannelOutput.Said(ConversationTexts.FINISH_HAND_OVER_SPOKEN)), step(handed, spoken("Send it")).outputs())
-        val continued = step(handed, spoken(InputIntent.Continue))
-        assertEquals(ConversationEffect.EndHandOver(7, HandOverEnd.CONTINUED), continued.effect<ConversationEffect.EndHandOver>())
+        val continuing = spoken(InputIntent.Continue)
+        val continued = step(handed, continuing)
+        // The owner's Continue lets the round act again (design 6.5 of sub-project 7).
+        assertEquals(ConversationEffect.EndHandOver(7, HandOverEnd.CONTINUED, OwnerAct(continuing.input)), continued.effect<ConversationEffect.EndHandOver>())
         assertEquals(
             ConversationEffect.AddLine(id, 1, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, InputChannel.VOICE),
             continued.effect<ConversationEffect.AddLine>(),

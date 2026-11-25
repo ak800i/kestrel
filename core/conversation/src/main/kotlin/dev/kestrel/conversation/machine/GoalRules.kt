@@ -58,14 +58,14 @@ internal object GoalRules {
         return MachineStep(ending(state, goal, GoalEnding.STOPPING, stop), listOf(effect)).then(::withdrawContinue)
     }
 
-    /** A paused round goes on: its gate opens and it looks at the screen afresh. */
-    fun resumePaused(state: ConversationState, goal: GoalState, channel: InputChannel, now: Long): MachineStep = MachineStep(
+    /** A paused round goes on for the owner's [act]: its gate opens and it looks at the screen afresh. */
+    fun resumePaused(state: ConversationState, goal: GoalState, act: OwnerAct, channel: InputChannel, now: Long): MachineStep = MachineStep(
         state.copy(
             goal = goal.copy(phase = GoalPhase.ACTING, hold = null, changedAtWall = now),
             heldWords = null,
             timers = state.timers.copy(hold = state.timers.hold + 1),
         ),
-        listOf(ConversationEffect.ResumePausedGoal, ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel)),
+        listOf(ConversationEffect.ResumePausedGoal(act), ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel)),
     ).then(::withdrawContinue)
 
     /**
@@ -198,7 +198,7 @@ internal object GoalRules {
         return when (answer) {
             ChannelAnswer.Yes ->
                 if (goal.phase == GoalPhase.PAUSED) {
-                    resumePaused(asked, goal, input?.channel ?: state.replyChannel, now)
+                    resumePaused(asked, goal, OwnerAct(input), input?.channel ?: state.replyChannel, now)
                 } else {
                     resume(asked, goal, input, null, now)
                 }
@@ -318,7 +318,7 @@ internal object GoalRules {
         val timers = state.timers.copy(handOver = number, hold = if (paused) state.timers.hold + 1 else state.timers.hold)
         return MachineStep(
             state.copy(goal = goal.copy(phase = GoalPhase.HANDED_OVER, hold = null, handOver = handOver), timers = timers),
-            listOfNotNull(ConversationEffect.ResumePausedGoal.takeIf { paused }, ConversationEffect.StartTimer(Timer.HAND_OVER, number, HAND_OVER_MILLIS)),
+            listOfNotNull(ConversationEffect.ResumePausedGoal(act = null).takeIf { paused }, ConversationEffect.StartTimer(Timer.HAND_OVER, number, HAND_OVER_MILLIS)),
         ).then(::withdrawContinue)
     }
 

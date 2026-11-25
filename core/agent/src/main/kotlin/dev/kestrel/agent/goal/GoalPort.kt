@@ -22,6 +22,13 @@ interface GoalPort {
 
     /** Something that the command's record needs, as it happens. */
     suspend fun traced(entry: TraceEntry)
+
+    /**
+     * Takes the screen's turn before a step that may act on the screen or open an app (design 6.5 of sub-project 7): returns
+     * once no instant command holds the screen; true when it waited, because the screen may have changed meanwhile. A run
+     * without a goal around it, as "save that as", acts on no screen and takes nothing.
+     */
+    suspend fun takeScreen(): Boolean = false
 }
 
 /** How the owner gave a steering message (design 7.3 and D9 of sub-project 7): spoken after "Kestrel", or typed. */

@@ -11,6 +11,7 @@ import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.model.RoundEnd
 import dev.kestrel.safety.Category
 import kotlinx.coroutines.Job
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * What a goal tells the conversation as its rounds run: its steps, the record's traces, the allowance, steering, touches
@@ -70,6 +71,20 @@ class RunningGoal(
     // ended; each new round starts without one.
     @Volatile
     internal var stopSentence: String? = null
+
+    // The number of the owner's input that lets the round act now, until the round's next screen turn takes it.
+    private val act = AtomicReference<Long?>(null)
+
+    /**
+     * The owner's input number [input] lets the round act now: it started or resumed the goal, or ended its hand-over or
+     * pause (design 6.5 of sub-project 7). Only the round's next screen turn names it; later turns name none.
+     */
+    fun actedFor(input: Long) {
+        act.set(input)
+    }
+
+    /** The input number that lets the round act now, once; null when the round goes on by itself. */
+    fun takeAct(): Long? = act.getAndSet(null)
 
     /** The owner's [message] for the goal's next turn; false once the goal has given its final words (its inbox is closed). */
     fun steer(message: SteeringMessage): Boolean = inbox.add(message)

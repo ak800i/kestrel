@@ -23,6 +23,7 @@ import dev.kestrel.app.agent.RoundModels
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.conversation.AndroidOwnerSupport
 import dev.kestrel.app.conversation.ConversationSignals
+import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.conversation.PermissionDialog
 import dev.kestrel.app.conversation.storedConversationSettings
 import dev.kestrel.app.conversation.VoiceChannel
@@ -501,6 +502,7 @@ class AppGraph(context: Context) {
             voiceOn = listening.state.map { it.mode != Mode.OFF }.distinctUntilChanged(),
             clock = AndroidConversationClock,
             report = reportFailure,
+            inputIds = InputIds::next,
             onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
         ).also(::followConversation)
     }

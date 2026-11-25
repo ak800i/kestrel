@@ -261,9 +261,10 @@ class GoalRulesTest : MachineTesting() {
         assertNull(goal.hold)
         assertTrue(handed.has<ConversationEffect.ResumePausedGoal>())
         assertTrue(step(handed.state, ConversationEvent.TimerEnded(Timer.HOLD, paused.timers.hold)).effects.isEmpty())
+        val continuing = spoken(InputIntent.Continue)
         assertEquals(
-            ConversationEffect.EndHandOver(5, HandOverEnd.CONTINUED),
-            step(handed.state, spoken(InputIntent.Continue)).effect<ConversationEffect.EndHandOver>(),
+            ConversationEffect.EndHandOver(5, HandOverEnd.CONTINUED, OwnerAct(continuing.input)),
+            step(handed.state, continuing).effect<ConversationEffect.EndHandOver>(),
         )
     }
 

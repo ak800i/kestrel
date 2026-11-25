@@ -42,7 +42,8 @@ import kotlin.random.Random
  * the model, and a round without one ends as [EndReason.NO_PROFILE]. The settings come from the encrypted store when the round starts: the mode, test mode and the
  * owner's names, the agent-free apps with the owner's changes, Android's emergency-number check and the phone apps with
  * the default one. A round of a goal forgets the call backstop's last action, gives the backstop every action of its own
- * ([CallBackstop.acted]), and its owner port is [GoalOwner] over the conversation's. [eyes] and the badge functions are
+ * ([CallBackstop.acted]), its owner port is [GoalOwner] over the conversation's, and its goal is [WatchedGoal], which
+ * starts the watcher again after a screen turn that waited. [eyes] and the badge functions are
  * read at each round, because plan 5C sets them. Release stops the watcher and drops the round's media items.
  */
 internal class AppGoalEnvironment(
@@ -120,7 +121,7 @@ internal class AppGoalEnvironment(
             memory,
             log,
             AndroidAgentClock,
-            start.goal,
+            WatchedGoal(start.goal, watcher),
             start.history,
         )
         // Read before the watcher starts, so that a failed read leaves no watcher on the screen.

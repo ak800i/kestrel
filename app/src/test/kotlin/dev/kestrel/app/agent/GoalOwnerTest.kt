@@ -1,5 +1,7 @@
 package dev.kestrel.app.agent
 
+import dev.kestrel.agent.goal.GoalPort
+import dev.kestrel.agent.goal.NoGoal
 import dev.kestrel.agent.port.AnswerKind
 import dev.kestrel.agent.port.DataPort
 import dev.kestrel.agent.port.Gate
@@ -51,6 +53,24 @@ class GoalOwnerTest {
         assertEquals(2, watcher.watches)
         goalOwner.gate()
         assertEquals(3, watcher.watches)
+    }
+
+    // The instant command that held the screen while the round waited for its turn stopped the watcher, so the round starts
+    // it again before it acts (D19; re-review round 2 of plan 7D).
+    @Test
+    fun aScreenTurnThatWaitedStartsTheWatcherAgain() = runTest {
+        val turns = ArrayDeque(listOf(false, true))
+        val goal = WatchedGoal(
+            object : GoalPort by NoGoal {
+                override suspend fun takeScreen(): Boolean = turns.removeFirst()
+            },
+            watcher,
+        )
+
+        assertEquals(false, goal.takeScreen())
+        assertEquals(0, watcher.watches)
+        assertEquals(true, goal.takeScreen())
+        assertEquals(1, watcher.watches)
     }
 
     private class CountingWatch : TouchWatch {

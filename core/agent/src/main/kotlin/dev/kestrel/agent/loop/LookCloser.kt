@@ -84,7 +84,7 @@ internal class LookCloser(private val run: TaskRun) {
             }
         }
         // The owner may take a while to answer: a screen that changed since the question is never captured (spec 12.5).
-        run.gate()
+        run.screenGate()
         repeat(CAPTURES) {
             val now = run.fresh()
             val same = ScreenTree.frontWindow(now)?.packageName == front && ScreenSignature.of(now).sameScreen(ScreenSignature.of(asked))

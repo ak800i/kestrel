@@ -18,6 +18,7 @@ import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.Gate
+import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.TaskLog
 import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.agent.testing.ScreenBuilder
@@ -493,36 +494,55 @@ class GoalRunnerTest {
         assertEquals(0, environment.released)
     }
 
-    // Whole-plan re-review of plan 7D, N1: a round takes the screen's turn at every gate, not only at its start, so a round
-    // that goes on after a pause ("Continue the goal?"), a hand-over or a permission request waits for an instant command
-    // that holds the screen, as a new round does; a turn that waited makes the run look at the screen again.
+    // Whole-plan re-review of plan 7D, N1, and its round 2 (R2-1): a round takes the screen's turn before every step that may
+    // act on the screen, also when it goes on after a pause ("Continue the goal?"), so it waits for an instant command that
+    // holds the screen; the turn names the owner's input that lets the round act, once: the input that started it at its
+    // start, and the input that resumed it at the first turn after the resume. Every other turn names none, because the
+    // round goes on by itself then. A turn that waited counts as a resume, so the run looks at the screen again.
     @Test
-    fun everyGateOfARoundTakesTheScreensTurnAlsoAfterAResume() = runTest {
-        val environment = environment(listSms, finish(1))
+    fun aRoundTakesTheScreensTurnBeforeItActsAndNamesTheInputThatLetsItActOnlyOnce() = runTest {
+        val start = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { button("Open", 300) }
+        val opened = ScreenBuilder.screen("dev.kestrel.testapp", "Kestrel fixtures") { text("Opened", 300) }
+        val tap = ScriptedModel.call("tap", "Open", null, null, "reason" to "open it", "category" to "reading")
+        val done = ScriptedModel.call("finish", null, null, null, "summary" to "Opened.", "evidence" to listOf(mapOf("target" to mapOf("label" to "Opened"))))
+        val environment = FakeGoalEnvironment(listOf(tap, tap, done), first = start).apply { screen.onTap("Open", opened) }
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+        val afters = mutableListOf<Long?>()
         val given = CompletableDeferred<Unit>()
-        var takes = 0
-        val screen = ScreenTurn {
-            when (takes++) {
-                0 -> false
-                1 -> {
-                    given.await()
-                    true
-                }
-                else -> false
+        val screen = ScreenTurn { after ->
+            afters += after
+            if (afters.size == 2) {
+                given.await()
+                true
+            } else {
+                false
             }
         }
-        val owner = FakeOwner().apply { gates += Gate.RESUMED }
+        val resumed = CompletableDeferred<Unit>()
+        var paused = true
+        val owner = object : OwnerPort by FakeOwner() {
+            override suspend fun gate(): Gate {
+                if (!paused) return Gate.GO
+                paused = false
+                resumed.await()
+                return Gate.RESUMED
+            }
+        }
+        goal.actedFor(5)
 
         runner(environment, screen).run(this, goal, plan(record()), owner)
         advanceUntilIdle()
-        assertEquals(2, takes)
-        assertTrue(environment.data.calls.isEmpty())
-        assertTrue(listener.ends.isEmpty())
+        assertEquals(listOf<Long?>(5), afters)
+        goal.actedFor(9)
+        resumed.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf<Long?>(5, 9), afters)
+        assertTrue(environment.screen.actions.isEmpty())
         given.complete(Unit)
         advanceUntilIdle()
 
-        assertTrue(takes > 2)
+        assertTrue(afters.drop(2).all { it == null })
+        assertEquals(1, environment.screen.actions.size)
         assertEquals(1, listener.ends.size)
     }
 

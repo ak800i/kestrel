@@ -37,8 +37,11 @@ sealed interface ConversationEffect {
     /** A lock or a call: the owner port withdraws the goal's question and closes its gate. */
     data object PauseGoal : ConversationEffect
 
-    /** The paused round goes on with a fresh look. */
-    data object ResumePausedGoal : ConversationEffect
+    /**
+     * The paused round goes on with a fresh look: for the owner's [act], or by itself (null), as when a hand-over that the
+     * round opened while a lock or a call paused it wins.
+     */
+    data class ResumePausedGoal(val act: OwnerAct?) : ConversationEffect
 
     /** Cancels the round's job as interrupted: the goal stays open and held (D13). */
     data class InterruptGoal(val cause: Interruption) : ConversationEffect
@@ -56,7 +59,8 @@ sealed interface ConversationEffect {
     /** Answers question [number]; [leftScreen] when the owner gave the answer on Kestrel's own screen, a typed input (design 10.3). */
     data class AnswerQuestion(val number: Int, val answer: ChannelAnswer, val leftScreen: Boolean = false) : ConversationEffect
 
-    data class EndHandOver(val number: Int, val end: HandOverEnd) : ConversationEffect
+    /** Ends hand-over [number] with [end]: for the owner's [act] ("Kestrel, continue"), or by itself (null), as at its 3 minutes. */
+    data class EndHandOver(val number: Int, val end: HandOverEnd, val act: OwnerAct? = null) : ConversationEffect
 
     /** Asks "Continue the goal?" (design 6.5 and 6.7). */
     data object AskContinueGoal : ConversationEffect
@@ -129,3 +133,10 @@ data class MachineStep(val state: ConversationState, val effects: List<Conversat
         return MachineStep(after.state, effects + after.effects)
     }
 }
+
+/**
+ * The owner's act that lets a goal's round act now (design 6.5 of sub-project 7): his [input], or a tap on a card, which
+ * comes without one (null). The round may then have an instant command that he started before it cancelled; a round that
+ * goes on without such an act waits for the command instead.
+ */
+data class OwnerAct(val input: OwnerInput?)

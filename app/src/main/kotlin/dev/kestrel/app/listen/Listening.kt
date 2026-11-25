@@ -1303,7 +1303,7 @@ class Listening internal constructor(
             return
         }
         scope.launch(thread) {
-            turns.take()
+            turns.take(after = null)
             try {
                 action()
             } catch (e: CancellationException) {
@@ -1367,7 +1367,7 @@ class Listening internal constructor(
         commandJob = job
         // The command holds the screen until its job has ended; a goal's round that needs the screen meanwhile has the
         // Orchestrator cancel it (design 6.5 of sub-project 7).
-        turns.started(job) { send(Event.ScreenWanted(effect.command)) }
+        turns.started(job, InputIds.newest()) { send(Event.ScreenWanted(effect.command)) }
     }
 
     // Section 7.3: the cancelled job still holds the screen in [turns] until it has completed, so that nothing new acts on
@@ -1378,6 +1378,7 @@ class Listening internal constructor(
         val job = commandJob ?: return
         commandJob = null
         job.cancel()
+        turns.stopped(job)
     }
 
     private fun publish(done: CommandReport) {

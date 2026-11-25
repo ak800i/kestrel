@@ -26,21 +26,44 @@ class ScreenTurnsTest {
     fun withoutACommandTheScreenIsFreeAtOnce() = runTest {
         assertFalse(turns.held())
 
-        assertFalse(turns.take())
+        assertFalse(turns.take(after = null))
 
         assertEquals(0L, currentTime)
     }
 
-    // Whole-plan re-review of plan 7D, N1: a command that still runs holds the screen too. Whoever takes the turn asks it to
-    // let go, and gets the screen only once its job has really ended.
+    // Re-review round 2, R2-1: a round that goes on by itself, or for an input of the owner's that came before the command,
+    // never has the command cancelled; it waits as long as the command runs, because the command is his newest act.
     @Test
-    fun aRunningCommandIsAskedToLetGoAndHoldsTheScreenUntilItsJobHasEnded() = runTest {
+    fun aRoundWithoutANewerInputWaitsForTheRunningCommandWithoutCancellingIt() = runTest {
+        for (after in listOf(null, 4L, 5L)) {
+            val job = Job()
+            var asked = 0
+            turns.started(job, since = 5) { asked++ }
+
+            val taken = async { turns.take(after) }
+            advanceTimeBy(60_000)
+            runCurrent()
+            assertFalse("$after", taken.isCompleted)
+            assertEquals("$after", 0, asked)
+            job.complete()
+            runCurrent()
+
+            assertTrue("$after", taken.await())
+            assertFalse(turns.held())
+        }
+        assertEquals(emptyList<String>(), reports)
+    }
+
+    // An input of the owner's that came after the command started chose the goal: the command is asked to let go, and the
+    // round gets the screen once its job has really ended.
+    @Test
+    fun anOwnersInputAfterTheCommandStartedHasItCancelled() = runTest {
         val job = Job()
         var asked = 0
-        turns.started(job) { asked++ }
+        turns.started(job, since = 5) { asked++ }
         assertTrue(turns.held())
 
-        val taken = async { turns.take() }
+        val taken = async { turns.take(after = 6) }
         runCurrent()
         assertEquals(1, asked)
         advanceTimeBy(1_000)
@@ -59,9 +82,12 @@ class ScreenTurnsTest {
         val finished = CompletableDeferred<Unit>()
         // Like a gesture or a binder call that Android finishes, the job ignores its cancellation for a while.
         val job = backgroundScope.launch { withContext(NonCancellable) { finished.await() } }
-        turns.started(job) { job.cancel() }
+        runCurrent()
+        turns.started(job, since = 5) {}
+        job.cancel()
+        turns.stopped(job)
 
-        val taken = async { turns.take() }
+        val taken = async { turns.take(after = null) }
         advanceTimeBy(1_000)
         runCurrent()
         assertFalse(taken.isCompleted)
@@ -74,11 +100,32 @@ class ScreenTurnsTest {
         assertEquals(emptyList<String>(), reports)
     }
 
+    // A round that waits for the owner's command gives it at most 3 s from the moment that it is cancelled, as "stop" does.
+    @Test
+    fun aWaitingRoundGivesACommandThatIsCancelledMeanwhileAtMostThreeSeconds() = runTest {
+        val job = Job()
+        turns.started(job, since = 5) {}
+        val taken = async { turns.take(after = null) }
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertFalse(taken.isCompleted)
+
+        turns.stopped(job)
+        advanceTimeBy(2_999)
+        runCurrent()
+        assertFalse(taken.isCompleted)
+        advanceTimeBy(2)
+        runCurrent()
+
+        assertTrue(taken.await())
+        assertEquals(listOf("A cancelled instant command"), reports)
+    }
+
     @Test
     fun aStuckCommandHoldsTheScreenForAtMostThreeSecondsAndIsReportedOnce() = runTest {
-        turns.started(Job()) {}
+        turns.started(Job(), since = 5) {}
 
-        val taken = async { turns.take() }
+        val taken = async { turns.take(after = 6) }
         advanceTimeBy(2_999)
         runCurrent()
         assertFalse(taken.isCompleted)
@@ -89,7 +136,7 @@ class ScreenTurnsTest {
         assertEquals(listOf("A cancelled instant command"), reports)
         // Kestrel goes on without it: nothing waits for it again.
         assertFalse(turns.held())
-        assertFalse(turns.take())
+        assertFalse(turns.take(after = 7))
         assertEquals(1, reports.size)
     }
 }

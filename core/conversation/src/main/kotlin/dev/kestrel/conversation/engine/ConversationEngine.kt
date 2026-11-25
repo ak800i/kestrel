@@ -28,6 +28,7 @@ import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationMachine
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.machine.OwnerAct
 import dev.kestrel.conversation.machine.QuietClock
 import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.ChannelAnswer
@@ -79,6 +80,8 @@ import kotlinx.coroutines.launch
  * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order, and the end
  * of a final reply's `show` is the machine's `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
  * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class;
+ * [inputIds] numbers an owner's act that comes without an input, as a tap on a card, among the owner's inputs (`:app`'s
+ * `InputIds`), so that the screen's turn can tell whether it came after an instant command started (design 6.5);
  * [onStep] sees every step, for the hooks' tags (plan 7D): every effect that starts work under a new command number
  * (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`, and `EndLocal` for "new conversation", which has no work) carries
  * the owner's input that asked for it.
@@ -95,6 +98,7 @@ class ConversationEngine(
     private val voiceOn: Flow<Boolean>,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
+    private val inputIds: () -> Long,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
 ) {
@@ -374,12 +378,18 @@ class ConversationEngine(
             is ConversationEffect.ResumeGoal -> resumeGoal(effect)
             is ConversationEffect.SteerGoal -> steering(effect)
             ConversationEffect.PauseGoal -> owner.pause()
-            ConversationEffect.ResumePausedGoal -> owner.resume()
+            is ConversationEffect.ResumePausedGoal -> {
+                effect.act?.let(::actedFor)
+                owner.resume()
+            }
             is ConversationEffect.InterruptGoal -> running?.interrupt(effect.cause)
             is ConversationEffect.CancelGoal -> running?.cancel(effect.reason, effect.sentence)
             is ConversationEffect.EndHeldGoal -> endHeld(effect.reason, effect.sentence)
             is ConversationEffect.AnswerQuestion -> owner.answer(effect.number, effect.answer, effect.leftScreen)
-            is ConversationEffect.EndHandOver -> owner.endHandOver(effect.number, effect.end)
+            is ConversationEffect.EndHandOver -> {
+                effect.act?.let(::actedFor)
+                owner.endHandOver(effect.number, effect.end)
+            }
             ConversationEffect.AskContinueGoal -> askContinue()
             ConversationEffect.CancelContinueQuestion -> continueJob?.cancel()
             is ConversationEffect.Output -> outputs.trySend(effect.output)
@@ -413,12 +423,22 @@ class ConversationEngine(
         }
     }
 
+    // Design 6.5: the owner's act lets the running round act now, so its next screen turn may have an instant command that
+    // he started before it cancelled.
+    private fun actedFor(act: OwnerAct) {
+        running?.actedFor(inputOf(act))
+    }
+
+    // A tap on a card comes without an input: it gets the next input number, as the owner's act at this moment.
+    private fun inputOf(act: OwnerAct): Long = act.input?.id ?: inputIds()
+
     private fun couldNot(command: Int, end: EndReason) = ended(RoundEnd(command, TaskReport(end), ConversationTexts.COULD_NOT, ConversationTexts.COULD_NOT))
 
     private fun startGoal(effect: ConversationEffect.StartGoal) {
         val id = checkNotNull(state.id) { "A goal starts in an open conversation" }
         newRecord(id, effect.record, effect.input.channel, effect.text)
         val goal = RunningGoal(effect.record, effect.command, effect.input.options, emptyList(), listener(id, effect.record))
+        goal.actedFor(effect.input.id)
         running = goal
         roundStep = null
         roundLedgerFrom = 0
@@ -436,6 +456,7 @@ class ConversationEngine(
         val goal = running ?: RunningGoal(held.record, effect.command, emptyMap(), emptyList(), listener(id, held.record)).also { running = it }
         goal.command = effect.command
         effect.input?.let { goal.options = it.options }
+        goal.actedFor(inputOf(OwnerAct(effect.input)))
         val plan = plan(id, goal, record.request, effect.cause)
         effect.steer?.let { steer(id, goal, SteeringMessage.of(it.text, it.channel)) }
         roundStep = null
