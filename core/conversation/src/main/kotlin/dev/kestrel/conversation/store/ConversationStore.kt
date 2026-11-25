@@ -47,7 +47,9 @@ interface ConversationStore {
     /**
      * Deletes every conversation, the open one too, the index and the archive's key, in the archive alone (design 9.7). Once
      * the archive's deletion has started, a cancellation takes effect only after it, and the outcome is a completed
-     * deletion. When the archive's call fails, it has marked nothing, and every conversation stays as the archive has it.
+     * deletion. It throws when the archive's transaction did not commit, and has then marked nothing, so that every
+     * conversation stays as the archive has it. A key that could not be erased after the transaction leaves the deletion
+     * complete; the store notes it as its own failure.
      */
     suspend fun deleteAll()
 

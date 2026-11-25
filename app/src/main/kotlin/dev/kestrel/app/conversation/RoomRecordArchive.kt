@@ -2,6 +2,7 @@ package dev.kestrel.app.conversation
 
 import dev.kestrel.conversation.store.ArchiveChange
 import dev.kestrel.conversation.store.ArchiveEntry
+import dev.kestrel.conversation.store.ArchiveErasure
 import dev.kestrel.conversation.store.ArchiveHeader
 import dev.kestrel.conversation.store.IndexStamp
 import dev.kestrel.conversation.store.IndexWrite
@@ -10,6 +11,7 @@ import dev.kestrel.conversation.store.ShardRead
 import dev.kestrel.privacy.conversations.ConversationArchiveStore
 import dev.kestrel.privacy.conversations.ConversationChange
 import dev.kestrel.privacy.conversations.IndexUpdate
+import dev.kestrel.privacy.conversations.KeyErasure
 import dev.kestrel.privacy.conversations.PlainConversation
 import dev.kestrel.privacy.conversations.StoredConversation
 import dev.kestrel.privacy.conversations.StoredShard
@@ -45,9 +47,12 @@ internal class RoomRecordArchive(private val table: ConversationArchiveStore) : 
 
     override suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int = table.purge(oldest, newest, index.plain())
 
-    override suspend fun deleteAll() {
-        table.deleteAll()
-    }
+    // The table throws only when its transaction did not commit; once it has, it says whether the key went.
+    override suspend fun deleteAll(): ArchiveErasure =
+        when (table.deleteAll()) {
+            KeyErasure.ERASED -> ArchiveErasure.KEY_ERASED
+            KeyErasure.KEPT -> ArchiveErasure.KEY_KEPT
+        }
 }
 
 private fun StoredConversation.archived(): ArchiveEntry =

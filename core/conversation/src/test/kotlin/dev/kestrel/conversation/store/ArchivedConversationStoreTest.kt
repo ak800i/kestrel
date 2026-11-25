@@ -287,18 +287,18 @@ class ArchivedConversationStoreTest {
         lateinit var watched: ArchivedConversationStore
         watched = ArchivedConversationStore(
             object : RecordArchive by archive {
-                override suspend fun deleteAll() {
+                override suspend fun deleteAll(): ArchiveErasure {
                     seenByTheArchive = watched.generation
-                    archive.deleteAll()
+                    return archive.deleteAll()
                 }
             },
             backgroundScope,
         ) {}
         watched.save(conversation(1, now - 2_000))
         val before = watched.generation
-        archive.interruptions["deleteAll"] = CancellationException("stop")
+        archive.failures["deleteAll"] = IOException("the disk failed")
 
-        assertTrue(runCatching { watched.deleteAll() }.exceptionOrNull() is CancellationException)
+        assertTrue(runCatching { watched.deleteAll() }.exceptionOrNull() is IOException)
 
         assertEquals(before + 1, seenByTheArchive)
         assertEquals(before + 1, watched.generation)
@@ -318,10 +318,10 @@ class ArchivedConversationStoreTest {
         val gate = CompletableDeferred<Unit>()
         val gated = ArchivedConversationStore(
             object : RecordArchive by archive {
-                override suspend fun deleteAll() {
+                override suspend fun deleteAll(): ArchiveErasure {
                     deleting.complete(Unit)
                     gate.await()
-                    archive.deleteAll()
+                    return archive.deleteAll()
                 }
             },
             backgroundScope,
@@ -348,6 +348,31 @@ class ArchivedConversationStoreTest {
         assertNull(gated.reopen(id(1), open, now, testMode = true))
         assertTrue(archive.rows.isEmpty())
         assertTrue(notes.isEmpty())
+    }
+
+    // Design 9.7: "delete history" is complete once the archive's transaction has deleted the rows and the index. A key that
+    // could not be erased after it is the archive's own failure, noted as such; the archive's next change erases it. The
+    // conversations count as deleted, the generation is raised, and no later save writes one back.
+    @Test
+    fun deleteHistoryWhoseKeyCouldNotBeErasedIsCompleteAndNotesTheKey() = test {
+        store.save(conversation(1, now - 2_000))
+        val open = conversation(2, now - 1_000, open = true)
+        store.save(open)
+        val before = store.generation
+        archive.keyKept = true
+
+        store.deleteAll()
+
+        assertEquals(before + 1, store.generation)
+        assertTrue(archive.rows.isEmpty())
+        assertTrue(archive.shards.isEmpty())
+        assertFalse(archive.keyErased)
+        assertEquals(listOf(ArchiveNote.KEY_NOT_ERASED), notes)
+        assertNull(store.open())
+        assertTrue(store.list().isEmpty())
+        store.save(open.copy(lastWall = now))
+        assertNull(store.reopen(id(1), open, now, testMode = true))
+        assertTrue(archive.rows.isEmpty())
     }
 
     // Design 9.7: "delete history" works on the archive alone. One that fails before the index is ready, while the store

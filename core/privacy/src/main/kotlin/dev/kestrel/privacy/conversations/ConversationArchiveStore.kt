@@ -75,6 +75,15 @@ class ConversationChange(val conversations: List<PlainConversation>, val deleted
     override fun toString(): String = "ConversationChange(conversations=${conversations.size}, deleted=${deleted.size}, index=$index)"
 }
 
+/** What "delete history" did with the key, once its transaction deleted every row and the index (design 9.7 of sub-project 7). */
+enum class KeyErasure {
+    /** The key is gone, so that no copy of what it encrypted can be read any more. */
+    ERASED,
+
+    /** The key could not be erased; the archive's next change erases it before it stores anything. */
+    KEPT,
+}
+
 /**
  * The archive of past conversations (design 9.1 and 9.2 of sub-project 7): one row per conversation, whose payload is
  * encrypted under its own erasable key and bound to the conversation's id, and the index of past conversations in rows of
@@ -173,20 +182,27 @@ class ConversationArchiveStore(
     /**
      * "Delete history" (design 9.7 of sub-project 7), in one step on one thread: deletes every conversation, the open one
      * too, and the index, in one transaction, and then erases the key, so that not even a copy of the database file, or what
-     * SQLite's journal still holds, can be decrypted any more. A deletion that does not complete leaves every row as it was.
-     * A process that ends between the two leaves an empty archive and its key, which the next process's first change
-     * erases. The next write makes a new key.
+     * SQLite's journal still holds, can be decrypted any more. It throws only when the transaction did not commit, which
+     * leaves every row as it was. Once it has committed, the deletion is complete: it returns [KeyErasure.KEPT] when the key
+     * could not be erased, which the next change erases before it stores anything, as it erases the key that a process
+     * which ended between the two left. The next write makes a new key.
      */
-    suspend fun deleteAll() {
-        key.guard.withLock {
+    suspend fun deleteAll(): KeyErasure {
+        val erasure = key.guard.withLock {
             withContext(dispatcher) {
                 dao.deleteAll()
                 keyChecked = false
-                key.erase()
-                keyChecked = true
+                try {
+                    key.erase()
+                    keyChecked = true
+                    KeyErasure.ERASED
+                } catch (e: Exception) {
+                    KeyErasure.KEPT
+                }
             }
         }
         reports.withLock { reportedUnknown.clear() }
+        return erasure
     }
 
     /**

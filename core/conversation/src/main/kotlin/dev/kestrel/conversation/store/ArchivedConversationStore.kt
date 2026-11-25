@@ -29,6 +29,12 @@ enum class ArchiveNote {
      * conversations now; the store tries again later. Noted once until the index is ready again.
      */
     INDEX_FAILED,
+
+    /**
+     * "Delete history" deleted every conversation and the index, but the archive's key could not be erased; the archive's
+     * next change erases it before it stores anything (design 9.7).
+     */
+    KEY_NOT_ERASED,
 }
 
 /**
@@ -64,7 +70,8 @@ enum class ArchiveNote {
  * history" ([deleteAll]) works on the archive alone, every row and the index in one transaction and then the key, so it has
  * one outcome whatever the store holds: once the archive's deletion has started, a cancellation cannot split it from the
  * marking of the deleted conversations, so that after it no snapshot of a conversation that this process held is written
- * again; when the archive's call fails, it marks nothing, and every conversation stays as the archive has it.
+ * again; when the archive's transaction did not commit, it marks nothing, and every conversation stays as the archive has
+ * it. A key that could not be erased after the transaction leaves the deletion complete, and is noted as its own failure.
  */
 class ArchivedConversationStore(
     private val archive: RecordArchive,
@@ -162,13 +169,15 @@ class ArchivedConversationStore(
     /**
      * Deletes every conversation in the archive alone (design 9.7). Once it has the lock, the archive's deletion and the
      * marking of the deleted conversations run as one unit that cancellation cannot split, the generation's raise first; a
-     * caller's cancellation takes effect after it. When the archive's call fails, it marks nothing.
+     * caller's cancellation takes effect after it. When the archive's transaction did not commit, it marks nothing. Once it
+     * has committed, the deletion is complete; a key that could not be erased after it is noted as its own failure
+     * ([ArchiveNote.KEY_NOT_ERASED]).
      */
     override suspend fun deleteAll() = mutex.withLock {
         withContext(NonCancellable) {
             generation++
             stopWork()
-            try {
+            val erasure = try {
                 archive.deleteAll()
             } catch (e: Throwable) {
                 forget()
@@ -179,6 +188,7 @@ class ArchivedConversationStore(
             (past as? Past.Failed)?.retry?.cancel()
             opened = Opened(null, null)
             past = ready(PastIndex.EMPTY)
+            if (erasure == ArchiveErasure.KEY_KEPT) noted(ArchiveNote.KEY_NOT_ERASED)
         }
     }
 

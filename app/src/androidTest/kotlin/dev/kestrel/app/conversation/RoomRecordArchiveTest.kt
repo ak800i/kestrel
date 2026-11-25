@@ -9,6 +9,7 @@ import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.store.ArchiveChange
 import dev.kestrel.conversation.store.ArchiveEntry
+import dev.kestrel.conversation.store.ArchiveErasure
 import dev.kestrel.conversation.store.ArchiveHeader
 import dev.kestrel.conversation.store.ArchiveNote
 import dev.kestrel.conversation.store.ArchiveRow
@@ -125,7 +126,7 @@ class RoomRecordArchiveTest {
         archive.write(ArchiveChange(rows = listOf(row(current, "{}")), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(1)))))
         assertTrue(keyStore.containsAlias(alias))
 
-        archive.deleteAll()
+        assertEquals(ArchiveErasure.KEY_ERASED, archive.deleteAll())
 
         assertNull(archive.readOpen())
         assertTrue(archive.readShards().isEmpty())

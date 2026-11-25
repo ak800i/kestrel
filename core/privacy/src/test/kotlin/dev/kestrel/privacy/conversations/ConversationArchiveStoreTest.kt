@@ -207,7 +207,7 @@ class ConversationArchiveStoreTest {
         var erasedBeforeTheRowsWent = true
         dao.beforeDeleteAll = { erasedBeforeTheRowsWent = key.erased > 0 }
 
-        store.deleteAll()
+        assertEquals(KeyErasure.ERASED, store.deleteAll())
 
         assertFalse(erasedBeforeTheRowsWent)
         assertEquals(1, key.erased)
@@ -242,14 +242,15 @@ class ConversationArchiveStoreTest {
         assertTrue(next.read(listOf("b")).single() is StoredConversation.Readable)
     }
 
-    // A "delete history" whose erasure failed deleted the rows and left the key, which must not encrypt the next conversation:
-    // the next change of the same process checks the archive again and erases the key before it stores anything.
+    // A "delete history" whose erasure failed deleted the rows and left the key: the deletion is complete, and deleteAll says
+    // that the key was kept (design 9.7 of sub-project 7). The key must not encrypt the next conversation: the next change of
+    // the same process checks the archive again and erases the key before it stores anything.
     @Test
     fun theNextChangeErasesAKeyThatDeleteAllFailedToErase() = runTest {
         write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()))
         key.failingErasures = 1
 
-        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is KeyStoreException)
+        assertEquals(KeyErasure.KEPT, store.deleteAll())
         assertTrue(dao.rows.isEmpty())
         assertTrue(key.exists)
         assertEquals(0, key.erased)
@@ -259,6 +260,20 @@ class ConversationArchiveStoreTest {
         assertEquals(1, key.erased)
         assertEquals(2, key.made)
         assertTrue(store.read(listOf("b")).single() is StoredConversation.Readable)
+    }
+
+    // A "delete history" whose transaction failed deleted nothing: it throws, and every row, the index and the key stay.
+    @Test
+    fun aDeleteAllWhoseTransactionFailsThrowsAndKeepsEveryRowAndTheKey() = runTest {
+        write(PlainConversation(closed("a", last = 1), "words".encodeToByteArray()), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()))
+        dao.beforeDeleteAll = { throw IOException("the disk failed") }
+
+        assertTrue(runCatching { store.deleteAll() }.exceptionOrNull() is IOException)
+
+        assertEquals(setOf("a"), dao.rows.keys)
+        assertEquals(setOf("0"), dao.shards.keys)
+        assertEquals(0, key.erased)
+        assertTrue(store.read(listOf("a")).single() is StoredConversation.Readable)
     }
 
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then

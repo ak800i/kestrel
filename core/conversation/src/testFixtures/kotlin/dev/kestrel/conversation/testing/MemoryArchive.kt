@@ -2,6 +2,7 @@ package dev.kestrel.conversation.testing
 
 import dev.kestrel.conversation.store.ArchiveChange
 import dev.kestrel.conversation.store.ArchiveEntry
+import dev.kestrel.conversation.store.ArchiveErasure
 import dev.kestrel.conversation.store.ArchiveRow
 import dev.kestrel.conversation.store.IndexStamp
 import dev.kestrel.conversation.store.IndexWrite
@@ -16,11 +17,12 @@ import kotlinx.coroutines.CompletableDeferred
  * format that this version cannot read ([unknown]), the index's shards by name ([shards]) and those that fail their check
  * ([unreadableShards]), each write's rows in order ([transactions]), the port's calls by name in order ([calls]), and
  * whether the key was erased. Its writes keep at most one row open, as plan 7C's table does. A change named in
- * [interruptions] (`write`, `purge`, `deleteAll`) is made and then throws its exception, once, as a Room call does when its
+ * [interruptions] (`write`, `purge`) is made and then throws its exception, once, as a Room call does when its
  * coroutine is cancelled while the call runs. A call named in [failures] throws its exception before it reads or changes
  * anything, for as long as it is set. While [readShardsGate] is set, `readShards` waits for it before it reads; while
  * [closedIdsGate] is set, `closedIds` lists the ids and then waits for it; while [readGate] is set, `read` reads the rows
  * and then waits for it, as a rebuild's read that later changes overtake. A row that a write stores is readable again.
+ * While [keyKept] is set, `deleteAll` deletes the rows and the index but cannot erase the key, as when Keystore fails.
  *
  * After every write that stores shards, it checks what the store's design rests on (design 9.2): the shards decode, their
  * stamp is the table's, and no open row is in them; a write that breaks it fails the test.
@@ -39,6 +41,7 @@ class MemoryArchive : RecordArchive {
     var closedIdsGate: CompletableDeferred<Unit>? = null
     var readGate: CompletableDeferred<Unit>? = null
     var keyErased = false
+    var keyKept = false
 
     override suspend fun readOpen(): ArchiveEntry? {
         calls += "readOpen"
@@ -90,11 +93,16 @@ class MemoryArchive : RecordArchive {
         gone.size
     }
 
-    override suspend fun deleteAll() = changing("deleteAll", IndexWrite.Replace(emptyMap())) {
+    override suspend fun deleteAll(): ArchiveErasure = changing("deleteAll", IndexWrite.Replace(emptyMap())) {
         rows.clear()
         unreadable.clear()
         unknown.clear()
-        keyErased = true
+        if (keyKept) {
+            ArchiveErasure.KEY_KEPT
+        } else {
+            keyErased = true
+            ArchiveErasure.KEY_ERASED
+        }
     }
 
     /** The payload of row [id] as text. */

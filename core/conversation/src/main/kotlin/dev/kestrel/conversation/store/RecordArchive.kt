@@ -42,11 +42,21 @@ interface RecordArchive {
     suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int
 
     /**
-     * "Delete history": deletes every row, the open one too, and the index, in one transaction, and then erases the
-     * archive's key, so that not even a copy of what was stored can be decrypted any more; a new key is made at the next
-     * write. A call that does not complete may have deleted the rows.
+     * "Delete history" (design 9.7): deletes every row, the open one too, and the index, in one transaction, and then erases
+     * the archive's key, so that not even a copy of what was stored can be decrypted any more; a new key is made at the
+     * next write. It throws only when the transaction did not commit, which leaves every row as it was. Once the transaction
+     * has committed, the deletion is complete, and it returns whether the key went: [ArchiveErasure.KEY_KEPT] when it could
+     * not be erased, which the archive's next change erases before it stores anything.
      */
-    suspend fun deleteAll()
+    suspend fun deleteAll(): ArchiveErasure
+}
+
+/** What "delete history" did with the archive's key, once its transaction deleted every row and the index (design 9.7). */
+enum class ArchiveErasure {
+    KEY_ERASED,
+
+    /** The key could not be erased; the archive's next change erases it before it stores anything. */
+    KEY_KEPT,
 }
 
 /** A row's plain fields: the conversation's id, its open and last-change times, whether it is open, and its records. */
