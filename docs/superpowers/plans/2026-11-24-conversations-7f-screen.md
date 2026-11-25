@@ -3403,7 +3403,6 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/Conversati
 
 ```kotlin
         switching = true
-        writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
 ```
 
 with:
@@ -3411,7 +3410,6 @@ with:
 ```kotlin
         switching = true
         switchingTo = id
-        writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3495,14 +3493,16 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-            report("The conversation", e)
+                is Message.HistoryDeletionEnded -> deletionEnded(message)
+                else -> Unit
 ```
 
 with:
 
 ```kotlin
-            report("The conversation", e)
-            (message as? Message.DeletePast)?.done?.complete(PastDeletion.FAILED)
+                is Message.HistoryDeletionEnded -> deletionEnded(message)
+                is Message.DeletePast -> message.done.complete(PastDeletion.FAILED)
+                else -> Unit
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3515,12 +3515,13 @@ with:
 
 ```kotlin
     // Design 9.5 of sub-project 7: the open conversation is never a past one, nor is the one that a running switch opens.
-    // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after.
+    // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after;
+    // while the settings page's "Delete history" runs, the deletion waits with the other writes ([send]).
     private fun deletion(message: Message.DeletePast) {
         if (message.id == state.id || message.id == switchingTo) {
             message.done.complete(PastDeletion.OPEN)
         } else {
-            writes.trySend(Write.DeletePast(message.id, message.done))
+            send(Write.DeletePast(message.id, message.done))
         }
     }
 
@@ -4910,7 +4911,7 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, replace:
 
 ```kotlin
-            is ChannelOutput.Said -> speaking.withLock { voice.say(output.text) }
+            is ChannelOutput.Said -> inTurn { voice.say(output.text) }
 ```
 
 with:
@@ -4918,8 +4919,8 @@ with:
 ```kotlin
             // While Kestrel is off, only a typed conversation's words come as Said (plan 7B's ConversationOwner gives a
             // spoken one's as Shown), and Kestrel's own voice speaks them (design 10.6 and 11 of sub-project 7), in their
-            // turn among the spoken outputs, as plan 7D's voice speaks.
-            is ChannelOutput.Said -> speaking.withLock { if (voiceOn()) voice.say(output.text) else offVoice.speak(output.text) }
+            // turn among the spoken outputs, as plan 7D's voice speaks, and a stop drops it as it drops theirs.
+            is ChannelOutput.Said -> inTurn { if (voiceOn()) voice.say(output.text) else offVoice.speak(output.text) }
 ```
 
 In `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, replace:
@@ -11209,4 +11210,4 @@ Each item is a reading of the design that the design leaves open, or a choice of
 - **Design coverage.** D20 and 10.1: Tasks 7 and 8 (the screen, the launcher, the banner, Settings, New conversation, the microphone). 10.2 (leaving Kestrel's screen): Tasks 4, 5, 6 and 8. 10.3 and D21 (cards, "Reply…", waits, picks): Tasks A1, 1, 4 and 9. 10.4 (Stop, Continue, Cancel; a touch that interrupts): Tasks 6, 7 and 9. 10.5 (the bar): Task 5. 10.6 (the typed start of the service): Task 8 and Task 14's Step 8, and Task 15. 11 (speech rules, typed replies with listening off): Tasks 5 and 9. 12.2 and 12.3 (the typed-input boundary; confirmations only over the app): Tasks 1, 4, 7, 8 and 10, and Task 13's hook for DUMP callers only. 9.5 and 9.6 (past conversations on the index, their search, Continue and Delete): Tasks 3 and 11. 13 (the Conversations page): Task 12. 14.4 (`conversation-type`, typed answers): Task 13. 15.2's device tests: Tasks 7 to 13, run in Task 14. Plan 7E's moved checks (its decision 2): Task 14's Step 8 and Task 15.
 - **Placeholder scan.** No step says "to be decided", "as needed" or "similar to"; every step that changes code gives the whole code, and every replacement names its old text. Tasks 14 and 15 name two values that the controller fills in from an earlier step: Step 1's or Step 2's listening mode and "stay awake" setting.
 - **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `TextChannel`, `TypedInputs`, `ScreenTurns.running`, `GoalBar`, `SharedFeedbackBar`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
-- **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `82eb1398` (plans 7A and 7B, this plan's Tasks A1 and A2, and plan 7C's Tasks 1 to 6, 9 and 9b built; plan 7B's engine after the fixes of its Task 10 and its re-checks, `e76ad7a6` and `50b99c61`; plan 7C's archive after `ae33cfda` and `6999fa5c`), it runs clean over plan 7C's Task 7, plans 7D and 7E as committed, and this plan's Tasks 1 to 13a (241 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
+- **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `3077c851` (plans 7A and 7B, this plan's Tasks A1 and A2, and plan 7C's Tasks 1 to 6, 9 and 9b built; plan 7B's engine after the fixes of its Task 10 and its re-checks, `e76ad7a6` and `50b99c61`; plan 7C's archive after `ae33cfda` and `6999fa5c`), it runs clean over plan 7C's Task 7, plans 7D (after its delta review, `3077c851`: writes held during the settings page's "Delete history", which this plan's single deletion joins through `send`, and `inTurn` for spoken outputs) and 7E as committed, and this plan's Tasks 1 to 13a (241 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
