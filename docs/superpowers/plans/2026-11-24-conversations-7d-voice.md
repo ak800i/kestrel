@@ -11781,7 +11781,7 @@ git commit -m "feat(app): the hooks conversation-state and conversation-control,
 
 ### Task 7: The settings page's "Delete history" through the conversation
 
-Design 9.7 of sub-project 7, as the controller settled it on 2026-11-24: the settings page's "Delete history" deletes what "Kestrel, delete history" deletes after a yes: both logs, every past conversation with the archive's key `kestrel.conversations`, the search's words, and the open conversation, which closes. The page asks its own question, as today, now with the design's words ("Delete the activity log, the network log and past conversations?"), and the conversation asks nothing more and says nothing on a channel. While a goal is open or one of Kestrel's own requests runs, the conversation leaves everything alone, as it does for "delete history" by voice, and the page says why. Plan 7F adds only the typed "delete history".
+Design 9.7 of sub-project 7, as the controller settled it on 2026-11-24: the settings page's "Delete history" deletes what "Kestrel, delete history" deletes after a yes: both logs, every past conversation with the index of past conversations and the archive's key `kestrel.conversations`, and the open conversation, which closes. The page asks its own question, as today, now with the design's words ("Delete the activity log, the network log and past conversations?"), and the conversation asks nothing more and says nothing on a channel. While a goal is open or one of Kestrel's own requests runs, the conversation leaves everything alone, as it does for "delete history" by voice, and the page says why. Plan 7F adds only the typed "delete history".
 
 This is the one task of this plan that changes `:core:conversation`: plan 7B's engine had no way in for a deletion that the owner already confirmed. `LocalRequests.deleteAll()` is the deletion that both ways share, `ConversationEngine.deleteHistory()` runs it on the engine's coroutine and closes the open conversation through the machine's new `ConversationEvent.HistoryDeleted`.
 
@@ -11802,14 +11802,14 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/Conversati
 
 ```kotlin
     @Test
-    fun theQuietClockWaitsUntilTheSpokenReplyHasEnded() = runTest {
+    fun theQuietClockWaitsUntilTheSpokenReplyHasEnded() = scope.runTest {
 ```
 
 with:
 
 ```kotlin
     @Test
-    fun theSettingsPagesDeleteHistoryAsksNothingMoreAndLeavesAnOpenGoalAlone() = runTest {
+    fun theSettingsPagesDeleteHistoryAsksNothingMoreAndLeavesAnOpenGoalAlone() = scope.runTest {
         val engine = engine(environment(ScriptedModel.call("ask_user", null, null, null, "question" to "Which one?"), fail))
         engine.restore()
         engine.submit(typed("Read my latest SMS"))
@@ -11837,7 +11837,7 @@ with:
     }
 
     @Test
-    fun theQuietClockWaitsUntilTheSpokenReplyHasEnded() = runTest {
+    fun theQuietClockWaitsUntilTheSpokenReplyHasEnded() = scope.runTest {
 ```
 
 In `app/src/androidTest/kotlin/dev/kestrel/app/settings/SettingsAppTest.kt`, replace:
@@ -11940,7 +11940,6 @@ In `core/conversation/src/main/kotlin/dev/kestrel/conversation/local/LocalReques
         return try {
             deleteLogs()
             store.deleteAll()
-            search.forgetAll()
             LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED)
         } catch (e: CancellationException) {
             throw e
@@ -11957,14 +11956,13 @@ with:
     }
 
     /**
-     * Deletes what "delete history" deletes once the owner said yes (design 9.7): the logs, every conversation with the
-     * archive's key, and the search's words. False when it failed, which [report] gets. The settings page calls it through
+     * Deletes what "delete history" deletes once the owner said yes (design 9.7): the logs, and every conversation with the
+     * index of past conversations and the archive's key. False when it failed, which [report] gets. The settings page calls it through
      * `ConversationEngine.deleteHistory`, after its own question (plan 7D).
      */
     suspend fun deleteAll(): Boolean = try {
         deleteLogs()
         store.deleteAll()
-        search.forgetAll()
         true
     } catch (e: CancellationException) {
         throw e
@@ -12342,7 +12340,7 @@ What plans 7E and 7F consume, as this plan leaves `:app`. Every type is `interna
 
 The controller settled items 1 to 9 on 2026-11-24; the plan carries them as follows.
 
-1. **The settings page's "Delete history" (settled: in this plan).** Task 7 moves it onto the conversation: the page asks its own question with the design's words, and `ConversationEngine.deleteHistory()` deletes both logs, every past conversation with the key `kestrel.conversations`, the search's words and the open conversation, without a second question. While a goal is open or one of Kestrel's own requests runs it deletes nothing, and the page says why. Plan 7F adds only the typed path.
+1. **The settings page's "Delete history" (settled: in this plan).** Task 7 moves it onto the conversation: the page asks its own question with the design's words, and `ConversationEngine.deleteHistory()` deletes both logs, every past conversation with the index of past conversations and the key `kestrel.conversations`, and the open conversation, without a second question. While a goal is open or one of Kestrel's own requests runs it deletes nothing, and the page says why. Plan 7F adds only the typed path.
 2. **Test limits below the page's bounds (settled: plan 7G).** `conversation-control do=limits` stays within the page's bounds; plan 7G adds a debug-only seam for smaller limits with its task `limit-continue`.
 3. **"Turn off" in the follow-up window (settled: it keeps its meaning).** Task 4 reads the window's words with `Requests.read(…, followUp = true)`: "turn off" alone turns Kestrel off and never reaches the conversation (design 3.6); `RequestsTest.turnOffAloneTurnsKestrelOffInTheFollowUpWindowButNotAfterYes` and `RulesTest.turnOffAloneInTheFollowUpWindowTurnsKestrelOffAndReachesNoConversation` test it.
 4. **`voice-task`'s new reply (settled: readers adapted).** No file in `scripts\` or `tools\` reads the reply's words; Task 3 adapts `scripts\hook.ps1`'s help for `voice-task` and the comment before the interruptions in `scripts\a71-session.ps1`, and runs `scripts\test-scripts.ps1`.
