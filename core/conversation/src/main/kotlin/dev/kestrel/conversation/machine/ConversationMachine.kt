@@ -103,10 +103,12 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         }
     }
 
-    // A command waits for the request in its turn; "stop" cancels the request, a switch too, and drops what waits.
+    // A command waits for the request in its turn; "stop" cancels the request, a switch too, and drops what waits. The
+    // request's question goes with it at once, so that a command after the stop is no answer to it ("Stop. Kestrel, …";
+    // design 6.4).
     private fun whileLocal(state: ConversationState, run: LocalRun, input: OwnerInput): MachineStep = when (input.intent) {
         is InputIntent.Command -> MachineStep(state.copy(waiting = state.waiting + input))
-        InputIntent.Stop -> MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true)), listOf(ConversationEffect.CancelLocal))
+        InputIntent.Stop -> MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true), question = null), listOf(ConversationEffect.CancelLocal))
         else -> MachineStep(state)
     }
 

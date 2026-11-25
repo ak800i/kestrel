@@ -318,6 +318,26 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
     }
 
+    // "Stop. Kestrel, …" while Kestrel's own request asks (design 6.4; review of plan 7D's Task 3, M1): the stop cancels
+    // the request and withdraws its question at once, so the command after it answers nothing and runs once the request
+    // has ended.
+    @Test
+    fun stopThenACommandWhileKestrelsOwnRequestAsksRunsTheCommandAfterTheRequest() {
+        val deleting = step(idleOpen(), spoken(InputIntent.DeleteHistory))
+        val run = deleting.effect<ConversationEffect.RunLocal>()
+        val asking = asked(deleting.state, 7, QuestionKind.DELETE_HISTORY)
+
+        val stopped = step(asking, spoken(InputIntent.Stop))
+        assertTrue(stopped.has<ConversationEffect.CancelLocal>())
+        assertNull(stopped.state.question)
+
+        val commanded = step(stopped.state, spoken("Open Viber"))
+        assertTrue(commanded.effects.none { it is ConversationEffect.AnswerQuestion || it is ConversationEffect.StartGoal })
+
+        val ended = step(commanded.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Quiet))
+        assertEquals("Open Viber", ended.effect<ConversationEffect.StartGoal>().text)
+    }
+
     // A change of test mode waits for a running memory request, as it waits for a goal: the conversation closes once the
     // request's end is recorded, and a command that waited runs in a new conversation under the new test mode.
     @Test

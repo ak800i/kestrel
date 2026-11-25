@@ -512,6 +512,32 @@ class ConversationEngineTest {
         assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
     }
 
+    // "Stop. Kestrel, …" while Kestrel's own request asks (review of plan 7D's Task 3, M1): the view shows the request
+    // while it runs, so that the voice stops it first; the stop withdraws its question, and the command after it runs as
+    // the conversation's next command once the request has ended.
+    @Test
+    fun aStopAndACommandWhileKestrelsOwnRequestAsksStopTheRequestAndRunTheCommand() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.DeleteHistory))
+        runCurrent()
+        assertTrue(engine.view.value.ownRequest)
+        assertEquals(QuestionKind.DELETE_HISTORY, engine.view.value.asking)
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        engine.submit(typed("Read it again"))
+        runCurrent()
+
+        assertFalse(engine.view.value.ownRequest)
+        assertEquals(EndReason.CANCELLED, engine.outcome(2)!!.report.end)
+        assertTrue(archive.rows.isNotEmpty())
+        assertEquals(listOf("Read my latest SMS", "Read it again"), engine.view.value.records.map { it.request })
+        assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
+    }
+
     // A message that comes after the round gave its final words, here while its routine offer's report is shown, is named
     // as too late at once; the record keeps it so, and no "Got it." says that a round will take it.
     @Test

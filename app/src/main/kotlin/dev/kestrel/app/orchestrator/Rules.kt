@@ -643,10 +643,10 @@ object Rules {
         // Words start the count of empty transcripts again.
         val counted = state.copy(emptyTranscripts = 0)
         val shown = Effect.Show(Feedback.Heard(event.text))
-        val stopsFirst = stopsGoalFirst(counted, request, event)
+        val stopsFirst = stopsWorkFirst(counted, request, event)
         // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
         // only the requests that stop something count, because nothing may start (section 14.4); a "Stop." before the
-        // name still stops the goal.
+        // name still stops the goal or Kestrel's own request.
         if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopGoal(counted, shown) else Step(counted)
         if (stopsFirst) return stopFirst(counted, request, event, shown, event.spokeAt)
         return when (counted.work) {
@@ -683,13 +683,16 @@ object Rules {
         return converse(state, intent, event, shown)
     }
 
-    private fun stopsGoalFirst(state: State, request: Request, event: Event.Heard): Boolean =
-        state.goal != null && request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
+    // What "Stop. Kestrel, [request]" stops first: the goal in every phase, or Kestrel's own request while it asks or runs
+    // (remember, forget, "save that as", delete history or a switch).
+    private fun stopsWorkFirst(state: State, request: Request, event: Event.Heard): Boolean =
+        (state.goal != null || state.openQuestion != null || state.conversation.ownRequest) &&
+            request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
 
-    // Design D2 of sub-project 5: "Stop. Kestrel, [request]" stops the goal in every phase, as the stop alone would, and
-    // the request then counts as it does without a goal, so that the stop is never lost: the conversation takes a command
-    // or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off" after the name keep their own
-    // rules. The transcript shows once, before the stop.
+    // Design D2 of sub-project 5: "Stop. Kestrel, [request]" stops the goal in every phase, or Kestrel's own request, as
+    // the stop alone would, and the request then counts as it does without them, so that the stop is never lost: the
+    // conversation takes a command or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off"
+    // after the name keep their own rules. The transcript shows once, before the stop.
     private fun stopFirst(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
         val stopped = stopGoal(state, shown)
         val after = whileIdle(stopped.state, request, event, shown, spokeAt)
@@ -748,7 +751,7 @@ object Rules {
     private fun idle(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long? = null): Step {
         val question = state.openQuestion
         return when {
-            stopsGoalFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
+            stopsWorkFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
             question != null -> answering(state, question, request, event, shown)
             state.goalWorks -> whileGoalWorks(state, request, event, shown)
             state.goal != null && request is Request.Stop -> stopGoal(state, shown)

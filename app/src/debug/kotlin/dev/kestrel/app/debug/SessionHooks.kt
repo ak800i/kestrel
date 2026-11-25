@@ -45,9 +45,9 @@ import kotlin.math.roundToInt
  * of the conversation in its process, how many words the newest goal had since the first voice-task or tagged transcript,
  * and how many keyword hits its voice sessions reported, so that the session counts Kestrel's reactions and the spotter's
  * hits, also false ones, without reading what Kestrel heard. VOICE_TASK makes each goal's round a stand-in
- * ([StandInRound]) that takes some seconds and then gives up with a given reply, in place of a round that ends at once
- * without a script, so that the owner can interrupt a long reply or say "stop" while a goal works; a goal that the owner
- * stopped meanwhile ends with the report of a stop, as any goal does.
+ * ([StandInRound]) that takes some seconds and then answers with a given reply, whole, as its final words, in place of a
+ * round that ends at once without a script, so that the owner can interrupt a long reply or say "stop" while a goal
+ * works; a goal that the owner stopped meanwhile ends with the report of a stop, as any goal does.
  * VOICE_ECHO plays a text in one of Kestrel's voices through the speaker while the real microphone feeds the keyword
  * spotter, and counts the keyword hits and those that the echo filter takes for Kestrel's own voice (design spec, section
  * 8.4), with the loudest sample that the microphone heard and whether Android silenced it, so that a run that heard
@@ -252,9 +252,8 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         val reply = intent.getStringExtra(EXTRA_REPLY)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es reply <text>")
         // The goal's words are counted as a count, never kept, so that the session can tell a dictated goal that was split.
         VoiceHooks.install(graph)
-        val standIn = StandInRound(seconds, reply)
-        graph.goalEnvironment.standIn = standIn::prepare
-        return "each goal's round now takes $seconds s and then gives up with a reply of ${reply.length} characters, until " +
+        graph.goalEnvironment.standIn = StandInRound(seconds, reply)
+        return "each goal's round now takes $seconds s and then answers with a reply of ${reply.length} characters, until " +
             "voice-task -Clear or the end of Kestrel's process"
     }
 

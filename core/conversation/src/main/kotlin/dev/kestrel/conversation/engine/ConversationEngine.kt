@@ -788,6 +788,7 @@ class ConversationEngine(
             testMode = if (current.id != null) current.testMode else current.safetyTestMode,
             quiet = current.quiet,
             keptForOwner = current.heldReports.isNotEmpty() || current.heldWords != null,
+            ownRequest = current.local?.cancelled == false,
         )
     }
 

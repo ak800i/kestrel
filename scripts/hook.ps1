@@ -149,10 +149,10 @@
 #                                           to 10) and -Threshold (0.01 to 0.5); a change counts for every keyword
 #                                           spotter that loads afterwards, also the spotter of the hook voice-echo,
 #                                           until the hook sets it again or Kestrel's process ends
-#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then give up with
-#                                           the reply, so that Kestrel says "I couldn't do it: <reply>. I didn't change
-#                                           anything.", unless the owner stopped the goal, until voice-task -Clear or the
-#                                           end of Kestrel's process
+#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then answer with
+#                                           the reply, whole and of any length, which Kestrel says as the goal's final
+#                                           words, unless the owner stopped the goal, until voice-task -Clear or the end
+#                                           of Kestrel's process
 #   voice-task -Clear                       each goal's round runs on the phone again
 #   voice-echo -Text 'text' [-Voice piper|kokoro]
 #                                           starts playing the text in Kestrel's voice while the real microphone feeds the

@@ -11,8 +11,9 @@ import kotlinx.coroutines.flow.map
 
 /**
  * What the voice reads of the conversation (design 5.5 of sub-project 7): whether one is [open], its goal's phase, its
- * open question's kind and number, and whether a final reply waits for the owner ([replying], the quiet clock held for
- * it). It holds no words and no records, so a goal's traces and steps never reach the Orchestrator.
+ * open question's kind and number, whether a final reply waits for the owner ([replying], the quiet clock held for it),
+ * and whether one of Kestrel's own requests runs ([ownRequest]), which "Stop. Kestrel, …" stops first. It holds no words
+ * and no records, so a goal's traces and steps never reach the Orchestrator.
  */
 data class VoiceView(
     val open: Boolean = false,
@@ -20,6 +21,7 @@ data class VoiceView(
     val asking: QuestionKind? = null,
     val question: Int? = null,
     val replying: Boolean = false,
+    val ownRequest: Boolean = false,
 ) {
     companion object {
         fun of(view: ConversationView): VoiceView = VoiceView(
@@ -28,6 +30,7 @@ data class VoiceView(
             asking = view.asking,
             question = view.question,
             replying = view.quiet == QuietClock.Held(HoldReason.REPLYING),
+            ownRequest = view.ownRequest,
         )
     }
 }

@@ -25,6 +25,8 @@ class VoiceViewTest {
             acting.copy(step = 3, records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Read my latest SMS"))),
             acting.copy(goal = GoalPhase.ASKING, asking = QuestionKind.YES_NO, question = 4),
             acting.copy(goal = null, quiet = QuietClock.Held(HoldReason.REPLYING)),
+            // One of Kestrel's own requests runs, which "Stop. Kestrel, …" stops first.
+            ConversationView(id = acting.id, command = 2, ownRequest = true),
             ConversationView(),
         )
 
@@ -33,6 +35,7 @@ class VoiceViewTest {
                 VoiceView(open = true, goal = GoalPhase.ACTING),
                 VoiceView(open = true, goal = GoalPhase.ASKING, asking = QuestionKind.YES_NO, question = 4),
                 VoiceView(open = true, replying = true),
+                VoiceView(open = true, ownRequest = true),
                 VoiceView(),
             ),
             views.forVoice().toList(),

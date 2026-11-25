@@ -18,7 +18,9 @@ import dev.kestrel.conversation.model.InputChannel
  * conversation was continued, its test mode (the Safety page's while no conversation is open, which the next one takes),
  * the quiet clock, and whether Kestrel keeps words until the owner is there
  * ([keptForOwner]: a goal's final reply, or a held goal's report, also after its conversation closed), for which plan
- * 7D's `ConversationSignals` keeps watching the phone. toString prints no words.
+ * 7D's `ConversationSignals` keeps watching the phone, and whether one of Kestrel's own requests runs and "stop" has not
+ * cancelled it yet ([ownRequest]: remember, forget, "save that as", delete history or a switch, design 9.6 and 9.7), so
+ * that the voice stops it before the command in "Stop. Kestrel, …". toString prints no words.
  */
 data class ConversationView(
     val id: ConversationId? = null,
@@ -34,13 +36,14 @@ data class ConversationView(
     val testMode: Boolean = true,
     val quiet: QuietClock = QuietClock.Off,
     val keptForOwner: Boolean = false,
+    val ownRequest: Boolean = false,
 ) {
     /** The owner continued the conversation from the list or by name (D23). */
     val continued: Boolean get() = continuedAtWall != null
 
     override fun toString(): String =
         "ConversationView(open=${id != null}, command=$command, goal=$goal, step=$step, asking=$asking, records=${records.size}, quiet=$quiet, " +
-            "kept=$keptForOwner)"
+            "kept=$keptForOwner, own=$ownRequest)"
 }
 
 /** A goal's checklist for the bar and the notification (design 10.5 and 10.6): done of total, and the current item. */

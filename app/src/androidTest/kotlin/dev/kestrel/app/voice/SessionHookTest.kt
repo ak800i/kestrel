@@ -41,7 +41,7 @@ class SessionHookTest {
             VoiceTests.startListening(ClipMicrophone())
             val reply = hook("VOICE_TASK", "reply" to "The task is done.", ints = mapOf("seconds" to 3))
             assertEquals(reply.text, Activity.RESULT_OK, reply.code)
-            assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then gives up with a reply of 17 characters"))
+            assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then answers with a reply of 17 characters"))
             conversations.endQuietTime()
             val tasks = conversations.view.value.command
 
@@ -58,7 +58,7 @@ class SessionHookTest {
             Thread.sleep(1_000)
             assertEquals(GoalPhase.ACTING, conversations.view.value.goal)
             assertTrue("The goal did not end", VoiceTests.waitUntil(10_000) { conversations.view.value.goal == null })
-            assertEquals("I couldn't do it: The task is done. I didn't change anything.", conversations.outcome(tasks + 1)?.answer)
+            assertEquals("The task is done.", conversations.outcome(tasks + 1)?.answer)
         }
         assertEquals("each goal's round runs on the phone again", hook("VOICE_TASK", flags = setOf("clear")).text)
         assertNull(VoiceTests.graph.goalEnvironment.standIn)

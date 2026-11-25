@@ -1592,6 +1592,26 @@ class RulesTest {
         )
     }
 
+    // Design D2 of sub-project 5: "Stop. Kestrel, …" stops Kestrel's own request too, while it asks or while it runs
+    // without a question, and the command after it reaches the conversation, so that neither the stop nor the command is
+    // lost (review of plan 7D's Task 3, M1). Without a goal or a request of Kestrel's own, the words stay one command.
+    @Test
+    fun aStopBeforeACommandStopsKestrelsOwnRequestFirst() {
+        val command = Event.Heard("Stop. Kestrel, open Viber.", named = true)
+        val running = listening.copy(conversation = VoiceView(open = true, ownRequest = true))
+        for (state in listOf(ownQuestion(), running)) {
+            assertEquals(
+                "$state",
+                listOf(Effect.Converse(InputIntent.Stop), Effect.Converse(InputIntent.Command("open Viber."), command)),
+                Rules.next(state, command).effects.filterIsInstance<Effect.Converse>(),
+            )
+        }
+        assertEquals(
+            listOf(Effect.Converse(InputIntent.Command("open Viber."), command)),
+            Rules.next(listening.copy(conversation = VoiceView(open = true)), command).effects.filterIsInstance<Effect.Converse>(),
+        )
+    }
+
     // Kestrel's own question, "Delete the history?", spoken by the voice (design 11 of sub-project 7).
     private fun ownQuestion(): State {
         val view = VoiceView(open = true, asking = QuestionKind.DELETE_HISTORY, question = 4)

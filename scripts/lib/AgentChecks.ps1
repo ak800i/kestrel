@@ -135,27 +135,28 @@ function Stop-SpeechTask([string]$Tag) {
     Wait-AgentTask -Tag $Tag -Seconds 30 | Out-Null
 }
 
-# Answers the question of a task of Kestrel's own, as "remember" runs (task-5c-7-review M2). CommandTags links a tag only
-# to an agent's task, so agent-state -Tag cannot see this one; Kestrel says the question while the task runs, and an
-# answer that comes before it is dropped. So this waits up to $Seconds until Kestrel has said the question (voice-state:
-# speaking, then no longer speaking), sends $Text as a transcript, and sends it again, at most twice more, while the task
-# still runs.
-function Send-OwnTaskAnswer([string]$Text, [double]$Seconds = 30) {
+# Answers the question of Kestrel's own request that the phrase's transcript with tag $Tag started, as "remember" asks
+# one (task-5c-7-review M2). The conversation asks it once the request runs, and an answer that comes before it is
+# dropped; CommandTags links the tag to the request, so agent-state -Tag shows the question while it is open (plan 7D).
+# So this waits up to $Seconds until the request asks or has ended (agent-task -Result -Tag), lets Kestrel finish saying
+# the question, sends $Text as a transcript, and sends it again, at most twice more, while the question is still open.
+function Send-OwnTaskAnswer([string]$Tag, [string]$Text, [double]$Seconds = 30) {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
-        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
-        if ($state -and $state['work'] -ne 'running_task') { break }
-        if ($state -and $state['speaking'] -eq 'true') {
+        $state = try { ConvertFrom-HookPairs (Invoke-Hook agent-state @{ Tag = $Tag }) } catch { $null }
+        if ($state -and $state['asking'] -ne 'none') {
             Wait-NotSpeaking 15 | Out-Null
             break
         }
+        $result = try { ConvertFrom-AgentTaskResult (Invoke-Hook agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+        if ($result -and $result['state'] -eq 'done') { break }
         Start-Sleep -Milliseconds 250
     }
     foreach ($try in 1..3) {
         Invoke-Hook voice @{ Send = 'heard'; Text = $Text; Tag = (New-CheckTag) } | Out-Null
         Start-Sleep -Seconds 3
-        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
-        if (-not $state -or $state['work'] -ne 'running_task') { return }
+        $state = try { ConvertFrom-HookPairs (Invoke-Hook agent-state @{ Tag = $Tag }) } catch { $null }
+        if (-not $state -or $state['asking'] -eq 'none') { return }
     }
 }
 
@@ -165,7 +166,7 @@ function Send-OwnTaskAnswer([string]$Text, [double]$Seconds = 30) {
 # runs, the answer check's or the task check's own, and sends the phrase's $Then, for "remember" only after Kestrel has
 # asked its question. Returns Invoke-AutoCheck's result, whose Line goes into the results.
 function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
-    $setup = @{ Tag = '' }
+    $setup = @{ Tag = ''; Phrase = '' }
     $before = {
         if ($Check.Script) { Install-AgentScript -Name 'speech-check.json' -Replies (Get-SpeechScript $Check.Script) }
         if ($Check.Kind -ne 'answer') { return $null }
@@ -190,7 +191,11 @@ function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
             Wait-AgentTask -Tag $Tag -Seconds ([math]::Min($Seconds, 60))
         }
         elseif ($Check.Kind -eq 'answer') { Wait-AgentTask -Tag $setup.Tag -Seconds ([math]::Min($Seconds, 60)) }
-        else { $null }
+        else {
+            # Kestrel's own request that the phrase starts, whose question $Check.Then answers.
+            $setup.Phrase = $Tag
+            $null
+        }
     }
     # The runner gives the tagged state, the context of -Before and what -Wait returned; the verdict needs the first and the last.
     $verify = { param($State) Get-AgentSpeechVerdict -Check $Check -State $State -Result $args[1] }
@@ -198,7 +203,7 @@ function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
         Invoke-AutoCheck -Name $Check.Name -Text '' -Clip $Clip -Play $Play -Before $before -Wait $wait -WaitSeconds 60 -Verify $verify
     } finally {
         if ($setup.Tag) { Stop-SpeechTask $setup.Tag }
-        if ($Check.Then -and $Check.Read -eq 'remember') { Send-OwnTaskAnswer $Check.Then }
+        if ($Check.Then -and $Check.Read -eq 'remember' -and $setup.Phrase) { Send-OwnTaskAnswer -Tag $setup.Phrase -Text $Check.Then }
         elseif ($Check.Then) { Invoke-Hook voice @{ Send = 'heard'; Text = $Check.Then; Tag = (New-CheckTag) } | Out-Null }
     }
 }

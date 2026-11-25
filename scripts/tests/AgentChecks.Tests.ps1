@@ -128,28 +128,47 @@ Describe 'The agent''s speech checks' {
         Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'agent-answer' -and $With.Tag -eq 'k9' -and $With.Answer -eq 'cancel' }
     }
 
-    It 'waits until Kestrel has asked the remember question before it says "no", and says it again while the task runs (task-5c-7-review M2)' {
+    It 'waits until Kestrel''s own request of the remember phrase asks before it says "no", and says it again while the question is open (task-5c-7-review M2; plan 7D)' {
         $check = Get-AgentSpeechChecks | Where-Object { $_.Name -eq 'Kestrel''s phrase: remember' }
         $events = [System.Collections.Generic.List[string]]::new()
+        # The request runs without a question first, then asks, keeps asking after the first "no", and ends.
         $states = [System.Collections.Generic.Queue[string]]::new([string[]]@(
-                'mode=listening session=open work=running_task speaking=false', 'mode=listening session=open work=running_task speaking=true',
-                'mode=listening session=open work=running_task speaking=false', 'mode=listening session=open work=running_task speaking=false',
-                'mode=listening session=open work=idle speaking=false'))
+                'phase=ended asking=none work=idle', 'phase=ended asking=none work=idle', 'phase=running asking=yes-no work=idle',
+                'phase=running asking=yes-no work=idle', 'phase=ended asking=none work=idle'))
         Mock Invoke-Hook {
             $next = if ($states.Count -gt 1) { $states.Dequeue() } else { $states.Peek() }
-            $events.Add("state $($next -replace '^.*work=(\S+) speaking=(\S+)$', '$1 $2')")
+            $events.Add("state $($With.Tag) $($next -replace '^.*asking=(\S+).*$', '$1')")
             $next
-        } -ParameterFilter { $Command -eq 'voice-state' }
+        } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-Hook { 'state=running' } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-Hook { $events.Add('voice-state'); 'mode=listening session=open work=idle speaking=false' } -ParameterFilter { $Command -eq 'voice-state' }
         Mock Invoke-Hook { $events.Add("said $($With.Text)"); 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
         Mock Invoke-AutoCheck { [pscustomobject]@{ Context = (& $Before); Waited = (& $Wait 'k9' 60); Line = "$Name [piper]: check=pass" } }
 
         Invoke-AgentSpeechCheck -Check $check -Clip ([pscustomobject]@{ Voice = 'piper'; Text = 'Kestrel, remember that the gate code is blue.'; Path = 'x.wav' }) -Play { } | Out-Null
 
-        $first = $events.IndexOf('said no')
-        $first | Should -BeGreaterThan $events.IndexOf('state running_task true')
-        $events.IndexOf('state running_task true') | Should -BeGreaterOrEqual 0
+        $asked = $events.IndexOf('state k9 yes-no')
+        $asked | Should -BeGreaterOrEqual 0
+        $events.IndexOf('said no') | Should -BeGreaterThan $asked
+        # Kestrel finished saying the question before the answer.
+        $events.IndexOf('voice-state') | Should -BeGreaterThan $asked
+        $events.IndexOf('voice-state') | Should -BeLessThan $events.IndexOf('said no')
         @($events | Where-Object { $_ -eq 'said no' }).Count | Should -Be 2
-        $events[-1] | Should -Be 'state idle false'
+        $events[-1] | Should -Be 'state k9 none'
+        Should -Invoke Invoke-Hook -Times 0 -Exactly -ParameterFilter { $Command -eq 'agent-answer' }
+    }
+
+    It 'says "no" once after the remember phrase when Kestrel''s own request ended without a question (plan 7D)' {
+        $check = Get-AgentSpeechChecks | Where-Object { $_.Name -eq 'Kestrel''s phrase: remember' }
+        Mock Invoke-Hook { 'phase=ended asking=none work=idle' } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-Hook { 'state=done end=FINISHED' } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-Hook { 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-AutoCheck { [pscustomobject]@{ Context = (& $Before); Waited = (& $Wait 'k9' 60); Line = "$Name [piper]: check=fail" } }
+
+        Invoke-AgentSpeechCheck -Check $check -Clip ([pscustomobject]@{ Voice = 'piper'; Text = 'Kestrel, remember that the gate code is blue.'; Path = 'x.wav' }) -Play { } | Out-Null
+
+        Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'voice' -and $With.Text -eq 'no' }
+        Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'agent-task' -and $With.Tag -eq 'k9' }
     }
 
     It 'sends "no" after a phrase whose question must not stay open, and starts no task for it' {

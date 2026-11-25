@@ -16,7 +16,7 @@
 - There is never a time with two task paths (design 14.2 item 4): Task 3 deletes `AgentRunner`, `AppOwnerPort`, `AgentEnvironment` and `AppAgentEnvironment` in the same commit that wires `ConversationEngine` into `AppGraph`. Tasks 1 and 2 are extractions that today's task path uses, so each ends green on its own.
 - This plan consumes plan 7A (`docs/superpowers/plans/2026-11-24-conversations-7a-agent.md`), plan 7B (`docs/superpowers/plans/2026-11-24-conversations-7b-core.md`, its section "Interfaces for 7C and 7D", its Task 7 table of `RulesTest`'s cases and its "Decisions for the controller", item 10, which the owner settled) and plan 7C (`docs/superpowers/plans/2026-11-24-conversations-7c-archive.md`, committed as `74670594`, its section "Interfaces for plans 7D, 7E and 7F"): `AppGraph.conversationStore` is the one store of conversations, `AndroidConversationClock` the clock, `SettingKeys.CONVERSATIONS` the setting, and `:app` already depends on `:core:conversation`. This plan builds no second store. Plan 7B carries, since `2113f5a0`, the two changes that this plan's review asked of it: a round lets go of the screen before its end reaches the listener, and "delete history" asks with `QuestionKind.DELETE_HISTORY`.
 - Decision 10 of plan 7B binds the voice: "turn off", "stop listening" and the listening notification's Stop listening change only the listening mode and give the conversation no input; "voice on" is a listening mode that is not `OFF`; the keyword spotter's "stop" while Kestrel speaks ends the speech and gives a `Stop` input; "stop" and "cancel" as an utterance give a `Stop` input.
-- This plan changes `:core:conversation` only in Task 7 (the settings page's "Delete history") and `:tools:eval` only in Task 3 (its refusal check learns `NO_SCREEN`); every other change is in `:app` and in two scripts' descriptions.
+- This plan changes `:core:conversation` only in Task 3 (the view's `ownRequest`, and a stop that withdraws the question of Kestrel's own request at once; review of Task 3: M1) and in Task 7 (the settings page's "Delete history") and `:tools:eval` only in Task 3 (its refusal check learns `NO_SCREEN`); every other change is in `:app`, in two scripts' descriptions and in `scripts\lib\AgentChecks.ps1` (review of Task 3: M2).
 - Steering by voice needs "Kestrel" (D9): while a goal works, only a command after the name reaches the conversation as a `Command`.
 - Never print, log or put into a hook's answer the owner's words, a reply, a question, a record's text or a checklist's text. Every new type's toString prints only kinds, numbers, counts and lengths (design D25 of sub-project 5).
 - Run Gradle only through `scripts\gradle.ps1`, one build at a time; when the controller's brief says that agents run in parallel, take `.superpowers\sdd\gradle.lock` in `H:\Code\kestrel` before each Gradle command as the brief says, and do not run `scripts\gradle.ps1 --stop` beside another Gradle user. Otherwise stop Gradle with `scripts\gradle.ps1 --stop` at the end of each task that builds. `scripts\gradle.ps1` refuses every task that installs, uninstalls or runs tests on a device. Install only through `scripts\install.ps1`, run the `:app` device tests only through `scripts\connected-test.ps1`, the instant commands' device suite only through `scripts\command-test.ps1`, and the suite only through `scripts\eval.ps1`.
@@ -62,7 +62,7 @@ These are this plan's readings of the design where it leaves a choice open, or w
 - **`PhoneSignals` serves both.** One screen receiver and one call listener serve listening (while its service runs) and the conversation (while a conversation is open, not only while a goal is open, because a goal's final reply waits for the owner's return; plan 7B's decision 6). `ConversationSignals` sends the engine `AGENT_CALL` only while a goal acts or asks, as today's backstop saw only a running task.
 - **A refusal's end.** A round that cannot start ends as `NO_SCREEN` when Kestrel's accessibility service is off or the touch watcher cannot start, and as `NO_PROFILE` for no profile and for a test build without a script (today every refusal ended as `NO_PROFILE`). The service is checked before the model is chosen, as today. `:tools:eval` reads both ends as a refusal (Task 3), so that an injection fixture never passes when nothing ran.
 - **`agent-state` keeps its words.** Its `asking=` keeps sub-project 5's names (`yes-no`, `confirm`, `free`, `pick-number`, `continue`), with a limit's "Continue?" and the switch as `yes-no` and the screenshot question as `free`, so that `:tools:eval`'s answers need no change before plan 7G; `question=` names `screenshot` and `limit`. Its `phase=` gains `paused-at-limit` and `interrupted` in Task 3, and the hook gains `checklist=` and `conversation=` in Task 6.
-- **`voice-task` becomes a stand-in round.** The A71 session's hook makes every goal's round a stand-in on fake ports whose model waits the given seconds and then gives up with the reply, so the goal's final reply is "I couldn't do it: <reply>. I didn't change anything." No script and no part of `:tools:eval` reads the reply's words; Task 3 changes the descriptions in `scripts\hook.ps1` and `scripts\a71-session.ps1`.
+- **`voice-task` becomes a stand-in round.** The A71 session's hook makes every goal's round a stand-in on fake ports whose model waits the given seconds and then finishes, and the goal's final words are the reply itself, whole and of any length (review of Task 3: I1; the model's summary and a failure's reason have limits, 200 characters for `fail`, which the A71 session's 478-character story exceeds) No script and no part of `:tools:eval` reads the reply's words; Task 3 changes the descriptions in `scripts\hook.ps1` and `scripts\a71-session.ps1`.
 - **The follow-up window reads as after "Yes?", with design 3.6's exceptions.** Inside the window the words are read as the words after the name (`Requests.read(…, afterName = true, followUp = true)`), so every other utterance is a command, while "stop", "cancel", "stop listening" and "turn off" keep their meaning (design 3.6): "turn off" alone turns Kestrel off and never reaches the conversation. After "Yes?" a bare "turn off" stays a command, as today.
 - **The limits stay within the page's bounds.** `conversation-control do=limits` writes the Conversations setting within its bounds (at least 50 replies, 5 minutes and 10 AI Credits); plan 7G adds a debug-only seam for smaller limits with its task `limit-continue`.
 
@@ -1240,9 +1240,9 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/orchestrator/VoiceAnswers.kt`, `app/src/main/kotlin/dev/kestrel/app/orchestrator/VoiceView.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/StoredSettings.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/InputIds.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/OwnerSupport.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/ConversationSignals.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/GoalOwner.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/RoundModels.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/RoundEvidences.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppGoalEnvironment.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppModels.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/Permissions.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/StandInRound.kt`
-- Modify: `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/orchestrator/Orchestrator.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `app/src/main/kotlin/dev/kestrel/app/phone/PhoneSignals.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/CallBackstop.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/TaskWitness.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/PermissionActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, `app/src/main/kotlin/dev/kestrel/app/KestrelApplication.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/CommandTags.kt` (whole), `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/VoiceHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/SessionHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/DebugTaskWitness.kt`; `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Refusals.kt`; the descriptions of `voice-task` in `scripts/hook.ps1` and `scripts/a71-session.ps1`
+- Modify: `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/orchestrator/Orchestrator.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/orchestrator/Requests.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `app/src/main/kotlin/dev/kestrel/app/phone/PhoneSignals.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/CallBackstop.kt` (whole), `app/src/main/kotlin/dev/kestrel/app/agent/AgentTexts.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/TaskWitness.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/PermissionActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, `app/src/main/kotlin/dev/kestrel/app/KestrelApplication.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/CommandTags.kt` (whole), `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/VoiceHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/SessionHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/DebugTaskWitness.kt`; `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Refusals.kt`; the descriptions of `voice-task` in `scripts/hook.ps1` and `scripts/a71-session.ps1`; `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationMachine.kt` (review of Task 3: M1); `scripts/lib/AgentChecks.ps1` (review of Task 3: M2)
 - Delete: `app/src/main/kotlin/dev/kestrel/app/orchestrator/TaskAnswers.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AgentRunner.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppOwnerPort.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/OwnerParts.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AgentEnvironment.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppAgentEnvironment.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/TaskOptions.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/AgentRunnerTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/AppOwnerPortTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/AppAgentEnvironmentTest.kt`
-- Test: create `app/src/test/kotlin/dev/kestrel/app/orchestrator/VoiceAnswersTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/OwnerSupportTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/ConversationSignalsTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/GoalOwnerTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/RoundModelsTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/RoundEvidencesTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/AppGoalEnvironmentTest.kt`, `app/src/test/kotlin/dev/kestrel/app/orchestrator/VoiceViewTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/StoredSettingsTest.kt`, the device test `app/src/androidTest/kotlin/dev/kestrel/app/agent/GoalPauseTest.kt` with its model `app/src/androidTest/kotlin/dev/kestrel/app/agent/HeldModel.kt`; modify `RulesTest.kt`, `OrchestratorTest.kt`, `ListeningTest.kt`, `PhoneSignalsTest.kt`, `CallBackstopTest.kt` (whole), `AgentTextsTest.kt`, and in `app/src/testDebug/kotlin/dev/kestrel/app/debug/` `CommandTagsTest.kt`, `AgentHookAnswersTest.kt`, `HookRulesTest.kt`, `DebugTaskWitnessTest.kt`; `tools/eval/src/test/kotlin/dev/kestrel/eval/run/RunnerTest.kt`; the device tests `app/src/androidTest/kotlin/dev/kestrel/app/agent/AgentTests.kt`, `AgentEndToEndTest.kt`, `NotificationListenerTest.kt`, `PermissionFlowTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/debug/AgentHooksTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/voice/SessionHookTest.kt`, `VoiceHookTest.kt`, `ConversationTest.kt`
+- Test: create `app/src/test/kotlin/dev/kestrel/app/orchestrator/VoiceAnswersTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/OwnerSupportTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/ConversationSignalsTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/GoalOwnerTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/RoundModelsTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/RoundEvidencesTest.kt`, `app/src/test/kotlin/dev/kestrel/app/agent/AppGoalEnvironmentTest.kt`, `app/src/test/kotlin/dev/kestrel/app/orchestrator/VoiceViewTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/StoredSettingsTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/StandInRoundTest.kt`, the device test `app/src/androidTest/kotlin/dev/kestrel/app/agent/GoalPauseTest.kt` with its model `app/src/androidTest/kotlin/dev/kestrel/app/agent/HeldModel.kt`; modify `RulesTest.kt`, `OrchestratorTest.kt`, `ListeningTest.kt`, `PhoneSignalsTest.kt`, `CallBackstopTest.kt` (whole), `AgentTextsTest.kt`, and in `app/src/testDebug/kotlin/dev/kestrel/app/debug/` `CommandTagsTest.kt`, `AgentHookAnswersTest.kt`, `HookRulesTest.kt`, `DebugTaskWitnessTest.kt`; `tools/eval/src/test/kotlin/dev/kestrel/eval/run/RunnerTest.kt`; `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`; `scripts/tests/AgentChecks.Tests.ps1`; the device tests `app/src/androidTest/kotlin/dev/kestrel/app/agent/AgentTests.kt`, `AgentEndToEndTest.kt`, `NotificationListenerTest.kt`, `PermissionFlowTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/debug/AgentHooksTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/voice/SessionHookTest.kt`, `VoiceHookTest.kt`, `ConversationTest.kt`
 
 **Interfaces:**
 - Consumes: plan 7B with its changes of `2113f5a0` (`QuestionKind.DELETE_HISTORY`, and a round's release before its end reaches the listener), and its "Interfaces for 7C and 7D" (`ConversationEngine` and its `view`, `owner`, `outcome`, `submit`, `signal`, `awaitingCommand`, `endQuietTime`, `restore`; `ConversationView`; `OwnerChannel`, `ChannelOutput`, `ChannelQuestion`, `QuestionKind`; `OwnerInput`, `InputIntent`, `ChannelAnswer`, `InputChannel`, `GoalPhase`, `PhoneSignal`; `GoalEnvironment`, `RoundStart`, `RoundSetup`, `RoundPurpose`; `GoalRunner`; `LocalRequests`; `HistorySearch`; `ConversationEvent`, `ConversationState`, `ConversationEffect`, `MachineStep`, `QuietClock`, `HoldReason`; `ConversationSettings`); plan 7C's `AppGraph.conversationStore`, `AndroidConversationClock`, `SettingKeys.CONVERSATIONS`; plan 7A's `OwnerPort.leaveKestrel()`, `OwnerPort.KESTREL_LEAVE_MILLIS`, `AgentPorts(…, goal, history)`; Tasks 1 and 2.
@@ -1252,9 +1252,9 @@ The deleted JVM tests and their successors (design 14.3 of sub-project 7: every 
 - Produces (package `dev.kestrel.app.agent`): `internal class GoalOwner(owner: OwnerPort, watcher: TouchWatch, witness: TaskWitness) : OwnerPort`; `internal class RoundModels(debuggable, liveSession, profile)` with `Choice.Model(port)`, `Choice.Refused(sentence, end)`, `modelOverride`, `suspend fun choose(options): Choice`, `MODEL`, `LIVE`; `internal class RoundEvidences` with `Evidence(touches, signals, witness: TaskEvidence)`, `Round.touched(signal)`, `start(command, witness)`, `of(command)`, `MAX = 16`; `internal class AppGoalEnvironment(…) : GoalEnvironment` with `evidences`, `selfChatAliases`, `witnesses`, `standIn: (suspend (RoundStart) -> RoundSetup)?` and `taskId(command)`; `startWatcherOrStop` (moved); `AppModels`, `AndroidApps`, `AndroidAgentClock` (moved unchanged); `Permissions` (moved unchanged); `CallBackstop(calls, clock)` with `acted()`, `forget()`, `stops(): Boolean`, `endCall()` and `WINDOW_MILLIS`; `PhoneSignals.callStates(): Flow<CallState>`.
 - Produces (`AppGraph`): `roundModels: RoundModels`, `goalEnvironment: AppGoalEnvironment`, `conversations: ConversationEngine`, the debug seam `conversationSteps: ((ConversationEvent, ConversationState, MachineStep) -> Unit)?`; no `agent`. `KestrelApplication` restores the conversation at the process start.
 - Produces (`TaskWitness`): `said`, `watch` and `evidence` without `ended`; `TaskEvidence(said, markerInData)` without `spoken`.
-- Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply)`. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
+- Produces (debug): `CommandTags.Role.CONVERSE`, `CommandTags.input(heard, input)`, `CommandTags.onConversationStep(event, state, step)`, `CommandTags.lastGoalWords`; `VoiceHooks.install(graph)`; `AgentHookAnswers.Ended(report, spoken, touches, signals, evidence)`, `AgentHookAnswers.asking(kind)`, `AgentHookAnswers.question(kind: QuestionKind)`, `answerRefusal(asking: QuestionKind?, …)`; `StandInRound(seconds, reply) : GoalEnvironment`, whose finished round's final words are the reply. `:tools:eval`: `Refusals.ENDS = setOf("NO_PROFILE", "NO_SCREEN")`, and `Refusals.KINDS` without `cancelled` and `could-not-start`. Device tests: `AgentTests.run(request, model: ModelPort)`, `AgentTests.turnOff()`, `AgentTests.spoken()`; `HeldModel(model: ModelPort) : ModelPort` with `calls` and `release()`.
 
-Counts: `:app` JVM A₂ + 2 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 = 99, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 7 + 1 = 8, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ and `:core:agent` G₀, unchanged. Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
+Counts: `:app` JVM A₂ + 4 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` as plans 7A to 7C left them (Step 1 counts it; 39 once plan 7A has run): `RulesTest` 124 − 25 + 1 = 100, `OrchestratorTest` 17 − 2 = 15, `ListeningTest` 147 − 3 + 2 = 146, `CallBackstopTest` 7 − 4 = 3, `CommandTagsTest` 4 + 1 = 5, `PhoneSignalsTest` 7 + 1 = 8, `DebugTaskWitnessTest` 2, and new `VoiceAnswersTest` 3, `VoiceChannelTest` 9, `OwnerSupportTest` 3, `ConversationSignalsTest` 7, `GoalOwnerTest` 2, `RoundModelsTest` 2, `RoundEvidencesTest` 1, `AppGoalEnvironmentTest` 2, `VoiceViewTest` 1, `StoredSettingsTest` 1, and in `app/src/testDebug` `StandInRoundTest` 1; `VoiceAnswersTest` has 4 of them. `:tools:eval` E₀ + 1 (`RunnerTest`). `:core:conversation` C₀ + 2 (`ConversationMachineTest` + 1, `ConversationEngineTest` + 1; review of Task 3: M1), and `:core:agent` G₀, unchanged. Pester + 1 (`AgentChecks.Tests.ps1`; review of Task 3: M2). Device tests: AD₀ + 2 (`GoalPauseTest` 2; `AgentTests` is a helper, and the changed device tests keep their number).
 
 - [ ] **Step 1: Check the plans that this task consumes, and count the tests of the files that it deletes**
 
@@ -1348,6 +1348,8 @@ class VoiceViewTest {
             acting.copy(step = 3, records = listOf(CommandRecord(1, 0, InputChannel.VOICE, "Read my latest SMS"))),
             acting.copy(goal = GoalPhase.ASKING, asking = QuestionKind.YES_NO, question = 4),
             acting.copy(goal = null, quiet = QuietClock.Held(HoldReason.REPLYING)),
+            // One of Kestrel's own requests runs, which "Stop. Kestrel, …" stops first.
+            ConversationView(id = acting.id, command = 2, ownRequest = true),
             ConversationView(),
         )
 
@@ -1356,6 +1358,7 @@ class VoiceViewTest {
                 VoiceView(open = true, goal = GoalPhase.ACTING),
                 VoiceView(open = true, goal = GoalPhase.ASKING, asking = QuestionKind.YES_NO, question = 4),
                 VoiceView(open = true, replying = true),
+                VoiceView(open = true, ownRequest = true),
                 VoiceView(),
             ),
             views.forVoice().toList(),
@@ -2392,6 +2395,215 @@ with:
 
     @Test
     fun aLostTranscriptIsReadBackAndNeverSentTwice() {
+```
+
+The review of Task 3 asked for three fixes, each with its tests (I1, M1 and M2): `voice-task`'s stand-in round answers with its whole reply as the goal's final words; "Stop. Kestrel, …" stops one of Kestrel's own requests while it asks or runs, and the command after it runs; and `Send-OwnTaskAnswer` waits for the question of Kestrel's own request through `agent-state -Tag`.
+
+Create `app/src/testDebug/kotlin/dev/kestrel/app/debug/StandInRoundTest.kt`:
+
+```kotlin
+package dev.kestrel.app.debug
+
+import dev.kestrel.agent.Agent
+import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.TaskRequest
+import dev.kestrel.agent.goal.NoGoal
+import dev.kestrel.agent.goal.NoHistory
+import dev.kestrel.agent.testing.FakeOwner
+import dev.kestrel.conversation.goal.RoundPurpose
+import dev.kestrel.conversation.goal.RoundSetup
+import dev.kestrel.conversation.goal.RoundStart
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** The A71 session's stand-in round (`voice-task`; design 14.4 of sub-project 7). */
+@OptIn(ExperimentalCoroutinesApi::class)
+class StandInRoundTest {
+    @Test
+    fun aStandInRoundTakesItsSecondsAndItsWholeReplyOfAnyLengthIsTheGoalsFinalWords() = runTest {
+        // As long as the A71 session's story, far beyond what a model may give as its summary or a failure's reason.
+        val reply = "Once upon a time a kestrel hovered over a quiet field. ".repeat(9).trimEnd().take(STORY)
+        assertEquals(STORY, reply.length)
+        val standIn = StandInRound(seconds = 3, reply = reply)
+
+        val setup = standIn.prepare(RoundStart(1, emptyMap(), FakeOwner(), NoGoal, NoHistory, RoundPurpose.GOAL)) as RoundSetup.Ready
+        var report: TaskReport? = null
+        Agent(setup.ports, setup.settings).run(TaskRequest(setup.taskId, "Read me the news")) { report = it }
+
+        val ended = report!!
+        assertEquals(EndReason.FINISHED, ended.end)
+        assertTrue("The round ended after ${currentTime} ms", currentTime >= 3_000)
+        assertEquals(reply, standIn.sentence(ended))
+        // Any other end keeps Kestrel's own words for it.
+        assertEquals("Cancelled. I didn't change anything.", standIn.sentence(TaskReport(EndReason.CANCELLED)))
+    }
+
+    private companion object {
+        const val STORY = 478
+    }
+}
+```
+
+In `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt`, replace:
+
+```kotlin
+        // A reply that the request gave before the stop reached it is its own end: it had finished.
+        val replied = step(stopped.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
+    }
+```
+
+with:
+
+```kotlin
+        // A reply that the request gave before the stop reached it is its own end: it had finished.
+        val replied = step(stopped.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Reply(ConversationTexts.REMEMBERED)))
+        assertEquals(ConversationEffect.EndRecord(id, 2, EndReason.FINISHED, ConversationTexts.REMEMBERED), replied.effect<ConversationEffect.EndRecord>())
+    }
+
+    // "Stop. Kestrel, …" while Kestrel's own request asks (design 6.4; review of plan 7D's Task 3, M1): the stop cancels
+    // the request and withdraws its question at once, so the command after it answers nothing and runs once the request
+    // has ended.
+    @Test
+    fun stopThenACommandWhileKestrelsOwnRequestAsksRunsTheCommandAfterTheRequest() {
+        val deleting = step(idleOpen(), spoken(InputIntent.DeleteHistory))
+        val run = deleting.effect<ConversationEffect.RunLocal>()
+        val asking = asked(deleting.state, 7, QuestionKind.DELETE_HISTORY)
+
+        val stopped = step(asking, spoken(InputIntent.Stop))
+        assertTrue(stopped.has<ConversationEffect.CancelLocal>())
+        assertNull(stopped.state.question)
+
+        val commanded = step(stopped.state, spoken("Open Viber"))
+        assertTrue(commanded.effects.none { it is ConversationEffect.AnswerQuestion || it is ConversationEffect.StartGoal })
+
+        val ended = step(commanded.state, ConversationEvent.LocalEnded(run.command, LocalOutcome.Quiet))
+        assertEquals("Open Viber", ended.effect<ConversationEffect.StartGoal>().text)
+    }
+```
+
+In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
+
+```kotlin
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
+    }
+```
+
+with:
+
+```kotlin
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
+    }
+
+    // "Stop. Kestrel, …" while Kestrel's own request asks (review of plan 7D's Task 3, M1): the view shows the request
+    // while it runs, so that the voice stops it first; the stop withdraws its question, and the command after it runs as
+    // the conversation's next command once the request has ended.
+    @Test
+    fun aStopAndACommandWhileKestrelsOwnRequestAsksStopTheRequestAndRunTheCommand() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.DeleteHistory))
+        runCurrent()
+        assertTrue(engine.view.value.ownRequest)
+        assertEquals(QuestionKind.DELETE_HISTORY, engine.view.value.asking)
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Stop))
+        engine.submit(typed("Read it again"))
+        runCurrent()
+
+        assertFalse(engine.view.value.ownRequest)
+        assertEquals(EndReason.CANCELLED, engine.outcome(2)!!.report.end)
+        assertTrue(archive.rows.isNotEmpty())
+        assertEquals(listOf("Read my latest SMS", "Read it again"), engine.view.value.records.map { it.request })
+        assertEquals(listOf(EndReason.FINISHED, EndReason.FINISHED), engine.view.value.records.map { it.end })
+    }
+```
+
+In `scripts/tests/AgentChecks.Tests.ps1`, replace:
+
+```powershell
+    It 'waits until Kestrel has asked the remember question before it says "no", and says it again while the task runs (task-5c-7-review M2)' {
+        $check = Get-AgentSpeechChecks | Where-Object { $_.Name -eq 'Kestrel''s phrase: remember' }
+        $events = [System.Collections.Generic.List[string]]::new()
+        $states = [System.Collections.Generic.Queue[string]]::new([string[]]@(
+                'mode=listening session=open work=running_task speaking=false', 'mode=listening session=open work=running_task speaking=true',
+                'mode=listening session=open work=running_task speaking=false', 'mode=listening session=open work=running_task speaking=false',
+                'mode=listening session=open work=idle speaking=false'))
+        Mock Invoke-Hook {
+            $next = if ($states.Count -gt 1) { $states.Dequeue() } else { $states.Peek() }
+            $events.Add("state $($next -replace '^.*work=(\S+) speaking=(\S+)$', '$1 $2')")
+            $next
+        } -ParameterFilter { $Command -eq 'voice-state' }
+        Mock Invoke-Hook { $events.Add("said $($With.Text)"); 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-AutoCheck { [pscustomobject]@{ Context = (& $Before); Waited = (& $Wait 'k9' 60); Line = "$Name [piper]: check=pass" } }
+
+        Invoke-AgentSpeechCheck -Check $check -Clip ([pscustomobject]@{ Voice = 'piper'; Text = 'Kestrel, remember that the gate code is blue.'; Path = 'x.wav' }) -Play { } | Out-Null
+
+        $first = $events.IndexOf('said no')
+        $first | Should -BeGreaterThan $events.IndexOf('state running_task true')
+        $events.IndexOf('state running_task true') | Should -BeGreaterOrEqual 0
+        @($events | Where-Object { $_ -eq 'said no' }).Count | Should -Be 2
+        $events[-1] | Should -Be 'state idle false'
+    }
+```
+
+with:
+
+```powershell
+    It 'waits until Kestrel''s own request of the remember phrase asks before it says "no", and says it again while the question is open (task-5c-7-review M2; plan 7D)' {
+        $check = Get-AgentSpeechChecks | Where-Object { $_.Name -eq 'Kestrel''s phrase: remember' }
+        $events = [System.Collections.Generic.List[string]]::new()
+        # The request runs without a question first, then asks, keeps asking after the first "no", and ends.
+        $states = [System.Collections.Generic.Queue[string]]::new([string[]]@(
+                'phase=ended asking=none work=idle', 'phase=ended asking=none work=idle', 'phase=running asking=yes-no work=idle',
+                'phase=running asking=yes-no work=idle', 'phase=ended asking=none work=idle'))
+        Mock Invoke-Hook {
+            $next = if ($states.Count -gt 1) { $states.Dequeue() } else { $states.Peek() }
+            $events.Add("state $($With.Tag) $($next -replace '^.*asking=(\S+).*$', '$1')")
+            $next
+        } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-Hook { 'state=running' } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-Hook { $events.Add('voice-state'); 'mode=listening session=open work=idle speaking=false' } -ParameterFilter { $Command -eq 'voice-state' }
+        Mock Invoke-Hook { $events.Add("said $($With.Text)"); 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-AutoCheck { [pscustomobject]@{ Context = (& $Before); Waited = (& $Wait 'k9' 60); Line = "$Name [piper]: check=pass" } }
+
+        Invoke-AgentSpeechCheck -Check $check -Clip ([pscustomobject]@{ Voice = 'piper'; Text = 'Kestrel, remember that the gate code is blue.'; Path = 'x.wav' }) -Play { } | Out-Null
+
+        $asked = $events.IndexOf('state k9 yes-no')
+        $asked | Should -BeGreaterOrEqual 0
+        $events.IndexOf('said no') | Should -BeGreaterThan $asked
+        # Kestrel finished saying the question before the answer.
+        $events.IndexOf('voice-state') | Should -BeGreaterThan $asked
+        $events.IndexOf('voice-state') | Should -BeLessThan $events.IndexOf('said no')
+        @($events | Where-Object { $_ -eq 'said no' }).Count | Should -Be 2
+        $events[-1] | Should -Be 'state k9 none'
+        Should -Invoke Invoke-Hook -Times 0 -Exactly -ParameterFilter { $Command -eq 'agent-answer' }
+    }
+
+    It 'says "no" once after the remember phrase when Kestrel''s own request ended without a question (plan 7D)' {
+        $check = Get-AgentSpeechChecks | Where-Object { $_.Name -eq 'Kestrel''s phrase: remember' }
+        Mock Invoke-Hook { 'phase=ended asking=none work=idle' } -ParameterFilter { $Command -eq 'agent-state' }
+        Mock Invoke-Hook { 'state=done end=FINISHED' } -ParameterFilter { $Command -eq 'agent-task' }
+        Mock Invoke-Hook { 'sent heard' } -ParameterFilter { $Command -eq 'voice' }
+        Mock Invoke-AutoCheck { [pscustomobject]@{ Context = (& $Before); Waited = (& $Wait 'k9' 60); Line = "$Name [piper]: check=fail" } }
+
+        Invoke-AgentSpeechCheck -Check $check -Clip ([pscustomobject]@{ Voice = 'piper'; Text = 'Kestrel, remember that the gate code is blue.'; Path = 'x.wav' }) -Play { } | Out-Null
+
+        Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'voice' -and $With.Text -eq 'no' }
+        Should -Invoke Invoke-Hook -Times 1 -Exactly -ParameterFilter { $Command -eq 'agent-task' -and $With.Tag -eq 'k9' }
+    }
 ```
 
 - [ ] **Step 4: Change the existing JVM tests**
@@ -4044,6 +4256,46 @@ with:
             Feedback.ConversationText("secret"),
             Request.Forget("secret"),
             asked(QuestionKind.FREE),
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+            heard(pausedGoal, "Stop. Kestrel, forget the gate code", named = true).effects,
+        )
+    }
+
+    // Kestrel's own question, "Delete the history?", spoken by the voice (design 11 of sub-project 7).
+```
+
+with:
+
+```kotlin
+            heard(pausedGoal, "Stop. Kestrel, forget the gate code", named = true).effects,
+        )
+    }
+
+    // Design D2 of sub-project 5: "Stop. Kestrel, …" stops Kestrel's own request too, while it asks or while it runs
+    // without a question, and the command after it reaches the conversation, so that neither the stop nor the command is
+    // lost (review of plan 7D's Task 3, M1). Without a goal or a request of Kestrel's own, the words stay one command.
+    @Test
+    fun aStopBeforeACommandStopsKestrelsOwnRequestFirst() {
+        val command = Event.Heard("Stop. Kestrel, open Viber.", named = true)
+        val running = listening.copy(conversation = VoiceView(open = true, ownRequest = true))
+        for (state in listOf(ownQuestion(), running)) {
+            assertEquals(
+                "$state",
+                listOf(Effect.Converse(InputIntent.Stop), Effect.Converse(InputIntent.Command("open Viber."), command)),
+                Rules.next(state, command).effects.filterIsInstance<Effect.Converse>(),
+            )
+        }
+        assertEquals(
+            listOf(Effect.Converse(InputIntent.Command("open Viber."), command)),
+            Rules.next(listening.copy(conversation = VoiceView(open = true)), command).effects.filterIsInstance<Effect.Converse>(),
+        )
+    }
+
+    // Kestrel's own question, "Delete the history?", spoken by the voice (design 11 of sub-project 7).
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/orchestrator/OrchestratorTest.kt`, replace:
@@ -5846,7 +6098,7 @@ In `app/src/androidTest/kotlin/dev/kestrel/app/voice/SessionHookTest.kt`, replac
 with:
 
 ```kotlin
-            assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then gives up with a reply of 17 characters"))
+            assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then answers with a reply of 17 characters"))
             conversations.endQuietTime()
             val tasks = conversations.view.value.command
 
@@ -5875,7 +6127,7 @@ with:
             Thread.sleep(1_000)
             assertEquals(GoalPhase.ACTING, conversations.view.value.goal)
             assertTrue("The goal did not end", VoiceTests.waitUntil(10_000) { conversations.view.value.goal == null })
-            assertEquals("I couldn't do it: The task is done. I didn't change anything.", conversations.outcome(tasks + 1)?.answer)
+            assertEquals("The task is done.", conversations.outcome(tasks + 1)?.answer)
         }
         assertEquals("each goal's round runs on the phone again", hook("VOICE_TASK", flags = setOf("clear")).text)
         assertNull(VoiceTests.graph.goalEnvironment.standIn)
@@ -5976,6 +6228,104 @@ Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.orchestr
 Expected: FAIL, the build does not compile: `VoiceAnswers`, `VoicePath`, `VoiceChannel` and the other new types do not exist yet.
 
 - [ ] **Step 7: The voice's rules**
+
+The conversation's view says while one of Kestrel's own requests runs, and a stop withdraws that request's question at once, so that "Stop. Kestrel, …" stops it first and the command after it runs (review of Task 3: M1).
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationView.kt`, replace:
+
+```kotlin
+ * ([keptForOwner]: a goal's final reply, or a held goal's report, also after its conversation closed), for which plan
+ * 7D's `ConversationSignals` keeps watching the phone. toString prints no words.
+ */
+data class ConversationView(
+    val id: ConversationId? = null,
+    val command: Int = 0,
+    val goal: GoalPhase? = null,
+    val step: Int? = null,
+    val asking: QuestionKind? = null,
+    val question: Int? = null,
+    val replyChannel: InputChannel = InputChannel.VOICE,
+    val checklist: ChecklistSummary? = null,
+    val records: List<CommandRecord> = emptyList(),
+    val continuedAtWall: Long? = null,
+    val testMode: Boolean = true,
+    val quiet: QuietClock = QuietClock.Off,
+    val keptForOwner: Boolean = false,
+) {
+    /** The owner continued the conversation from the list or by name (D23). */
+    val continued: Boolean get() = continuedAtWall != null
+
+    override fun toString(): String =
+        "ConversationView(open=${id != null}, command=$command, goal=$goal, step=$step, asking=$asking, records=${records.size}, quiet=$quiet, " +
+            "kept=$keptForOwner)"
+```
+
+with:
+
+```kotlin
+ * ([keptForOwner]: a goal's final reply, or a held goal's report, also after its conversation closed), for which plan
+ * 7D's `ConversationSignals` keeps watching the phone, and whether one of Kestrel's own requests runs and "stop" has not
+ * cancelled it yet ([ownRequest]: remember, forget, "save that as", delete history or a switch, design 9.6 and 9.7), so
+ * that the voice stops it before the command in "Stop. Kestrel, …". toString prints no words.
+ */
+data class ConversationView(
+    val id: ConversationId? = null,
+    val command: Int = 0,
+    val goal: GoalPhase? = null,
+    val step: Int? = null,
+    val asking: QuestionKind? = null,
+    val question: Int? = null,
+    val replyChannel: InputChannel = InputChannel.VOICE,
+    val checklist: ChecklistSummary? = null,
+    val records: List<CommandRecord> = emptyList(),
+    val continuedAtWall: Long? = null,
+    val testMode: Boolean = true,
+    val quiet: QuietClock = QuietClock.Off,
+    val keptForOwner: Boolean = false,
+    val ownRequest: Boolean = false,
+) {
+    /** The owner continued the conversation from the list or by name (D23). */
+    val continued: Boolean get() = continuedAtWall != null
+
+    override fun toString(): String =
+        "ConversationView(open=${id != null}, command=$command, goal=$goal, step=$step, asking=$asking, records=${records.size}, quiet=$quiet, " +
+            "kept=$keptForOwner, own=$ownRequest)"
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+            keptForOwner = current.heldReports.isNotEmpty() || current.heldWords != null,
+        )
+```
+
+with:
+
+```kotlin
+            keptForOwner = current.heldReports.isNotEmpty() || current.heldWords != null,
+            ownRequest = current.local?.cancelled == false,
+        )
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationMachine.kt`, replace:
+
+```kotlin
+    // A command waits for the request in its turn; "stop" cancels the request, a switch too, and drops what waits.
+    private fun whileLocal(state: ConversationState, run: LocalRun, input: OwnerInput): MachineStep = when (input.intent) {
+        is InputIntent.Command -> MachineStep(state.copy(waiting = state.waiting + input))
+        InputIntent.Stop -> MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true)), listOf(ConversationEffect.CancelLocal))
+```
+
+with:
+
+```kotlin
+    // A command waits for the request in its turn; "stop" cancels the request, a switch too, and drops what waits. The
+    // request's question goes with it at once, so that a command after the stop is no answer to it ("Stop. Kestrel, …";
+    // design 6.4).
+    private fun whileLocal(state: ConversationState, run: LocalRun, input: OwnerInput): MachineStep = when (input.intent) {
+        is InputIntent.Command -> MachineStep(state.copy(waiting = state.waiting + input))
+        InputIntent.Stop -> MachineStep(state.copy(waiting = emptyList(), local = run.copy(cancelled = true), question = null), listOf(ConversationEffect.CancelLocal))
+```
 
 Replace the whole `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt` with:
 
@@ -6581,10 +6931,10 @@ object Rules {
         // Words start the count of empty transcripts again.
         val counted = state.copy(emptyTranscripts = 0)
         val shown = Effect.Show(Feedback.Heard(event.text))
-        val stopsFirst = stopsGoalFirst(counted, request, event)
+        val stopsFirst = stopsWorkFirst(counted, request, event)
         // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
         // only the requests that stop something count, because nothing may start (section 14.4); a "Stop." before the
-        // name still stops the goal.
+        // name still stops the goal or Kestrel's own request.
         if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopGoal(counted, shown) else Step(counted)
         if (stopsFirst) return stopFirst(counted, request, event, shown, event.spokeAt)
         return when (counted.work) {
@@ -6619,13 +6969,16 @@ object Rules {
         return converse(state, intent, event, shown)
     }
 
-    private fun stopsGoalFirst(state: State, request: Request, event: Event.Heard): Boolean =
-        state.goal != null && request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
+    // What "Stop. Kestrel, [request]" stops first: the goal in every phase, or Kestrel's own request while it asks or runs
+    // (remember, forget, "save that as", delete history or a switch).
+    private fun stopsWorkFirst(state: State, request: Request, event: Event.Heard): Boolean =
+        (state.goal != null || state.openQuestion != null || state.conversation.ownRequest) &&
+            request !is Request.Stop && request != Request.TurnOff && Requests.stopsFirst(event.text, event.named)
 
-    // Design D2 of sub-project 5: "Stop. Kestrel, [request]" stops the goal in every phase, as the stop alone would, and
-    // the request then counts as it does without a goal, so that the stop is never lost: the conversation takes a command
-    // or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off" after the name keep their own
-    // rules. The transcript shows once, before the stop.
+    // Design D2 of sub-project 5: "Stop. Kestrel, [request]" stops the goal in every phase, or Kestrel's own request, as
+    // the stop alone would, and the request then counts as it does without them, so that the stop is never lost: the
+    // conversation takes a command or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off"
+    // after the name keep their own rules. The transcript shows once, before the stop.
     private fun stopFirst(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
         val stopped = stopGoal(state, shown)
         val after = whileIdle(stopped.state, request, event, shown, spokeAt)
@@ -6684,7 +7037,7 @@ object Rules {
     private fun idle(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long? = null): Step {
         val question = state.openQuestion
         return when {
-            stopsGoalFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
+            stopsWorkFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
             question != null -> answering(state, question, request, event, shown)
             state.goalWorks -> whileGoalWorks(state, request, event, shown)
             state.goal != null && request is Request.Stop -> stopGoal(state, shown)
@@ -7507,8 +7860,9 @@ import kotlinx.coroutines.flow.map
 
 /**
  * What the voice reads of the conversation (design 5.5 of sub-project 7): whether one is [open], its goal's phase, its
- * open question's kind and number, and whether a final reply waits for the owner ([replying], the quiet clock held for
- * it). It holds no words and no records, so a goal's traces and steps never reach the Orchestrator.
+ * open question's kind and number, whether a final reply waits for the owner ([replying], the quiet clock held for it),
+ * and whether one of Kestrel's own requests runs ([ownRequest]), which "Stop. Kestrel, …" stops first. It holds no words
+ * and no records, so a goal's traces and steps never reach the Orchestrator.
  */
 data class VoiceView(
     val open: Boolean = false,
@@ -7516,6 +7870,7 @@ data class VoiceView(
     val asking: QuestionKind? = null,
     val question: Int? = null,
     val replying: Boolean = false,
+    val ownRequest: Boolean = false,
 ) {
     companion object {
         fun of(view: ConversationView): VoiceView = VoiceView(
@@ -7524,6 +7879,7 @@ data class VoiceView(
             asking = view.asking,
             question = view.question,
             replying = view.quiet == QuietClock.Held(HoldReason.REPLYING),
+            ownRequest = view.ownRequest,
         )
     }
 }
@@ -8846,21 +9202,21 @@ internal class AppGoalEnvironment(
     internal var witnesses: ((options: Map<String, String>) -> TaskWitness)? = null
 
     /**
-     * Debug builds only: prepares every round in place of the phone's ports, as the A71 session's `voice-task` does
-     * (plan 2E's stand-in task, design 14.4 of sub-project 7). Null otherwise.
+     * Debug builds only: prepares every round in place of the phone's ports and words its end, as the A71 session's
+     * `voice-task` does (plan 2E's stand-in task, design 14.4 of sub-project 7). Null otherwise.
      */
     @Volatile
-    internal var standIn: (suspend (RoundStart) -> RoundSetup)? = null
+    internal var standIn: GoalEnvironment? = null
 
     // The provider of the newest round, which names it in an error's sentence.
     @Volatile
     private var provider = ""
 
     override suspend fun prepare(start: RoundStart): RoundSetup {
-        standIn?.let { return it(start) }
+        standIn?.let { return it.prepare(start) }
         if (start.purpose == RoundPurpose.ROUTINE) return routine(start)
-        // Kestrel's accessibility service first, as AppAgentEnvironment checked it: without it no model is chosen, so the
-        // owner hears at once that the service is off, also in a test build without a script.
+        // Kestrel's accessibility service first, as the task path checked it before plan 7D: without it no model is
+        // chosen, so the owner hears at once that the service is off, also in a test build without a script.
         val screen = session() ?: return RoundSetup.Refused(AgentTexts.couldNotStart(AgentTexts.NO_SERVICE), EndReason.NO_SCREEN)
         val model = when (val choice = choose(start)) {
             is RoundModels.Choice.Refused -> return RoundSetup.Refused(choice.sentence, choice.end)
@@ -8927,7 +9283,7 @@ internal class AppGoalEnvironment(
     private suspend fun choose(start: RoundStart): RoundModels.Choice =
         models.choose(start.options).also { choice -> if (choice is RoundModels.Choice.Model) provider = choice.port.model.providerName }
 
-    override fun sentence(report: TaskReport): String = AgentTexts.sentence(report, provider)
+    override fun sentence(report: TaskReport): String = standIn?.sentence(report) ?: AgentTexts.sentence(report, provider)
 
     private suspend fun agentSettings(): AgentSettings {
         val changes = settings.get(SettingKeys.AGENT_FREE_APPS)
@@ -9660,7 +10016,7 @@ internal class CommandTags {
                 else -> tagged.copy(role = Role.NONE, command = 0)
             }
             // The options wait for the input that Listening makes of the transcript; any other end drops them.
-            if (conversed != null && heard != null) conversing[heard] = tag else options.remove(tag)
+            if (conversed != null) conversing[heard] = tag else options.remove(tag)
         }
         // The newest answer to each command: its tag, or none when it was not tagged, so that an answer that is passed on
         // moves only its own tag.
@@ -9780,6 +10136,9 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.AgentSettings
+import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.TaskReport
+import dev.kestrel.agent.port.ModelPort
 import dev.kestrel.agent.testing.FakeApps
 import dev.kestrel.agent.testing.FakeClock
 import dev.kestrel.agent.testing.FakeData
@@ -9788,8 +10147,10 @@ import dev.kestrel.agent.testing.FakeLog
 import dev.kestrel.agent.testing.FakeMemory
 import dev.kestrel.agent.testing.FakeScreen
 import dev.kestrel.agent.testing.ScreenBuilder
-import dev.kestrel.agent.port.ModelPort
 import dev.kestrel.agent.testing.ScriptedModel
+import dev.kestrel.agent.tools.Tools
+import dev.kestrel.app.agent.AgentTexts
+import dev.kestrel.conversation.goal.GoalEnvironment
 import dev.kestrel.conversation.goal.RoundSetup
 import dev.kestrel.conversation.goal.RoundStart
 import dev.kestrel.providers.chat.ChatRequest
@@ -9797,29 +10158,26 @@ import dev.kestrel.providers.client.PricedResponse
 import dev.kestrel.providers.profiles.ModelRole
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 /**
- * The A71 session's stand-in round (plan 2E's voice-task; design 14.4 of sub-project 7): every round of a goal runs on
- * fake ports, on a launcher's screen that the round only reads, and its model waits [seconds] and then gives up with [reply].
- * So the goal's final reply is "I couldn't do it: <reply>. I didn't change anything.", and the owner can interrupt it,
- * stop it or say a new command while it waits, with nothing on the phone touched and no provider called.
+ * The A71 session's stand-in for the phone's rounds (plan 2E's voice-task; design 14.4 of sub-project 7): every round of
+ * a goal runs on fake ports, on a launcher's screen that the round only reads, and its model waits [seconds] and then
+ * finishes, citing the screen's "Home". The finished round's final words are [reply] itself, whole and of any length, as
+ * the answer to the owner's goal; the model's own summary and a failure's reason have limits, so the reply never goes
+ * through them. So the owner can interrupt the reply, stop the goal or say a new command while it waits, with nothing on
+ * the phone touched and no provider called. Any other end, such as a stop, keeps Kestrel's own words for it.
  */
-internal class StandInRound(private val seconds: Int, private val reply: String) {
-    fun prepare(start: RoundStart): RoundSetup {
-        val failing = ScriptedModel(
-            listOf(buildJsonObject {
-                put("tool", "fail")
-                put("arguments", buildJsonObject { put("reason", reply) })
-            }),
+internal class StandInRound(private val seconds: Int, private val reply: String) : GoalEnvironment {
+    override suspend fun prepare(start: RoundStart): RoundSetup {
+        val finishing = ScriptedModel(
+            listOf(ScriptedModel.call(Tools.FINISH, null, null, null, "summary" to SUMMARY, "evidence" to listOf(mapOf("target" to mapOf("label" to HOME))))),
         )
         val ports = AgentPorts(
-            FakeScreen(ScreenBuilder.screen(LAUNCHER) { text("Home", top = 100) }),
+            FakeScreen(ScreenBuilder.screen(LAUNCHER) { text(HOME, top = 100) }),
             FakeEyes(),
             FakeData(),
             start.owner,
-            Waiting(failing, seconds * 1_000L),
+            Waiting(finishing, seconds * 1_000L),
             FakeApps(),
             FakeMemory(),
             FakeLog(),
@@ -9828,6 +10186,12 @@ internal class StandInRound(private val seconds: Int, private val reply: String)
             start.history,
         )
         return RoundSetup.Ready(ports, AgentSettings(), "task-${start.command}-standin", emptySet(), emptyFlow(), offersRoutines = false) {}
+    }
+
+    // A finished round, checked or not, answers with the reply.
+    override fun sentence(report: TaskReport): String = when (report.end) {
+        EndReason.FINISHED, EndReason.UNVERIFIED -> reply
+        else -> AgentTexts.sentence(report, ScriptedModel.INFO.providerName)
     }
 
     override fun toString(): String = "StandInRound(seconds=$seconds, reply=${reply.length} characters)"
@@ -9842,6 +10206,8 @@ internal class StandInRound(private val seconds: Int, private val reply: String)
 
     private companion object {
         const val LAUNCHER = "com.android.launcher3"
+        const val HOME = "Home"
+        const val SUMMARY = "I read the reply."
     }
 }
 ```
@@ -10292,9 +10658,9 @@ with:
  * of the conversation in its process, how many words the newest goal had since the first voice-task or tagged transcript,
  * and how many keyword hits its voice sessions reported, so that the session counts Kestrel's reactions and the spotter's
  * hits, also false ones, without reading what Kestrel heard. VOICE_TASK makes each goal's round a stand-in
- * ([StandInRound]) that takes some seconds and then gives up with a given reply, in place of a round that ends at once
- * without a script, so that the owner can interrupt a long reply or say "stop" while a goal works; a goal that the owner
- * stopped meanwhile ends with the report of a stop, as any goal does.
+ * ([StandInRound]) that takes some seconds and then answers with a given reply, whole, as its final words, in place of a
+ * round that ends at once without a script, so that the owner can interrupt a long reply or say "stop" while a goal
+ * works; a goal that the owner stopped meanwhile ends with the report of a stop, as any goal does.
 ```
 
 In `app/src/debug/kotlin/dev/kestrel/app/debug/SessionHooks.kt`, replace:
@@ -10346,9 +10712,8 @@ with:
 ```kotlin
         // The goal's words are counted as a count, never kept, so that the session can tell a dictated goal that was split.
         VoiceHooks.install(graph)
-        val standIn = StandInRound(seconds, reply)
-        graph.goalEnvironment.standIn = standIn::prepare
-        return "each goal's round now takes $seconds s and then gives up with a reply of ${reply.length} characters, until " +
+        graph.goalEnvironment.standIn = StandInRound(seconds, reply)
+        return "each goal's round now takes $seconds s and then answers with a reply of ${reply.length} characters, until " +
             "voice-task -Clear or the end of Kestrel's process"
     }
 
@@ -10477,7 +10842,7 @@ with:
             if (answer["end"] in Refusals.ENDS) state.refusal = Refusals.kind(hooks, tag)
 ```
 
-`voice-task` now makes each goal's round a stand-in that gives up with the reply, so Kestrel's final reply is "I couldn't do it: <reply>. I didn't change anything." No script and no part of `:tools:eval` reads the reply's words: `scripts\a71-session.ps1` uses the reply only as a long text that the owner interrupts, and reads Kestrel's state and times. Only the descriptions change.
+`voice-task` now makes each goal's round a stand-in that finishes and answers with the reply, so Kestrel's final words are the reply itself, whole and of any length (review of Task 3: I1). No script and no part of `:tools:eval` reads the reply's words: `scripts\a71-session.ps1` uses the reply only as a long text that the owner interrupts, and reads Kestrel's state and times. Only the descriptions change.
 
 In `scripts/hook.ps1`, replace:
 
@@ -10490,10 +10855,10 @@ In `scripts/hook.ps1`, replace:
 with:
 
 ```powershell
-#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then give up with
-#                                           the reply, so that Kestrel says "I couldn't do it: <reply>. I didn't change
-#                                           anything.", unless the owner stopped the goal, until voice-task -Clear or the
-#                                           end of Kestrel's process
+#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then answer with
+#                                           the reply, whole and of any length, which Kestrel says as the goal's final
+#                                           words, unless the owner stopped the goal, until voice-task -Clear or the end
+#                                           of Kestrel's process
 #   voice-task -Clear                       each goal's round runs on the phone again
 ```
 
@@ -10501,13 +10866,168 @@ In `scripts/a71-session.ps1`, replace:
 
 ```powershell
     # Each task now takes a second and then reads a long reply without any of Kestrel's keywords, which the owner
+    # interrupts. A pause shorter than the speech detector's 0.7 s joins the request to Kestrel's own voice, which the
+    # pipeline drops after an interruption (analysis, item 8), so the pauses start at 1 s.
 ```
 
 with:
 
 ```powershell
-    # Each goal's round now takes a second and then gives up with a long reply without any of Kestrel's keywords, which
-    # Kestrel reads in its final reply and which the owner
+    # Each goal's round now takes a second and then answers with a long reply without any of Kestrel's keywords, which
+    # Kestrel reads whole as the goal's final words and which the owner interrupts. A pause shorter than the speech
+    # detector's 0.7 s joins the request to Kestrel's own voice, which the pipeline drops after an interruption
+    # (analysis, item 8), so the pauses start at 1 s.
+```
+
+`scripts\lib\AgentChecks.ps1`'s answer to the question of Kestrel's own request after the remember phrase waits for that question through `agent-state -Tag`, because `voice-state`'s `work=running_task` no longer exists (review of Task 3: M2):
+
+In `scripts/lib/AgentChecks.ps1`, replace:
+
+```powershell
+# Answers the question of a task of Kestrel's own, as "remember" runs (task-5c-7-review M2). CommandTags links a tag only
+# to an agent's task, so agent-state -Tag cannot see this one; Kestrel says the question while the task runs, and an
+# answer that comes before it is dropped. So this waits up to $Seconds until Kestrel has said the question (voice-state:
+# speaking, then no longer speaking), sends $Text as a transcript, and sends it again, at most twice more, while the task
+# still runs.
+function Send-OwnTaskAnswer([string]$Text, [double]$Seconds = 30) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
+        if ($state -and $state['work'] -ne 'running_task') { break }
+        if ($state -and $state['speaking'] -eq 'true') {
+            Wait-NotSpeaking 15 | Out-Null
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    foreach ($try in 1..3) {
+        Invoke-Hook voice @{ Send = 'heard'; Text = $Text; Tag = (New-CheckTag) } | Out-Null
+        Start-Sleep -Seconds 3
+        $state = try { ConvertFrom-VoiceState (Invoke-Hook voice-state) } catch { $null }
+        if (-not $state -or $state['work'] -ne 'running_task') { return }
+    }
+}
+
+# Runs one speech check with Invoke-AutoCheck and its clip ($Clip: Voice, Text, Path), which $Play plays. An answer
+# check first opens the fixture, installs its script and starts its task by text, and waits until the task asks
+# ($Check.Asking); a task check installs its script before the clip. Afterwards it ends the check's task when it still
+# runs, the answer check's or the task check's own, and sends the phrase's $Then, for "remember" only after Kestrel has
+# asked its question. Returns Invoke-AutoCheck's result, whose Line goes into the results.
+function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
+    $setup = @{ Tag = '' }
+    $before = {
+        if ($Check.Script) { Install-AgentScript -Name 'speech-check.json' -Replies (Get-SpeechScript $Check.Script) }
+        if ($Check.Kind -ne 'answer') { return $null }
+        Invoke-SettingsCommand -Serial $Serial -Command "am start -n $(Get-SpeechFixture)" | Out-Null
+        Start-Sleep -Seconds 2
+        $setup.Tag = New-CheckTag
+        Invoke-Hook voice @{ Send = 'heard'; Text = 'Kestrel, tap Rebuild on the views fixture.'; Named = $true; Tag = $setup.Tag } | Out-Null
+        $asking = $Check.Asking
+        $state = Wait-AgentState -Tag $setup.Tag -Seconds 60 -Until {
+            param($State)
+            if ($asking -eq 'running') { $State['phase'] -eq 'running' -and $State['asking'] -eq 'none' } else { $State['asking'] -eq $asking }
+        }
+        $ready = if ($asking -eq 'running') { $state -and $state['phase'] -eq 'running' } else { $state -and $state['asking'] -eq $asking }
+        if (-not $ready) { throw "the check's task did not reach '$asking' within 60 s" }
+        $setup.Tag
+    }
+    $wait = {
+        param($Tag, $Seconds)
+        if ($Check.Kind -eq 'task') {
+            # The finally below ends the task of the clip's transcript when it still runs, as after a question (task-5c-7-review M1).
+            $setup.Tag = $Tag
+            Wait-AgentTask -Tag $Tag -Seconds ([math]::Min($Seconds, 60))
+        }
+        elseif ($Check.Kind -eq 'answer') { Wait-AgentTask -Tag $setup.Tag -Seconds ([math]::Min($Seconds, 60)) }
+        else { $null }
+    }
+    # The runner gives the tagged state, the context of -Before and what -Wait returned; the verdict needs the first and the last.
+    $verify = { param($State) Get-AgentSpeechVerdict -Check $Check -State $State -Result $args[1] }
+    try {
+        Invoke-AutoCheck -Name $Check.Name -Text '' -Clip $Clip -Play $Play -Before $before -Wait $wait -WaitSeconds 60 -Verify $verify
+    } finally {
+        if ($setup.Tag) { Stop-SpeechTask $setup.Tag }
+        if ($Check.Then -and $Check.Read -eq 'remember') { Send-OwnTaskAnswer $Check.Then }
+        elseif ($Check.Then) { Invoke-Hook voice @{ Send = 'heard'; Text = $Check.Then; Tag = (New-CheckTag) } | Out-Null }
+    }
+}
+```
+
+with:
+
+```powershell
+# Answers the question of Kestrel's own request that the phrase's transcript with tag $Tag started, as "remember" asks
+# one (task-5c-7-review M2). The conversation asks it once the request runs, and an answer that comes before it is
+# dropped; CommandTags links the tag to the request, so agent-state -Tag shows the question while it is open (plan 7D).
+# So this waits up to $Seconds until the request asks or has ended (agent-task -Result -Tag), lets Kestrel finish saying
+# the question, sends $Text as a transcript, and sends it again, at most twice more, while the question is still open.
+function Send-OwnTaskAnswer([string]$Tag, [string]$Text, [double]$Seconds = 30) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+        $state = try { ConvertFrom-HookPairs (Invoke-Hook agent-state @{ Tag = $Tag }) } catch { $null }
+        if ($state -and $state['asking'] -ne 'none') {
+            Wait-NotSpeaking 15 | Out-Null
+            break
+        }
+        $result = try { ConvertFrom-AgentTaskResult (Invoke-Hook agent-task @{ Result = $true; Tag = $Tag }) } catch { $null }
+        if ($result -and $result['state'] -eq 'done') { break }
+        Start-Sleep -Milliseconds 250
+    }
+    foreach ($try in 1..3) {
+        Invoke-Hook voice @{ Send = 'heard'; Text = $Text; Tag = (New-CheckTag) } | Out-Null
+        Start-Sleep -Seconds 3
+        $state = try { ConvertFrom-HookPairs (Invoke-Hook agent-state @{ Tag = $Tag }) } catch { $null }
+        if (-not $state -or $state['asking'] -eq 'none') { return }
+    }
+}
+
+# Runs one speech check with Invoke-AutoCheck and its clip ($Clip: Voice, Text, Path), which $Play plays. An answer
+# check first opens the fixture, installs its script and starts its task by text, and waits until the task asks
+# ($Check.Asking); a task check installs its script before the clip. Afterwards it ends the check's task when it still
+# runs, the answer check's or the task check's own, and sends the phrase's $Then, for "remember" only after Kestrel has
+# asked its question. Returns Invoke-AutoCheck's result, whose Line goes into the results.
+function Invoke-AgentSpeechCheck($Check, $Clip, [scriptblock]$Play) {
+    $setup = @{ Tag = ''; Phrase = '' }
+    $before = {
+        if ($Check.Script) { Install-AgentScript -Name 'speech-check.json' -Replies (Get-SpeechScript $Check.Script) }
+        if ($Check.Kind -ne 'answer') { return $null }
+        Invoke-SettingsCommand -Serial $Serial -Command "am start -n $(Get-SpeechFixture)" | Out-Null
+        Start-Sleep -Seconds 2
+        $setup.Tag = New-CheckTag
+        Invoke-Hook voice @{ Send = 'heard'; Text = 'Kestrel, tap Rebuild on the views fixture.'; Named = $true; Tag = $setup.Tag } | Out-Null
+        $asking = $Check.Asking
+        $state = Wait-AgentState -Tag $setup.Tag -Seconds 60 -Until {
+            param($State)
+            if ($asking -eq 'running') { $State['phase'] -eq 'running' -and $State['asking'] -eq 'none' } else { $State['asking'] -eq $asking }
+        }
+        $ready = if ($asking -eq 'running') { $state -and $state['phase'] -eq 'running' } else { $state -and $state['asking'] -eq $asking }
+        if (-not $ready) { throw "the check's task did not reach '$asking' within 60 s" }
+        $setup.Tag
+    }
+    $wait = {
+        param($Tag, $Seconds)
+        if ($Check.Kind -eq 'task') {
+            # The finally below ends the task of the clip's transcript when it still runs, as after a question (task-5c-7-review M1).
+            $setup.Tag = $Tag
+            Wait-AgentTask -Tag $Tag -Seconds ([math]::Min($Seconds, 60))
+        }
+        elseif ($Check.Kind -eq 'answer') { Wait-AgentTask -Tag $setup.Tag -Seconds ([math]::Min($Seconds, 60)) }
+        else {
+            # Kestrel's own request that the phrase starts, whose question $Check.Then answers.
+            $setup.Phrase = $Tag
+            $null
+        }
+    }
+    # The runner gives the tagged state, the context of -Before and what -Wait returned; the verdict needs the first and the last.
+    $verify = { param($State) Get-AgentSpeechVerdict -Check $Check -State $State -Result $args[1] }
+    try {
+        Invoke-AutoCheck -Name $Check.Name -Text '' -Clip $Clip -Play $Play -Before $before -Wait $wait -WaitSeconds 60 -Verify $verify
+    } finally {
+        if ($setup.Tag) { Stop-SpeechTask $setup.Tag }
+        if ($Check.Then -and $Check.Read -eq 'remember' -and $setup.Phrase) { Send-OwnTaskAnswer -Tag $setup.Phrase -Text $Check.Then }
+        elseif ($Check.Then) { Invoke-Hook voice @{ Send = 'heard'; Text = $Check.Then; Tag = (New-CheckTag) } | Out-Null }
+    }
+}
 ```
 
 - [ ] **Step 12: Check that nothing of the task path is left**
@@ -10517,18 +11037,18 @@ Expected: no output.
 
 - [ ] **Step 13: Run the new and changed tests to see them pass**
 
-Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.orchestrator.* --tests=dev.kestrel.app.conversation.* --tests=dev.kestrel.app.agent.* --tests=dev.kestrel.app.listen.ListeningTest --tests=dev.kestrel.app.phone.PhoneSignalsTest --tests=dev.kestrel.app.debug.CommandTagsTest --tests=dev.kestrel.app.debug.AgentHookAnswersTest --tests=dev.kestrel.app.debug.HookRulesTest`, then `scripts\gradle.ps1 :tools:eval:test --tests=dev.kestrel.eval.run.RunnerTest`
+Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.orchestrator.* --tests=dev.kestrel.app.conversation.* --tests=dev.kestrel.app.agent.* --tests=dev.kestrel.app.listen.ListeningTest --tests=dev.kestrel.app.phone.PhoneSignalsTest --tests=dev.kestrel.app.debug.CommandTagsTest --tests=dev.kestrel.app.debug.AgentHookAnswersTest --tests=dev.kestrel.app.debug.HookRulesTest --tests=dev.kestrel.app.debug.StandInRoundTest`, then `scripts\gradle.ps1 :tools:eval:test --tests=dev.kestrel.eval.run.RunnerTest`, then `scripts\gradle.ps1 :core:conversation:test --tests=*ConversationMachineTest --tests=*ConversationEngineTest`
 Expected: PASS.
 
 - [ ] **Step 14: Run every module that this task touches, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :core:conversation:test :core:agent:test :tools:eval:test :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'tools\eval\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`, then `scripts\test-scripts.ps1`
-Expected: BUILD SUCCESSFUL; `app` A₂ + 2 − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with the count of Pester tests that it had before (the scripts' changes are comments).
+Expected: BUILD SUCCESSFUL; `app` A₂ + 4 − D; `tools\eval` E₀ + 1; `device` AD₀ + 2; `:core:conversation` C₀ + 2 and `:core:agent` G₀ tests pass, as their reports show; `scripts\test-scripts.ps1` passes with one Pester test more than it had before (`AgentChecks.Tests.ps1`; the other scripts' changes are comments).
 
 - [ ] **Step 15: Commit**
 
 ```bash
-git add -A app/src tools/eval/src scripts/hook.ps1 scripts/a71-session.ps1
+git add -A app/src tools/eval/src core/conversation/src scripts/hook.ps1 scripts/a71-session.ps1 scripts/lib/AgentChecks.ps1 scripts/tests/AgentChecks.Tests.ps1
 git commit -m "feat(app): the voice path gives the conversation its inputs; AgentRunner and AppOwnerPort go (plan 7D)" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -10547,7 +11067,7 @@ Design 6.6 of sub-project 7: once Kestrel has finished speaking a command's or a
 - Consumes: Task 3's `Rules`, `VoicePath` and `VoiceChannel`; plan 7B's `ConversationSettings.followUpMillis`.
 - Produces: `Work.FOLLOWING_UP`; `State.followUpMillis`, `State.followUp`, `State.finalReply: Int?`; `Event.SpeechEnded(spoken: Boolean)` (was a `data object`), `Event.ChannelSays(reply, text, final = false)`, `Event.FollowUpLength(millis: Long)`, `Event.FollowUpEnded(followUp: Int)`; `Feedback.FollowUp(seconds: Int, reply: Int)`, `Feedback.ConversationText(text, keep = false, finalReply: Int? = null)`; `Effect.TimeFollowUp(answering = false)`; `VoicePath.say(text, final = false)`; `Requests.read(transcript, spotted, afterName = false, stopSpotted = false, followUp = false)`; `ListeningTexts.goOn(seconds)`; `internal class OwnedBar(bar: FeedbackBar)` with `show(text, keep = false, owner = BarOwner.Other)`, `takeOver(text, owner, over): Boolean` and `release(owner)`, and `internal sealed interface BarOwner` (`Other`, `Commands`, `FinalReply(reply)`, `FollowUp`); the app graph sends `FollowUpLength` at every change of the Conversations page.
 
-Counts: `:app` JVM A₃ + 10 (`RulesTest` 99 + 4 = 103, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 4 = 150; `VoiceChannelTest` changes a case, `ListeningTest` two, and `RulesTest` and `OrchestratorTest` give every `Event.SpeechEnded` its `spoken`). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₃ + 10 (`RulesTest` 100 + 4 = 104, `RequestsTest` 32 + 1 = 33, `OrchestratorTest` 15 + 1 = 16, `ListeningTest` 146 + 4 = 150; `VoiceChannelTest` changes a case, `ListeningTest` two, and `RulesTest` and `OrchestratorTest` give every `Event.SpeechEnded` its `spoken`). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -12130,7 +12650,7 @@ Design 6.8, 9.6 and 12.2 of sub-project 7: after the name, "new conversation" (a
 - Consumes: Task 3's `Requests.intent` and `Rules`; plan 7B's `InputIntent.NewConversation` and `InputIntent.ContinuePast(topic: String?)`.
 - Produces: `Request.NewConversation`, `Request.ContinuePast(topic: String?)`; `Requests.typed(text: String): InputIntent?` for plan 7F.
 
-Counts: `:app` JVM A₄ + 6 (`RequestsTest` 33 + 5 = 38, `RulesTest` 103 + 1 = 104). Device tests: AD₀ + 2, unchanged.
+Counts: `:app` JVM A₄ + 6 (`RequestsTest` 33 + 5 = 38, `RulesTest` 104 + 1 = 105). Device tests: AD₀ + 2, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -13122,7 +13642,7 @@ This is the one task of this plan that changes `:core:conversation`: plan 7B's e
 - Consumes: plan 7B's `ConversationEngine`, `LocalRequests`, `ConversationEvent` and `ConversationMachine`; Task 3's `AppGraph.conversations`.
 - Produces: `enum class HistoryDeletion { DELETED, REFUSED, FAILED }` (package `dev.kestrel.conversation.engine`); `suspend fun ConversationEngine.deleteHistory(): HistoryDeletion`; `suspend fun LocalRequests.deleteAll(stored: suspend () -> Unit = {}): Boolean`; `ConversationEvent.HistoryDeleted`; `SettingsData.deleteHistory(): HistoryDeletion`; the strings `logs_delete_refused` and `logs_delete_failed`.
 
-Counts: `:core:conversation` C₀ + 4 (`ConversationEngineTest` + 4). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
+Counts: `:core:conversation` C₀ + 2 + 4 = C₀ + 6 (`ConversationEngineTest` + 4; Task 3 added 2). `:app` JVM: A₆, unchanged. Device tests: AD₀ + 4 + 1 = AD₀ + 5 (`SettingsAppTest` + 1; `MainActivityTest.deleteHistoryWipesBothLogs` runs unchanged through the conversation).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -13717,7 +14237,7 @@ with:
 - [ ] **Step 4: Run the conversation's tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`
-Expected: PASS, C₀ + 4 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
+Expected: PASS, C₀ + 6 tests; `LocalRequestsTest.deleteHistoryAsksAndDeletesTheLogsTheConversationsAndTheWordsAfterYes` and `ConversationEngineTest.deleteHistoryLeavesNoConversationBehind` pass unchanged.
 
 - [ ] **Step 5: The settings page**
 
@@ -13859,7 +14379,7 @@ with:
 - [ ] **Step 6: Run the modules' tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 4 tests pass. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; `app` A₆; `device` AD₀ + 5; `:core:conversation` C₀ + 6 tests pass. Task 8 runs the device tests.
 
 - [ ] **Step 7: Commit**
 
@@ -13934,7 +14454,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7D": the build's commit on
 
 - `:app` JVM (with `app/src/testDebug`): A₀ + 30 − D, where D is the number of tests in `AgentRunnerTest`, `AppOwnerPortTest` and `AppAgentEnvironmentTest` that Task 3 counts in its Step 1, 39 once plan 7A has run (Task 1 + 7, Task 2 + 3, Task 3 + 2 − D, Task 4 + 10, Task 5 + 6, Task 6 + 2, Task 7 + 0). `RulesTest` has 104 cases at the end, from 124: plan 7B's Task 7 table names the new test of each case that moved, and Task 3's table the rest. `RequestsTest` has 38, from 32.
 - `:app` device tests: AD₀ + 5 (`GoalPauseTest` 2, `ConversationHooksTest` 2, `SettingsAppTest` + 1).
-- `:core:conversation`: C₀ + 4 (`ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: unchanged; Task 3 changes only comments of two scripts.
+- `:core:conversation`: C₀ + 6 (`ConversationMachineTest` + 1 and `ConversationEngineTest` + 1, Task 3's review fix M1; `ConversationEngineTest` + 4, Task 7), on top of plan 7B's count as built (`a05ea85a`). `:tools:eval`: E₀ + 1 (`RunnerTest`, Task 3). `:core:agent` G₀: unchanged. Pester: + 1 (`AgentChecks.Tests.ps1`, Task 3's review fix M2); otherwise Task 3 changes only comments of two scripts.
 
 ## Interfaces for 7E and 7F
 

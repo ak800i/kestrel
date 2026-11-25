@@ -79,18 +79,18 @@ internal class AppGoalEnvironment(
     internal var witnesses: ((options: Map<String, String>) -> TaskWitness)? = null
 
     /**
-     * Debug builds only: prepares every round in place of the phone's ports, as the A71 session's `voice-task` does
-     * (plan 2E's stand-in task, design 14.4 of sub-project 7). Null otherwise.
+     * Debug builds only: prepares every round in place of the phone's ports and words its end, as the A71 session's
+     * `voice-task` does (plan 2E's stand-in task, design 14.4 of sub-project 7). Null otherwise.
      */
     @Volatile
-    internal var standIn: (suspend (RoundStart) -> RoundSetup)? = null
+    internal var standIn: GoalEnvironment? = null
 
     // The provider of the newest round, which names it in an error's sentence.
     @Volatile
     private var provider = ""
 
     override suspend fun prepare(start: RoundStart): RoundSetup {
-        standIn?.let { return it(start) }
+        standIn?.let { return it.prepare(start) }
         if (start.purpose == RoundPurpose.ROUTINE) return routine(start)
         // Kestrel's accessibility service first, as the task path checked it before plan 7D: without it no model is
         // chosen, so the owner hears at once that the service is off, also in a test build without a script.
@@ -160,7 +160,7 @@ internal class AppGoalEnvironment(
     private suspend fun choose(start: RoundStart): RoundModels.Choice =
         models.choose(start.options).also { choice -> if (choice is RoundModels.Choice.Model) provider = choice.port.model.providerName }
 
-    override fun sentence(report: TaskReport): String = AgentTexts.sentence(report, provider)
+    override fun sentence(report: TaskReport): String = standIn?.sentence(report) ?: AgentTexts.sentence(report, provider)
 
     private suspend fun agentSettings(): AgentSettings {
         val changes = settings.get(SettingKeys.AGENT_FREE_APPS)
