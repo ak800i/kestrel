@@ -3045,7 +3045,7 @@ So `deleteAll` now deletes every row and every shard in one transaction, and the
 - A deletion that does not complete leaves every row as it was and readable; nothing is noted, and the owner can ask again.
 - A process that ends between the two steps leaves an empty archive and its key. The first change of each process (`write` or `purge`) first asks the DAO whether both tables are empty (`ConversationDao.isEmpty()`, one plain query) and erases the key when they are, before it encrypts anything. So an empty archive never keeps its key, and nothing is stored under a key that "delete history" should have erased.
 - A key that fails to erase is erased by the next change's check, because `deleteAll` marks the key as unchecked before it erases it, so the check runs again after such a failure; `theNextChangeErasesAKeyThatDeleteAllFailedToErase` tests it with a test key whose erasure throws.
-- `deleteAll` tells its two phases apart (design 9.7, as amended on 2026-11-25): it throws only when the transaction did not commit, which leaves every row, the index and the key (`aDeleteAllWhoseTransactionFailsThrowsAndKeepsEveryRowAndTheKey`). Once the transaction has committed, the deletion is complete, and it returns `KeyErasure.ERASED`, or `KeyErasure.KEPT` when the key could not be erased, so that plan 7B's store counts the deletion as complete and notes the kept key as a failure of its own.
+- `deleteAll` tells its two phases apart (design 9.7, as amended on 2026-11-25): it throws only when the transaction did not commit, which leaves every row, the index and the key (`aDeleteAllWhoseTransactionFailsThrowsAndKeepsEveryRowAndTheKey`). Once the transaction has committed, the deletion is complete, and it returns `KeyErasure.ERASED`, or `KeyErasure.KEPT` when the key could not be erased, so that plan 7B's store counts the deletion as complete and notes the kept key as a failure of its own. Once `deleteAll` holds the key's guard, the transaction and its result run as one unit that cancellation cannot split (`withContext(NonCancellable)`), so that the contract holds for any caller: a caller cancelled while the transaction runs still gets the result (`aCallerCancelledWhileTheTransactionRunsStillGetsItsResult`).
 - Once the key is gone, no key opens the copies of deleted pages that SQLite's journal may still hold, as before.
 
 The first change of a process also erases the key of an archive that retention emptied; that costs nothing, because no row needs it, and the next write makes a new key.
@@ -3058,7 +3058,7 @@ The first change of a process also erases the key of an archive that retention e
 - Consumes: Task 4b's `ConversationDao`, `ConversationArchiveStore` and `ErasableKey` with its `guard` and `withExisting`, as built and reviewed (`d9382170`): only a write makes the key, and a read decrypts with the key as it is.
 - Produces: `abstract fun ConversationDao.isEmpty(): Boolean` (both tables empty); `ConversationArchiveStore.deleteAll(): KeyErasure` that deletes the rows and the index in one transaction and then erases the key, throws only when the transaction did not commit, and returns `enum class KeyErasure { ERASED, KEPT }`; `ConversationArchiveStore.write` and `purge`, whose first call in each process erases the key of an empty archive. The schema does not change: `3.json` stays as Task 4b generated it.
 
-Counts: `:core:privacy` JVM N + 3 (`ConversationArchiveStoreTest` 17 → 20; 84 + 3 = 87 at `d9382170`). `:core:privacy` device tests unchanged (`KestrelDatabaseTest` 10, with three more checks).
+Counts: `:core:privacy` JVM N + 4 (`ConversationArchiveStoreTest` 17 → 21; 84 + 4 = 88 at `d9382170`). `:core:privacy` device tests unchanged (`KestrelDatabaseTest` 10, with three more checks).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3196,6 +3196,30 @@ with:
         assertEquals(setOf("0"), dao.shards.keys)
         assertEquals(0, key.erased)
         assertTrue(store.read(listOf("a")).single() is StoredConversation.Readable)
+    }
+
+    // Design 9.7 of sub-project 7: deleteAll throws only when its transaction did not commit, also for a caller that is
+    // cancelled while the transaction runs: the transaction and its result are one unit that cancellation cannot split.
+    @Test
+    fun aCallerCancelledWhileTheTransactionRunsStillGetsItsResult() = runTest {
+        write(PlainConversation(closed("a", last = 1), byteArrayOf(1)))
+        val inside = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        dao.beforeDeleteAll = { inside.countDown(); gate.await(5, TimeUnit.SECONDS) }
+        var outcome: Result<KeyErasure>? = null
+        Executors.newSingleThreadExecutor().asCoroutineDispatcher().use { dispatcher ->
+            val store = ConversationArchiveStore(dao, key, dispatcher = dispatcher)
+            val delete = launch(Dispatchers.Default) { outcome = runCatching { store.deleteAll() } }
+            assertTrue(inside.await(5, TimeUnit.SECONDS))
+
+            delete.cancel()
+            gate.countDown()
+            delete.join()
+        }
+
+        assertEquals(KeyErasure.ERASED, outcome?.getOrThrow())
+        assertTrue(dao.rows.isEmpty())
+        assertEquals(1, key.erased)
     }
 
     // Without the key's guard, the key could be erased between a write's encryption and its row, which no key would then
@@ -3452,6 +3476,21 @@ with:
 In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
 
 ```kotlin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+```
+
+with:
+
+```kotlin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
+```
+
+In `core/privacy/src/main/kotlin/dev/kestrel/privacy/conversations/ConversationArchiveStore.kt`, replace:
+
+```kotlin
 /** One change, in one transaction: [conversations] stored, [deleted] deleted, and the index as [index] says. */
 class ConversationChange(val conversations: List<PlainConversation>, val deleted: Collection<String>, val index: IndexUpdate) {
     override fun toString(): String = "ConversationChange(conversations=${conversations.size}, deleted=${deleted.size}, index=$index)"
@@ -3518,11 +3557,13 @@ with:
      * SQLite's journal still holds, can be decrypted any more. It throws only when the transaction did not commit, which
      * leaves every row as it was. Once it has committed, the deletion is complete: it returns [KeyErasure.KEPT] when the key
      * could not be erased, which the next change erases before it stores anything, as it erases the key that a process
-     * which ended between the two left. The next write makes a new key.
+     * which ended between the two left. The next write makes a new key. Once it holds the key's guard, the transaction and
+     * its result are one unit that cancellation cannot split, so that this holds for any caller: a caller cancelled
+     * meanwhile still gets the result, and its cancellation takes effect at its next suspension.
      */
-    suspend fun deleteAll(): KeyErasure {
-        val erasure = key.guard.withLock {
-            withContext(dispatcher) {
+    suspend fun deleteAll(): KeyErasure = key.guard.withLock {
+        withContext(NonCancellable) {
+            val erasure = withContext(dispatcher) {
                 dao.deleteAll()
                 keyChecked = false
                 try {
@@ -3533,9 +3574,9 @@ with:
                     KeyErasure.KEPT
                 }
             }
+            reports.withLock { reportedUnknown.clear() }
+            erasure
         }
-        reports.withLock { reportedUnknown.clear() }
-        return erasure
     }
 
     /**
@@ -3558,7 +3599,7 @@ with:
 - [ ] **Step 4: Build and run the JVM tests**
 
 Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest :core:privacy:compileDebugAndroidTestKotlin`, then `$n = 0; Get-ChildItem core\privacy\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\privacy $n"; git status --short core/privacy/schemas`
-Expected: BUILD SUCCESSFUL; `core\privacy` N + 3 (87 at `d9382170`); no change under `core/privacy/schemas`, because a query changes no schema.
+Expected: BUILD SUCCESSFUL; `core\privacy` N + 4 (88 at `d9382170`); no change under `core/privacy/schemas`, because a query changes no schema.
 
 - [ ] **Step 5: The database's device test on kestrel-api37**
 
@@ -4197,7 +4238,7 @@ Write the times of both devices into `.superpowers\sdd\progress.md`. These are t
 
 ## Counts at the end of plan 7C
 
-- `:core:privacy` JVM: P₀ + 21 (Task 2: 1, Task 3: 10, Task 4b: 7, Task 4c: 3).
+- `:core:privacy` JVM: P₀ + 22 (Task 2: 1, Task 3: 10, Task 4b: 7, Task 4c: 4).
 - `:app` JVM: A₀ (unchanged).
 - `:core:privacy` device tests: D₀ + 13 (32 when D₀ is 19), one of them skipped without its instrumentation argument.
 - `:app` device tests: AD₀ + 7 (450 when AD₀ is 443).

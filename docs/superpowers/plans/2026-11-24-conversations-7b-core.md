@@ -4704,7 +4704,7 @@ The tests also take the load of the index through each of its failures, with the
 
 `MemoryArchive` checks, after every write that stores shards, what the store's design rests on: the shards decode, their stamp is the table's, and no open row is in them. So every test of the store also checks that property.
 
-Every shard that the store writes decodes again, by construction (design 9.2), never by an estimate of how Kestrel is used: `SearchIndex` leaves out a folded word longer than `MAX_WORD_LENGTH` (40 characters) and holds at most `CONVERSATION_WORDS` (10,000) different words and `CONVERSATION_POSITIONS` (20,000) positions of one conversation, its records in order and each record's words in the order of its texts, and no record that is left without words. A conversation or a kept row enters a shard one at a time, and a shard is full at `PastIndex.SHARD_POSITIONS` positions or at `PastIndex.SHARD_BYTES` (2 MB) of `IndexShard.plainBytes`, the most bytes that it takes before Deflate; a `KeptRow`'s id is at most 32 characters. So one conversation adds at most `PastIndexCodec.MOST_CONVERSATION_BYTES` (about 1.7 MB) to a shard, `MAX_PLAIN_BYTES` is four times a full shard's bound (about 14.8 MB), and `PastIndexCodec.encode` refuses a shard past it. A shard's format keeps each conversation's number of commands apart from the records that the index holds of it, which `IndexShard.restored` allows to be fewer, each once. A test saves one huge conversation of long words: it is indexed within the bounds, its shard decodes, and the next start rebuilds nothing. The tests that use the coroutines' test clock opt in to `ExperimentalCoroutinesApi` in their class.
+Every shard that the store writes decodes again, by construction (design 9.2), never by an estimate of how Kestrel is used: `SearchIndex` leaves out a folded word longer than `MAX_WORD_LENGTH` (40 characters) and holds at most `CONVERSATION_WORDS` (10,000) different words and `CONVERSATION_POSITIONS` (20,000) positions of one past conversation (`SearchIndex.withinBounds`): its first record, whose request names it, and then its newest records, the newest first, so that the records between them go first, each record's words in the order of its texts, and no record that is left without words. The open conversation, which is never encoded, is searched whole (`SearchIndex.whole`). A test checks a long conversation: its first and newest commands match, a command between them does not, and the same conversation, open, matches all three. A conversation or a kept row enters a shard one at a time, and a shard is full at `PastIndex.SHARD_POSITIONS` positions or at `PastIndex.SHARD_BYTES` (2 MB) of `IndexShard.plainBytes`, the most bytes that it takes before Deflate; a `KeptRow`'s id is at most 32 characters. So one conversation adds at most `PastIndexCodec.MOST_CONVERSATION_BYTES` (about 1.7 MB) to a shard, `MAX_PLAIN_BYTES` is four times a full shard's bound (about 14.8 MB), and `PastIndexCodec.encode` refuses a shard past it. A shard's format keeps each conversation's number of commands apart from the records that the index holds of it, which `IndexShard.restored` allows to be fewer, each once. A test saves one huge conversation of long words: it is indexed within the bounds, its shard decodes, and the next start rebuilds nothing. The tests that use the coroutines' test clock opt in to `ExperimentalCoroutinesApi` in their class.
 
 **Files:**
 - Modify (whole files): `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`; and Task 5b's `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/SearchIndex.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/IndexShard.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndex.kt` and `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/PastIndexCodec.kt`
@@ -4727,7 +4727,7 @@ Every shard that the store writes decodes again, by construction (design 9.2), n
 
   Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
 
-Counts: `:core:conversation` 149 + 31 (`ArchivedConversationStoreTest` 16 → 42, `HistorySearchTest` 11 → 13, `PastIndexTest` 10 → 12, `MemoryArchiveTest` 1, `HistoryRankingTest` and `RetentionTest` unchanged) = 180; N + 31 if Task 5b's count differed.
+Counts: `:core:conversation` 149 + 32 (`ArchivedConversationStoreTest` 16 → 42, `HistorySearchTest` 11 → 14, `PastIndexTest` 10 → 12, `MemoryArchiveTest` 1, `HistoryRankingTest` and `RetentionTest` unchanged) = 181; N + 32 if Task 5b's count differed.
 
 - [ ] **Step 1: Write the failing tests and the archive in memory**
 
@@ -5308,8 +5308,8 @@ class ArchivedConversationStoreTest {
     }
 
     // Design 9.2 and 9.4: whatever a conversation holds, the index keeps at most SearchIndex's bounds of it: no word longer
-    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first records
-    // first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
+    // than MAX_WORD_LENGTH, CONVERSATION_WORDS different words and CONVERSATION_POSITIONS positions, its first record and
+    // then its newest ones first. So its shard decodes again, and the next start trusts it and rebuilds nothing.
     @Test
     fun aHugeConversationOfLongWordsIsIndexedWithinItsBoundsAndTheNextStartTrustsItsShard() = test {
         fun letters(n: Int) = (0 until 3).map { 'a' + n / pow26(it) % 26 }.joinToString("")
@@ -5327,8 +5327,8 @@ class ArchivedConversationStoreTest {
         assertEquals(SearchIndex.CONVERSATION_WORDS, words.size)
         assertEquals(SearchIndex.CONVERSATION_POSITIONS, shard.positions)
         assertTrue(words.all { it.length <= SearchIndex.MAX_WORD_LENGTH })
-        assertTrue("com" + letters(0) in words && "own" + letters(0) + letters(0) in words)
-        assertFalse("own" + letters(119) + letters(0) in words)
+        assertTrue("own" + letters(0) + letters(0) in words && "own" + letters(119) + letters(0) in words)
+        assertFalse("own" + letters(40) + letters(0) in words)
         archive.calls.clear()
 
         val started = fresh()
@@ -5990,6 +5990,27 @@ class HistorySearchTest {
 
         assertEquals(listOf("Ambar dinner"), requests("Ambar", excluding = RecordRef(id(1), 2)))
         assertEquals(listOf("Ambar dinner"), search.port(RecordRef(id(1), 2)).search(HistoryQuery("Ambar")).matches.map { it.request })
+    }
+
+    // Design 9.2 and 9.4: within the bounds of one conversation, a past conversation keeps its first command, which names
+    // it, and its newest commands searchable; the commands in between go first. The open conversation is searched whole.
+    @Test
+    fun aLongPastConversationKeepsItsFirstAndNewestCommandsSearchableAndTheOpenOneAllOfThem() = test {
+        fun filler(n: Int) = "f" + (0 until 5).map { 'a' + n / (0 until it).fold(1) { power, _ -> power * 26 } % 26 }.joinToString("")
+        val requests = (1..250).map { n -> if (n == 1) "Ambar" else if (n == 100) "Zoran" else if (n == 250) "Kafana" else "Request $n" }
+        fun records() = requests.mapIndexed { index, request ->
+            record(index + 1, request, day - index, answer = List(100) { filler(index * 100 + it) }.joinToString(" "))
+        }.toTypedArray()
+
+        save(1, *records())
+
+        assertEquals(listOf("Ambar"), requests("Ambar"))
+        assertEquals(listOf("Kafana"), requests("Kafana"))
+        assertTrue(requests("Zoran").isEmpty())
+
+        save(2, *records(), open = true)
+
+        assertEquals(listOf("Zoran"), requests("Zoran"))
     }
 
     @Test
@@ -7540,7 +7561,7 @@ sealed interface ConversationLookup {
  * The on-device search over past conversations (design 9.4 of sub-project 7), behind plan 7A's `search_conversations`, and
  * the search for a conversation to continue (design 9.6). It reads what the store's [ConversationStore.searchable] gives:
  * the index of past conversations, whose records within retention it searches, and the open conversation, whose records
- * other than the asking command's it folds at each search (never an observation or a screenshot, which no record holds).
+ * other than the asking command's it folds whole at each search (never an observation or a screenshot, which no record holds).
  * [HistoryRanking] matches and orders them, and only the best matches' bodies are read, in one call, for their details.
  * While the index is being rebuilt, or cannot be read, the search says so ([HistoryResult.REBUILDING],
  * [HistoryResult.FAILED], [ConversationLookup.Rebuilding], [ConversationLookup.Unavailable]) and gives no match, not even
@@ -7564,7 +7585,7 @@ class HistorySearch(
         }
         val open = searchable.open
         val reach = reach(searchable.past).mapTo(HashSet()) { it.id }
-        val indexes = searchable.past.searches + listOfNotNull(open?.let { SearchIndex.of(listOf(it)) })
+        val indexes = searchable.past.searches + listOfNotNull(open?.let(SearchIndex::whole))
         val ranked = HistoryRanking.rank(indexes, query, clock.zone(), reached = { record ->
             record.ref != excluding && (record.ref.conversation in reach || record.ref.conversation == open?.id)
         })
@@ -7699,9 +7720,11 @@ class SearchIndex private constructor(val words: List<String>, val records: List
      * Builds an index one conversation at a time, as a rebuild reads them (design 9.2): each word gets a number when it
      * first comes, and [build] sorts the words once and turns the numbers into positions, so that no conversation is kept
      * after it was added. A word that [shared] already holds, from another builder, is taken from it, so that the words of
-     * several indexes are kept once in memory. toString prints only counts.
+     * several indexes are kept once in memory. A [bounded] builder, which every index of past conversations uses, takes
+     * each conversation within the bounds of one conversation in a shard ([withinBounds]); the open conversation's, which
+     * is never encoded, takes it whole. toString prints only counts.
      */
-    class Builder(private val shared: MutableMap<String, String> = HashMap()) {
+    class Builder(private val shared: MutableMap<String, String> = HashMap(), private val bounded: Boolean = true) {
         private val numbers = HashMap<String, Int>()
         private val records = ArrayList<IndexedRecord>()
 
@@ -7710,29 +7733,18 @@ class SearchIndex private constructor(val words: List<String>, val records: List
             private set
 
         /**
-         * Adds [conversation]'s records within the bounds of one conversation (design 9.2 and 9.4): its records in order,
-         * each record's words in the order of its texts, at most [CONVERSATION_WORDS] different words and at most
-         * [CONVERSATION_POSITIONS] positions in all. A word that would pass a bound is left out, and so is a record that is
-         * left without words, because it can match no query. Returns how many word positions the conversation holds.
+         * Adds [conversation]'s records, within the bounds of one conversation when the builder is [bounded]. A record without
+         * words is left out, because it can match no query. Returns how many word positions the conversation holds.
          */
         fun add(conversation: ConversationSnapshot): Int {
-            val own = HashSet<String>()
             var positions = 0
-            for (record in conversation.records) {
-                if (positions == CONVERSATION_POSITIONS) break
-                val found = ArrayList<Int>()
-                for (word in folded(record)) {
-                    if (positions == CONVERSATION_POSITIONS) break
-                    if (word !in own) {
-                        if (own.size == CONVERSATION_WORDS) continue
-                        own += word
-                    }
-                    found += number(word)
-                    positions++
-                }
-                if (found.isEmpty()) continue
+            val indexed = if (bounded) withinBounds(conversation) else conversation.records.map { it to folded(it).toList() }
+            for ((record, words) in indexed) {
+                if (words.isEmpty()) continue
+                val found = words.map(::number)
                 records += IndexedRecord(RecordRef(conversation.id, record.number), record.atWall, found.toIntArray())
                 plainBytes += PastIndexCodec.recordBytes(found.size)
+                positions += found.size
             }
             return positions
         }
@@ -7765,32 +7777,68 @@ class SearchIndex private constructor(val words: List<String>, val records: List
     companion object {
         /**
          * The longest folded word that the index holds, in characters: no name or topic is longer, and the longer runs of
-         * letters and digits are tokens, codes and numbers, of which a near miss cannot be judged anyway. A longer word is
-         * not searchable (design 9.4). With [CONVERSATION_WORDS] and [CONVERSATION_POSITIONS], it bounds what one
-         * conversation adds to a shard, so that every shard stays far under the bound that its decoder allows (design 9.2).
+         * letters and digits are tokens, codes and numbers, of which a near miss cannot be judged anyway. A longer word of a
+         * past conversation is not searchable (design 9.4). With [CONVERSATION_WORDS] and [CONVERSATION_POSITIONS], it bounds
+         * what one conversation adds to a shard, so that every shard stays far under the bound that its decoder allows
+         * (design 9.2).
          */
         const val MAX_WORD_LENGTH = 40
 
         /**
-         * The most different words that the index holds of one conversation: about 30 commands of heavy use (design R3).
-         * The words of a longer conversation that come after them are not searchable; those that it already holds are.
+         * The most different words that the index holds of one past conversation: about 30 commands of heavy use (design
+         * R3). The words that a longer conversation's commands between its first and its newest add after them are not
+         * searchable; those that it already holds are.
          */
         const val CONVERSATION_WORDS = 10_000
 
         /**
-         * The most word positions that the index holds of one conversation, a fifth of a shard: about 65 commands of heavy
-         * use. The records after them are not searchable. Without it, a conversation continued again and again would carry
-         * its shard past its decoder's bound by its records alone.
+         * The most word positions that the index holds of one past conversation, a fifth of a shard: about 65 commands of
+         * heavy use. The commands between its first and its newest that come after them are not searchable. Without it, a
+         * conversation continued again and again would carry its shard past its decoder's bound by its records alone.
          */
         const val CONVERSATION_POSITIONS = 20_000
 
         val EMPTY = SearchIndex(emptyList(), emptyList())
 
-        /** The index of the records of [conversations]: the folded words of every text that each record holds. */
+        /** The index of the records of [conversations], past ones, each within the bounds of one conversation in a shard. */
         fun of(conversations: List<ConversationSnapshot>): SearchIndex {
             val builder = Builder()
             for (conversation in conversations) builder.add(conversation)
             return builder.build()
+        }
+
+        /** The index of every record of [conversation], the open one, which is never encoded, so no bound applies (design 9.4). */
+        fun whole(conversation: ConversationSnapshot): SearchIndex = Builder(bounded = false).apply { add(conversation) }.build()
+
+        /**
+         * The words that the index holds of [conversation]'s records, a past conversation's, within the bounds of one
+         * conversation (design 9.2 and 9.4): its first record, whose request names the conversation, and then its newest
+         * records, the newest first, so that the records between them go first; each record's words in the order of its
+         * texts and no longer than [MAX_WORD_LENGTH]; at most [CONVERSATION_WORDS] different words and
+         * [CONVERSATION_POSITIONS] positions in all. A word that would pass a bound is left out. The records come in their
+         * order, each with its words.
+         */
+        fun withinBounds(conversation: ConversationSnapshot): List<Pair<CommandRecord, List<String>>> {
+            val records = conversation.records
+            val kept = arrayOfNulls<List<String>>(records.size)
+            val own = HashSet<String>()
+            var positions = 0
+            for (index in listOf(0) + (records.lastIndex downTo 1)) {
+                if (index !in records.indices || positions == CONVERSATION_POSITIONS) break
+                val words = ArrayList<String>()
+                for (word in folded(records[index])) {
+                    if (positions == CONVERSATION_POSITIONS) break
+                    if (word.length > MAX_WORD_LENGTH) continue
+                    if (word !in own) {
+                        if (own.size == CONVERSATION_WORDS) continue
+                        own += word
+                    }
+                    words += word
+                    positions++
+                }
+                kept[index] = words
+            }
+            return records.indices.mapNotNull { index -> kept[index]?.let { records[index] to it } }
         }
 
         /**
@@ -7810,8 +7858,7 @@ class SearchIndex private constructor(val words: List<String>, val records: List
         /**
          * The folded words of every text that [record] holds, each once, in the order of its texts: its request and answer,
          * its apps' labels, its data notes, its lines, its ledger and its checklist's items, folded with `Normalizer.words`,
-         * so that letter case, diacritics and the two Serbian scripts fold as the matcher folds them. A word longer than
-         * [MAX_WORD_LENGTH] is left out.
+         * so that letter case, diacritics and the two Serbian scripts fold as the matcher folds them.
          */
         fun folded(record: CommandRecord): Set<String> {
             val texts = listOfNotNull(record.request, record.answer) +
@@ -7821,7 +7868,7 @@ class SearchIndex private constructor(val words: List<String>, val records: List
                 record.ledger +
                 record.checklist?.items?.map { it.text }.orEmpty()
             val words = LinkedHashSet<String>()
-            for (text in texts) Normalizer.words(text).filterTo(words) { it.length <= MAX_WORD_LENGTH }
+            for (text in texts) words += Normalizer.words(text)
             return words
         }
 
@@ -8427,12 +8474,12 @@ object PastIndexCodec {
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: PASS, 76 tests (`ArchivedConversationStoreTest` 42, `HistorySearchTest` 13, `PastIndexTest` 12, `MemoryArchiveTest` 1, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
+Expected: PASS, 77 tests (`ArchivedConversationStoreTest` 42, `HistorySearchTest` 14, `PastIndexTest` 12, `MemoryArchiveTest` 1, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 180`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 181`.
 
 - [ ] **Step 6: Commit**
 
@@ -9393,7 +9440,7 @@ The other 52 cases of `RulesTest` are the voice's own (the listening modes, the 
 - Consumes: Task 1's model; Task 6's `ChannelOutput`, `QuestionKind`, `DialogueEvent`; `dev.kestrel.agent.TaskReport`, `EndReason`, `Interruption`; `dev.kestrel.agent.goal.ResumeCause`; `dev.kestrel.agent.port.HandOverEnd`.
 - Produces: `object dev.kestrel.conversation.ConversationTexts` (the constants and functions below, among them `GOT_IT`, `STOP_GOAL_FIRST`, `NOTHING_TO_CONTINUE`, `ANSWER_CONTINUE_FIRST`, `CONTINUE_GOAL`, `CONTINUE_WORD`, `NEW_CONVERSATION`, `CALL_STARTED`, `NOTHING_CHANGED`, `GO_ON`, `LEAVE_KESTREL`, `NOT_FOUND`, `GONE`, `PREPARING_PAST`, `DELETE_HISTORY_QUESTION`, `SAY_YES_OR_NO`, `HISTORY_DELETED`, `HISTORY_NOT_DELETED`, `REMEMBERED`, `FORGOTTEN`, `NOT_SAVED`, `NOTHING_TO_SAVE`, `COULD_NOT`, `finishHandOverFirst(channel)`, `held(hold)`, `tooLate(texts)`, `remember(key, value)`, `forget(key)`, `noFact(key)`, `day(wall, zone)`, `date(wall, zone)`, `switchQuestion(day, firstRequest)`, `backIn(day)`, `continuedNote(wall, zone, testMode)`); package `dev.kestrel.conversation.local`: `sealed interface LocalRequest { val words: String? }` with `Remember(key, value)`, `Forget(key)`, `SaveRoutine(name)`, `DeleteHistory`, `ContinuePast(topic: String?)`; `sealed interface LocalOutcome { val sentence: String? }` with `Reply(sentence)`, `Quiet`, `Switch(id: ConversationId)`, `Deleted(sentence)`. Package `dev.kestrel.conversation.machine`: `data class ConversationState(id, openedAtWall, testMode, continuedAtWall, commands, command, goal, question: OpenQuestion?, asksContinue, continueAnswer: OwnerInput?, replyChannel, voiceOn, quiet: QuietClock, composing, awaiting, replying: Int?, heldReport: ChannelOutput.Report?, heldWords: ChannelOutput.Said?, local: LocalRun?, next: OwnerInput?, closeAfterGoal, phone: PhoneState, timers: Timers, settings: ConversationSettings, safetyTestMode)`; `data class OpenQuestion(number: Int, kind: QuestionKind, replyOpen: Boolean = false)`; `data class LocalRun(command: Int, record: Int?, input: OwnerInput, cancelled: Boolean = false)`; `data class PhoneState(locked, ringing, inCall, known = false)` with `away` and `present` (`known` once `LOCKED` or `UNLOCKED` came); `data class Timers(quiet, hold, handOver, question)`; `enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }`; `sealed interface QuietClock { Off; Held(why: HoldReason); Running(number: Int, sinceWall: Long) }`; `enum class HoldReason { GOAL, QUESTION, WORKING, REPLYING, COMPOSING, WAITING_FOR_COMMAND }`; `sealed interface ConversationEvent` with `Input(input)`, `Dialogue(event: DialogueEvent)`, `GoalEnded(command, report: TaskReport, answer: String?, reply: String?)`, `Touched`, `ReplyShown(command)`, `TimerEnded(timer, number)`, `Composing(active)`, `Awaiting(active)`, `Voice(on)`, `ReplyOpened(question)`, `Signal(signal: PhoneSignal)`, `SettingsChanged(settings, testMode)`, `Restored(snapshot: ConversationSnapshot?, previous: ProcessEnd = ProcessEnd.Other)`, `ContinueAnswered(answer: ChannelAnswer)`, `LocalEnded(command, outcome: LocalOutcome)`, `Switched(snapshot: ConversationSnapshot?, sentence: String)`, `EndQuietTime`; `sealed interface ConversationEffect` with `StartGoal(command, record, input: OwnerInput, text)`, `ResumeGoal(command, cause: ResumeCause, steer: Steering?, input: OwnerInput?)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause: Interruption)`, `CancelGoal(reason: EndReason, sentence: String? = null)`, `EndHeldGoal(reason: EndReason)`, `AnswerQuestion(number, answer: ChannelAnswer)`, `EndHandOver(number, end: HandOverEnd)`, `AskContinueGoal`, `CancelContinueQuestion`, `Output(output: ChannelOutput)`, `AddLine(record, kind: LineKind, text, channel: InputChannel?)`, `EndRecord(record, end: EndReason, answer: String?)`, `RunLocal(command, record: Int?, request: LocalRequest, input: OwnerInput)`, `CancelLocal`, `SwitchTo(command, id, input: OwnerInput)`, `StartTimer(timer, number, millis: Long)`, `Close(id, keep: Boolean = true)`, `Persist`; `data class Steering(text: String, channel: InputChannel)`; `data class MachineStep(state, effects)` with `then`; `class ConversationMachine(ids: () -> ConversationId) { fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep }`; `internal object QuietRules` and `internal object GoalRules` (`HOLD_MILLIS`, `HAND_OVER_MILLIS`, `QUESTION_MILLIS`, `CONFIRM_MILLIS`, `REPLY_MILLIS`).
 
-Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 45 to `:core:conversation` (Task 5b 14, Task 5d 31).
+Counts: `:core:conversation` 81 + 54 (`QuietClockTest` 6, `ConversationMachineTest` 29, `GoalRulesTest` 19) = 135. Task 7 ran before Tasks 5a to 5d, which add 46 to `:core:conversation` (Task 5b 14, Task 5d 32).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -11697,7 +11744,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 180 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 195, after Tasks 5a to 5d.
+Counts: `:core:conversation` 181 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 196, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -12774,7 +12821,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 195`.
+Expected: BUILD SUCCESSFUL; `core\conversation 196`.
 
 - [ ] **Step 7: Commit**
 
@@ -12798,7 +12845,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
-Counts: `:core:conversation` 195 + 9 = 204.
+Counts: `:core:conversation` 196 + 9 = 205.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -13173,7 +13220,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 204`.
+Expected: BUILD SUCCESSFUL; `core\conversation 205`.
 
 - [ ] **Step 6: Commit**
 
@@ -13196,7 +13243,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 204 + 15 = 219. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 205 + 15 = 220. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -14330,7 +14377,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 219` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 220` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -14343,7 +14390,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 219, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 31, Task 8: 15, Task 9: 9, Task 10: 15).
+- `:core:conversation`: C₀ + 220, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 32, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
