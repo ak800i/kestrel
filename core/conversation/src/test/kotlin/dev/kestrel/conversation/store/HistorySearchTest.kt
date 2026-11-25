@@ -143,4 +143,16 @@ class HistorySearchTest {
         assertNull(search.conversation("Wi-Fi"))
         assertFalse(search.conversation("trip")!!.firstRequest.isEmpty())
     }
+
+    @Test
+    fun theSearchsTypesPrintNoWords() = runTest {
+        val marker = "Zorana"
+        val record = record(1, "Call $marker", day, answer = marker)
+        save(1, record)
+        assertEquals(1, requests(marker).size)
+        val entry = SearchEntry.of(id(1), record)
+        val values = listOf(entry, RankedEntry(entry, 1), search.conversation(marker)!!, search, search.port(RecordRef(id(1), 1)))
+
+        for (value in values) assertFalse(value.javaClass.simpleName, value.toString().contains(marker, ignoreCase = true))
+    }
 }

@@ -14,8 +14,8 @@ data class RecordRef(val conversation: ConversationId, val record: Int)
 
 /**
  * One command as the search sees it (design 9.4 of sub-project 7): where it is, when it was given (wall clock) and the
- * folded words of its texts. It holds no text that could be read back as the owner's words, only their folded forms, which
- * are kept in memory only. toString prints only counts.
+ * folded words of its texts. The folded words are the owner's words and Kestrel's, folded, so they are kept in memory only;
+ * toString prints only counts.
  */
 data class SearchEntry(val ref: RecordRef, val atWall: Long, val words: Set<String>) {
     override fun toString(): String = "SearchEntry(record=${ref.record}, words=${words.size})"
@@ -57,22 +57,30 @@ object HistoryRanking {
     /** The folded words of [texts], which an entry holds. */
     fun words(texts: List<String>): Set<String> = texts.flatMapTo(HashSet()) { Normalizer.words(it) }
 
+    /** The query's words that count, folded, each once; empty when [text] holds no topic. */
+    fun wanted(text: String): List<String> = Normalizer.words(text).filter { it !in IGNORED }.distinct()
+
     /**
      * The entries that match [query], best match first and the newer first on a tie: only those given on a day from
      * [HistoryQuery.from] to [HistoryQuery.to] in [zone], both included. Empty when the query holds no word that counts.
+     * Each query word's near misses are worked out once, over the distinct words of all the entries, so [similarity], the
+     * matcher's score (`LabelMatcher.score`; a test may count its calls), scores each distinct word at most once per query
+     * word, however many entries hold it.
      */
-    fun rank(entries: List<SearchEntry>, query: HistoryQuery, zone: ZoneId): List<RankedEntry> {
+    fun rank(
+        entries: List<SearchEntry>,
+        query: HistoryQuery,
+        zone: ZoneId,
+        similarity: (String, String) -> Double = { wanted, word -> LabelMatcher.score(wanted, word) },
+    ): List<RankedEntry> {
         val wanted = wanted(query.text)
         if (wanted.isEmpty()) return emptyList()
-        return entries.asSequence()
-            .filter { within(it, query, zone) }
-            .mapNotNull { entry -> score(entry, wanted)?.let { RankedEntry(entry, it) } }
+        val reached = entries.filter { within(it, query, zone) }
+        val vocabulary = reached.flatMapTo(HashSet()) { it.words }
+        val near = wanted.map { word -> vocabulary.filterTo(HashSet()) { it == word || near(word, it, similarity) } }
+        return reached.mapNotNull { entry -> score(entry, near)?.let { RankedEntry(entry, it) } }
             .sortedWith(compareByDescending<RankedEntry> { it.score }.thenByDescending { it.entry.atWall })
-            .toList()
     }
-
-    /** The query's words that count, folded, each once; empty when [text] holds no topic. */
-    fun wanted(text: String): List<String> = Normalizer.words(text).filter { it !in IGNORED }.distinct()
 
     private fun within(entry: SearchEntry, query: HistoryQuery, zone: ZoneId): Boolean {
         if (query.from == null && query.to == null) return true
@@ -80,12 +88,15 @@ object HistoryRanking {
         return (query.from == null || day >= query.from) && (query.to == null || day <= query.to)
     }
 
-    private fun score(entry: SearchEntry, wanted: List<String>): Int? {
-        val score = wanted.count { word -> word in entry.words || entry.words.any { near(word, it) } }
-        return score.takeIf { it * 2 >= wanted.size }
+    /** How many query words [entry] holds, each given by the words that count as it ([near]); null under half. */
+    private fun score(entry: SearchEntry, near: List<Set<String>>): Int? {
+        val score = near.count { counted ->
+            if (counted.size <= entry.words.size) counted.any { it in entry.words } else entry.words.any { it in counted }
+        }
+        return score.takeIf { it * 2 >= near.size }
     }
 
-    private fun near(wanted: String, word: String): Boolean =
+    private fun near(wanted: String, word: String, similarity: (String, String) -> Double): Boolean =
         wanted.length >= NEAR_LETTERS && word.length >= NEAR_LETTERS && wanted[0] == word[0] &&
-            LabelMatcher.score(wanted, word) + MatchRules.TOLERANCE >= MatchRules.ACCEPT
+            similarity(wanted, word) + MatchRules.TOLERANCE >= MatchRules.ACCEPT
 }

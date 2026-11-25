@@ -40,6 +40,7 @@ class HistorySearch(
 
     /** The commands that match [query], other than [excluding], which asks. */
     suspend fun search(query: HistoryQuery, excluding: RecordRef? = null): HistoryResult = mutex.withLock {
+        if (HistoryRanking.wanted(query.text).isEmpty()) return@withLock HistoryResult(emptyList())
         val reach = store.closedSince(since()) + listOfNotNull(store.open())
         val entries = entries(reach, prune = true).filter { it.ref != excluding }
         val ranked = HistoryRanking.rank(entries, query, clock.zone())
