@@ -123,7 +123,11 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val confirming = owner.confirming?.takeIf { current }?.wire ?: "none"
         // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
         val question = owner.asking?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
-        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question"
+        // The goal's checklist in counts, and whether a conversation is open (design 14.4 of sub-project 7).
+        val checklist = ConversationHookAnswers.checklist(view.checklist?.takeIf { current })
+        val conversation = if (view.id != null) "open" else "closed"
+        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question " +
+            "checklist=$checklist conversation=$conversation"
     }
 
     // agent-cache --es field <anthropicMarks|responsesExplicit|chatCopilotMarks> --ez on <true|false>

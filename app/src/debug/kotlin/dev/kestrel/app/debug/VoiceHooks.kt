@@ -123,7 +123,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
 
     // The latest instant command, or with --ei number the command with that number, as long as it is one of the newest 16:
     // its number, its kind and how it ended, never its words. With a number, latest= gives the latest command's number,
-    // so that a check of the A71 sessions sees how many commands started after its own.
+    // so that a check of the A71 sessions sees how many commands started after its own. followUp= says whether the
+    // follow-up window is open (design 6.6 and 14.4 of sub-project 7).
     private fun state(intent: Intent): String {
         val state = graph.listening.state.value
         val session = if (graph.listening.sessionOpen.value) "open" else "closed"
@@ -143,7 +144,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
         val latest = if (asked > 0) " latest=${state.command}" else ""
         return "mode=${state.mode.name.lowercase()} work=${state.work.name.lowercase()} speaking=${state.speaking} " +
             "microphone=${state.microphone} recognition=${state.recognition.name.lowercase()} " +
-            "screenOn=${state.screenOn} micBusy=${state.micBusy} command=$number kind=$kind outcome=$outcome$latest " +
+            "followUp=${if (state.work == Work.FOLLOWING_UP) "open" else "closed"} screenOn=${state.screenOn} micBusy=${state.micBusy} command=$number kind=$kind outcome=$outcome$latest " +
             "session=$session clips=$clips"
     }
 

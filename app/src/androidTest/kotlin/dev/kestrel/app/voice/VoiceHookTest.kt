@@ -351,7 +351,7 @@ class VoiceHookTest {
 
     private companion object {
         val STATE_WHILE_OFF = Regex(
-            "mode=off work=idle speaking=false microphone=false recognition=named screenOn=(true|false) micBusy=false " +
+            "mode=off work=idle speaking=false microphone=false recognition=named followUp=closed screenOn=(true|false) micBusy=false " +
                 "command=\\d+ kind=\\w+ outcome=\\w+ session=closed clips=off",
         )
     }
