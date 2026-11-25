@@ -4687,7 +4687,7 @@ Design 9.1 to 9.4, 9.7 and R3 of sub-project 7, as amended on 2026-11-25 and 202
 `RecordArchive` becomes the port that plan 7C's archive implements with one Keystore operation per row, each row decrypted on the thread that read it:
 - `readOpen()` reads the open conversation's row: a restore waits for one decryption only.
 - `readShards()` reads the index's shards, each decrypted; `readStamp()` reads the stamp of the closed rows, a plain query.
-- `read(ids)` reads some bodies in one call; `closedIds()` lists the closed rows, the oldest first, for a rebuild that reads them in pages of 50.
+- `read(ids)` reads some bodies in one call, in the order of the ids; `closedIds()` lists the closed rows, the oldest first, for a rebuild that reads them in pages of 50 and folds each page in that order, so that the newest conversations are in the newest shard.
 - `write(ArchiveChange)` stores rows, deletes rows and changes the shards (`IndexWrite.Keep`, `Update` or `Replace`), in one transaction.
 - `purge(oldest, newest, index)` deletes the closed rows outside retention by the table's own times, with the shards, in one transaction.
 - `deleteAll()` deletes the rows and the shards in one transaction, and then erases the key (plan 7C's Task 4c).
@@ -4707,6 +4707,7 @@ The tests also take the load of the index through each of its failures, with the
 **Files:**
 - Modify (whole files): `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/RecordArchive.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ArchivedConversationStore.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistoryRanking.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/HistorySearch.kt`, `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/MemoryArchive.kt`
 - Test (whole files): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/ArchivedConversationStoreTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistorySearchTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistoryRankingTest.kt`; and `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/RetentionTest.kt`
+- Test (create): `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/MemoryArchiveTest.kt`
 
 **Interfaces:**
 - Consumes: Task 5a's `LabelMatcher.mayAccept`; Task 5b's `SearchIndex`, `IndexedRecord`, `IndexShard`, `PastIndex`, `ShardChanges`, `PastConversation`, `KeptRow`, `IndexStamp` and `PastIndexCodec`; Task 5c's `HistoryResult.REBUILDING` and `HistoryResult.FAILED`; Task 4's `ConversationClock` and `ManualConversationClock`.
@@ -4723,7 +4724,7 @@ The tests also take the load of the index through each of its failures, with the
 
   Plan 7C's Task 5 implements the port, and its Task 6 builds the store with the app's scope; Tasks 8 to 10 use the store and the search.
 
-Counts: `:core:conversation` 149 + 25 (`ArchivedConversationStoreTest` 16 → 39, `HistorySearchTest` 11 → 13, `HistoryRankingTest` and `RetentionTest` unchanged) = 174; N + 25 if Task 5b's count differed.
+Counts: `:core:conversation` 149 + 26 (`ArchivedConversationStoreTest` 16 → 39, `HistorySearchTest` 11 → 13, `MemoryArchiveTest` 1, `HistoryRankingTest` and `RetentionTest` unchanged) = 175; N + 26 if Task 5b's count differed.
 
 - [ ] **Step 1: Write the failing tests and the archive in memory**
 
@@ -6072,6 +6073,30 @@ with:
         fun closed(n: Int, last: Long) = ConversationSnapshot(
 ```
 
+Create `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/MemoryArchiveTest.kt`, which checks that the archive in memory gives `read`'s rows in the order of the ids, as the port says and plan 7C's archive does:
+
+```kotlin
+package dev.kestrel.conversation.store
+
+import dev.kestrel.conversation.testing.MemoryArchive
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/** The archive in memory keeps the port's contract, as plan 7C's archive on the encrypted tables does. */
+class MemoryArchiveTest {
+    // RecordArchive.read gives the rows in the order of the ids, so that a rebuild folds each page in the order of closedIds.
+    @Test
+    fun readGivesTheRowsInTheOrderOfTheIds() = runTest {
+        val archive = MemoryArchive()
+        val rows = listOf("a", "b", "c").mapIndexed { n, id -> ArchiveRow(ArchiveHeader(id, n.toLong(), n.toLong(), open = false, commands = 1), "{}".encodeToByteArray()) }
+        archive.write(ArchiveChange(rows = rows))
+
+        assertEquals(listOf("c", "a", "b"), archive.read(listOf("c", "gone", "a", "b")).map { it.header.id })
+    }
+}
+```
+
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
@@ -6103,7 +6128,10 @@ interface RecordArchive {
     /** What the table holds of closed rows ([IndexStamp]), which an index that is in step counts too. */
     suspend fun readStamp(): IndexStamp
 
-    /** The rows [ids] in one call, each as its kind of entry; an id without a row is left out. */
+    /**
+     * The rows [ids], which name each row once, in one call, each as its kind of entry, in the order of [ids], so that a
+     * rebuild folds each page in the order of [closedIds]; an id without a row is left out.
+     */
     suspend fun read(ids: Collection<String>): List<ArchiveEntry>
 
     /** The ids of the closed rows, the oldest last change first, without their payloads: what a rebuild reads in pages. */
@@ -7068,12 +7096,12 @@ class HistorySearch(
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.store.*`
-Expected: PASS, 70 tests (`ArchivedConversationStoreTest` 39, `HistorySearchTest` 13, `PastIndexTest` 10, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
+Expected: PASS, 71 tests (`ArchivedConversationStoreTest` 39, `HistorySearchTest` 13, `PastIndexTest` 10, `MemoryArchiveTest` 1, `SearchIndexTest` 4, `HistoryRankingTest` 2, `RetentionTest` 2).
 
 - [ ] **Step 5: Run the module's tests and its checks, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:check`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 174`.
+Expected: BUILD SUCCESSFUL, with no finding of `kestrelAudit`; `core\conversation 175`.
 
 - [ ] **Step 6: Commit**
 
@@ -10338,7 +10366,7 @@ git commit -m "feat(conversation): the conversation's rules: inputs in each situ
 - Consumes: Tasks 1 to 7 (`CommandRecord`, `RecordRef`, `HistorySearch.port`, `ContextBlock`, `ConversationClock`, `ConversationTexts`); plan 7A's `Agent.run`, `AgentPorts`, `AgentSettings`, `TaskRequest`, `TaskReport` (`checklist`, `interruption`), `TaskCancellation(reason, interruption)`, `Interruption`, `EndReason`, `Ledger.sentence`, `GoalPort`, `Steer`, `SteerChannel`, `TraceEntry`, `Checklist`, `GoalLimits`, `ResumeCause`, `ResumeNote`, `NoGoal`, `NoHistory`; `dev.kestrel.agent.memory.RoutineMaker`, `Recording`, `SaveResult`; `dev.kestrel.safety.TaskAllowance`, `Category`, `Redactor`, `Vault`.
 - Produces (package `dev.kestrel.conversation.goal`): `interface GoalEnvironment { suspend fun prepare(start: RoundStart): RoundSetup; fun sentence(report: TaskReport): String }`; `enum class RoundPurpose { GOAL, ROUTINE }`; `class RoundStart(val command: Int, val options: Map<String, String>, val owner: OwnerPort, val goal: GoalPort, val history: HistoryPort, val purpose: RoundPurpose)`; `sealed interface RoundSetup { class Ready(ports: AgentPorts, settings: AgentSettings, taskId: String, knownNames: Set<String>, touches: Flow<Unit>, offersRoutines: Boolean, release: suspend () -> Unit); data class Refused(sentence: String, end: EndReason) }`; `fun interface ScreenTurn { suspend fun take() }`; `class SteeringInbox(initial: List<Steer> = emptyList(), changed: () -> Unit = {})` with `add`, `drain`, `pending`; `interface GoalListener { fun stepStarted(step: Int); suspend fun traced(entry: TraceEntry); suspend fun checklist(checklist: Checklist); fun allowed(categories: Set<Category>); fun steeringChanged(); fun touched(); fun ended(end: RoundEnd) }`; `data class RoundEnd(val command: Int, val report: TaskReport, val answer: String?, val reply: String?)`; `class RunningGoal(val record: Int, command: Int, options: Map<String, String>, steering: List<Steer>, val listener: GoalListener) : GoalPort` with `var command`, `var options`, `val inbox`, `val knownNames`, `fun steer(text: String, channel: InputChannel)`, `fun interrupt(cause: Interruption)`, `fun cancel(reason: EndReason, sentence: String? = null)`; `fun InputChannel.toSteer(): SteerChannel` and `fun SteerChannel.toInput(): InputChannel`; `class RoundPlan(record, earlier, text, resume: ResumeCause?, testMode, continuedAtWall: Long?, limits: GoalLimits, options, self: RecordRef, zone: ZoneId)`; `object GoalRequests { fun request(plan: RoundPlan, taskId: String, knownNames: Set<String>, budget: Int): TaskRequest; fun ownerWords(records: List<CommandRecord>): List<String>; fun goalInputs(record: CommandRecord): List<String>; fun categories(wires: Collection<String>): Set<Category> }`; `class GoalRunner(environment: GoalEnvironment, screen: ScreenTurn, history: HistorySearch, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `fun run(scope: CoroutineScope, goal: RunningGoal, plan: RoundPlan, owner: OwnerPort)`, `fun endHeld(command: Int, record: CommandRecord, pending: List<Steer>, reason: EndReason): RoundEnd`, `suspend fun saveRoutine(name: String, owner: OwnerPort): String?` and `RECORDING_MILLIS`. Fixture: `class FakeGoalEnvironment(replies: List<JsonObject>, first: ScreenSnapshot? = HOME, settings: AgentSettings = …) : GoalEnvironment` (`screen`, `data`, `memory`, `model`, `touches`, `starts`, `refusal: RoundSetup.Refused?`, `knownNames`, `offersRoutines`, `released`, `afterCall`, `sentenceOf(report)`).
 
-Counts: `:core:conversation` 174 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 189, after Tasks 5a to 5d.
+Counts: `:core:conversation` 175 + 15 (`GoalRequestsTest` 4, `GoalRunnerTest` 11) = 190, after Tasks 5a to 5d.
 
 - [ ] **Step 1: Create the goal's ports and the fake environment**
 
@@ -11415,7 +11443,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 189`.
+Expected: BUILD SUCCESSFUL; `core\conversation 190`.
 
 - [ ] **Step 7: Commit**
 
@@ -11439,7 +11467,7 @@ git commit -m "feat(conversation): the goal runner: a round's request from the r
 - Consumes: Task 2's `RecordText`; Task 4's `ConversationStore` and `ConversationClock`; Task 5d's `HistorySearch.conversation` and `ConversationLookup` (with `Rebuilding` and `Unavailable`); Task 6's `Dialogue` and `QuestionKind`; Task 7's `LocalRequest`, `LocalOutcome` and `ConversationTexts`; `dev.kestrel.agent.port.OwnerPort`, `MemoryStore`, `Answer`, `AnswerKind`; `dev.kestrel.agent.memory.Fact`, `FactKind`; `dev.kestrel.agent.goal.TraceEntry`; `dev.kestrel.commands.text.Normalizer`.
 - Produces (package `dev.kestrel.conversation.local`): `class RecordedOwner(owner: OwnerPort, traced: suspend (TraceEntry) -> Unit) : OwnerPort`; `class LocalRequests(memory: MemoryStore, store: ConversationStore, search: HistorySearch, deleteLogs: suspend () -> Unit, routines: suspend (name: String, owner: OwnerPort) -> String?, clock: ConversationClock, report: (String, Throwable) -> Unit)` with `suspend fun run(request: LocalRequest, owner: OwnerPort, dialogue: Dialogue): LocalOutcome` and `FIRST_REQUEST = 60`; `ConversationTexts.PAST_UNAVAILABLE` ("I can't read your past conversations right now. I'll try again later."); Task 7's `PREPARING_PAST` in `ConversationTexts` becomes `REBUILDING_PAST` ("I'm still rebuilding the index of your past conversations and can't search them yet.").
 
-Counts: `:core:conversation` 189 + 9 = 198.
+Counts: `:core:conversation` 190 + 9 = 199.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -11814,7 +11842,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test`, then `$n = 0; Get-ChildItem core\conversation\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "core\conversation $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `core\conversation 198`.
+Expected: BUILD SUCCESSFUL; `core\conversation 199`.
 
 - [ ] **Step 6: Commit**
 
@@ -11837,7 +11865,7 @@ git commit -m "feat(conversation): Kestrel's own requests: remember, forget, sav
 - Consumes: everything of Tasks 1 to 9.
 - Produces (package `dev.kestrel.conversation.engine`): `data class ConversationView(id: ConversationId? = null, command: Int = 0, goal: GoalPhase? = null, step: Int? = null, asking: QuestionKind? = null, question: Int? = null, replyChannel: InputChannel = InputChannel.VOICE, checklist: ChecklistSummary? = null, records: List<CommandRecord> = emptyList(), continuedAtWall: Long? = null, testMode: Boolean = true, quiet: QuietClock = QuietClock.Off, keptForOwner: Boolean = false)` with `continued`; `data class ChecklistSummary(done: Int, total: Int, current: String?)` with `ChecklistSummary.of(checklist)`; `data class CommandOutcome(command: Int, report: TaskReport, answer: String?)`; `enum class Restored { NOTHING, OPEN, CLOSED, GOAL_HELD, GOAL_ENDED }`; `class ConversationEngine(scope: CoroutineScope, store: ConversationStore, goals: GoalRunner, local: LocalRequests, channels: Map<InputChannel, OwnerChannel>, permissions: (List<String>) -> PermissionEnd, settings: Flow<ConversationSettings>, testMode: Flow<Boolean>, voiceOn: Flow<Boolean>, clock: ConversationClock, report: (String, Throwable) -> Unit, machine: ConversationMachine = ConversationMachine { ConversationId.random() }, onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> })` with `val owner: ConversationOwner`, `val view: StateFlow<ConversationView>`, `val restored: Restored?`, `suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): Restored`, `fun submit(input: OwnerInput)`, `fun signal(signal: PhoneSignal)`, `fun touched()`, `fun composing(active: Boolean)`, `fun awaitingCommand(active: Boolean)`, `fun replyOpened(question: Int)`, `fun endQuietTime()`, `fun outcome(command: Int): CommandOutcome?` and `MAX_OUTCOMES = 16`.
 
-Counts: `:core:conversation` 198 + 15 = 213. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
+Counts: `:core:conversation` 199 + 15 = 214. `:core:agent`: G₁ + 1 (see Before you start; Task 5c adds 1).
 
 - [ ] **Step 1: Create the view**
 
@@ -12971,7 +12999,7 @@ Expected: PASS, 15 tests.
 - [ ] **Step 6: Run the module's tests and the agent's, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:agent:test`, then `foreach ($dir in 'core\conversation\build\test-results\test', 'core\agent\build\test-results\test') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 :core:conversation:check`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 213` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
+Expected: BUILD SUCCESSFUL each time; `core\conversation\build\test-results\test 214` and `core\agent\build\test-results\test` G₁ + 1; `:core:conversation:check` runs the privacy audit (`kestrelAudit`) with no finding.
 
 - [ ] **Step 7: Commit**
 
@@ -12984,7 +13012,7 @@ git commit -m "feat(conversation): the conversation engine: one event at a time,
 
 ## Counts at the end of plan 7B
 
-- `:core:conversation`: C₀ + 213, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 25, Task 8: 15, Task 9: 9, Task 10: 15).
+- `:core:conversation`: C₀ + 214, from C₀ = 0 (Task 1: 7, Task 2: 16, Task 3: 11, Task 4: 18, Task 5: 13, Task 6: 16, Task 7: 54, Task 5b: 14, Task 5d: 26, Task 8: 15, Task 9: 9, Task 10: 15).
 - `:core:agent`: G₁ + 1 (Task 5c adds 1; Task 10, Step 6 runs it; see Before you start).
 - `:core:commands`: N + 2 (Task 5a adds 1 to `NormalizerTest` and 1 to `LabelMatcherTest`; 159 at `d6c76d70`).
 - `:app` JVM, `:tools:eval`, the Pester tests and the device tests: unchanged; this plan touches no file of theirs.
@@ -13010,7 +13038,7 @@ These change what the owner sees or hears, or move a line between plans; the con
 What plans 7C and 7D (and the later plans) consume, exactly as this plan leaves `:core:conversation`. Packages are below `dev.kestrel.conversation`.
 
 **The archive (plan 7C)**
-- `store.RecordArchive` (as Tasks 5a to 5d leave it; design 9.2): `suspend fun readOpen(): ArchiveEntry?` (the open row, or null: a restore's one decryption); `suspend fun readShards(): List<ShardRead>` (each shard `ShardRead.Readable(name, bytes)` with its decrypted bytes or `ShardRead.Unreadable(name)` when it fails its check or its cipher's format is newer, none when there is no index); `suspend fun readStamp(): IndexStamp` (`IndexStamp(closed, newest, total)` of the closed rows: how many, the newest `last_millis` and their sum, each 0 without rows; a plain query, which the store makes under its lock once the shards are decoded); `suspend fun read(ids: Collection<String>): List<ArchiveEntry>` (the rows that exist, in one query); `suspend fun closedIds(): List<String>` (the closed rows' ids, the oldest `lastMillis` first, without payloads, for a rebuild that reads them in pages of 50); `suspend fun write(change: ArchiveChange)` (`ArchiveChange(rows, deleted: Set<String>, index: IndexWrite)`, all in one Room transaction: the deletions, the rows, an open row closing every other open row first, and the shards kept (`IndexWrite.Keep`), changed (`Update(put: Map<String, ByteArray>, deleted: Set<String>)`) or all replaced (`Replace(shards)`; an empty one leaves no index), each shard by its name, its number as text); `suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int` (in one transaction, the closed rows whose `last_millis` is before `oldest` or after `newest`, by the table's own times, and the shards' change; how many rows went); `suspend fun deleteAll()` (every row, the open one too, and every shard, in one transaction, and then the Keystore key `kestrel.conversations`; a new key is made at the next write, and plan 7C's archive erases the key of an empty archive at a process's first change, which a process that ended between the two left). Each entry is `ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes with its index entry and notes, or `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out, keeps and counts in the index, and which the archive reports. Each read decrypts its rows on the thread that ran its query, one Keystore operation per row (R3), and stops between two rows when its caller is cancelled.
+- `store.RecordArchive` (as Tasks 5a to 5d leave it; design 9.2): `suspend fun readOpen(): ArchiveEntry?` (the open row, or null: a restore's one decryption); `suspend fun readShards(): List<ShardRead>` (each shard `ShardRead.Readable(name, bytes)` with its decrypted bytes or `ShardRead.Unreadable(name)` when it fails its check or its cipher's format is newer, none when there is no index); `suspend fun readStamp(): IndexStamp` (`IndexStamp(closed, newest, total)` of the closed rows: how many, the newest `last_millis` and their sum, each 0 without rows; a plain query, which the store makes under its lock once the shards are decoded); `suspend fun read(ids: Collection<String>): List<ArchiveEntry>` (the rows that exist, in one query, in the order of the ids, which name each row once); `suspend fun closedIds(): List<String>` (the closed rows' ids, the oldest `lastMillis` first, without payloads, for a rebuild that reads them in pages of 50); `suspend fun write(change: ArchiveChange)` (`ArchiveChange(rows, deleted: Set<String>, index: IndexWrite)`, all in one Room transaction: the deletions, the rows, an open row closing every other open row first, and the shards kept (`IndexWrite.Keep`), changed (`Update(put: Map<String, ByteArray>, deleted: Set<String>)`) or all replaced (`Replace(shards)`; an empty one leaves no index), each shard by its name, its number as text); `suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int` (in one transaction, the closed rows whose `last_millis` is before `oldest` or after `newest`, by the table's own times, and the shards' change; how many rows went); `suspend fun deleteAll()` (every row, the open one too, and every shard, in one transaction, and then the Keystore key `kestrel.conversations`; a new key is made at the next write, and plan 7C's archive erases the key of an empty archive at a process's first change, which a process that ended between the two left). Each entry is `ArchiveEntry.Readable(header, payload)` with the decrypted payload, `ArchiveEntry.Unreadable(header)` when the payload fails its tag, which the store deletes with its index entry and notes, or `ArchiveEntry.Unknown(header)` when its format is one that this version cannot read, which the store leaves out, keeps and counts in the index, and which the archive reports. Each read decrypts its rows on the thread that ran its query, one Keystore operation per row (R3), and stops between two rows when its caller is cancelled.
 - `store.ArchiveHeader(id: String, openedMillis: Long, lastMillis: Long, open: Boolean, commands: Int)` (its `open` and its times are the record of whether a conversation is open and of when it opened and last changed; `ArchivedConversationStore` reads them from the header, never from the payload): the columns `id`, `opened_millis`, `last_millis`, `open`, `commands` of design 9.2's `ConversationRow`; `store.ArchiveRow(header: ArchiveHeader, payload: ByteArray)`: the payload is the snapshot's JSON in UTF-8, which `ConversationArchiveStore` encrypts with `AesGcmFieldCipher` under `kestrel.conversations` and the associated data `conversations/<id>`; each shard is encrypted under the same key with `conversation_index/<name>`.
 - `store.ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore`, with `DAY_MILLIS`, `REBUILD_PAGE`, `FIRST_RETRY_MILLIS` and `MAX_RETRY_MILLIS`; `store.ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED }`, which the app graph writes into the activity log by its kind only. At its first use it reads the open row alone and starts reading the index in its `scope`; it keeps the decoded index and the open conversation in memory, and reads a past conversation's body only for `get`, `getAll` and `reopen`. A save of the open conversation writes its row only; every change of the closed conversations writes the shards that it changed in the same transaction. No change waits for the index: while it is read, a change writes its rows alone, and once the shards are decoded the store reads the stamp under its lock, applies the changes' updates, checks them against it and writes the shards that they changed; a process that ends in between leaves the index out of step, and the next start rebuilds it. When the index is missing while closed rows exist, unreadable, in another format or out of step with the stamp, the store rebuilds it page by page in its `scope` (about 10 s on the A71 for 30 days), notes `INDEX_REBUILT`, and meanwhile saves the open conversation as usual, replays the other changes onto the rebuilt index, gives `Searchable.Rebuilding` and makes `list` wait; `purge` never waits, because it deletes by the table. When the index can be neither read nor rebuilt, it notes `INDEX_FAILED` once, gives `Searchable.Failed`, makes `list` throw `PastUnavailableException`, and reads the index again after 1 minute, then twice as long each time, up to 1 hour. Its memory never outlives an archive's change that did not complete: the next call reads the archive again; only an index that has failed stays failed, with its next try, because it holds nothing of the archive. A row's id is compared as text, so a row whose id is not a conversation's fails as an unreadable row does. It never writes again a conversation that it deleted in this process (by `delete`, `deleteAll` or an unreadable row), so a held snapshot that `save` or `reopen`'s `closing` brings after "delete history" is left out, and when it reads the archive again after a deletion that did not complete, it deletes such a conversation again before it shows anything; the caller passes nothing for this. `deleteAll` raises `ConversationStore.generation` before it deletes anything, also when the deletion does not complete, so that a reader that takes it before reading and compares it before giving out what it read (`HistorySearch`) never gives out a deleted conversation's words. What the store cannot know is a conversation that the engine made and never saved before `deleteAll`; that one is the engine's to drop. Tasks 9 and 10 must make `LocalRequests` run the deletion to its end once the owner has said yes, and make the engine close its conversation without keeping it whenever `deleteAll` may have run, not only when it returned (the review of Task 4, its notes for later tasks).
 - `store.ConversationStore`: `generation`, `open()`, `save(snapshot)`, `list(): List<ConversationSummary>` (closed, newest first, from the index; it waits while the index is read or rebuilt, and throws `PastUnavailableException` while it cannot be read), `get(id)`, `getAll(ids): Map<ConversationId, ConversationSnapshot>` (in one call), `reopen(id, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot?`, `delete(id)`, `deleteAll()`, `purge(retentionDays: Int, nowWall: Long): Int` (by the table's own times, in one transaction with the index's change; it never waits for a rebuild), `searchable(): Searchable` (`Searchable.Ready(past: PastIndex, open: ConversationSnapshot?)`, `Searchable.Rebuilding` or `Searchable.Failed`); `store.ConversationSummary(id, openedAtWall, lastWall, commands, firstRequest: String?)`, whose first request the index keeps cut at `PastIndex.FIRST_REQUEST` (80) characters, with "…" when it was cut, so that a caller shows it as it is; `store.PastIndex` (`shards: List<IndexShard>`, `conversations: List<PastConversation>`, `searches: List<SearchIndex>`, `kept: List<KeptRow>`, `stamp`, `SHARD_POSITIONS`), `store.IndexShard`, `store.PastIndexCodec` (`FORMAT = 1`), `store.SearchIndex` and `store.IndexedRecord`.

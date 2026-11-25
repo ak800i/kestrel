@@ -51,7 +51,7 @@ Plan 7C merges **after** plan 7B. Its Tasks 1 to 4b may run while plan 7B is car
 Tasks 5 and 6 use these types of `:core:conversation`, as plan 7B (committed at `9ddf3385`, changed at `a4558faf`) defines them in its "Interfaces for 7C and 7D":
 
 - package `dev.kestrel.conversation.store`:
-  - `interface RecordArchive { suspend fun readOpen(): ArchiveEntry?; suspend fun readShards(): List<ShardRead>; suspend fun readStamp(): IndexStamp; suspend fun read(ids: Collection<String>): List<ArchiveEntry>; suspend fun closedIds(): List<String>; suspend fun write(change: ArchiveChange); suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int; suspend fun deleteAll() }` (plan 7B's Task 5d): `readOpen()` gives the open conversation's row as its kind of entry, or null; `readShards()` gives the index's shards (`ShardRead.Readable(name, bytes)` or `ShardRead.Unreadable(name)`, none when there is no index); `readStamp()` gives the stamp of the closed rows, `IndexStamp(closed, newest, total)`; `read(ids)` gives the rows that exist; `closedIds()` gives the closed rows' ids, the oldest `lastMillis` first, for a rebuild that reads them in pages; `write(ArchiveChange(rows, deleted, index))` deletes, inserts or replaces, and keeps (`IndexWrite.Keep`), changes (`IndexWrite.Update(put, deleted)`) or replaces (`IndexWrite.Replace(shards)`) the shards, each by its name, all in one transaction; `purge(oldest, newest, index)` deletes the closed rows outside the window by the table's own times, with the shards' change, in one transaction, and gives how many went; `deleteAll()` erases the key `kestrel.conversations` and then deletes every row, the open one too, and every shard.
+  - `interface RecordArchive { suspend fun readOpen(): ArchiveEntry?; suspend fun readShards(): List<ShardRead>; suspend fun readStamp(): IndexStamp; suspend fun read(ids: Collection<String>): List<ArchiveEntry>; suspend fun closedIds(): List<String>; suspend fun write(change: ArchiveChange); suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int; suspend fun deleteAll() }` (plan 7B's Task 5d): `readOpen()` gives the open conversation's row as its kind of entry, or null; `readShards()` gives the index's shards (`ShardRead.Readable(name, bytes)` or `ShardRead.Unreadable(name)`, none when there is no index); `readStamp()` gives the stamp of the closed rows, `IndexStamp(closed, newest, total)`; `read(ids)` gives the rows that exist, in the order of the ids, which name each row once, so that a rebuild folds each page in the order of `closedIds()`; `closedIds()` gives the closed rows' ids, the oldest `lastMillis` first, for a rebuild that reads them in pages; `write(ArchiveChange(rows, deleted, index))` deletes, inserts or replaces, and keeps (`IndexWrite.Keep`), changes (`IndexWrite.Update(put, deleted)`) or replaces (`IndexWrite.Replace(shards)`) the shards, each by its name, all in one transaction; `purge(oldest, newest, index)` deletes the closed rows outside the window by the table's own times, with the shards' change, in one transaction, and gives how many went; `deleteAll()` erases the key `kestrel.conversations` and then deletes every row, the open one too, and every shard.
   - `data class ArchiveHeader(val id: String, val openedMillis: Long, val lastMillis: Long, val open: Boolean, val commands: Int)`; `class ArchiveRow(val header: ArchiveHeader, val payload: ByteArray)` (the payload is the snapshot's JSON in UTF-8).
   - `sealed interface ArchiveEntry { val header: ArchiveHeader }` with `class Readable(header, val payload: ByteArray)`, `class Unreadable(header)` (the payload failed its check: the store deletes the row and its index entry and notes `ArchiveNote.CONVERSATION_DELETED`) and `class Unknown(header)` (the payload is in a format that this version cannot read: the store leaves the conversation out, keeps the row and counts it in the index; the archive has reported it).
   - `class ArchivedConversationStore(archive: RecordArchive, scope: CoroutineScope, noted: (ArchiveNote) -> Unit) : ConversationStore`, with `DAY_MILLIS` and `enum class ArchiveNote { CONVERSATION_DELETED, INDEX_REBUILT, INDEX_FAILED }`; at its first use it reads the open row alone and starts reading the index in `scope`, keeps the index and the open conversation in memory, reads a past conversation's body only when it is asked for, rebuilds a missing, unreadable, unknown or out-of-step index page by page in `scope`, tries a failed one again later, and takes whether a conversation is open, and its times, from the row's header, the table's columns: `ConversationSnapshot.open` is `@Transient`, so the snapshot's JSON never holds it.
@@ -3605,6 +3605,8 @@ class RoomRecordArchiveTest {
         val read = archive.read(listOf(past.id, current.id, "gone")).associateBy { it.header.id }
         assertEquals(setOf(past, current), read.values.map { it.header }.toSet())
         assertEquals("""{"request":"Пошаљи Мили поруку 🙂"}""", (read.getValue(past.id) as ArchiveEntry.Readable).payload.decodeToString())
+        // The rows come in the order of the ids, which is neither the table's order of its keys nor the order of the writes.
+        assertEquals(listOf(current.id, past.id), archive.read(listOf(current.id, "gone", past.id)).map { it.header.id })
         assertEquals(current, archive.readOpen()!!.header)
         assertEquals("""{"request":"Turn on dark mode"}""", (archive.readOpen() as ArchiveEntry.Readable).payload.decodeToString())
         assertEquals(listOf(past.id), archive.closedIds())
@@ -3687,6 +3689,8 @@ class RoomRecordArchiveTest {
         val writing = ArchivedConversationStore(archive, this) {}
         writing.save(first)
         writing.save(second)
+        // The first store's index has settled, so that the restart reads it.
+        assertEquals(listOf(first.id), writing.list().map { it.id })
         val notes = mutableListOf<ArchiveNote>()
 
         val restarted = ArchivedConversationStore(archive, this) { notes += it }
@@ -3779,7 +3783,11 @@ internal class RoomRecordArchive(private val table: ConversationArchiveStore) : 
 
     override suspend fun readStamp(): IndexStamp = table.stamp().archived()
 
-    override suspend fun read(ids: Collection<String>): List<ArchiveEntry> = table.read(ids).map { it.archived() }
+    // The table gives its rows in an order of its own; the port gives them in the order of [ids].
+    override suspend fun read(ids: Collection<String>): List<ArchiveEntry> {
+        val read = table.read(ids).associateBy { it.header.id }
+        return ids.mapNotNull { read[it]?.archived() }
+    }
 
     override suspend fun closedIds(): List<String> = table.closedIds()
 
