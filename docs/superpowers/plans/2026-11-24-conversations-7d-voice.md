@@ -75,7 +75,7 @@ These are this plan's readings of the design where it leaves a choice open, or w
 | `orchestrator/` `Rules.kt`, `Orchestrator.kt` (whole), `Requests.kt`, `VoiceAnswers.kt`, `VoiceView.kt` (new), `TaskAnswers.kt` (deleted); `listen/` `VoicePath.kt` (new), `Listening.kt`; `conversation/` `InputIds.kt`, `OwnerSupport.kt`, `VoiceChannel.kt`, `ConversationSignals.kt`, `StoredSettings.kt` (new); `agent/` `AppGoalEnvironment.kt`, `AppModels.kt`, `RoundModels.kt`, `RoundEvidences.kt`, `GoalOwner.kt`, `Permissions.kt` (new), `CallBackstop.kt` (whole), `AgentTexts.kt`, `TaskWitness.kt`, `AgentRunner.kt`, `AppOwnerPort.kt`, `OwnerParts.kt`, `AgentEnvironment.kt`, `AppAgentEnvironment.kt` (deleted); `AppGraph.kt`, `KestrelApplication.kt`; debug `CommandTags.kt` (whole), `StandInRound.kt` (new), `AgentTaskHooks.kt`, `AgentHookAnswers.kt`, `VoiceHooks.kt`, `SessionHooks.kt`, `DebugTaskWitness.kt`, `TaskOptions.kt` (deleted); their JVM and device tests, and the device test `GoalPauseTest.kt` with `HeldModel.kt` (new); `:tools:eval`'s `Runner.kt`, `Refusals.kt` and `RunnerTest.kt`; the descriptions of `voice-task` in `scripts/hook.ps1` and `scripts/a71-session.ps1` | Task 3: the switch-over |
 | `Rules.kt`, `Requests.kt`, `Orchestrator.kt`, `Listening.kt`, `VoicePath.kt`, `VoiceChannel.kt`, `AppGraph.kt`; `RulesTest.kt`, `RequestsTest.kt`, `OrchestratorTest.kt`, `ListeningTest.kt`, `VoiceChannelTest.kt` | Task 4: the follow-up window |
 | `Requests.kt`; `RequestsTest.kt`, `RulesTest.kt` | Task 5: "new conversation", "continue the conversation about X" and the typed reading |
-| debug `ConversationHookAnswers.kt`, `ConversationHooks.kt` (new), `TestHooks.kt`, `AgentTaskHooks.kt`, `VoiceHooks.kt`; JVM test `app/src/testDebug/kotlin/dev/kestrel/app/debug/ConversationHookAnswersTest.kt` (new); device tests `app/src/androidTest/kotlin/dev/kestrel/app/debug/ConversationHooksTest.kt` (new), `VoiceHookTest.kt` | Task 6: the hooks `conversation-state` and `conversation-control` |
+| debug `ConversationHookAnswers.kt`, `ConversationHooks.kt` (new), `TestHooks.kt`, `AgentHookAnswers.kt`, `AgentTaskHooks.kt`, `VoiceHooks.kt`; JVM tests `app/src/testDebug/kotlin/dev/kestrel/app/debug/ConversationHookAnswersTest.kt` (new), `AgentHookAnswersTest.kt`; device tests `app/src/androidTest/kotlin/dev/kestrel/app/debug/ConversationHooksTest.kt` (new), `VoiceHookTest.kt` | Task 6: the hooks `conversation-state` and `conversation-control` |
 | `core/conversation/` `engine/HistoryDeletion.kt` (new), `engine/ConversationEngine.kt`, `local/LocalRequests.kt`, `machine/ConversationEvent.kt`, `machine/ConversationMachine.kt`; `settings/SettingsData.kt`, `settings/LogPages.kt`, `res/values/strings.xml`; tests `ConversationEngineTest.kt`, `SettingsAppTest.kt` | Task 7: the settings page's "Delete history" through the conversation |
 | none (device steps) | Task 8: the regression gate on kestrel-api37 |
 
@@ -11899,18 +11899,18 @@ git commit -m "feat(app): a new conversation and a past one by voice, and the ty
 
 ### Task 6: The hooks `conversation-state` and `conversation-control`
 
-Design 14.4 of sub-project 7: `conversation-state` reads the open conversation in counts and kinds only (`open`, `continued`, `commands`, `goal`, the quiet clock with the seconds left while it runs, `replyChannel`, `testMode`), and `conversation-control --es do new|expire|limits|restore-check` starts a new conversation as "Kestrel, new conversation" does, ends the quiet time at once so that a test need not wait, sets a round's limits, and says what the restore at the process's start found. `do=limits` sets the page's smallest limits, or with `--es limits <replies>/<minutes>/<credits>` the given ones, each within the page's bounds, and answers the stored ones as `was=`, so that a check can put them back (see "Decisions for the controller", item 2). `voice-state` gains `followUp=open|closed`, and `agent-state` gains `checklist=<done>/<total>` and `conversation=open|closed`. The answers' new keys come after the keys that `:tools:eval` and the scripts read today, except `followUp=`, which follows `recognition=`, so that the check of `VoiceHookTest` that reads the start of the line stays as it is.
+Design 14.4 of sub-project 7: `conversation-state` reads the open conversation in counts and kinds only (`open`, `continued`, `commands`, `goal`, the quiet clock with the seconds left while it runs, `replyChannel`, `testMode`), and `conversation-control --es do new|expire|limits|restore-check` starts a new conversation as "Kestrel, new conversation" does, ends the quiet time at once so that a test need not wait, sets a round's limits, and says what the restore at the process's start found. `do=limits` sets the page's smallest limits, or with `--es limits <replies>/<minutes>/<credits>` the given ones, each within the page's bounds, and answers the stored ones as `was=`, so that a check can put them back (see "Decisions for the controller", item 2). `voice-state` gains `followUp=open|closed`, and `agent-state` gains `checklist=<done>/<total>` and `conversation=open|closed`. The answers' new keys come after the keys that `:tools:eval` and the scripts read today, except `followUp=`, which follows `recognition=`, so that the check of `VoiceHookTest` that reads the start of the line stays as it is. agent-state's line is built in `AgentHookAnswers.state`, apart from Android, so that a JVM test reads its new keys (Task 6's review M1).
 
 **Files:**
 - Create: `app/src/debug/kotlin/dev/kestrel/app/debug/ConversationHookAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/ConversationHooks.kt`
-- Modify: `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/VoiceHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`
-- Test: create `app/src/testDebug/kotlin/dev/kestrel/app/debug/ConversationHookAnswersTest.kt` and `app/src/androidTest/kotlin/dev/kestrel/app/debug/ConversationHooksTest.kt`; modify `app/src/androidTest/kotlin/dev/kestrel/app/voice/VoiceHookTest.kt`
+- Modify: `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/VoiceHooks.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`
+- Test: create `app/src/testDebug/kotlin/dev/kestrel/app/debug/ConversationHookAnswersTest.kt` and `app/src/androidTest/kotlin/dev/kestrel/app/debug/ConversationHooksTest.kt`; modify `app/src/testDebug/kotlin/dev/kestrel/app/debug/AgentHookAnswersTest.kt` and `app/src/androidTest/kotlin/dev/kestrel/app/voice/VoiceHookTest.kt`
 
 **Interfaces:**
 - Consumes: Task 3's `AppGraph.conversations`, `InputIds` and `AgentTaskHooks.state`; Task 4's `Work.FOLLOWING_UP`; plan 7B's `ConversationView`, `ChecklistSummary`, `QuietClock`, `RestoreResult`, `ConversationEngine.submit`, `endQuietTime` and `restored`, and `ConversationSettings` with `quietMillis`, `roundLimits`, `REPLIES`, `WORK_MINUTES` and `CREDITS`; plan 7C's `SettingKeys.CONVERSATIONS`.
-- Produces: the hooks `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`internal class ConversationHooks(graph: AppGraph)` with `COMMANDS`); `internal object ConversationHookAnswers` with `state(view, settings, now): String`, `checklist(summary: ChecklistSummary?): String`, `limits(settings, text: String?): ConversationSettings?`, `limitsText(limits: GoalLimits): String` and `restored(restored: RestoreResult?): String`; `voice-state`'s `followUp=`; `agent-state`'s `checklist=` and `conversation=`. Plan 7G adds the hooks to `scripts\hook.ps1` (see "Decisions for the controller", item 5).
+- Produces: the hooks `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`internal class ConversationHooks(graph: AppGraph)` with `COMMANDS`); `internal object ConversationHookAnswers` with `state(view, settings, now): String`, `checklist(summary: ChecklistSummary?): String`, `limits(settings, text: String?): ConversationSettings?`, `limitsText(limits: GoalLimits): String` and `restored(restored: RestoreResult?): String`; `voice-state`'s `followUp=`; `agent-state`'s `checklist=` and `conversation=`, from `AgentHookAnswers.Open(handOver, confirming, question)` and `AgentHookAnswers.state(number, view, work, open): String`, which `AgentTaskHooks.state` answers. Plan 7G adds the hooks to `scripts\hook.ps1` (see "Decisions for the controller", item 5).
 
-Counts: `:app` JVM A₅ + 2 (`ConversationHookAnswersTest` 2). Device tests: AD₀ + 2 + 2 = AD₀ + 4 (`ConversationHooksTest` 2; `VoiceHookTest` changes a pattern).
+Counts: `:app` JVM A₅ + 3 (`ConversationHookAnswersTest` 2, `AgentHookAnswersTest` + 1). Device tests: AD₀ + 2 + 2 = AD₀ + 4 (`ConversationHooksTest` 2; `VoiceHookTest` changes a pattern).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -12067,6 +12067,73 @@ class ConversationHooksTest {
 }
 ```
 
+In `app/src/testDebug/kotlin/dev/kestrel/app/debug/AgentHookAnswersTest.kt`, replace:
+
+```kotlin
+import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyGuard
+```
+
+with:
+
+```kotlin
+import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ChecklistSummary
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.GoalPhase
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.safety.HandOverKind
+```
+
+In `app/src/testDebug/kotlin/dev/kestrel/app/debug/AgentHookAnswersTest.kt`, replace:
+
+```kotlin
+    @Test
+    fun anAnswerIsOneOfTheOwnersWordsANumberOrAText() {
+```
+
+with:
+
+```kotlin
+    @Test
+    fun theStateGivesTheChecklistOnlyForTheCurrentRoundAndWhetherAConversationIsOpen() {
+        val acting = ConversationView(id = ConversationId.random(), command = 3, goal = GoalPhase.ACTING, checklist = ChecklistSummary(2, 5, "write to Mila"))
+
+        val line = AgentHookAnswers.state(3, acting, Work.IDLE, AgentHookAnswers.Open())
+
+        assertEquals("phase=running asking=none work=idle handOver=none confirming=none question=none checklist=2/5 conversation=open", line)
+        assertFalse(line, line.contains("Mila"))
+        // An earlier round of the open conversation has ended, and its line names nothing of the current round.
+        val confirming = acting.copy(goal = GoalPhase.ASKING, asking = QuestionKind.CONFIRM)
+        val open = AgentHookAnswers.Open(HandOverKind.CALL, Category.SENDING, QuestionKind.CONFIRM)
+        assertEquals(
+            "phase=ended asking=none work=awaiting-task handOver=none confirming=none question=none checklist=none conversation=open",
+            AgentHookAnswers.state(2, confirming, Work.AWAITING_TASK, open),
+        )
+        assertEquals(
+            "phase=running asking=confirm work=awaiting-task handOver=CALL confirming=sending question=none checklist=2/5 conversation=open",
+            AgentHookAnswers.state(3, confirming, Work.AWAITING_TASK, open),
+        )
+        assertEquals(
+            "phase=paused-at-limit asking=none work=idle handOver=none confirming=none question=none checklist=2/5 conversation=open",
+            AgentHookAnswers.state(3, acting.copy(goal = GoalPhase.PAUSED_AT_LIMIT), Work.IDLE, AgentHookAnswers.Open()),
+        )
+        assertEquals(
+            "phase=ended asking=none work=idle handOver=none confirming=none question=none checklist=none conversation=closed",
+            AgentHookAnswers.state(3, ConversationView(), Work.IDLE, AgentHookAnswers.Open()),
+        )
+    }
+
+    @Test
+    fun anAnswerIsOneOfTheOwnersWordsANumberOrAText() {
+```
+
 In `app/src/androidTest/kotlin/dev/kestrel/app/voice/VoiceHookTest.kt`, replace:
 
 ```kotlin
@@ -12082,7 +12149,7 @@ with:
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.debug.ConversationHookAnswersTest`
-Expected: FAIL, the build does not compile: `ConversationHookAnswers` does not exist yet.
+Expected: FAIL, the build does not compile: `ConversationHookAnswers` and `AgentHookAnswers.state` do not exist yet.
 
 - [ ] **Step 3: The answers and the hooks**
 
@@ -12254,20 +12321,147 @@ with:
             "followUp=${if (state.work == Work.FOLLOWING_UP) "open" else "closed"} screenOn=${state.screenOn} micBusy=${state.micBusy} command=$number kind=$kind outcome=$outcome$latest " +
 ```
 
-In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, replace:
+agent-state's line moves into `AgentHookAnswers.state`, so that a JVM test reads its keys (Task 6's review M1).
+
+In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`, replace:
 
 ```kotlin
-        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question"
+import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.safety.AgentFreeApps
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyGuard
 ```
 
 with:
 
 ```kotlin
+import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.commands.text.Normalizer
+import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.GoalPhase
+import dev.kestrel.safety.AgentFreeApps
+import dev.kestrel.safety.Category
+import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.safety.HandOverKind
+```
+
+In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`, replace:
+
+```kotlin
+        QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"
+    }
+```
+
+with:
+
+```kotlin
+        QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"
+    }
+
+    /**
+     * What the conversation's owner holds open now (plan 7B's `ConversationOwner`): a hand-over's kind, a confirmation's
+     * category and the kind that the agent asked its question with.
+     */
+    data class Open(val handOver: HandOverKind? = null, val confirming: Category? = null, val question: QuestionKind? = null)
+
+    /**
+     * agent-state's answer for the conversation's command [number] (design 14.4 of sub-project 7). The command is current
+     * while it is the goal's current round, or the conversation's own request that asks now; otherwise its phase is
+     * `ended`, and its question, hand-over, confirmation and checklist are `none`. `work=` is the listener's [work], and
+     * `conversation=` says whether a conversation is open.
+     */
+    fun state(number: Int, view: ConversationView, work: Work, open: Open): String {
+        val current = view.command == number && (view.goal != null || view.asking != null)
+        val phase = if (current) phase(view.goal) else "ended"
+        val asking = view.asking?.takeIf { current }?.let(AgentHookAnswers::asking) ?: "none"
+        val handOver = open.handOver?.takeIf { current }?.name ?: "none"
+        // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
+        val confirming = open.confirming?.takeIf { current }?.wire ?: "none"
+        // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
+        val question = open.question?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
         // The goal's checklist in counts, and whether a conversation is open (design 14.4 of sub-project 7).
         val checklist = ConversationHookAnswers.checklist(view.checklist?.takeIf { current })
         val conversation = if (view.id != null) "open" else "closed"
-        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question " +
+        return "phase=$phase asking=$asking work=${work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question " +
             "checklist=$checklist conversation=$conversation"
+    }
+
+    // A goal's phase in agent-state's words; the conversation's own question has no goal and counts as running.
+    private fun phase(goal: GoalPhase?): String = when (goal) {
+        GoalPhase.HANDED_OVER -> "handed-over"
+        GoalPhase.PAUSED -> "paused"
+        GoalPhase.PAUSED_AT_LIMIT -> "paused-at-limit"
+        GoalPhase.INTERRUPTED -> "interrupted"
+        GoalPhase.ACTING, GoalPhase.ASKING, null -> "running"
+    }
+```
+
+In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, replace:
+
+```kotlin
+        val (_, number) = taggedTask(intent)
+        val state = graph.listening.state.value
+        val view = graph.conversations.view.value
+        val owner = graph.conversations.owner
+        // The tag's command is the goal's current round, or the conversation's own request that asks now.
+        val current = view.command == number && (view.goal != null || view.asking != null)
+        val phase = if (!current) "ended" else phaseOf(view)
+        val asking = view.asking?.takeIf { current }?.let(AgentHookAnswers::asking) ?: "none"
+        val handOver = owner.handOverKind?.takeIf { current }?.name ?: "none"
+        // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
+        val confirming = owner.confirming?.takeIf { current }?.wire ?: "none"
+        // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
+        val question = owner.asking?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
+        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question"
+    }
+```
+
+with:
+
+```kotlin
+        val (_, number) = taggedTask(intent)
+        val owner = graph.conversations.owner
+        val open = AgentHookAnswers.Open(owner.handOverKind, owner.confirming, owner.asking)
+        return AgentHookAnswers.state(number, graph.conversations.view.value, graph.listening.state.value.work, open)
+    }
+```
+
+In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, replace:
+
+```kotlin
+    // A goal's phase in agent-state's words; the conversation's own question has no goal and counts as running.
+    private fun phaseOf(view: ConversationView): String = when (view.goal) {
+        GoalPhase.HANDED_OVER -> "handed-over"
+        GoalPhase.PAUSED -> "paused"
+        GoalPhase.PAUSED_AT_LIMIT -> "paused-at-limit"
+        GoalPhase.INTERRUPTED -> "interrupted"
+        GoalPhase.ACTING, GoalPhase.ASKING, null -> "running"
+    }
+
+    private fun signs(rule: String?): String = when (rule) {
+```
+
+with:
+
+```kotlin
+    private fun signs(rule: String?): String = when (rule) {
+```
+
+In `app/src/debug/kotlin/dev/kestrel/app/debug/AgentTaskHooks.kt`, replace:
+
+```kotlin
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.GoalPhase
+```
+
+with:
+
+```kotlin
+import dev.kestrel.conversation.model.GoalPhase
 ```
 
 - [ ] **Step 5: Run the tests to see them pass**
@@ -12278,7 +12472,7 @@ Expected: PASS.
 - [ ] **Step 6: Run `:app`'s JVM tests, compile the device tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug`, then `$n = 0; Get-ChildItem app\build\test-results\testDebugUnitTest -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "app $n"`, then `"device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `app` A₅ + 2; `device` AD₀ + 4. Task 8 runs the device tests.
+Expected: BUILD SUCCESSFUL; `app` A₅ + 3; `device` AD₀ + 4. Task 8 runs the device tests.
 
 - [ ] **Step 7: Commit**
 

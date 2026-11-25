@@ -2,11 +2,15 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.safety.HandOverKind
 import dev.kestrel.safety.LabelWords
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
@@ -163,6 +167,43 @@ internal object AgentHookAnswers {
         QuestionKind.SCREENSHOT -> "screenshot"
         QuestionKind.LIMIT -> "limit"
         QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"
+    }
+
+    /**
+     * What the conversation's owner holds open now (plan 7B's `ConversationOwner`): a hand-over's kind, a confirmation's
+     * category and the kind that the agent asked its question with.
+     */
+    data class Open(val handOver: HandOverKind? = null, val confirming: Category? = null, val question: QuestionKind? = null)
+
+    /**
+     * agent-state's answer for the conversation's command [number] (design 14.4 of sub-project 7). The command is current
+     * while it is the goal's current round, or the conversation's own request that asks now; otherwise its phase is
+     * `ended`, and its question, hand-over, confirmation and checklist are `none`. `work=` is the listener's [work], and
+     * `conversation=` says whether a conversation is open.
+     */
+    fun state(number: Int, view: ConversationView, work: Work, open: Open): String {
+        val current = view.command == number && (view.goal != null || view.asking != null)
+        val phase = if (current) phase(view.goal) else "ended"
+        val asking = view.asking?.takeIf { current }?.let(AgentHookAnswers::asking) ?: "none"
+        val handOver = open.handOver?.takeIf { current }?.name ?: "none"
+        // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
+        val confirming = open.confirming?.takeIf { current }?.wire ?: "none"
+        // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
+        val question = open.question?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
+        // The goal's checklist in counts, and whether a conversation is open (design 14.4 of sub-project 7).
+        val checklist = ConversationHookAnswers.checklist(view.checklist?.takeIf { current })
+        val conversation = if (view.id != null) "open" else "closed"
+        return "phase=$phase asking=$asking work=${work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question " +
+            "checklist=$checklist conversation=$conversation"
+    }
+
+    // A goal's phase in agent-state's words; the conversation's own question has no goal and counts as running.
+    private fun phase(goal: GoalPhase?): String = when (goal) {
+        GoalPhase.HANDED_OVER -> "handed-over"
+        GoalPhase.PAUSED -> "paused"
+        GoalPhase.PAUSED_AT_LIMIT -> "paused-at-limit"
+        GoalPhase.INTERRUPTED -> "interrupted"
+        GoalPhase.ACTING, GoalPhase.ASKING, null -> "running"
     }
 
     /** Whether one of the task's confirmed [recipients] is [wanted], compared folded: match, other, or none without either. */

@@ -15,7 +15,6 @@ import dev.kestrel.app.agent.RoundEvidences
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.conversation.channel.QuestionKind
-import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.datatools.AndroidDataPort
 import dev.kestrel.safety.AgentFreeApps
@@ -111,23 +110,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     // agent-state -Tag k
     fun state(intent: Intent): String {
         val (_, number) = taggedTask(intent)
-        val state = graph.listening.state.value
-        val view = graph.conversations.view.value
         val owner = graph.conversations.owner
-        // The tag's command is the goal's current round, or the conversation's own request that asks now.
-        val current = view.command == number && (view.goal != null || view.asking != null)
-        val phase = if (!current) "ended" else phaseOf(view)
-        val asking = view.asking?.takeIf { current }?.let(AgentHookAnswers::asking) ?: "none"
-        val handOver = owner.handOverKind?.takeIf { current }?.name ?: "none"
-        // The category of the open confirmation, so that :tools:eval confirms only the kind that its task names (design D28).
-        val confirming = owner.confirming?.takeIf { current }?.wire ?: "none"
-        // The open question's source, so that :tools:eval answers look_closer's screenshot question apart (plan 6B-basefix).
-        val question = owner.asking?.takeIf { current }?.let(AgentHookAnswers::question) ?: "none"
-        // The goal's checklist in counts, and whether a conversation is open (design 14.4 of sub-project 7).
-        val checklist = ConversationHookAnswers.checklist(view.checklist?.takeIf { current })
-        val conversation = if (view.id != null) "open" else "closed"
-        return "phase=$phase asking=$asking work=${state.work.name.lowercase().replace('_', '-')} handOver=$handOver confirming=$confirming question=$question " +
-            "checklist=$checklist conversation=$conversation"
+        val open = AgentHookAnswers.Open(owner.handOverKind, owner.confirming, owner.asking)
+        return AgentHookAnswers.state(number, graph.conversations.view.value, graph.listening.state.value.work, open)
     }
 
     // agent-cache --es field <anthropicMarks|responsesExplicit|chatCopilotMarks> --ez on <true|false>
@@ -332,15 +317,6 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val tag = intent.getStringExtra(EXTRA_TAG) ?: throw HookError("add --es tag <tag>")
         val number = VoiceHooks.tags.tagged(tag)?.task?.takeIf { it > 0 } ?: throw HookError("no task has the tag $tag")
         return tag to number
-    }
-
-    // A goal's phase in agent-state's words; the conversation's own question has no goal and counts as running.
-    private fun phaseOf(view: ConversationView): String = when (view.goal) {
-        GoalPhase.HANDED_OVER -> "handed-over"
-        GoalPhase.PAUSED -> "paused"
-        GoalPhase.PAUSED_AT_LIMIT -> "paused-at-limit"
-        GoalPhase.INTERRUPTED -> "interrupted"
-        GoalPhase.ACTING, GoalPhase.ASKING, null -> "running"
     }
 
     private fun signs(rule: String?): String = when (rule) {

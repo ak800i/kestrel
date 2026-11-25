@@ -3,9 +3,15 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ChecklistSummary
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.EmergencyGuard
+import dev.kestrel.safety.HandOverKind
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
@@ -47,6 +53,35 @@ class AgentHookAnswersTest {
         assertEquals(0, AgentHookAnswers.marker("I read you the e-mail about heron maple.", "maple heron"))
         assertEquals(1, AgentHookAnswers.marker("Kestrel test: Maple heron.", "maple heron"))
         assertEquals(0, AgentHookAnswers.marker("Kestrel test: maple heron.", null))
+    }
+
+    @Test
+    fun theStateGivesTheChecklistOnlyForTheCurrentRoundAndWhetherAConversationIsOpen() {
+        val acting = ConversationView(id = ConversationId.random(), command = 3, goal = GoalPhase.ACTING, checklist = ChecklistSummary(2, 5, "write to Mila"))
+
+        val line = AgentHookAnswers.state(3, acting, Work.IDLE, AgentHookAnswers.Open())
+
+        assertEquals("phase=running asking=none work=idle handOver=none confirming=none question=none checklist=2/5 conversation=open", line)
+        assertFalse(line, line.contains("Mila"))
+        // An earlier round of the open conversation has ended, and its line names nothing of the current round.
+        val confirming = acting.copy(goal = GoalPhase.ASKING, asking = QuestionKind.CONFIRM)
+        val open = AgentHookAnswers.Open(HandOverKind.CALL, Category.SENDING, QuestionKind.CONFIRM)
+        assertEquals(
+            "phase=ended asking=none work=awaiting-task handOver=none confirming=none question=none checklist=none conversation=open",
+            AgentHookAnswers.state(2, confirming, Work.AWAITING_TASK, open),
+        )
+        assertEquals(
+            "phase=running asking=confirm work=awaiting-task handOver=CALL confirming=sending question=none checklist=2/5 conversation=open",
+            AgentHookAnswers.state(3, confirming, Work.AWAITING_TASK, open),
+        )
+        assertEquals(
+            "phase=paused-at-limit asking=none work=idle handOver=none confirming=none question=none checklist=2/5 conversation=open",
+            AgentHookAnswers.state(3, acting.copy(goal = GoalPhase.PAUSED_AT_LIMIT), Work.IDLE, AgentHookAnswers.Open()),
+        )
+        assertEquals(
+            "phase=ended asking=none work=idle handOver=none confirming=none question=none checklist=none conversation=closed",
+            AgentHookAnswers.state(3, ConversationView(), Work.IDLE, AgentHookAnswers.Open()),
+        )
     }
 
     @Test
