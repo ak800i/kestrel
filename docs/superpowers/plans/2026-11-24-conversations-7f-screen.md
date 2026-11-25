@@ -31,7 +31,7 @@ Code comments name this plan "plan 7F" and the design's sections as "design 10.3
 
 ## Before you start
 
-- This plan's Tasks A1 and A2 run first, right after plan 7B's Tasks 5a to 5d and before its Task 8, with their own checks ("Before Tasks A1 and A2" in their section). Its Tasks 1 to 15 start only after plans 7A to 7E, with Tasks A1 and A2, are merged into `sp3`. It was written against `sp3` at `a141ea4f`, where plan 7A and plan 7B's Tasks 1 to 7 had landed, with plan 7B's fixes (`693f3dde`, `31ef1c54`, `c6bafb8d`, `0aa11403`, `e12844d5`, and Task 7's `a3459e50` and `d6c76d70`), plan 7B's index of past conversations planned in shards after its fix rounds (Tasks 5a to 5d, design 4.3 and 9.x, `90b6c2b7` to `7265779c`), plan 7C's Task 4b built (`1422af92`, `d9382170`) and its Task 4c planned (`a141ea4f`), plan 7E's amendment moved into plan 7B's Tasks 7 and 10 (`ba1cc001`, `82a42656`), and plan 7E rebased onto plan 7B's built rules (`04c540d9`, `b799de95`). The plan checker simulated, in order: plan 7B's Tasks 5a to 5d, this plan's Tasks A1 and A2, plan 7B's Tasks 8 to 10, plan 7C from Task 4c, and plans 7D and 7E; this plan's Tasks 1 to 13a ran clean on top. Its old texts in `core/`, `app/` and their tests are the texts that those plans leave. The files that Tasks 1 to 13a change and that the simulated plans leave as they are at `a141ea4f` are `app/src/main/kotlin/dev/kestrel/app/MainActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SetupChecklist.kt`, `app/src/test/kotlin/dev/kestrel/app/settings/SetupChecklistTest.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/CardPresence.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/ConfirmationCard.kt`, `core/screen/src/main/res/values/strings.xml`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/GridBarAndCardTest.kt` and `testapp/src/main/AndroidManifest.xml`.
+- This plan's Tasks A1 and A2 ran first, right after plan 7B's Tasks 5a to 5d and before its Task 8, and are built: Task A1 in `b4f5fcc3`, Task A2 in `ade80de8`. Its Tasks 1 to 15 start only after plans 7A to 7E, with Tasks A1 and A2, are merged into `sp3`. It was written against `sp3` at `a141ea4f`, where plan 7A and plan 7B's Tasks 1 to 7 had landed, with plan 7B's fixes (`693f3dde`, `31ef1c54`, `c6bafb8d`, `0aa11403`, `e12844d5`, and Task 7's `a3459e50` and `d6c76d70`), plan 7B's index of past conversations planned in shards after its fix rounds (Tasks 5a to 5d, design 4.3 and 9.x, `90b6c2b7` to `7265779c`), plan 7C's Task 4b built (`1422af92`, `d9382170`) and its Task 4c planned (`a141ea4f`), plan 7E's amendment moved into plan 7B's Tasks 7 and 10 (`ba1cc001`, `82a42656`), and plan 7E rebased onto plan 7B's built rules (`04c540d9`, `b799de95`). It was re-synced to plan 7B's engine after the fixes of its Task 10 (`25cdca0a`, `4804136d`): every store write goes through the engine's writer, and its timers are deadlines on `ConversationClock.sinceBootMillis`; and to `LineKind.OWNER_TOO_LATE`. The plan checker first simulated, in order: plan 7B's Tasks 5a to 5d, this plan's Tasks A1 and A2, plan 7B's Tasks 8 to 10, plan 7C from Task 4c, and plans 7D and 7E; this plan's Tasks 1 to 13a ran clean on top. Its old texts in `core/`, `app/` and their tests are the texts that those plans leave. The files that Tasks 1 to 13a change and that the simulated plans leave as they are at `a141ea4f` are `app/src/main/kotlin/dev/kestrel/app/MainActivity.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SetupChecklist.kt`, `app/src/test/kotlin/dev/kestrel/app/settings/SetupChecklistTest.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/ScreenSession.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/CardPresence.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/ConfirmationCard.kt`, `core/screen/src/main/res/values/strings.xml`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`, `app/src/androidTest/kotlin/dev/kestrel/app/screen/GridBarAndCardTest.kt` and `testapp/src/main/AndroidManifest.xml`.
 - At the starts of Tasks 1, 4, 8 and 11, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7f-screen.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:SIMDIR = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7f-sim'; $env:END_TASK = ''; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 1 also set `$env:START_TASK = '1'`, for Task 4 `$env:START_TASK = '4'`, for Task 8 `$env:START_TASK = '8'`, and for Task 11 `$env:START_TASK = '11'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plans 7A to 7E moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
 - At the start of Task 1, check that plans 7B to 7E and Tasks A1 and A2 as merged have what this plan consumes: `Select-String -Path core\agent\src\main\kotlin\dev\kestrel\agent\port\OwnerPort.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\model\OwnerInput.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationEngine.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\engine\ConversationView.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\ConversationTexts.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\store\ConversationStore.kt, core\conversation\src\main\kotlin\dev\kestrel\conversation\store\HistorySearch.kt, app\src\main\kotlin\dev\kestrel\app\AppGraph.kt, app\src\main\kotlin\dev\kestrel\app\conversation\OwnerSupport.kt, app\src\main\kotlin\dev\kestrel\app\conversation\InputIds.kt, app\src\main\kotlin\dev\kestrel\app\orchestrator\Requests.kt, app\src\main\kotlin\dev\kestrel\app\listen\ScreenTurns.kt, app\src\main\kotlin\dev\kestrel\app\goal\GoalForeground.kt -Pattern 'fun replyOpened\(question: Int\)|fun composing\(active: Boolean\)|suspend fun deleteHistory\(\): HistoryDeletion|val hold: GoalHold\? = null|fun held\(hold: GoalHold\)|const val CONTINUE_IN_NOTIFICATION|suspend fun searchable\(\): Searchable|class PastUnavailableException|suspend fun getAll\(|suspend fun conversation\(topic: String\?\): ConversationLookup|val goalForeground: GoalForeground|internal interface OwnerScreen|object InputIds|fun typed\(text: String\): InputIntent\?|class ScreenTurns|suspend fun <T> whileSpeaking|const val MAX_CHOICES = 4|val question: Int\? = null\) : InputIntent'`. Expected: 18 matches or more. Otherwise stop and ask the controller. Then check that only the two files that Task 3 changes name plan 7E's constant, so that its rename reaches every use: `git grep -l CONTINUE_IN_NOTIFICATION -- core app`. Expected: exactly `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt` and `core/conversation/src/main/kotlin/dev/kestrel/conversation/ConversationTexts.kt` (plan 7E's `GoalRules.backgroundRefused` and its tests take the sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`). Otherwise stop and ask the controller.
 - Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :app:testDebugUnitTest :core:conversation:test :core:screen:testDebugUnitTest`, then `foreach ($dir in 'app\build\test-results\testDebugUnitTest', 'core\conversation\build\test-results\test', 'core\screen\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `"app device $(@(Get-ChildItem app\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"; "privacy device $(@(Get-ChildItem core\privacy\src\androidTest -Recurse -Filter *.kt | Select-String -Pattern '@Test\b').Count)"`, then `scripts\gradle.ps1 --stop`. These are A₀ (`:app` JVM, with `app/src/testDebug`), C₀ (`:core:conversation`, after Tasks A1 and A2 and plans 7B to 7E), S₀ (`:core:screen` JVM), AD₀ (`:app`'s device tests) and PD₀ (`:core:privacy`'s device tests, which Task 14 runs again unchanged). `:core:agent` (G₀; Task A1 counts its own change), `:core:privacy`'s JVM tests (P₀), `:tools:eval` (E₀) and the Pester tests do not change in Tasks 1 to 15. Each task gives its counts as "N + k", where N is the count before the task. If a count differs, stop and ask the controller.
@@ -62,7 +62,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 - **A typed round waits for a running instant command.** A spoken input cancels a running instant command before it reaches the conversation (plan 7D). A typed input, a card's button and the notification's buttons reach the conversation without the Orchestrator, so `ScreenTurns` also keeps the running command's job, and a goal's round waits for it to end, for at most 60 s, as it waits for a cancelled one (plan 7B's `ScreenTurn` contract; plan 7D's "Interfaces for 7E and 7F").
 - **The bar's goal progress is this plan's, and the bar has one writer.** Design 10.5's "Step 12 · 3 of 7 · Replying to Mila" and "On hold: say 'Kestrel, continue' or open Kestrel." are in no earlier plan; `GoalBar` gives them for both channels from the conversation's view, and `SharedFeedbackBar` shows them only while no kept text (a question, a hand-over's sentence) holds the bar and no other text showed in the last 4 s.
 - **The speech of typed replies with listening off.** With "Speak replies to typed commands" on and Kestrel off, the voice channel speaks a typed conversation's words with `AppOffVoice`, which loads the owner's voice for the reply inside plan 7E's `GoalForeground.whileSpeaking` and closes it 30 s after the last reply.
-- **Deleting past conversations.** One past conversation is deleted from the list or its transcript after a question; "Delete all past conversations" deletes every closed conversation, also one in a format that this version cannot read, in one archive change with the index without them, and reads no body (`ConversationStore.deleteClosed` to `ConversationEngine.deleteAllPast`); it raises the store's generation first, as "delete history" does, and while the index cannot be read it deletes nothing and says so. One conversation's deletion runs on the engine's coroutine, which refuses to delete the open conversation; "Delete all" runs beside the engine's inbox, never through it, because the store may wait minutes for its index (review N2), and the store keeps the open conversation, which its index never holds. So a conversation that the owner continued meanwhile is kept either way, and the page shows "Deleting past conversations…" until the outcome comes back, which it reads out.
+- **Deleting past conversations.** One past conversation is deleted from the list or its transcript after a question; "Delete all past conversations" deletes every closed conversation, also one in a format that this version cannot read, in one archive change with the index without them, and reads no body (`ConversationStore.deleteClosed` to `ConversationEngine.deleteAllPast`); it raises the store's generation first, as "delete history" does, and while the index cannot be read it deletes nothing and says so. One conversation's deletion is checked by the engine's loop, which refuses to delete the open conversation or the one that a running switch opens, and done by its writer after the writes before it; "Delete all" runs beside the engine's inbox, never through it, because the store may wait minutes for its index (review N2), and the store keeps the open conversation, which its index never holds. So a conversation that the owner continued meanwhile is kept either way, and the page shows "Deleting past conversations…" until the outcome comes back, which it reads out.
 - **The list's search** uses the search's own rule over plan 7B's index of past conversations, through `HistorySearch.matching`, which `:core:conversation` gains, once the typing pauses and off the main thread; while the index is read or rebuilt, the list says "Loading past conversations…", and while it cannot be read, "Kestrel can't read past conversations right now. It will try again later." (design 9.5).
 - **The round limits on the Conversations page** are choices within the design's ranges (50 to 2,000 replies, 5 to 240 minutes, 10 to 5,000 AI Credits), so that a voice user can set them by name: 50, 100, 200, 500, 1,000 or 2,000 replies; 5, 15, 30, 60, 120 or 240 minutes; 10, 100, 250, 500, 1,000, 2,500 or 5,000 AI Credits.
 - **The settings app.** `MainActivity` leaves the launcher but stays exported, because the scripts and the device tests start it with `am start`, and it follows only the extras that it follows today. Its window is not guarded, as today; the Conversations page's dialog is.
@@ -99,6 +99,8 @@ Every main path of `:app` is below `app/src/main/kotlin/dev/kestrel/app/`, every
 
 ## Plan 7A and 7B amendments
 
+**Status: built.** Task A1 in `b4f5fcc3` and Task A2 in `ade80de8`; their steps are checked. The rest of this section stays as the record of what they did.
+
 Two decisions of the controller change code that plans 7A and 7B built, so they are tasks of their own, which run earlier than the rest of this plan: right after plan 7B's Tasks 5a to 5d and before its Task 8, as the controller routes them.
 
 - **Task A1 (review items G1 and N1): a pick's choices and its numbers reach its card.** The agent's question carries its choices, at most 4, from the agent through the owner port, plan 7B's `Dialogue` and `ConversationOwner`, to `ChannelQuestion.choices`, which design 10.3's card shows as buttons. A tapped choice answers as the owner's number does: `ChannelAnswer.Pick(position)`, which the agent reads as `Answer.Number(position)`. So a caller offers choices only when choice number i is the answer i. With them comes the pick's highest number (`highest`: its numbers run from 1 to it; 0 when the asker knows no range), which the card's keypad keeps to (Task 1). `look_closer`'s "Which number should I use?" offers its badges' numbers as choices when there are at most 4 of them and they run from 1, as the observation numbers its lines; otherwise it offers none, and the owner gives the number on the card's keypad, by voice, or typed. It gives the highest number whenever its numbers run from 1.
@@ -124,7 +126,7 @@ Counts of Tasks A1 and A2: `:core:agent` Gₐ + 1 (`AgentToolsTest` + 1); `:core
 
 Counts: `:core:agent` Gₐ + 1 (`AgentToolsTest` + 1); `:core:conversation` Cₐ + 1 (`ConversationOwnerTest` + 1).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `core/agent/src/test/kotlin/dev/kestrel/agent/AgentToolsTest.kt`, replace:
 
@@ -210,12 +212,12 @@ with:
     fun aPauseWithdrawsTheGoalsQuestionAndClosesTheGateUntilTheResume() = runTest {
 ```
 
-- [ ] **Step 2: Run the tests to see them fail**
+- [x] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:agent:test --tests=dev.kestrel.agent.AgentToolsTest`; then `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.channel.ConversationOwnerTest`
 Expected: FAIL: the compiler does not know `OwnerPort.MAX_CHOICES`, `FakeOwner.choices` and `FakeOwner.highest`, `ConversationOwner.ask` takes no choices and `ChannelQuestion` has no `highest`.
 
-- [ ] **Step 3: The port, the run, `look_closer`, the dialogue and the owner**
+- [x] **Step 3: The port, the run, `look_closer`, the dialogue and the owner**
 
 In `core/agent/src/main/kotlin/dev/kestrel/agent/port/OwnerPort.kt`, replace:
 
@@ -517,12 +519,12 @@ with:
         )
 ```
 
-- [ ] **Step 4: Run the tests and the builds**
+- [x] **Step 4: Run the tests and the builds**
 
 Run: `scripts\gradle.ps1 :core:agent:test :core:conversation:test :app:testDebugUnitTest :app:assembleDebug; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL; `:core:agent` Gₐ + 1, `:core:conversation` Cₐ + 1, `:app` JVM unchanged.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/agent core/conversation/src/main/kotlin/dev/kestrel/conversation/channel core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/ConversationOwnerTest.kt app/src/main/kotlin/dev/kestrel/app/agent/AppOwnerPort.kt
@@ -542,7 +544,7 @@ Review low item (c): a button on the conversation screen's copy of a card reache
 
 Counts: `:core:conversation` + 1 (`ConversationMachineTest` + 1).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt`, replace:
 
@@ -574,12 +576,12 @@ with:
     }
 ```
 
-- [ ] **Step 2: Run the test to see it fail**
+- [x] **Step 2: Run the test to see it fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.machine.ConversationMachineTest`
 Expected: FAIL: `InputIntent.Answer` takes no question.
 
-- [ ] **Step 3: The answer names its question**
+- [x] **Step 3: The answer names its question**
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/model/OwnerInput.kt`, replace:
 
@@ -617,12 +619,12 @@ with:
                 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `scripts\gradle.ps1 :core:conversation:test; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL; `:core:conversation` Cₐ + 2 after Tasks A1 and A2.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add core/conversation/src/main/kotlin/dev/kestrel/conversation/model/OwnerInput.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/machine/ConversationMachine.kt core/conversation/src/test/kotlin/dev/kestrel/conversation/machine/ConversationMachineTest.kt
@@ -2604,7 +2606,7 @@ git commit -m "feat(listen): a goal's round waits for a running instant command,
 
 ### Task 3: The conversation's parts for the screen, the list and the device tests
 
-Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them, and the engine never deletes the open one; the list's search field filters by the search's own rule; and the device tests delete the conversations that they made, and only those (Task 8's `TypedTests`). Design 15.2: the device tests shorten D21's waits. Plan 7E's interfaces: once the conversation screen has Continue, a goal that Android's refusal holds says design 10.6's "Open Kestrel and tap Continue." This task gives the engine `deletePast(id)`, which runs on the engine's coroutine over the store's `delete(id)`, and `deleteAllPast()`, which runs beside the engine's inbox, in its scope, over the store's new `deleteClosed()`, because that may wait minutes for the index to be read or rebuilt and must never hold up the conversation (review N2); a seam for its timers' lengths, which `AppGraph.conversationTimers` sets for device tests only; and the held goal's new sentence. Both store parts work on plan 7B's index of past conversations (design 9.2), so that neither reads a body: `deleteClosed()` lives inside the store: under its `withIndex`, it deletes the index's conversations and kept rows in one archive change with the index without them, which writes only the shards that changed, and raises the store's `generation` first, as "delete history" does, so that a search that it overtook gives out nothing; it needs no new function of the archive's port. While the index is read or rebuilt it waits, and while the index cannot be read it throws `PastUnavailableException`, which the engine's `deleteAllPast()` gives as `PastDeletion.UNAVAILABLE`. `HistorySearch.matching(text)` ranks the index's shards with `HistoryRanking`, as the agent's search does, and says when the index is being rebuilt or cannot be read. Plan 7E's `GoalRules.backgroundRefused` and its tests take the held goal's sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so the new sentence changes only `ConversationTexts.kt` and the one test that names the constant, plan 7E's `GoalNoticesTest` (see "Before you start").
+Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them, and the engine never deletes the open one; the list's search field filters by the search's own rule; and the device tests delete the conversations that they made, and only those (Task 8's `TypedTests`). Design 15.2: the device tests shorten D21's waits. Plan 7E's interfaces: once the conversation screen has Continue, a goal that Android's refusal holds says design 10.6's "Open Kestrel and tap Continue." This task gives the engine `deletePast(id)`, which the engine's loop checks against the open conversation and the one that a switch is opening, and whose deletion its writer does in the loop's order (plan 7B's rule that every write to the store goes through the writer), and `deleteAllPast()`, which runs beside the engine's inbox, in its scope, over the store's new `deleteClosed()`, because that may wait minutes for the index to be read or rebuilt and must never hold up the conversation (review N2); a seam for its timers' lengths, which shortens each timer's deadline itself (plan 7B's timers are deadlines on `ConversationClock.sinceBootMillis`, and a `delay` only wakes the loop) and which `AppGraph.conversationTimers` sets for device tests only; and the held goal's new sentence. Both store parts work on plan 7B's index of past conversations (design 9.2), so that neither reads a body: `deleteClosed()` lives inside the store: under its `withIndex`, it deletes the index's conversations and kept rows in one archive change with the index without them, which writes only the shards that changed, and raises the store's `generation` first, as "delete history" does, so that a search that it overtook gives out nothing; it needs no new function of the archive's port. While the index is read or rebuilt it waits, and while the index cannot be read it throws `PastUnavailableException`, which the engine's `deleteAllPast()` gives as `PastDeletion.UNAVAILABLE`. `HistorySearch.matching(text)` ranks the index's shards with `HistoryRanking`, as the agent's search does, and says when the index is being rebuilt or cannot be read. Plan 7E's `GoalRules.backgroundRefused` and its tests take the held goal's sentence from `ConversationTexts.held(GoalHold.BACKGROUND_REFUSED)`, so the new sentence changes only `ConversationTexts.kt` and the one test that names the constant, plan 7E's `GoalNoticesTest` (see "Before you start").
 
 **Files:**
 - Create: `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/PastDeletion.kt`
@@ -2612,7 +2614,7 @@ Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them,
 - Test: modify `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/ArchivedConversationStoreTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/store/HistorySearchTest.kt`, `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt`
 
 **Interfaces:**
-- Consumes: plan 7B's index store (Tasks 5a to 5d): `ConversationStore` (`delete(id)`, `generation`, `searchable()`, `list()`), `Searchable` (`Ready(past, open)`, `Rebuilding`, `Failed`), `PastUnavailableException`, `PastIndex` (`conversations`, `kept`, `searches`, `without(ids)`), `ArchivedConversationStore` (its `withIndex` with a suspend block, `change` and `deleted`), `HistorySearch`, `HistoryRanking.rank` and `wanted`, the fixtures' `MemoryArchive` (`calls`, `failures`, `keyErased`); plan 7B's `ConversationEngine` (its `Message` inbox and `startTimer`) and `Timer`; plan 7E's `ConversationTexts.CONTINUE_IN_NOTIFICATION` and `held(hold)`, and `GoalNotices`; plan 7D's `AppGraph.conversations` and `conversationSteps`.
+- Consumes: plan 7B's index store (Tasks 5a to 5d): `ConversationStore` (`delete(id)`, `generation`, `searchable()`, `list()`), `Searchable` (`Ready(past, open)`, `Rebuilding`, `Failed`), `PastUnavailableException`, `PastIndex` (`conversations`, `kept`, `searches`, `without(ids)`), `ArchivedConversationStore` (its `withIndex` with a suspend block, `change` and `deleted`), `HistorySearch`, `HistoryRanking.rank` and `wanted`, the fixtures' `MemoryArchive` (`calls`, `failures`, `keyErased`); plan 7B's `ConversationEngine` as fixed in `25cdca0a` (its `Message` inbox, its writer's `Write`s, `switchTo` and `reopened`, and `startTimer` with its deadline on `clock.sinceBootMillis()`) and `Timer`; plan 7E's `ConversationTexts.CONTINUE_IN_NOTIFICATION` and `held(hold)`, and `GoalNotices`; plan 7D's `AppGraph.conversations` and `conversationSteps`.
 - Produces: `ConversationStore.deleteClosed(): Int`; `sealed interface PastMatches { All; Only(ids: Set<ConversationId>); Rebuilding; Failed }` and `HistorySearch.matching(text: String): PastMatches` (package `dev.kestrel.conversation.store`); `ConversationEngine.deletePast(id: ConversationId): PastDeletion` and `deleteAllPast(): PastDeletion`; `enum class PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }` (package `dev.kestrel.conversation.engine`); the engine constructor's last parameter `timerMillis: (Timer, Long) -> Long = { _, millis -> millis }`; `AppGraph.conversationTimers: ((Timer, Long) -> Long)?`; `ConversationTexts.OPEN_AND_CONTINUE = "Open Kestrel and tap Continue."` in place of `CONTINUE_IN_NOTIFICATION`.
 
 Counts: `:core:conversation` C₀ + 5 (`ArchivedConversationStoreTest` + 1, `HistorySearchTest` + 1, `ConversationEngineTest` + 3), where C₀ is the count before Task 1 ("Before you start"; Tasks 1 and 2 add none there). `:app` JVM unchanged.
@@ -2699,14 +2701,14 @@ with:
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
 
 ```kotlin
-        onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
+        report: (String, Throwable) -> Unit = { _, error -> throw error },
     ): ConversationEngine {
 ```
 
 with:
 
 ```kotlin
-        onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
+        report: (String, Throwable) -> Unit = { _, error -> throw error },
         timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
     ): ConversationEngine {
 ```
@@ -2714,13 +2716,13 @@ with:
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
 
 ```kotlin
-            settings, testMode, voiceOn, clock, { _, error -> throw error }, onStep = onStep,
+            settings, testMode, voiceOn, clock, report, onStep = onStep,
 ```
 
 with:
 
 ```kotlin
-            settings, testMode, voiceOn, clock, { _, error -> throw error }, onStep = onStep, timerMillis = timerMillis,
+            settings, testMode, voiceOn, clock, report, onStep = onStep, timerMillis = timerMillis,
 ```
 
 In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
@@ -2768,7 +2770,8 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/Conversati
         assertEquals(open, engine.view.value.id)
     }
 
-    // Plan 7F's device tests shorten the engine's timers through its seam; the machine's lengths stay.
+    // Plan 7F's device tests shorten the engine's timers through its seam, which shortens the deadline itself, not only the
+    // wake-up; the machine's lengths stay.
     @Test
     fun theTimersTakeTheirLengthsThroughTheSeam() = scope.runTest {
         val engine = engine(environment(listSms, finish(1)), timerMillis = { _, millis -> millis / 60 })
@@ -2812,7 +2815,7 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/Conversati
 
 ```kotlin
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.awaitCancellation
 ```
 
 with:
@@ -2820,7 +2823,7 @@ with:
 ```kotlin
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.awaitCancellation
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/goal/GoalNoticesTest.kt`, replace:
@@ -2862,14 +2865,16 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/store/ConversationStore.kt`, replace:
 
 ```kotlin
-    /** Deletes every conversation, the open one too, the index and the archive's key (design 9.7). */
+     * complete; the store notes it as its own failure.
+     */
     suspend fun deleteAll()
 ```
 
 with:
 
 ```kotlin
-    /** Deletes every conversation, the open one too, the index and the archive's key (design 9.7). */
+     * complete; the store notes it as its own failure.
+     */
     suspend fun deleteAll()
 
     /**
@@ -3003,16 +3008,76 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-        class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
 ```
 
 with:
 
 ```kotlin
-        class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
+        class Reopened(val snapshot: ConversationSnapshot?, val failed: Boolean) : Message
 
         /** The deletion of the past conversation [id] (plan 7F); [done] gets how it ended. */
         class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Message
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+```
+
+with:
+
+```kotlin
+        class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+
+        /** Deletes the past conversation [id] (plan 7F); [done] gets how it ended. */
+        class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Write
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+    private var switching = false
+```
+
+with:
+
+```kotlin
+    private var switching = false
+
+    // The past conversation that the running switch opens, which no deletion may take (plan 7F).
+    private var switchingTo: ConversationId? = null
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        switching = true
+        writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
+```
+
+with:
+
+```kotlin
+        switching = true
+        switchingTo = id
+        writes.trySend(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+        switching = false
+        val opened = message.snapshot
+```
+
+with:
+
+```kotlin
+        switching = false
+        switchingTo = null
+        val opened = message.snapshot
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3026,9 +3091,10 @@ with:
 
 ```kotlin
     /**
-     * Deletes the past conversation [id] (design 9.5 of sub-project 7; plan 7F), on the engine's coroutine, so that no
-     * switch to it comes between: [PastDeletion.OPEN] when [id] is the open conversation now, which stays. Waits for
-     * [restore].
+     * Deletes the past conversation [id] (design 9.5 of sub-project 7; plan 7F): the loop checks it between the machine's
+     * steps, and the writer deletes it after the writes that the loop gave it before, so that no save or switch of the
+     * loop's comes between: [PastDeletion.OPEN] when [id] is the open conversation now, or the one that a running switch
+     * opens, which stays. Waits for [restore].
      */
     suspend fun deletePast(id: ConversationId): PastDeletion {
         val done = CompletableDeferred<PastDeletion>()
@@ -3052,38 +3118,46 @@ with:
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-                is Message.DeleteHistory -> message.done.complete(deleteConfirmed())
+                is Message.Reopened -> reopened(message)
 ```
 
 with:
 
 ```kotlin
-                is Message.DeleteHistory -> message.done.complete(deleteConfirmed())
-                is Message.DeletePast -> message.done.complete(deletePastNow(message.id))
+                is Message.Reopened -> reopened(message)
+                is Message.DeletePast -> deletion(message)
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-            (message as? Message.DeleteHistory)?.done?.complete(HistoryDeletion.FAILED)
-        }
-    }
+            report("The conversation", e)
 ```
 
 with:
 
 ```kotlin
-            (message as? Message.DeleteHistory)?.done?.complete(HistoryDeletion.FAILED)
+            report("The conversation", e)
             (message as? Message.DeletePast)?.done?.complete(PastDeletion.FAILED)
-        }
-    }
+```
 
-    // Design 9.5 of sub-project 7: the open conversation is never a past one. The deletion runs between the machine's
-    // steps, so that no switch to the conversation comes between the check and the deletion.
-    private suspend fun deletePastNow(id: ConversationId): PastDeletion {
-        if (id == state.id) return PastDeletion.OPEN
-        store.delete(id)
-        return PastDeletion.DELETED
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+    // D23: the writer closes the open conversation into the list and opens the chosen one, in one transaction of the store.
+```
+
+with:
+
+```kotlin
+    // Design 9.5 of sub-project 7: the open conversation is never a past one, nor is the one that a running switch opens.
+    // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after.
+    private fun deletion(message: Message.DeletePast) {
+        if (message.id == state.id || message.id == switchingTo) {
+            message.done.complete(PastDeletion.OPEN)
+        } else {
+            writes.trySend(Write.DeletePast(message.id, message.done))
+        }
     }
 
     // While the index of past conversations cannot be read, the store deletes nothing and says so; it is no failure. A failure
@@ -3099,6 +3173,33 @@ with:
         report("Deleting past conversations", e)
         PastDeletion.FAILED
     }
+
+    // D23: the writer closes the open conversation into the list and opens the chosen one, in one transaction of the store.
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+                inbox.trySend(Message.Reopened(opened, failed = false))
+            }
+```
+
+with:
+
+```kotlin
+                inbox.trySend(Message.Reopened(opened, failed = false))
+            }
+            is Write.DeletePast -> write.done.complete(
+                try {
+                    store.delete(write.id)
+                    PastDeletion.DELETED
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    report("Deleting a past conversation", e)
+                    PastDeletion.FAILED
+                },
+            )
 ```
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
@@ -3134,13 +3235,14 @@ import dev.kestrel.conversation.store.RecordRef
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
 
 ```kotlin
-            delay(effect.millis)
+        val at = clock.sinceBootMillis() + effect.millis
 ```
 
 with:
 
 ```kotlin
-            delay(timerMillis(effect.timer, effect.millis))
+        // The device tests' seam shortens the deadline itself: a shorter wake-up alone would end nothing sooner.
+        val at = clock.sinceBootMillis() + timerMillis(effect.timer, effect.millis)
 ```
 
 - [ ] **Step 5: The held goal's sentence names the screen's Continue**
@@ -4613,7 +4715,7 @@ Design 10.1 of sub-project 7: the conversation screen holds no conversation stat
 
 **Interfaces:**
 - Consumes: plan 7B's `CommandRecord`, `RecordLine`, `LineKind`, `InputChannel`, `InputIntent`, `ChannelAnswer`, `ConversationId`, `ConversationView` (`id`, `command`, `goal`, `asking`, `records`, `continuedAtWall`, `quiet`, `hold`), `QuietClock`, `GoalPhase`, `QuestionKind`; plan 7A's `Checklist`, `ItemState`; plan 7E's `ConversationTexts.held(hold)` and `GO_ON`; Task 1's `OwnerCard`; Task 5's `ForegroundState`.
-- Produces: `internal enum class OwnerLine { COMMAND, ANSWER, STEERING, CONTINUE }`; `internal sealed interface TranscriptLine` (`Owner(kind, text, channel, atWall)`, `Kestrel(text, asked)`, `Answer(text)`, `Checklist(items, done)`, `Note(text)`, `LeftOut(lines, data)`, `Continued(atWall)`, `Ended(atWall)`); `internal data class ChecklistRow(text, state)`; `internal object Transcript { fun of(records, continuedAtWall: Long? = null, endedAtWall: Long? = null): List<TranscriptLine> }`; `internal sealed interface GoalControls` (`None`, `Working`, `Held(how)`); `internal data class ScreenUi(lines, goal, stopAndNew, card)`; `internal data class ScreenState(id, records, continuedAtWall, endedAtWall, armedAt, newAfterStop, clearAtClose)`; `internal sealed interface ScreenEffect` (`Leave`, `Submit(intent)`); `internal data class ScreenStep(state, effects)`; `internal object ConversationScreenRules` with `ui(state, view, card): ScreenUi`, `viewed(state, view, foreground, nowWall): ScreenStep`, `sent(state, intent, view): ScreenState`, `listened(state, view): ScreenState`, `left(state): ScreenState`, `newConversation(state, view): ScreenStep` and `leaves(intent, view): Boolean`; `internal class ConversationScreenModel(nowWall: () -> Long)` with `state: StateFlow<ScreenState>`, `effects: Flow<ScreenEffect>`, `viewed(view)`, `foreground(state)`, `sent(intent)`, `listened()`, `inFront(front)` and `newConversation()`.
+- Produces: `internal enum class OwnerLine { COMMAND, ANSWER, STEERING, TOO_LATE, CONTINUE }`; `internal sealed interface TranscriptLine` (`Owner(kind, text, channel, atWall)`, `Kestrel(text, asked)`, `Answer(text)`, `Checklist(items, done)`, `Note(text)`, `LeftOut(lines, data)`, `Continued(atWall)`, `Ended(atWall)`); `internal data class ChecklistRow(text, state)`; `internal object Transcript { fun of(records, continuedAtWall: Long? = null, endedAtWall: Long? = null): List<TranscriptLine> }`; `internal sealed interface GoalControls` (`None`, `Working`, `Held(how)`); `internal data class ScreenUi(lines, goal, stopAndNew, card)`; `internal data class ScreenState(id, records, continuedAtWall, endedAtWall, armedAt, newAfterStop, clearAtClose)`; `internal sealed interface ScreenEffect` (`Leave`, `Submit(intent)`); `internal data class ScreenStep(state, effects)`; `internal object ConversationScreenRules` with `ui(state, view, card): ScreenUi`, `viewed(state, view, foreground, nowWall): ScreenStep`, `sent(state, intent, view): ScreenState`, `listened(state, view): ScreenState`, `left(state): ScreenState`, `newConversation(state, view): ScreenStep` and `leaves(intent, view): Boolean`; `internal class ConversationScreenModel(nowWall: () -> Long)` with `state: StateFlow<ScreenState>`, `effects: Flow<ScreenEffect>`, `viewed(view)`, `foreground(state)`, `sent(intent)`, `listened()`, `inFront(front)` and `newConversation()`.
 
 Counts: `:app` JVM A₅ + 12 (`TranscriptTest` 3, `ConversationScreenRulesTest` 6, `ConversationScreenModelTest` 3), where A₅ is the count after Task 5.
 
@@ -4649,6 +4751,7 @@ class TranscriptTest {
                 RecordLine(LineKind.OWNER_ANSWERED, "Friday", InputChannel.TEXT),
                 RecordLine(LineKind.KESTREL_SAID, "On it."),
                 RecordLine(LineKind.OWNER_STEERED, "Also book a hotel", InputChannel.VOICE),
+                RecordLine(LineKind.OWNER_TOO_LATE, "And a car", InputChannel.VOICE),
                 RecordLine(LineKind.OWNER_CONTINUED, "continue", InputChannel.TEXT),
                 RecordLine(LineKind.NOTE, "A routine ran"),
             ),
@@ -4665,6 +4768,7 @@ class TranscriptTest {
                 TranscriptLine.Owner(OwnerLine.ANSWER, "Friday", InputChannel.TEXT),
                 TranscriptLine.Kestrel("On it.", asked = false),
                 TranscriptLine.Owner(OwnerLine.STEERING, "Also book a hotel", InputChannel.VOICE),
+                TranscriptLine.Owner(OwnerLine.TOO_LATE, "And a car", InputChannel.VOICE),
                 TranscriptLine.Owner(OwnerLine.CONTINUE, "continue", InputChannel.TEXT),
                 TranscriptLine.Note("A routine ran"),
                 TranscriptLine.Checklist(listOf(ChecklistRow("Find a train", ItemState.DONE), ChecklistRow("Book a hotel", ItemState.DOING)), done = 1),
@@ -4946,7 +5050,7 @@ import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.LineKind
 
 /** The owner's kinds of line in a transcript. */
-internal enum class OwnerLine { COMMAND, ANSWER, STEERING, CONTINUE }
+internal enum class OwnerLine { COMMAND, ANSWER, STEERING, TOO_LATE, CONTINUE }
 
 /** One line of a transcript as the conversation screen draws it (design 10.1 and 9.5 of sub-project 7). toString prints no words. */
 internal sealed interface TranscriptLine {
@@ -5020,6 +5124,8 @@ internal object Transcript {
                     LineKind.KESTREL_ASKED -> TranscriptLine.Kestrel(line.text, asked = true)
                     LineKind.OWNER_ANSWERED -> TranscriptLine.Owner(OwnerLine.ANSWER, line.text, line.channel)
                     LineKind.OWNER_STEERED -> TranscriptLine.Owner(OwnerLine.STEERING, line.text, line.channel)
+                    // Plan 7B: words that came after the goal's final words, which Kestrel asked the owner to say again.
+                    LineKind.OWNER_TOO_LATE -> TranscriptLine.Owner(OwnerLine.TOO_LATE, line.text, line.channel)
                     LineKind.OWNER_CONTINUED -> TranscriptLine.Owner(OwnerLine.CONTINUE, line.text, line.channel)
                     LineKind.NOTE -> TranscriptLine.Note(line.text)
                 },
@@ -5492,6 +5598,7 @@ Create `app/src/main/res/values/strings_conversation.xml`:
     <string name="conversation_spoken">Spoken</string>
     <string name="conversation_you_answered">You answered</string>
     <string name="conversation_you_added">You added</string>
+    <string name="conversation_you_added_too_late">You added, too late for the goal</string>
     <string name="conversation_you_continued">You continued</string>
     <string name="conversation_kestrel_asked">Kestrel asked</string>
     <string name="conversation_checklist">Checklist: %1$d of %2$d done</string>
@@ -5593,6 +5700,7 @@ private fun OwnerWords(line: TranscriptLine.Owner, zone: ZoneId) {
         OwnerLine.COMMAND -> null
         OwnerLine.ANSWER -> R.string.conversation_you_answered
         OwnerLine.STEERING -> R.string.conversation_you_added
+        OwnerLine.TOO_LATE -> R.string.conversation_you_added_too_late
         OwnerLine.CONTINUE -> R.string.conversation_you_continued
     }
     val channel = line.channel?.let { if (it == InputChannel.TEXT) R.string.conversation_typed else R.string.conversation_spoken }
@@ -10680,7 +10788,7 @@ Plan 7G (the hooks' script entries, `:tools:eval`'s turns, typed answers and the
 - **The text channel** (`AppGraph.textChannel`): `sent: SharedFlow<InputIntent>`, `read(text)`, `input(intent)`, `submit(input)`, `choose(key, choice)` and `composing(active)`.
 - **The owner port** (Task A1): `OwnerPort.ask(question, kind, choices = emptyList(), highest = 0)` with `OwnerPort.MAX_CHOICES = 4`; a choice answers as `Answer.Number(position)`; `ChannelQuestion.highest`. **The answer's question** (Task A2): `InputIntent.Answer(answer, question = null)`; an answer that names another question than the open one answers nothing.
 - **The device tests' seams:** `AppGraph.conversationTimers: ((Timer, Long) -> Long)?` and the instrumentation argument `kestrelWaitDivisor` (60 when it is not given); `AppGraph.offVoice.replies`; the androidTest helper `TypedTests` (`graph`, `marker`, `marked(words)`, `own(id)`, `prepare(model)`, `finish()`, which deletes only the conversations that the tests made, `bringScreen(screen)`, `screenInFront(screen)`, `send(nodes, words)`, `text(id, args)`); the Compose tags `FIELD_TAG` (`conversation-field`), `PAST_SEARCH_TAG` (`past-search`) and `pastRowTag(id)`; the fixture `ObscuringActivity` of `:testapp`, whose window "Obscuring overlay" needs the app-op `SYSTEM_ALERT_WINDOW`.
-- **Past conversations:** `ConversationEngine.deletePast(id)` (on the engine's coroutine) and `deleteAllPast()` (beside the engine's inbox, in its scope) with `PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }`; `ConversationStore.deleteClosed()`, which raises the store's generation and throws `PastUnavailableException` while the index cannot be read; `HistorySearch.matching(text): PastMatches` (`All`, `Only(ids)`, `Rebuilding`, `Failed`), over plan 7B's index's shards; `AppGraph.pastConversations`.
+- **Past conversations:** `ConversationEngine.deletePast(id)` (checked by the engine's loop, done by its writer) and `deleteAllPast()` (beside the engine's inbox, in its scope) with `PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }`; `ConversationStore.deleteClosed()`, which raises the store's generation and throws `PastUnavailableException` while the index cannot be read; `HistorySearch.matching(text): PastMatches` (`All`, `Only(ids)`, `Rebuilding`, `Failed`), over plan 7B's index's shards; `AppGraph.pastConversations`.
 - **The Conversations page:** `SettingsPage.CONVERSATIONS` (so `MainActivity`'s `EXTRA_PAGE` `CONVERSATIONS` opens it); `SettingsData.conversations`, `setConversations`, `countsCredits` and `deleteAllPast`.
 - **The bar:** `GoalBar.text(view)` gives design 10.5's "Step 12 · 3 of 7 · …" and `GoalBar.ON_HOLD`; `AppGraph.feedbackBar` (`SharedFeedbackBar`) is the bar's one writer, with `progress(text: String?)`, which shows the newest progress once no other text holds the bar, and drops a waiting line when it gets null at the goal's end.
 - **The goal service for the screen:** `GoalForeground.foreground: StateFlow<ForegroundState>` (`goal`, `running`, `settled`).
@@ -10700,7 +10808,7 @@ Each item is a reading of the design that the design leaves open, or a choice of
 7. **A typed round waits up to 60 s for a running instant command** instead of cancelling it. Recommendation: accept. A spoken input still cancels one first (plan 7D); the voice's path does not change.
 8. **The bar's goal progress of design 10.5 is built here, through the bar's one writer** (decided): `SharedFeedbackBar` passes listening's texts, the text channel's words and the progress; a kept text wins, and the newest progress waits until the kept text is released or 4 s after another text, and then shows by itself, so "On hold" shows after the held goal's own sentence (review low item b); it replaces only an earlier progress.
 9. **Typed replies with listening off** are spoken by `AppOffVoice`, which loads the owner's voice inside plan 7E's `whileSpeaking` and closes it 30 s after the last reply. Recommendation: accept. If the owner turns Kestrel on within those 30 s, both voices are loaded until `AppOffVoice` closes its own.
-10. **Deleting past conversations** (decided): one after a question, from the list or the transcript; all from the Conversations page after a question, inside the store, in one archive change on plan 7B's index, which reads no body, writes only the shards that changed and raises the store's generation. One deletion runs on the engine's coroutine, which never deletes the open conversation; "Delete all" runs beside the engine's inbox (review N2), and the store keeps the open conversation, which its index never holds; the page shows "Deleting past conversations…" until the outcome comes back, which it reads out. While the index cannot be read, "Delete all" deletes nothing and the page says so (`PastDeletion.UNAVAILABLE`).
+10. **Deleting past conversations** (decided): one after a question, from the list or the transcript; all from the Conversations page after a question, inside the store, in one archive change on plan 7B's index, which reads no body, writes only the shards that changed and raises the store's generation. One deletion is checked by the engine's loop, which never deletes the open conversation or the one that a running switch opens, and done by the engine's writer in the loop's order (plan 7B's rule for writes); "Delete all" runs beside the engine's inbox (review N2), and the store keeps the open conversation, which its index never holds; the page shows "Deleting past conversations…" until the outcome comes back, which it reads out. While the index cannot be read, "Delete all" deletes nothing and the page says so (`PastDeletion.UNAVAILABLE`).
 11. **The list's search is `HistorySearch.matching`** (decided), the search's own rule (`HistoryRanking`) over the index's shards, run once the typing pauses and off the main thread; while the index is read or rebuilt, the list says "Loading past conversations…", and while it cannot be read, design 9.5's "Kestrel can't read past conversations right now. It will try again later." The list shows each first request as the index keeps it, cut once at 80 characters.
 12. **The list's date** is the day on which the conversation began, with its year (the list holds up to 365 days), as "Continue the conversation from <day>" names a conversation by its first day. Recommendation: accept.
 13. **The round limits are lists of choices**: 50, 100, 200, 500, 1,000 or 2,000 replies; 5, 15, 30, 60, 120 or 240 minutes; 10, 100, 250, 500, 1,000, 2,500 or 5,000 AI Credits, the credits only while the default profile is Copilot's. Recommendation: accept, or the owner names other values within the design's ranges.
@@ -10733,4 +10841,4 @@ Each item is a reading of the design that the design leaves open, or a choice of
 - **Design coverage.** D20 and 10.1: Tasks 7 and 8 (the screen, the launcher, the banner, Settings, New conversation, the microphone). 10.2 (leaving Kestrel's screen): Tasks 4, 5, 6 and 8. 10.3 and D21 (cards, "Reply…", waits, picks): Tasks A1, 1, 4 and 9. 10.4 (Stop, Continue, Cancel; a touch that interrupts): Tasks 6, 7 and 9. 10.5 (the bar): Task 5. 10.6 (the typed start of the service): Task 8 and Task 14's Step 8, and Task 15. 11 (speech rules, typed replies with listening off): Tasks 5 and 9. 12.2 and 12.3 (the typed-input boundary; confirmations only over the app): Tasks 1, 4, 7, 8 and 10, and Task 13's hook for DUMP callers only. 9.5 and 9.6 (past conversations on the index, their search, Continue and Delete): Tasks 3 and 11. 13 (the Conversations page): Task 12. 14.4 (`conversation-type`, typed answers): Task 13. 15.2's device tests: Tasks 7 to 13, run in Task 14. Plan 7E's moved checks (its decision 2): Task 14's Step 8 and Task 15.
 - **Placeholder scan.** No step says "to be decided", "as needed" or "similar to"; every step that changes code gives the whole code, and every replacement names its old text. Tasks 14 and 15 name two values that the controller fills in from an earlier step: Step 1's or Step 2's listening mode and "stay awake" setting.
 - **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `TextChannel`, `TypedInputs`, `ScreenTurns.running`, `GoalBar`, `SharedFeedbackBar`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
-- **The plan checker** (with its new `END_TASK`) runs clean, at `410ae0fd` (plan 7B's Tasks 5a to 5d and plan 7C's Task 4c built), over this chain: this plan's Tasks A1 and A2, alone against HEAD, as their checks run it; plan 7B's Tasks 8, 9 and 10, each on its own; plan 7C from Task 5; plan 7D's Tasks 1 and 2, its Task 3 on its own, and its Tasks 4 to 8; plan 7E; and this plan's Tasks 1 to 13a (operations and files as its summary lines say, no `PROBLEM:` line). Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
+- **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `0a81dd14` (plans 7A and 7B, this plan's Tasks A1 and A2, and plan 7C's Tasks 1 to 6 built; plan 7B's engine after the fixes of its Task 10), it runs over plan 7C's Task 7, plans 7D and 7E as committed, and this plan's Tasks 1 to 13a: this plan gives no `PROBLEM:` line (229 operations, 97 files). Plan 7D gives one of its own there (its Task 7's old text in `ConversationEngine.kt`, which plan 7B's fixes changed), which its writer is fixing; this plan's texts do not depend on that replacement. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
