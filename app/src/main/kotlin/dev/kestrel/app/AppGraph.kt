@@ -46,6 +46,7 @@ import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.ScreenBoostWords
+import dev.kestrel.app.listen.ScreenTurns
 import dev.kestrel.app.listen.Session
 import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.SettingsOpener
@@ -634,6 +635,7 @@ class AppGraph(context: Context) {
                 screen.value?.let { session -> AndroidCallScreen(appContext, session.actions) }
             },
             commands = commands,
+            turns = screenTurns,
             // Section 15: encrypted like every setting. Listening passes a change on at once.
             options = settings.observe(SettingKeys.LISTENING_OPTIONS),
             conditions = AndroidListeningConditions(appContext),
@@ -650,6 +652,9 @@ class AppGraph(context: Context) {
      * ListeningService, Listening and, from plan 7D's switch-over, the conversation.
      */
     internal val phoneSignals: PhoneSignals by lazy { PhoneSignals(AndroidScreenSource(appContext), AndroidCallMonitor(appContext)) }
+
+    /** The screen's turn (spec 7.3; design 7.1 of sub-project 7): the instant commands, the settings and the goals wait in it. */
+    internal val screenTurns: ScreenTurns by lazy { ScreenTurns(reportFailure) }
 
     /** The microphone of the newest voice session, for the debug hook voice-route (plan 2E). */
     @Volatile

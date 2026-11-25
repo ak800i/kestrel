@@ -41,7 +41,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Starts and stops ListeningService. Any thread may call it. */
@@ -264,9 +263,9 @@ internal interface StopNotices {
  * and the bar shows why one failed. [assist] turns Kestrel on for the assistant gesture and asks for a task once the
  * voice session is open (section 8.6). [options] are the owner's choices for listening (section 15); Listening collects
  * them on [thread], passes them to the Orchestrator, and keeps the newest in [currentOptions].
- * [commands] runs the instant commands (sections 7.3 and 9.5): one job at a time in [scope]. A cancelled job stays the
- * stopping job, and a new command, a task or the settings wait until it has completed, for at most 3 s, so that two parts
- * of Kestrel never drive the screen at once. Every command that started gets one report in [commandReports].
+ * [commands] runs the instant commands (sections 7.3 and 9.5): one job at a time in [scope]. A cancelled job holds the
+ * screen in [turns], and a new command, a task or the settings wait until it has completed, for at most 3 s, so that two
+ * parts of Kestrel never drive the screen at once. Every command that started gets one report in [commandReports].
  * [timeline] records on the phone's clock when a session opened, when Kestrel reacted to speech and why it turned itself
  * off, and [voiceCounts] counts what the sessions heard, as times and counts only, for the A71 session (plan 2E).
  */
@@ -286,6 +285,7 @@ class Listening internal constructor(
     private val calls: CallMonitor,
     private val callActions: CallControl,
     private val commands: CommandRunner,
+    private val turns: ScreenTurns,
     options: Flow<ListeningOptions>,
     microphones: () -> Microphone,
     private val timeline: Timeline = Timeline { 0L },
@@ -369,12 +369,11 @@ class Listening internal constructor(
     // once it opens, so that "Yes?" is spoken and the wait counts from there (section 8.6).
     private var assistWhenOpen = false
 
-    // Only [thread] uses these (section 7.3): the running command's job and conversation, the cancelled job that may
-    // still act, the number of the newest command to run, and the newest number that was cancelled, also before its job
-    // started.
+    // Only [thread] uses these (section 7.3): the running command's job and conversation, the number of the newest command
+    // to run, and the newest number that was cancelled, also before its job started. A cancelled job that may still act
+    // holds the screen in [turns].
     private var commandJob: Job? = null
     private var conversation: Conversation? = null
-    private var stopping: Job? = null
     private var newestCommand = 0
     private var cancelledCommand = 0
 
@@ -1240,8 +1239,8 @@ class Listening internal constructor(
     }
 
     /**
-     * Runs [action] at once, or, while a cancelled command's job has not completed, on [thread] once it has, but after
-     * at most [STOPPING_MILLIS] (section 7.3). A deferred action that throws is reported, and then [failed] runs.
+     * Runs [action] at once, or, while a cancelled command's job holds the screen, on [thread] once [turns] gives the
+     * screen back (section 7.3). A deferred action that throws is reported, and then [failed] runs.
      */
     // Design D2 of sub-project 5: a task whose start waited for a cancelled command starts only while the Orchestrator
     // still has it, and a pause that came during the wait reaches it at once (AgentRunner keeps a pause that comes before
@@ -1260,18 +1259,12 @@ class Listening internal constructor(
 
     private fun afterStopping(failed: () -> Unit = {}, action: () -> Unit) {
         // A cancelled job is no longer active, but it may still run until it completes.
-        val job = stopping?.takeIf { !it.isCompleted }
-        stopping = job
-        if (job == null) {
+        if (!turns.held()) {
             action()
             return
         }
         scope.launch(thread) {
-            if (withTimeoutOrNull(STOPPING_MILLIS) { job.join() } == null) {
-                report("A cancelled instant command", StuckCommandException())
-                // Kestrel goes on without it: nothing later waits for it again.
-                if (stopping === job) stopping = null
-            }
+            turns.take()
             try {
                 action()
             } catch (e: CancellationException) {
@@ -1343,7 +1336,7 @@ class Listening internal constructor(
         val job = commandJob ?: return
         commandJob = null
         job.cancel()
-        stopping = job
+        turns.stopped(job)
     }
 
     private fun publish(done: CommandReport) {
@@ -1477,15 +1470,9 @@ class Listening internal constructor(
         // not come back after every crash.
         const val CRASH_AFTER_RESTORE_MILLIS = 120_000L
 
-        // Section 7.3: how long a new command, a task or the settings wait for a cancelled command's job.
-        const val STOPPING_MILLIS = 3_000L
-
         // How often a countdown looks at its hold, and how long the holds may last in all before it gives up, so that
         // speech in the background cannot hold a call for ever (design D2 of sub-project 3).
         const val TICK_MILLIS = 100L
         const val HOLD_LIMIT_MILLIS = 30_000L
     }
 }
-
-/** A cancelled instant command's job had not completed after 3 s; Kestrel went on without it. */
-private class StuckCommandException : Exception()

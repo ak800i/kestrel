@@ -2897,6 +2897,7 @@ class ListeningTest {
         calls = calls,
         callActions = callActions,
         commands = runner,
+        turns = ScreenTurns({ what, error -> reports += what to error }),
         options = options,
         microphones = { microphone },
         timeline = timeline,
@@ -3191,6 +3192,7 @@ class ListeningTest {
             calls = calls,
             callActions = callActions,
             commands = runner,
+            turns = ScreenTurns({ what, error -> reports += what to error }),
             options = storedOptions,
             // Its first write throws an Error, and the later ones work.
             memory = object : ModeMemory {
