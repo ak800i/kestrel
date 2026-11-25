@@ -45,6 +45,7 @@ import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.conversation.testing.FakeChannel
 import dev.kestrel.conversation.testing.FakeGoalEnvironment
+import dev.kestrel.conversation.testing.FakeScreenTurn
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import dev.kestrel.providers.chat.ChatMessage
@@ -98,7 +99,7 @@ class ConversationEngineTest {
         store: ConversationStore = this@ConversationEngineTest.store,
         onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
         report: (String, Throwable) -> Unit = { _, error -> throw error },
-        screen: ScreenTurn = ScreenTurn { false },
+        screen: ScreenTurn = FakeScreenTurn { false },
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
         val goals = GoalRunner(environment, screen, search, clock) { _, error -> throw error }
@@ -252,7 +253,7 @@ class ConversationEngineTest {
         val speaking = CompletableDeferred<Unit>()
         text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
         val afters = mutableListOf<Long?>()
-        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = ScreenTurn { after -> afters += after; false })
+        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = FakeScreenTurn { after -> afters += after; false })
         engine.restore()
         val command = typed("Read my latest SMS")
         engine.submit(command)
@@ -277,7 +278,7 @@ class ConversationEngineTest {
         val speaking = CompletableDeferred<Unit>()
         text.onShow = { if (it == ChannelOutput.Said("On it.")) speaking.await() }
         val afters = mutableListOf<Long?>()
-        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = ScreenTurn { after -> afters += after; false })
+        val engine = engine(environment(say("On it."), listSms, finish(1)), screen = FakeScreenTurn { after -> afters += after; false })
         engine.restore()
         engine.submit(typed("Read my latest SMS"))
         runCurrent()
@@ -302,7 +303,7 @@ class ConversationEngineTest {
         ))
         text.answers += ChannelAnswer.Yes
         val afters = mutableListOf<Long?>()
-        val engine = engine(environment(fail), ArchivedConversationStore(archive, backgroundScope) {}, screen = ScreenTurn { after -> afters += after; false })
+        val engine = engine(environment(fail), ArchivedConversationStore(archive, backgroundScope) {}, screen = FakeScreenTurn { after -> afters += after; false })
 
         assertEquals(RestoreResult.GOAL_HELD, engine.restore())
         runCurrent()

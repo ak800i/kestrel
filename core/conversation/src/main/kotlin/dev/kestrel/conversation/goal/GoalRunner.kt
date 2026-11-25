@@ -129,6 +129,9 @@ class GoalRunner(
         } catch (e: Exception) {
             report("A goal's round", e)
             null
+        } finally {
+            // The round lets go of the screen's turn on every path, before its end reaches the listener (design 6.5).
+            screen.release()
         }
         finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR), refused, stopped = cancellation != null)
         if (cancellation != null) throw cancellation

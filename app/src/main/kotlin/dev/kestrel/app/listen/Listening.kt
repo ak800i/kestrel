@@ -28,6 +28,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -167,6 +168,9 @@ internal object ListeningTexts {
     // The instant commands (sections 7.3 and 9.5).
     const val CANCELLED = "Cancelled"
     const val BUSY = "Still busy with the last command."
+
+    /** A goal's round holds the screen, so an instant command or the settings did not start (design 6.5 of sub-project 7). */
+    const val GOAL_BUSY = "Busy with the goal. Say \"stop\" to end it."
     const val NOTHING_TO_REPEAT = "There's no command to repeat."
     const val QUESTION_ENDED = "The question ended. Say the command again."
     const val PRIVATE_INPUT = "Typing in a password field."
@@ -1116,7 +1120,8 @@ class Listening internal constructor(
             // The Orchestrator runs the timers itself.
             is Effect.WaitForTask, Effect.TimeSilence, is Effect.WaitForAnswer, Effect.TimeLateAnswers, is Effect.TimeFollowUp -> Unit
             Effect.StopService -> shutdown()
-            Effect.OpenSettings -> afterStopping { openSettingsOrSayWhy() }
+            // While a goal's round holds the screen, Kestrel's settings do not come to its front (design 6.5 of sub-project 7).
+            Effect.OpenSettings -> if (turns.roundHolds()) send(Event.ScreenHeld(null)) else afterStopping { openSettingsOrSayWhy() }
             // Plan 2D's call commands (Effect.CallCommand) still run at once: a ringing call must not wait 3 s.
             is Effect.CallCommand -> carryOut(effect.command)
         }
@@ -1250,6 +1255,7 @@ class Listening internal constructor(
         Feedback.CommandBusy -> ListeningTexts.BUSY
         Feedback.NothingToRepeat -> ListeningTexts.NOTHING_TO_REPEAT
         Feedback.QuestionEnded -> ListeningTexts.QUESTION_ENDED
+        Feedback.GoalBusy -> ListeningTexts.GOAL_BUSY
         Feedback.SettingsFailed -> ListeningTexts.CANNOT_OPEN_SETTINGS
         is Feedback.ConversationText -> feedback.text
         is Feedback.FollowUp -> ListeningTexts.goOn(feedback.seconds)
@@ -1303,7 +1309,7 @@ class Listening internal constructor(
             return
         }
         scope.launch(thread) {
-            turns.take(after = null)
+            turns.commandEnded()
             try {
                 action()
             } catch (e: CancellationException) {
@@ -1328,12 +1334,10 @@ class Listening internal constructor(
             return
         }
         val talk = Conversation(effect.command, effect.spokeAt)
-        conversation = talk
-        startedCommand = effect.command
         // One report per command: a cancel that comes after the body's last check changes nothing. The body writes it
         // before the job completes, and the handler runs only after that.
         var reported = false
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = try {
                 commands.run(effect.parsed, effect.heard, talk)
             } catch (e: Exception) {
@@ -1364,10 +1368,20 @@ class Listening internal constructor(
                 }
             }
         }
+        // Design 6.5 of sub-project 7: the screen's turn decides at once whether the command may start. While a goal's round
+        // holds the turn, it does not, whatever the Orchestrator reads of the goal's phase, and the Orchestrator hears so.
+        // Once started, the command holds the screen until its job has ended; a round that needs the screen meanwhile for
+        // the owner's newer input has the Orchestrator cancel it.
+        if (!turns.startCommand(job, InputIds.newest()) { send(Event.ScreenWanted(effect.command)) }) {
+            // The job never starts; its completion reports the command as cancelled.
+            job.cancel()
+            send(Event.ScreenHeld(effect.command))
+            return
+        }
+        conversation = talk
+        startedCommand = effect.command
         commandJob = job
-        // The command holds the screen until its job has ended; a goal's round that needs the screen meanwhile has the
-        // Orchestrator cancel it (design 6.5 of sub-project 7).
-        turns.started(job, InputIds.newest()) { send(Event.ScreenWanted(effect.command)) }
+        job.start()
     }
 
     // Section 7.3: the cancelled job still holds the screen in [turns] until it has completed, so that nothing new acts on

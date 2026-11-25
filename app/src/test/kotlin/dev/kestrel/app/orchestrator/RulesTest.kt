@@ -1663,6 +1663,21 @@ class RulesTest {
     // Whole-plan re-review of plan 7D, N1: a goal's round that needs the screen while an instant command holds it asks for
     // it (ScreenTurns), and the conversation's work goes first: the command is cancelled, as for "stop", and the bar says
     // so. A request for an older command, or while none runs, changes nothing.
+    // Re-review round 4, R4-1: a command that a round's turn kept from starting ends at once, and the bar says that Kestrel
+    // is busy with the goal; so does the settings' start. An older command's report, or one while Kestrel is off, changes
+    // nothing.
+    @Test
+    fun aCommandThatTheRoundsTurnKeptFromStartingEndsAsBusy() {
+        val held = Rules.next(runningCommand, Event.ScreenHeld(1))
+        assertEquals(listOf(Effect.Show(Feedback.GoalBusy)), held.effects)
+        assertEquals(Work.IDLE, held.state.work)
+        assertEquals(null, held.state.running)
+
+        assertEquals(Step(runningCommand), Rules.next(runningCommand, Event.ScreenHeld(0)))
+        assertEquals(listOf(Effect.Show(Feedback.GoalBusy)), Rules.next(listening, Event.ScreenHeld(null)).effects)
+        assertEquals(Step(State()), Rules.next(State(), Event.ScreenHeld(null)))
+    }
+
     @Test
     fun aRoundThatWantsTheScreenCancelsTheRunningCommand() {
         val wanted = Rules.next(runningCommand, Event.ScreenWanted(1))

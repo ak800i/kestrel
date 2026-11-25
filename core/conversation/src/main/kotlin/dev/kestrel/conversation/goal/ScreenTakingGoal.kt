@@ -10,5 +10,7 @@ import dev.kestrel.agent.goal.GoalPort
 internal class ScreenTakingGoal(private val goal: RunningGoal, private val screen: ScreenTurn) : GoalPort by goal {
     override suspend fun takeScreen(): Boolean = screen.take(goal.takeAct())
 
+    override fun releaseScreen() = screen.release()
+
     override fun toString(): String = "ScreenTakingGoal($goal)"
 }

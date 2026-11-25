@@ -376,6 +376,12 @@ sealed interface Event {
      * as for "stop", and the round waits until its job has ended.
      */
     data class ScreenWanted(val command: Int) : Event
+
+    /**
+     * A goal's round holds the screen (`ScreenTurns`; design 6.5 of sub-project 7), so instant command number [command] did
+     * not start, or, when [command] is null, the settings did not open: the round acts, as while the goal works.
+     */
+    data class ScreenHeld(val command: Int?) : Event
 }
 
 /** What Kestrel says. */
@@ -449,6 +455,9 @@ sealed interface Feedback {
 
     /** A command came while another ran, and was dropped (decision 3 of sub-project 3). */
     data object CommandBusy : Feedback
+
+    /** A goal's round holds the screen, so what the owner asked for did not start (design 6.5 of sub-project 7). */
+    data object GoalBusy : Feedback
 
     /** "Again" without a command to repeat. */
     data object NothingToRepeat : Feedback
@@ -655,6 +664,8 @@ object Rules {
         }
         // A command that has ended or was cancelled may still report; nothing changes then.
         is Event.CommandEnded, is Event.CommandAsks, is Event.CommandSays, is Event.CommandCounts, is Event.ScreenWanted -> Step(state)
+        // The settings did not open, because a goal's round holds the screen; an older command's report changes nothing.
+        is Event.ScreenHeld -> if (event.command == null && state.mode != Mode.OFF) Step(state, listOf(Effect.Show(Feedback.GoalBusy))) else Step(state)
     }
 
     private fun heard(state: State, event: Event.Heard): Step {
@@ -897,6 +908,13 @@ object Rules {
         is Event.Heard -> heardDuringCommand(state, event)
         // A goal's round needs the screen (ScreenTurns): the conversation's work goes first, as for "stop".
         is Event.ScreenWanted -> if (event.command == state.command) cancelCommand(state) else Step(state)
+        // A goal's round held the screen, so the command never started: it ends at once, as any command does while the
+        // goal acts (design 6.5 of sub-project 7), and the bar says that Kestrel is busy with the goal.
+        is Event.ScreenHeld -> if (event.command == state.command) {
+            Step(state.copy(work = Work.IDLE, running = null, heard = null, asking = false, counting = false), listOf(Effect.Show(Feedback.GoalBusy)))
+        } else {
+            keepOrLeave(state, event)
+        }
         // The owner starts to speak: a countdown holds until the transcript decides, and an answer gets the longer wait,
         // also the conversation's.
         Event.Speaking -> when {

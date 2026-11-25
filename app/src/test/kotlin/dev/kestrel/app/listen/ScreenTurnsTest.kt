@@ -38,7 +38,7 @@ class ScreenTurnsTest {
         for (after in listOf(null, 4L, 5L)) {
             val job = Job()
             var asked = 0
-            turns.started(job, since = 5) { asked++ }
+            turns.startCommand(job, since = 5) { asked++ }
 
             val taken = async { turns.take(after) }
             advanceTimeBy(60_000)
@@ -50,8 +50,25 @@ class ScreenTurnsTest {
 
             assertTrue("$after", taken.await())
             assertFalse(turns.held())
+            turns.release()
         }
         assertEquals(emptyList<String>(), reports)
+    }
+
+    // Re-review round 4, R4-1: while a round holds the turn, no instant command starts, whatever the Orchestrator reads of the
+    // goal's phase; once the round lets go, as a wait for the owner starts or the round ends, commands start again.
+    @Test
+    fun aCommandCannotStartWhileARoundHoldsTheTurnAndCanAfterItLetsGo() = runTest {
+        assertFalse(turns.take(after = null))
+        assertTrue(turns.roundHolds())
+
+        assertFalse(turns.startCommand(Job(), since = 5) {})
+        assertFalse(turns.held())
+        turns.release()
+
+        assertFalse(turns.roundHolds())
+        assertTrue(turns.startCommand(Job(), since = 5) {})
+        assertTrue(turns.held())
     }
 
     // An input of the owner's that came after the command started chose the goal: the command is asked to let go, and the
@@ -60,7 +77,7 @@ class ScreenTurnsTest {
     fun anOwnersInputAfterTheCommandStartedHasItCancelled() = runTest {
         val job = Job()
         var asked = 0
-        turns.started(job, since = 5) { asked++ }
+        turns.startCommand(job, since = 5) { asked++ }
         assertTrue(turns.held())
 
         val taken = async { turns.take(after = 6) }
@@ -83,7 +100,7 @@ class ScreenTurnsTest {
         // Like a gesture or a binder call that Android finishes, the job ignores its cancellation for a while.
         val job = backgroundScope.launch { withContext(NonCancellable) { finished.await() } }
         runCurrent()
-        turns.started(job, since = 5) {}
+        turns.startCommand(job, since = 5) {}
         job.cancel()
         turns.stopped(job)
 
@@ -104,7 +121,7 @@ class ScreenTurnsTest {
     @Test
     fun aWaitingRoundGivesACommandThatIsCancelledMeanwhileAtMostThreeSeconds() = runTest {
         val job = Job()
-        turns.started(job, since = 5) {}
+        turns.startCommand(job, since = 5) {}
         val taken = async { turns.take(after = null) }
         advanceTimeBy(10_000)
         runCurrent()
@@ -123,7 +140,7 @@ class ScreenTurnsTest {
 
     @Test
     fun aStuckCommandHoldsTheScreenForAtMostThreeSecondsAndIsReportedOnce() = runTest {
-        turns.started(Job(), since = 5) {}
+        turns.startCommand(Job(), since = 5) {}
 
         val taken = async { turns.take(after = 6) }
         advanceTimeBy(2_999)

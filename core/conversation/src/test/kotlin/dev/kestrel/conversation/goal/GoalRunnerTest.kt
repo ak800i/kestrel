@@ -2,6 +2,7 @@ package dev.kestrel.conversation.goal
 
 import dev.kestrel.agent.AgentPorts
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.TaskCancellation
 import dev.kestrel.agent.Ledger
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.TaskReport
@@ -35,6 +36,7 @@ import dev.kestrel.conversation.store.ConversationStore
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.conversation.store.Searchable
 import dev.kestrel.conversation.testing.FakeGoalEnvironment
+import dev.kestrel.conversation.testing.FakeScreenTurn
 import dev.kestrel.conversation.testing.ManualConversationClock
 import dev.kestrel.conversation.testing.MemoryArchive
 import dev.kestrel.providers.chat.ChatMessage
@@ -114,7 +116,7 @@ class GoalRunnerTest {
 
     private fun TestScope.runner(
         environment: GoalEnvironment,
-        screen: ScreenTurn = ScreenTurn { false },
+        screen: ScreenTurn = FakeScreenTurn { false },
         store: ConversationStore = ArchivedConversationStore(MemoryArchive(), backgroundScope) {},
     ): GoalRunner {
         val clock = ManualConversationClock({ testScheduler.currentTime })
@@ -210,7 +212,7 @@ class GoalRunnerTest {
         }
         val clock = ManualConversationClock({ testScheduler.currentTime })
         val failures = mutableListOf<String>()
-        val runner = GoalRunner(failing, ScreenTurn { false }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { what, _ -> failures += what }
+        val runner = GoalRunner(failing, FakeScreenTurn { false }, HistorySearch(ArchivedConversationStore(MemoryArchive(), backgroundScope) {}, { 30 }, clock), clock) { what, _ -> failures += what }
 
         runner.run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
         advanceUntilIdle()
@@ -481,7 +483,7 @@ class GoalRunnerTest {
         val environment = environment(listSms, finish(1))
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
 
-        runner(environment, ScreenTurn { awaitCancellation() }).run(this, goal, plan(record()), FakeOwner())
+        runner(environment, FakeScreenTurn { awaitCancellation() }).run(this, goal, plan(record()), FakeOwner())
         advanceUntilIdle()
         assertTrue(listener.ends.isEmpty())
         goal.cancel(EndReason.CANCELLED)
@@ -508,7 +510,7 @@ class GoalRunnerTest {
         val goal = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
         val afters = mutableListOf<Long?>()
         val given = CompletableDeferred<Unit>()
-        val screen = ScreenTurn { after ->
+        val screen = FakeScreenTurn { after ->
             afters += after
             if (afters.size == 2) {
                 given.await()
@@ -543,6 +545,35 @@ class GoalRunnerTest {
         assertTrue(afters.drop(2).all { it == null })
         assertEquals(1, environment.screen.actions.size)
         assertEquals(1, listener.ends.size)
+    }
+
+    // Re-review round 4, R4-1: the round holds the screen's turn while it acts, and lets go of it when it ends, on every
+    // path: its end, a refusal and a cancellation while it acts.
+    @Test
+    fun theRoundLetsGoOfTheTurnOnEveryPath() = runTest {
+        val finished = FakeScreenTurn()
+        runner(environment(listSms, finish(1)), finished).run(this, RunningGoal(1, 1, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertEquals(1, listener.ends.size)
+        assertFalse(finished.holds)
+
+        val refused = FakeScreenTurn()
+        val refusing = environment().apply { refusal = RoundSetup.Refused("No profile.", EndReason.NO_PROFILE) }
+        runner(refusing, refused).run(this, RunningGoal(1, 2, emptyMap(), emptyList(), listener), plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertEquals(2, listener.ends.size)
+        assertFalse(refused.holds)
+
+        val cancelled = FakeScreenTurn()
+        val goal = RunningGoal(1, 3, emptyMap(), emptyList(), listener)
+        // The round's job is cancelled while the round acts, holding the turn, as "stop" cancels it during a model call.
+        val cancelling = environment(listSms, finish(1)).apply { afterCall = { throw TaskCancellation(EndReason.CANCELLED) } }
+        runner(cancelling, cancelled).run(this, goal, plan(record()), FakeOwner())
+        advanceUntilIdle()
+        assertEquals(3, listener.ends.size)
+        assertEquals(EndReason.CANCELLED, listener.ends.last().report.end)
+        assertTrue(cancelled.takes > 0)
+        assertFalse(cancelled.holds)
     }
 
     @Test

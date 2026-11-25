@@ -536,6 +536,7 @@ internal class TaskRun(given: AgentPorts, val settings: AgentSettings, val task:
      * run looks at the screen afresh.
      */
     suspend fun <T> waitForOwner(wait: suspend () -> T): T {
+        ports.goal.releaseScreen()
         val result = limits.waiting { wait() }
         if (limits.waiting { ports.goal.takeScreen() }) {
             turnsWaited++

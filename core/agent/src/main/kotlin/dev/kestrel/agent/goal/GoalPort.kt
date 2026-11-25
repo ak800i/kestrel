@@ -29,6 +29,12 @@ interface GoalPort {
      * without a goal around it, as "save that as", acts on no screen and takes nothing.
      */
     suspend fun takeScreen(): Boolean = false
+
+    /**
+     * Lets go of the screen's turn as a wait for the owner starts (design 6.5 of sub-project 7; `TaskRun.waitForOwner`), so
+     * that his instant commands can run while he has the phone. A run without a goal around it holds no turn.
+     */
+    fun releaseScreen() = Unit
 }
 
 /** How the owner gave a steering message (design 7.3 and D9 of sub-project 7): spoken after "Kestrel", or typed. */

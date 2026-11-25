@@ -67,15 +67,19 @@ sealed interface RoundSetup {
 }
 
 /**
- * The screen's turn (spec 7.3; design 6.5 and 7.1 of sub-project 7), the one rule for who acts on the screen: [take]
- * returns once no instant command holds the screen. [after] is the number of the owner's input that lets the round act
+ * The screen's turn (spec 7.3; design 6.5 and 7.1 of sub-project 7), the one rule for who acts on the screen, in both
+ * directions: [take] gives a goal's round the turn once no instant command holds the screen, and the round holds it until
+ * [release], so that no instant command starts while it acts. [after] is the number of the owner's input that lets the round act
  * now (`OwnerInput.id`), or null for a round that goes on by itself. A command that the owner started before that input is
  * asked to let go (the Orchestrator cancels it), because his newer input chose the goal; a command that he started after
  * it, or while the round goes on by itself, is his newest act, so the round waits until its job has ended (D15; spec 7.3).
- * [take] is true when it waited, because the screen may have changed meanwhile. A goal never holds the screen itself, so
- * the instant commands still work during its hand-overs and pauses; each of its rounds takes the turn at its start and
- * as every wait for the owner ends (`GoalRunner`, `TaskRun.waitForOwner`). `:app`'s `ScreenTurns` (plan 7D) implements it.
+ * [take] is true when it waited, because the screen may have changed meanwhile. Each round takes the turn at its start and
+ * as every wait for the owner ends, and lets go as each such wait starts, so that the instant commands work during its
+ * hand-overs and pauses, and when it ends, on every path (`GoalRunner`, `TaskRun.waitForOwner`). `:app`'s `ScreenTurns`
+ * (plan 7D) implements it.
  */
-fun interface ScreenTurn {
+interface ScreenTurn {
     suspend fun take(after: Long?): Boolean
+
+    fun release()
 }

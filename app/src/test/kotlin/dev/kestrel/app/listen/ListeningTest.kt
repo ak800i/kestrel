@@ -559,6 +559,26 @@ class ListeningTest {
         assertEquals(listOf(Outcome.CANCELLED), commandReports.map { it.outcome })
     }
 
+    // Re-review round 4, R4-1: a round takes the turn before the Rules hear that the goal acts; a transcript in between starts
+    // no instant command, and the bar says that Kestrel is busy with the goal. Once the round lets go, commands run again.
+    @Test
+    fun aTranscriptAfterARoundTookTheTurnStartsNoCommand() = runTest {
+        val listening = listeningWithSession()
+        collectReports(listening)
+        assertFalse(turns.take(after = null))
+
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+
+        assertTrue(runner.started.isEmpty())
+        assertEquals(Work.IDLE, listening.state.value.work)
+        assertEquals(ListeningTexts.GOAL_BUSY, shown.last())
+        turns.release()
+        listening.send(Event.Heard("Scroll down", named = false))
+        runCurrent()
+        assertEquals(1, runner.started.size)
+    }
+
     // Re-review round 2, R2-1: a round that goes on by itself, as after a hand-over that ended by itself, never cancels the
     // owner's command, also one that he started before the round's own input; it waits until the command has ended.
     @Test
