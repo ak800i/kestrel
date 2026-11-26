@@ -25,6 +25,7 @@ import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.safety.Redactor
 import dev.kestrel.safety.TaskAllowance
 import dev.kestrel.safety.Vault
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -60,9 +61,9 @@ class GoalRunner(
     @Volatile
     private var kept: Pair<Recording, Long>? = null
 
-    // The running round's view of the screen's turn, which a pause and its resume reach (plan 7E).
-    @Volatile
-    private var turn: ScreenTakingGoal? = null
+    // The running round's view of the screen's turn, which a pause and its resume reach (plan 7E). A round's end clears only
+    // its own view, in one step, so that a round that started meanwhile keeps its view (the whole-plan review's M5).
+    private val turn = AtomicReference<ScreenTakingGoal?>(null)
 
     /**
      * Runs a round of [goal] in [scope]; it returns at once, with the goal's job set. The round starts atomically
@@ -76,7 +77,7 @@ class GoalRunner(
         goal.stopSentence = null
         // Every turn of the round goes through its goal, the first and the last too, so that a pause has one rule.
         val taking = ScreenTakingGoal(goal, screen)
-        turn = taking
+        turn.set(taking)
         goal.job = scope.launch(start = CoroutineStart.ATOMIC) { round(goal, taking, plan, owner) }
     }
 
@@ -97,12 +98,12 @@ class GoalRunner(
      * so that the owner's instant commands work during the pause (`ScreenTakingGoal`).
      */
     fun paused() {
-        turn?.paused()
+        turn.get()?.paused()
     }
 
     /** The paused goal goes on: the end of the round's step keeps the turn again. */
     fun resumed() {
-        turn?.resumed()
+        turn.get()?.resumed()
     }
 
     /** "Save that as [name]": the newest finished goal's steps as a routine, asked through [owner]; null once saved. */
@@ -154,7 +155,7 @@ class GoalRunner(
         } finally {
             // The round lets go of the screen's turn on every path, before its end reaches the listener (design 6.5).
             taking.releaseScreen()
-            if (turn === taking) turn = null
+            turn.compareAndSet(taking, null)
         }
         finish(goal, ready, owner, result ?: TaskReport(EndReason.KESTREL_ERROR), refused, stopped = cancellation != null)
         if (cancellation != null) throw cancellation

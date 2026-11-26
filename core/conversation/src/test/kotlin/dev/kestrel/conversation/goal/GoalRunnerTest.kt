@@ -587,6 +587,34 @@ class GoalRunnerTest {
         assertFalse(screen.holds)
     }
 
+    // The whole-plan review's M5: a round's end clears only its own view of the screen's turn, never the view of a round that
+    // started after it, so a pause after an older round's late end still reaches the newer round and lets go of its turn.
+    @Test
+    fun anOlderRoundsLateEndLeavesTheNewerRoundsTurnToThePause() = runTest {
+        val screen = FakeScreenTurn()
+        val environment = environment(listSms, finish(1))
+        val runner = runner(environment, screen)
+        var gates = 0
+        val owner = object : OwnerPort by FakeOwner() {
+            override suspend fun gate(): Gate {
+                if (++gates == 1) runner.paused()
+                return Gate.GO
+            }
+        }
+        val holdsAtCalls = mutableListOf<Boolean>()
+        environment.beforeCall = { holdsAtCalls += screen.holds }
+        val older = RunningGoal(1, 1, emptyMap(), emptyList(), listener)
+
+        runner.run(this, older, plan(record()), FakeOwner())
+        runner.run(this, RunningGoal(1, 2, emptyMap(), emptyList(), listener), plan(record()), owner)
+        // The older round ends only now, after the newer one started.
+        older.job?.cancel()
+        advanceUntilIdle()
+
+        assertEquals(false, holdsAtCalls.first())
+        assertEquals(2, listener.ends.size)
+    }
+
     // Plan 7E: a round whose turn waits behind the owner's instant command, at its start or as a wait for the owner ends,
     // tells its listener as the wait starts and once it has the turn, so that the goal notification can say why the goal
     // does not move while the bar belongs to the command.
