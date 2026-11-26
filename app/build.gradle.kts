@@ -1,5 +1,7 @@
+import com.android.build.api.artifact.SingleArtifact
 import dev.kestrel.build.BuildCommitTask
 import dev.kestrel.build.CopyAssetsTask
+import dev.kestrel.build.MergedManifestArgument
 
 plugins {
     id("kestrel.android.application")
@@ -86,6 +88,13 @@ androidComponents {
             folder.set("catalog")
         }
         variant.sources.assets?.addGeneratedSourceDirectory(catalog, CopyAssetsTask::outputDirectory)
+        // ScreenManifestTest reads the variant's merged manifest (design 12.2 of sub-project 7).
+        val mergedManifest = objects.newInstance<MergedManifestArgument>()
+        mergedManifest.manifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+        val unitTest = "test${variant.name.replaceFirstChar(Char::titlecase)}UnitTest"
+        tasks.withType<Test>().configureEach {
+            if (name == unitTest) jvmArgumentProviders.add(mergedManifest)
+        }
     }
     // The debug build's commit and whether its worktree had changes, which the debug hook `state` answers (review I2 of plan 6B).
     onVariants(selector().withBuildType("debug")) { variant ->

@@ -3,7 +3,8 @@
 
     <!-- For NotificationActivity's notification: the command tests grant it, and command-test.ps1 takes it back. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- For the cross-app overlay of injection fixture 6: :tools:eval allows it with appops and puts it back. -->
+    <!-- For the cross-app overlays of injection fixture 6 and ObscuringActivity: :tools:eval and the device test
+         TypedBoundaryTest allow it with appops and put it back. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
@@ -115,6 +116,10 @@
         <!-- sub-project 5C: fixtures -->
         <activity
             android:name=".OcrCanvasActivity"
+            android:exported="true" />
+        <!-- Sub-project 7: a window over Kestrel's conversation screen, through which touches pass (plan 7F). -->
+        <activity
+            android:name=".ObscuringActivity"
             android:exported="true" />
     </application>
 </manifest>
