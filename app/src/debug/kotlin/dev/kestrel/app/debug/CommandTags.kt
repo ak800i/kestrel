@@ -12,10 +12,12 @@ import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 import java.security.MessageDigest
+import java.util.Collections
 import java.util.IdentityHashMap
 
 /**
@@ -63,21 +65,41 @@ internal class CommandTags {
     var ownConversation: (ConversationId) -> Unit = {}
 
     /**
-     * Gets the conversation that the owner's own command (typed or spoken, without a tag, and not typed by a hook) opened
-     * or continued, which is his and never the hooks' (Task 13a, review low risk); [VoiceHooks.install] sets it to
-     * [HookConversations.forget]. It runs under this object's lock.
+     * Gets the conversation that the owner's input with his words or his choice reached (a command, an answer or a
+     * switch, never a hook's), which is his and never the hooks' (Task 13a, review low risk and review M1);
+     * [VoiceHooks.install] sets it to [HookConversations.forget]. It runs under this object's lock.
      */
     @Volatile
     var ownerConversation: (ConversationId) -> Unit = {}
 
-    // The inputs that conversation-type gave without a tag: the hooks', not the owner's.
-    private val untaggedInputs = LinkedHashSet<Long>()
+    // The inputs that the hooks gave the conversation, tagged or not: never the owner's (review M2 of Task 13a). They stay
+    // noted after the step that started their work, because a local request's switch names its input again later.
+    private val hookInputs = LinkedHashSet<Long>()
 
-    /** Notes [input], which `conversation-type` gives the conversation without a tag, as the hooks' and not the owner's. */
+    // The transcripts that a hook sent without a tag, until the Orchestrator's step, and those of them that went on to the
+    // conversation, until Listening makes their input.
+    private val hookHeard: MutableSet<Event.Heard> = Collections.newSetFromMap(IdentityHashMap())
+    private val hookConversing: MutableSet<Event.Heard> = Collections.newSetFromMap(IdentityHashMap())
+
+    /**
+     * Notes [input], which a hook gives the conversation without a tag (`conversation-type`, `conversation-control do new`
+     * or agent-answer's typed answer), as the hooks' and not the owner's.
+     */
     @Synchronized
-    fun untagged(input: OwnerInput) {
-        untaggedInputs += input.id
-        while (untaggedInputs.size > MAX_TAGS) untaggedInputs.remove(untaggedInputs.first())
+    fun untagged(input: OwnerInput) = noteHooks(input.id)
+
+    /**
+     * Notes [event], a transcript that a hook sends without a tag (voice heard, agent-answer's spoken answer), so that the
+     * input that Listening makes of it is the hooks' and not the owner's.
+     */
+    @Synchronized
+    fun untagged(event: Event.Heard) {
+        hookHeard += event
+    }
+
+    private fun noteHooks(id: Long) {
+        hookInputs += id
+        while (hookInputs.size > MAX_TAGS) hookInputs.remove(hookInputs.first())
     }
 
     /**
@@ -105,6 +127,7 @@ internal class CommandTags {
         if (tag in tags) return null
         tags[tag] = Tagged(Role.CONVERSE, 0, read)
         inputs[input.id] = tag
+        noteHooks(input.id)
         dropOldest()
         while (inputs.size > MAX_TAGS) inputs.remove(inputs.keys.first())
         return if (options.isEmpty()) input else input.copy(options = options)
@@ -128,6 +151,7 @@ internal class CommandTags {
     /** [event] never reaches the Orchestrator, as a match that a hook drops: its tag, if it has one, did nothing. */
     @Synchronized
     fun dropped(event: Event.Heard) {
+        hookHeard.remove(event)
         val tag = waiting.remove(event) ?: return
         options.remove(tag)
         tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE, command = 0) }
@@ -144,6 +168,7 @@ internal class CommandTags {
         val heard = event as? Event.Heard
         val conversed = step.effects.filterIsInstance<Effect.Converse>().lastOrNull { it.heard != null && it.heard === heard }
         val tag = heard?.let { waiting.remove(it) }
+        if (heard != null && hookHeard.remove(heard) && conversed != null) hookConversing += heard
         val tagged = tag?.let { tags[it] }
         val answer = step.effects.filterIsInstance<Effect.AnswerCommand>().firstOrNull()
         if (tag != null && tagged != null) {
@@ -199,12 +224,15 @@ internal class CommandTags {
 
     /**
      * The input that Listening made of [heard] for the conversation, with the options of its tag, if it has one; the
-     * conversation's step that starts work for the input then gives its tag the command's number.
+     * conversation's step that starts work for the input then gives its tag the command's number. The input of a hook's
+     * transcript, tagged or not, is the hooks'.
      */
     @Synchronized
     fun input(heard: Event.Heard?, input: OwnerInput): OwnerInput {
+        if (heard != null && hookConversing.remove(heard)) noteHooks(input.id)
         val tag = heard?.let { conversing.remove(it) } ?: return input
         inputs[input.id] = tag
+        noteHooks(input.id)
         while (inputs.size > MAX_TAGS) inputs.remove(inputs.keys.first())
         return options.remove(tag)?.let { input.copy(options = it) } ?: input
     }
@@ -216,37 +244,52 @@ internal class CommandTags {
      */
     @Synchronized
     fun onConversationStep(event: ConversationEvent, state: ConversationState, step: MachineStep) {
-        // The owner's own command makes its conversation his: a hook's mark on it goes (review low risk). An answer may be
-        // a hook's press of the card, so only a command counts.
-        val owners = (event as? ConversationEvent.Input)?.input
-            ?.takeIf { it.intent is InputIntent.Command && it.id !in inputs && it.id !in untaggedInputs }
-        if (owners != null) step.state.id?.let(ownerConversation)
+        // A mark means that only the hooks' inputs are in the conversation (review M1 of Task 13a): the owner's input that
+        // carries his words or his choice takes the mark away from the conversation that it reaches, the one that the step
+        // leaves open, or for a switch the one that it moves into, also when the switch ends a local request later.
+        val given = (event as? ConversationEvent.Input)?.input
+        val brought = (listOfNotNull(given) + step.effects.mapNotNull { work(it)?.second }).distinctBy { it.id }.filter(::owners)
+        brought.mapNotNull { reached(it, step) }.distinct().forEach(ownerConversation)
         val started = mutableSetOf<Long>()
         for (effect in step.effects) {
-            val (command, input) = when (effect) {
-                is ConversationEffect.StartGoal -> {
-                    lastGoalWords = effect.text.split(WHITESPACE).count { it.isNotEmpty() }
-                    effect.command to effect.input
-                }
-                is ConversationEffect.ResumeGoal -> effect.command to effect.input
-                is ConversationEffect.RunLocal -> effect.command to effect.input
-                is ConversationEffect.SwitchTo -> effect.command to effect.input
-                else -> continue
-            }
+            if (effect is ConversationEffect.StartGoal) lastGoalWords = effect.text.split(WHITESPACE).count { it.isNotEmpty() }
+            val (command, input) = work(effect) ?: continue
             if (input != null) started += input.id
-            // Only a conversation that a hook's input's work opened is the hooks' own, the input tagged or typed by
-            // conversation-type without a tag, a goal's work or a local request's: a switch moves into a past conversation,
-            // and a follow-up continues the open one, either of which may be the owner's (plan 7G's review N1). This is the
-            // one rule that marks the hooks' conversations (review B-I2 of plan 7F).
-            val hooks = input != null && (input.id in inputs || untaggedInputs.remove(input.id))
+            // Only a conversation that a hook's input's work opened is the hooks' own, the input tagged or given without a
+            // tag, a goal's work or a local request's: a switch moves into a past conversation, and a follow-up continues the
+            // open one, either of which may be the owner's (plan 7G's review N1). This is the one rule that marks the hooks'
+            // conversations (review B-I2 of plan 7F).
+            val hooks = input != null && input.id in hookInputs
             if (hooks && effect !is ConversationEffect.SwitchTo && step.state.id != state.id) step.state.id?.let(ownConversation)
             val tag = input?.let { inputs.remove(it.id) } ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }
-        val input = (event as? ConversationEvent.Input)?.input ?: return
+        val input = given ?: return
         if (input.id in started || step.state.waiting.any { it.id == input.id }) return
         val tag = inputs.remove(input.id) ?: return
         tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
+    }
+
+    // The command whose work [effect] starts, with the input that it starts for; null for an effect that starts none.
+    private fun work(effect: ConversationEffect): Pair<Int, OwnerInput?>? = when (effect) {
+        is ConversationEffect.StartGoal -> effect.command to effect.input
+        is ConversationEffect.ResumeGoal -> effect.command to effect.input
+        is ConversationEffect.RunLocal -> effect.command to effect.input
+        is ConversationEffect.SwitchTo -> effect.command to effect.input
+        else -> null
+    }
+
+    // The conversation that [input] reaches in [step]: the one that a switch for it moves into, or else the open one.
+    private fun reached(input: OwnerInput, step: MachineStep): ConversationId? =
+        step.effects.filterIsInstance<ConversationEffect.SwitchTo>().firstOrNull { it.input.id == input.id }?.id ?: step.state.id
+
+    // The owner's input that brings his words or his choice: not the hooks', and not a wordless Stop, Continue or New
+    // conversation, which the goal notification's buttons also give, for goal-control's tap in the shade as for his, nor
+    // the end of a wait (Silence) or a withdrawn question.
+    private fun owners(input: OwnerInput): Boolean = input.id !in hookInputs && when (val intent = input.intent) {
+        InputIntent.Stop, InputIntent.Continue, InputIntent.NewConversation -> false
+        is InputIntent.Answer -> intent.answer != ChannelAnswer.Silence && intent.answer != ChannelAnswer.Interrupted
+        else -> true
     }
 
     private fun add(command: Int, said: String? = null, shown: String? = null) {

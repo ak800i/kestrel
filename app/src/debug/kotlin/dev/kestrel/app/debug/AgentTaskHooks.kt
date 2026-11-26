@@ -92,7 +92,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         } else {
             Event.Heard(words, named = false)
         }
-        graph.listening.send(event)
+        graph.listening.send(VoiceHooks.untagged(graph, event))
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"}"
     }
 
@@ -105,10 +105,13 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         AgentHookAnswers.openCardRefusal(card, tag, question, asking)?.let { throw HookError(it) }
         if (!card.answersOnScreen) throw HookError("only the card over the app answers this; answer with --es channel card")
         val channel = graph.textChannel
-        when (val choice = AgentHookAnswers.cardChoice(words, card.choices)) {
-            null -> channel.submit(channel.read(words) ?: throw HookError("the answer holds no words"))
-            else -> channel.choose(card.key, choice)
+        // Each input is noted as the hooks' before the conversation gets it, so that it never counts as the owner's (review
+        // M2 of Task 13a).
+        val input = when (val choice = AgentHookAnswers.cardChoice(words, card.choices)) {
+            null -> channel.read(words) ?: throw HookError("the answer holds no words")
+            else -> channel.answer(card.key, choice) ?: throw HookError("the card no longer takes the answer $words; read agent-state again")
         }
+        channel.submit(VoiceHooks.untagged(graph, input))
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=text"
     }
 

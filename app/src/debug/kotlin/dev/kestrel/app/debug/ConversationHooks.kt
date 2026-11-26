@@ -48,7 +48,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
         // As the owner's "Kestrel, new conversation" (design 6.8 of sub-project 7): while a goal is open, Kestrel says that
         // it must stop first.
         "new" -> {
-            graph.conversations.submit(OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.NewConversation, System.currentTimeMillis()))
+            graph.conversations.submit(VoiceHooks.untagged(graph, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.NewConversation, System.currentTimeMillis())))
             "new=sent"
         }
         // The quiet time ends at once if its clock runs, so that a test need not wait for it.

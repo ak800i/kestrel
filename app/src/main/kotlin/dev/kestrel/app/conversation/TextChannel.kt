@@ -81,13 +81,24 @@ internal class TextChannel(
      * card does not have take nothing, and no tap is kept for a later card (design 12.2).
      */
     fun choose(key: Int, choice: CardChoice) {
-        val card = cards.open.value?.takeIf { it.key == key && it.answersOnScreen && choice in it.choices } ?: return
-        when (val answer = choice.answer) {
-            null -> conversation.replyOpened(checkNotNull(card.question))
-            // The answer names its question, so that a tap that comes late answers no later one (Task A2).
-            else -> submit(input(InputIntent.Answer(answer, question = card.question)))
-        }
+        val card = taking(key, choice) ?: return
+        if (choice.answer == null) conversation.replyOpened(checkNotNull(card.question)) else submit(answerOf(card, choice))
     }
+
+    /**
+     * The input that the owner's tap on [choice] of the screen's copy of the open card [key] gives, as [choose] submits it;
+     * null when the card does not take it, or for "Reply…", which gives none. The debug hook agent-answer notes it as the
+     * hooks' before it submits it.
+     */
+    fun answer(key: Int, choice: CardChoice): OwnerInput? =
+        taking(key, choice)?.takeIf { choice.answer != null }?.let { answerOf(it, choice) }
+
+    private fun taking(key: Int, choice: CardChoice): OwnerCard? =
+        cards.open.value?.takeIf { it.key == key && it.answersOnScreen && choice in it.choices }
+
+    // The answer names its question, so that a tap that comes late answers no later one (Task A2).
+    private fun answerOf(card: OwnerCard, choice: CardChoice): OwnerInput =
+        input(InputIntent.Answer(checkNotNull(choice.answer), question = card.question))
 
     /** The owner's typed [text] as an input, read against the open question (design 12.2); null for a text without words. */
     fun read(text: String): OwnerInput? = TypedInputs.read(text, conversation.view())?.let(::input)

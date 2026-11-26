@@ -66,6 +66,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
             if (event !is Event.Heard) throw HookError("only a transcript takes a tag; add --es event heard")
             val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
             tag(graph, given, event, taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER)))
+        } else if (event is Event.Heard) {
+            untagged(graph, event)
         }
         graph.listening.send(event)
         return if (given != null) "sent $name tag=$given" else "sent $name"
@@ -290,13 +292,23 @@ internal class VoiceHooks(private val graph: AppGraph) {
         }
 
         /**
-         * Notes [input], which the hook `conversation-type` gives the conversation without a tag, as the hooks' own, so that
-         * it is not taken for the owner's command, and starts the record of the steps ([install]; Task 13a); returns it.
+         * Notes [input], which a hook gives the conversation without a tag, as the hooks' own, so that it is not taken for
+         * the owner's, and starts the record of the steps ([install]; Task 13a and its review M2); returns it.
          */
         fun untagged(graph: AppGraph, input: OwnerInput): OwnerInput {
             install(graph)
             tags.untagged(input)
             return input
+        }
+
+        /**
+         * Notes [event], a transcript that a hook sends without a tag, so that its input is the hooks' own and not the
+         * owner's, and starts the record of the steps ([install]; review M2 of Task 13a); returns it.
+         */
+        fun untagged(graph: AppGraph, event: Event.Heard): Event.Heard {
+            install(graph)
+            tags.untagged(event)
+            return event
         }
 
         /** A typed input's kind in lower case, such as command, answer or stop: never its words. */

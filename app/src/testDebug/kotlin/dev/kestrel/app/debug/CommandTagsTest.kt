@@ -6,6 +6,8 @@ import dev.kestrel.app.orchestrator.Rules
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
+import dev.kestrel.conversation.local.LocalOutcome
+import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
@@ -187,22 +189,79 @@ class CommandTagsTest {
         assertEquals(listOf(conversation), own)
     }
 
-    // Review low risk of plan 7F: the owner's own command, without a tag, in a marked conversation makes it his again, so
-    // that delete-typed leaves it; a command that conversation-type gave without a tag, or an answer, does not.
+    // Review low risk of plan 7F and review M1 of Task 13a: a mark means that only the hooks' inputs are in the conversation.
+    // The owner's own command or answer in it makes it his again, so that delete-typed leaves it; a hook's command or answer
+    // does not, nor a wordless Stop, which the goal notification's button gives for goal-control's tap too.
     @Test
-    fun theOwnersOwnCommandInAMarkedConversationTakesItsMarkAway() {
+    fun theOwnersOwnCommandOrAnswerInAMarkedConversationTakesItsMarkAway() {
         val gone = mutableListOf<ConversationId>()
         tags.ownerConversation = { gone += it }
         val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
         val hooks = OwnerInput(31, InputChannel.TEXT, InputIntent.Command("and the times"), 0)
         tags.untagged(hooks)
         tags.onConversationStep(ConversationEvent.Input(hooks), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(9, 2, hooks, "and the times"))))
-        val answer = OwnerInput(32, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes), 0)
-        tags.onConversationStep(ConversationEvent.Input(answer), marked, MachineStep(marked, emptyList()))
+        val hooksAnswer = OwnerInput(32, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes), 0)
+        tags.untagged(hooksAnswer)
+        tags.onConversationStep(ConversationEvent.Input(hooksAnswer), marked, MachineStep(marked, emptyList()))
+        val stop = OwnerInput(34, InputChannel.TEXT, InputIntent.Stop, 0)
+        tags.onConversationStep(ConversationEvent.Input(stop), marked, MachineStep(marked, emptyList()))
         assertEquals(emptyList<ConversationId>(), gone)
 
         val owners = OwnerInput(33, InputChannel.VOICE, InputIntent.Command("and the prices"), 0)
         tags.onConversationStep(ConversationEvent.Input(owners), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(10, 3, owners, "and the prices"))))
+        val answer = OwnerInput(35, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Text("the red one")), 0)
+        tags.onConversationStep(ConversationEvent.Input(answer), marked, MachineStep(marked, emptyList()))
+        assertEquals(listOf(marked.id, marked.id), gone)
+    }
+
+    // Review M1 of Task 13a: the owner's switch into a marked conversation, by "continue the conversation about ..." (a
+    // local request whose end switches) or by the list's Continue, makes the conversation that it moves into his; a hook's
+    // switch does not.
+    @Test
+    fun theOwnersSwitchIntoAMarkedConversationTakesItsMarkAway() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val his = ConversationState(id = ConversationId("ab".repeat(16)))
+        val marked = ConversationId("0123456789abcdef0123456789abcdef")
+        val about = OwnerInput(51, InputChannel.VOICE, InputIntent.ContinuePast("the bus"), 0)
+        tags.onConversationStep(ConversationEvent.Input(about), his, MachineStep(his, listOf(ConversationEffect.RunLocal(14, null, LocalRequest.ContinuePast("the bus"), about))))
+        gone.clear()
+        tags.onConversationStep(ConversationEvent.LocalEnded(14, LocalOutcome.Switch(marked)), his, MachineStep(his, listOf(ConversationEffect.SwitchTo(14, marked, about))))
+        assertEquals(listOf(marked), gone)
+
+        gone.clear()
+        val listed = OwnerInput(52, InputChannel.TEXT, InputIntent.ContinueConversation(marked), 0)
+        tags.onConversationStep(ConversationEvent.Input(listed), his, MachineStep(his, listOf(ConversationEffect.SwitchTo(15, marked, listed))))
+        assertEquals(listOf(marked), gone)
+
+        gone.clear()
+        val hooks = OwnerInput(53, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
+        tags.untagged(hooks)
+        tags.onConversationStep(ConversationEvent.Input(hooks), his, MachineStep(his, listOf(ConversationEffect.RunLocal(16, null, LocalRequest.ContinuePast("the bus"), hooks))))
+        tags.onConversationStep(ConversationEvent.LocalEnded(16, LocalOutcome.Switch(marked)), his, MachineStep(his, listOf(ConversationEffect.SwitchTo(16, marked, hooks))))
+        assertEquals(emptyList<ConversationId>(), gone)
+    }
+
+    // Review M2 of Task 13a: a transcript that a hook sends without a tag, as agent-answer's spoken answer or voice heard's,
+    // gives an input that is the hooks' own, never the owner's.
+    @Test
+    fun anUntaggedTranscriptOfAHookGivesTheHooksInput() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+        step(Event.Toggle)
+        val sent = Event.Heard("Kestrel, and the times.", named = true)
+        tags.untagged(sent)
+        step(sent)
+        val hooks = tags.input(sent, OwnerInput(61, InputChannel.VOICE, InputIntent.Command("and the times."), 0))
+        tags.onConversationStep(ConversationEvent.Input(hooks), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(17, 2, hooks, "and the times."))))
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        // The owner's own transcript with the same words is his.
+        val his = Event.Heard("Kestrel, and the times.", named = true)
+        step(his)
+        val owners = tags.input(his, OwnerInput(62, InputChannel.VOICE, InputIntent.Command("and the times."), 0))
+        tags.onConversationStep(ConversationEvent.Input(owners), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(18, 3, owners, "and the times."))))
         assertEquals(listOf(marked.id), gone)
     }
 
