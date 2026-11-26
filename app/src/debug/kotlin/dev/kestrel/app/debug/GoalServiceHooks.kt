@@ -91,7 +91,8 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
                 is NoticeButtons.Tapped.Pressed -> null
                 is NoticeButtons.Tapped.Refused -> tapped.reason
                 is NoticeButtons.Tapped.NotShown -> "the goal notification's ${action.name.lowercase()} is not in the shade"
-            }        } catch (error: CancellationException) {
+            }
+        } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"

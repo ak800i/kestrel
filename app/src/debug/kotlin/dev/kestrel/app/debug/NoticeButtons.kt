@@ -124,7 +124,8 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
 
         /** No look showed the button, so nothing was pressed. */
         data class NotShown(override val expanded: List<ShadeExpansion>) : Tapped
-    }}
+    }
+}
 
 /** A collapsed row that the hook goal-control expanded in the shade: the notification's own [ROW], or the [GROUP] that Android put it in. */
 internal enum class ShadeExpansion { ROW, GROUP }

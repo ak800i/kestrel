@@ -75,7 +75,6 @@ class ClipMicrophone : Microphone {
             recordingNow = false
             silencedState.value = false
             threads.stop(afterEnd)
-
         }
     }
 

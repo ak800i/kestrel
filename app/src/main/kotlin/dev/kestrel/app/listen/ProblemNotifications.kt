@@ -1,6 +1,5 @@
 package dev.kestrel.app.listen
 
-import dev.kestrel.app.KestrelNotification
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import dev.kestrel.app.KestrelNotification
 import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 

@@ -1,6 +1,5 @@
 package dev.kestrel.app.listen
 
-import dev.kestrel.app.KestrelNotification
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -14,6 +13,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import dev.kestrel.app.KestrelApplication
+import dev.kestrel.app.KestrelNotification
 import dev.kestrel.app.MainActivity
 import dev.kestrel.app.NotificationGroups
 import dev.kestrel.app.R

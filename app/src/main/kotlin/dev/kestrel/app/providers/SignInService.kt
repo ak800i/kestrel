@@ -1,6 +1,5 @@
 package dev.kestrel.app.providers
 
-import dev.kestrel.app.KestrelNotification
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import dev.kestrel.app.KestrelApplication
+import dev.kestrel.app.KestrelNotification
 import dev.kestrel.app.MainActivity
 import dev.kestrel.app.R
 import kotlinx.coroutines.Dispatchers
