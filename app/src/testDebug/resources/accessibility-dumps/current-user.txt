@@ -1,0 +1,15 @@
+ACCESSIBILITY MANAGER (dumpsys accessibility)
+
+currentUserId=10
+User state[
+     attributes:{id=0, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{}
+     Binding services:{}
+     Crashed services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}}
+User state[
+     attributes:{id=10, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}}
+     Binding services:{}
+     Crashed services:{}

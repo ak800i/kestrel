@@ -239,6 +239,8 @@ function Test-ServiceListed([string]$Services, [string]$Component) {
 # the user that the line 'currentUserId=<user>' names counts, or the first block when that line is missing. Returns $null
 # when the answer has no such block, so that an answer that could not be read never counts as a service that is off.
 # 'Bound services:{...}' names only the services' labels, so Test-ServiceRecordBound tells whether the service is bound.
+# The device tests' reader, ManagedService in app\src\debug, follows the same rule, and both are tested with the same
+# sample dumps (app\src\testDebug\resources\accessibility-dumps).
 function ConvertFrom-AccessibilityDump([string[]]$Dump, [string]$Component) {
     $current = $null
     foreach ($line in $Dump) { if ($line -match '^\s*currentUserId=(\d+)\s*$') { $current = $Matches[1]; break } }

@@ -498,45 +498,25 @@ Describe 'The settings helpers' {
 }
 
 Describe 'ConvertFrom-AccessibilityDump' {
+    BeforeDiscovery {
+        # The sample dumps that the device tests' reader (ManagedService, app\src\debug) is tested with too, with the state
+        # that both give Kestrel's service: one rule in two languages.
+        $samples = Join-Path $PSScriptRoot '..\..\app\src\testDebug\resources\accessibility-dumps'
+        $cases = @(Get-Content -LiteralPath (Join-Path $samples 'cases.tsv') | Where-Object { $_ -and -not $_.StartsWith('#') } | ForEach-Object {
+            $file, $expected = $_ -split "`t"
+            @{ File = $file; Expected = $expected; Path = Join-Path $samples $file }
+        })
+    }
+
     BeforeAll {
         . "$PSScriptRoot\..\lib\Kestrel.ps1"
-        $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
-        function New-UserBlock([int]$Id, [string]$Enabled = '', [string]$Binding = '', [string]$Crashed = '') {
-            'User state[', "     attributes:{id=$Id, touchExplorationEnabled=false}", '     Bound services:{}', "     Enabled services:{$Enabled}",
-            "     Binding services:{$Binding}", "     Crashed services:{$Crashed}"
-        }
     }
 
-    It "reads only the block of the user that currentUserId names" {
-        $dump = @('ACCESSIBILITY MANAGER (dumpsys accessibility)', 'currentUserId=10') + (New-UserBlock 0 -Crashed "{$kestrel}") + (New-UserBlock 10 -Enabled "{$kestrel}")
+    It 'gives the sample dump <File> the state <Expected>' -ForEach $cases {
+        $state = ConvertFrom-AccessibilityDump -Dump @(Get-Content -LiteralPath $Path) -Component $KestrelAccessibilityService
 
-        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
-
-        $state.Enabled | Should -BeExactly $true
-        $state.Binding | Should -BeExactly $false
-        $state.Crashed | Should -BeExactly $false
-    }
-
-    It 'reads the first block when the answer names no current user' {
-        $dump = (New-UserBlock 0 -Enabled "{com.example.reader/com.example.reader.ReaderService}, {$kestrel}" -Crashed "{$kestrel}") + (New-UserBlock 10)
-
-        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
-
-        $state.Enabled | Should -BeExactly $true
-        $state.Crashed | Should -BeExactly $true
-    }
-
-    It 'does not count a component whose name only starts with the component' {
-        $dump = @('currentUserId=0') + (New-UserBlock 0 -Enabled "{$($kestrel)Old}" -Binding "{$($kestrel)Old}" -Crashed "{$($kestrel)Old}")
-
-        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
-
-        $state.Enabled -or $state.Binding -or $state.Crashed | Should -BeExactly $false
-    }
-
-    It 'returns $null for an answer without the block of the current user' {
-        ConvertFrom-AccessibilityDump -Dump @('currentUserId=0', "Can't find service: accessibility") -Component $kestrel | Should -BeNullOrEmpty
-        ConvertFrom-AccessibilityDump -Dump (@('currentUserId=11') + (New-UserBlock 0)) -Component $kestrel | Should -BeNullOrEmpty
+        $read = if ($state) { "enabled=$("$($state.Enabled)".ToLowerInvariant()) binding=$("$($state.Binding)".ToLowerInvariant()) crashed=$("$($state.Crashed)".ToLowerInvariant())" } else { 'unreadable' }
+        $read | Should -BeExactly $Expected
     }
 }
 

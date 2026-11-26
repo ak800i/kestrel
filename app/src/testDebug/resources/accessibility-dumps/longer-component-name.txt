@@ -1,0 +1,7 @@
+currentUserId=0
+User state[
+     attributes:{id=0, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityServiceOld}}
+     Binding services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityServiceOld}}
+     Crashed services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityServiceOld}}

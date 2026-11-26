@@ -1,0 +1,12 @@
+User state[
+     attributes:{id=0, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{{com.example.reader/com.example.reader.ReaderService}, {dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}}
+     Binding services:{}
+     Crashed services:{{dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}}
+User state[
+     attributes:{id=10, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{}
+     Binding services:{}
+     Crashed services:{}

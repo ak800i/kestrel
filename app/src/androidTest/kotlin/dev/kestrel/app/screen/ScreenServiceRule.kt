@@ -64,15 +64,15 @@ class ScreenServiceRule : ExternalResource() {
 
     /**
      * Turns Kestrel's service off, as Android's accessibility manager applies it, not only as Kestrel's session ends. In a
-     * new test process the session is gone already while the manager may still be binding the service, and a bind that never
-     * completes keeps the manager from binding it again until it has seen the service off (`ServiceStall`). When the
+     * new test process the session is gone already while the manager may still be binding the service or hold it as crashed,
+     * and either keeps the manager from binding it again until it has seen the service off (`ServiceStall`). When the
      * setting is put back right after its deletion, the manager can read it only after both writes and never see the off
      * (plan 7E, Task 8).
      */
     private suspend fun turnOff() {
         shell("settings delete secure enabled_accessibility_services")
-        withTimeoutOrNull(BOUND_MILLIS) { while (!managed().off) delay(100) }
-            ?: throw AssertionError("Android's accessibility manager still has Kestrel's service (${managed()}) ${BOUND_MILLIS / 1_000} s after its setting was deleted")
+        withTimeoutOrNull(BOUND_MILLIS) { while (managed()?.off != true) delay(100) }
+            ?: throw AssertionError("Android's accessibility manager still has Kestrel's service (${managed() ?: "unreadable"}) ${BOUND_MILLIS / 1_000} s after its setting was deleted")
         withTimeout(BOUND_MILLIS) { graph.screen.first { it == null } }
     }
 
@@ -83,7 +83,8 @@ class ScreenServiceRule : ExternalResource() {
         return withTimeoutOrNull(BOUND_MILLIS) { graph.screen.filterNotNull().first() }
     }
 
-    private fun managed(): ManagedService = ManagedService.of(shell("dumpsys accessibility"), SERVICE)
+    // Null when the dump has no block of the current user (ManagedService.of).
+    private fun managed(): ManagedService? = ManagedService.of(shell("dumpsys accessibility"), SERVICE)
 
     /**
      * Runs [block] with [source] as this device's touch rule and branch (design D19 of sub-project 5), and puts back the

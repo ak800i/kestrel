@@ -1,0 +1,9 @@
+currentUserId=0
+User state[
+     attributes:{id=0, touchExplorationEnabled=false, serviceHandlesDoubleTap=false}
+     Bound services:{}
+     Enabled services:{{com.example.reader/com.example.reader.ReaderService}}
+     Binding services:{}
+     Crashed services:{}
+     shortcut key:{dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}
+     Button targets:{dev.kestrel/dev.kestrel.app.KestrelAccessibilityService}

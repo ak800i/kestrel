@@ -1,0 +1,11 @@
+# The state that every reader of 'dumpsys accessibility' gives Kestrel's accessibility service for each sample dump in
+# this folder: ManagedService.of in Kotlin (ManagedServiceTest) and ConvertFrom-AccessibilityDump in PowerShell
+# (scripts\tests\Kestrel.Tests.ps1), one rule in two languages. 'unreadable' when the dump has no block of the current
+# user. Columns: the file, then the state.
+current-user.txt	enabled=true binding=false crashed=false
+first-block-without-current-user.txt	enabled=true binding=false crashed=true
+binding.txt	enabled=true binding=true crashed=false
+off-but-a-shortcut-target.txt	enabled=false binding=false crashed=false
+longer-component-name.txt	enabled=false binding=false crashed=false
+no-block.txt	unreadable
+other-user-only.txt	unreadable
