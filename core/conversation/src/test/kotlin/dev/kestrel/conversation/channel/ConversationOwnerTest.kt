@@ -365,4 +365,20 @@ class ConversationOwnerTest {
         val voiceOnly = ConversationOwner(mapOf(InputChannel.VOICE to voice), { granted }, voiceOn, { route }) {}
         assertFalse(voiceOnly.leaveKestrel())
     }
+
+    // Plan 7F: one hand-over opens its page once. In a spoken conversation the voice owns the hand-over, and the text
+    // channel's card, which comes once Kestrel is off, also when it turns off during the hand-over, is only a copy of its card.
+    @Test
+    fun aSpokenConversationsHandOverIsTheVoicesAndTheTextChannelShowsOnlyItsCard() = runTest {
+        val handing = async { owner.handOver(HandOver.of(HandOverKind.ACCESS)) }
+        runCurrent()
+        assertEquals(listOf(HandOverPart.OWN), voice.handOverParts)
+        assertTrue(text.handOvers.isEmpty())
+
+        voiceOn.value = false
+        runCurrent()
+        assertEquals(listOf(HandOverPart.CARD), text.handOverParts)
+        owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.CONTINUED)
+        assertEquals(HandOverEnd.CONTINUED, handing.await())
+    }
 }

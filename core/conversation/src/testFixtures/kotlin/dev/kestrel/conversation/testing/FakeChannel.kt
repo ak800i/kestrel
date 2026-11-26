@@ -6,6 +6,7 @@ import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
+import dev.kestrel.conversation.channel.HandOverPart
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
@@ -41,9 +42,13 @@ class FakeChannel(override val kind: InputChannel) : OwnerChannel {
         return CardAnswer(answer, taps())
     }
 
+    /** How the channel took part in each hand-over, as its own channel or as the copy of its card (plan 7F). */
+    val handOverParts = mutableListOf<HandOverPart>()
+
     // A queued end other than DONE_BY_ITSELF is the owner's tap on the card, which takes its number.
-    override suspend fun handOver(handOver: HandOver): HandOverAnswer {
+    override suspend fun handOver(handOver: HandOver, part: HandOverPart): HandOverAnswer {
         handOvers += handOver
+        handOverParts += part
         val end = handOverEnds.removeFirstOrNull() ?: awaitCancellation()
         return HandOverAnswer(end, if (end == HandOverEnd.DONE_BY_ITSELF) null else taps())
     }

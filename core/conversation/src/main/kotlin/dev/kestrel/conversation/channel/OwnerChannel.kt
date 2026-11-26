@@ -26,9 +26,11 @@ interface OwnerChannel {
 
     /**
      * A hand-over: returns when the owner continued or cancelled on the channel, with the number of his tap on its card's
-     * button, or when it ended by itself.
+     * button, or when it ended by itself. As the hand-over's own channel ([HandOverPart.OWN]) the channel opens what the
+     * hand-over opens and watches for its end by itself; as the copy of its card beside the owner's channel
+     * ([HandOverPart.CARD]) it shows only the card, so that one hand-over opens its page once (plan 7F).
      */
-    suspend fun handOver(handOver: HandOver): HandOverAnswer
+    suspend fun handOver(handOver: HandOver, part: HandOverPart = HandOverPart.OWN): HandOverAnswer
 
     /** Shows Android's permission dialog for [permissions] after saying [why]. */
     suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd
@@ -58,6 +60,12 @@ data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)
  * by itself. A Continue on the card is the owner's act of its moment, as a spoken "Kestrel, continue" is (plan 7F).
  */
 data class HandOverAnswer(val end: HandOverEnd, val act: Long?)
+
+/**
+ * How a channel takes part in a hand-over (plan 7F): as its own channel, the owner's latest, or as the copy of its card that
+ * a spoken conversation gets on the text channel once Kestrel is off (design 10.3).
+ */
+enum class HandOverPart { OWN, CARD }
 
 /** What a channel says or shows (design 11 of sub-project 7). toString prints no words. */
 sealed interface ChannelOutput {

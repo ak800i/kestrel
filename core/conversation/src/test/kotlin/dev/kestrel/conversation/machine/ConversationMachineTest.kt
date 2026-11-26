@@ -738,4 +738,17 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals(InputChannel.VOICE, step(goal, spoken("Make it 8")).state.replyChannel)
         assertEquals(InputChannel.TEXT, step(step(goal, spoken("Make it 8")).state, typed("No, 9")).state.replyChannel)
     }
+
+    // Plan 7F: a typed answer whose question has ended is not lost without a word: Kestrel says that the question had
+    // ended, so that the owner knows that his words did nothing (design 11 and 12.2). A spoken one that came late is dropped,
+    // because the voice's wait ended with its question (plan 7D).
+    @Test
+    fun aTypedAnswerThatCameAfterItsQuestionEndedSaysSo() {
+        val asking = asked(acting(), 4, QuestionKind.YES_NO)
+        val ended = ConversationEffect.Output(ChannelOutput.Shown(ConversationTexts.ANSWER_ENDED))
+
+        assertEquals(ended, step(asking, typed(InputIntent.Answer(ChannelAnswer.Yes, question = 3))).effect<ConversationEffect.Output>())
+        assertEquals(ended, step(acting(), typed(InputIntent.Answer(ChannelAnswer.Text("Half past seven"), question = 4))).effect<ConversationEffect.Output>())
+        assertFalse(step(asking, spoken(InputIntent.Answer(ChannelAnswer.Yes, question = 3))).has<ConversationEffect.Output>())
+    }
 }

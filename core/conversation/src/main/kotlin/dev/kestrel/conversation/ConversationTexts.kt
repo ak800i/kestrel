@@ -21,6 +21,9 @@ object ConversationTexts {
     const val ANSWER_CONTINUE_FIRST = "Answer 'Continue the goal?' first, or say cancel."
     const val FINISH_HAND_OVER_TYPED = "Finish the step first, then tap Continue, or Cancel."
     const val FINISH_HAND_OVER_SPOKEN = "Say 'Kestrel, continue' or 'cancel' first."
+
+    /** A typed answer came after its question had ended (plan 7F). */
+    const val ANSWER_ENDED = "That question had ended, so I didn't use your answer."
     const val CONTINUE_GOAL = "Continue the goal?"
 
     /** The owner's word in a record's line when he continued a goal. */

@@ -63,7 +63,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         state.question?.let { open -> answer(state, open, input)?.let { return it } }
         return when (val intent = input.intent) {
             is InputIntent.Command -> command(state, input, intent.text, now)
-            is InputIntent.Answer -> MachineStep(state)
+            is InputIntent.Answer -> lateAnswer(state, input)
             InputIntent.Stop -> state.local?.let { stopLocal(state, it) } ?: GoalRules.stop(state)
             InputIntent.Continue -> continued(state, input, now)
             InputIntent.NewConversation -> alone(state, input) { newConversation(it, input) }
@@ -86,11 +86,11 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val answering = if (continuing) state.copy(continueAnswer = input) else state
         val typed = input.channel == InputChannel.TEXT
         return when (val intent = input.intent) {
-            // An answer that names another question came late: the question that it answered has gone (the voice's answers;
-            // plan 7F's screen buttons).
+            // An answer that names another question came late: the question that it answered has gone (the voice's answers,
+            // the typed words' answers and the screen's buttons all name theirs; plan 7F).
             is InputIntent.Answer ->
                 if (intent.question != null && intent.question != open.number) {
-                    MachineStep(state)
+                    lateAnswer(state, input)
                 } else {
                     MachineStep(answering, listOf(ConversationEffect.AnswerQuestion(open.number, intent.answer, leftScreen = typed)))
                 }
@@ -105,6 +105,16 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             else -> null
         }
     }
+
+    // Plan 7F: a typed answer whose question has ended is not lost without a word: Kestrel says that the question had ended,
+    // so that the owner knows that his words did nothing (design 11 and 12.2). A spoken one is dropped, because the voice's
+    // wait ended with its question (plan 7D), and a button's answer comes only from a card that was open.
+    private fun lateAnswer(state: ConversationState, input: OwnerInput): MachineStep =
+        if (input.channel == InputChannel.TEXT) {
+            MachineStep(state, listOf(ConversationEffect.Output(ChannelOutput.Shown(ConversationTexts.ANSWER_ENDED))))
+        } else {
+            MachineStep(state)
+        }
 
     // "Stop" cancels Kestrel's own request, a switch too, and drops what waits. The request's question goes with it at
     // once, so that the command or the request after the stop is no answer to it ("Stop. Kestrel, …"; design 6.4).

@@ -147,7 +147,7 @@ class ConversationOwner(
 
     override suspend fun handOver(handOver: HandOver): HandOverEnd {
         val answered = { answer: HandOverAnswer -> Ended(answer.end, answer.act) }
-        return handedOver(handOver.kind, { answered(it.handOver(handOver)) }, { answered(it.handOver(handOver)) }) { it }
+        return handedOver(handOver.kind, { answered(it.handOver(handOver)) }, { answered(it.handOver(handOver, HandOverPart.CARD)) }) { it }
     }
 
     // Android's dialog is shown once, by the owner's channel. The card that a spoken conversation gets once Kestrel is off
@@ -157,7 +157,7 @@ class ConversationOwner(
         return handedOver(
             HandOverKind.PERMISSION,
             { Ended(it.askPermission(permissions, why), act = null) },
-            { channel -> channel.handOver(HandOver.of(HandOverKind.PERMISSION)).let { Ended(ended(it.end), it.act) } },
+            { channel -> channel.handOver(HandOver.of(HandOverKind.PERMISSION), HandOverPart.CARD).let { Ended(ended(it.end), it.act) } },
             ended,
         )
     }

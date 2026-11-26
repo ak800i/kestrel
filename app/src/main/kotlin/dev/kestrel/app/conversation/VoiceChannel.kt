@@ -1,13 +1,13 @@
 package dev.kestrel.app.conversation
 
 import dev.kestrel.agent.port.HandOverEnd
-import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
 import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
+import dev.kestrel.conversation.channel.HandOverPart
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.model.InputChannel
@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The conversation's voice (design 11 of sub-project 7): it speaks and shows through the Orchestrator ([voice]), which
@@ -76,8 +75,10 @@ internal class VoiceChannel(
         withContext(NonCancellable) { screen.releaseBar() }
     }
 
-    // The voice's hand-over has no button: the owner's "Kestrel, continue" reaches the conversation as an input.
-    override suspend fun handOver(handOver: HandOver): HandOverAnswer = try {
+    // The voice's hand-over has no button: the owner's "Kestrel, continue" reaches the conversation as an input. The voice
+    // is always the hand-over's own channel; only the text channel shows a copy of its card (plan 7F).
+    override suspend fun handOver(handOver: HandOver, part: HandOverPart): HandOverAnswer = try {
+        check(part == HandOverPart.OWN) { "The voice shows no hand-over's card" }
         voice.handOver(handOver.text)
         handOvers.opened(handOver.kind)
         handOvers.endedByItself(handOver.kind)
@@ -95,13 +96,7 @@ internal class VoiceChannel(
         withContext(NonCancellable) { screen.releaseBar() }
     }
 
-    // Nothing moves Kestrel's own screen away until plan 7F, so the goal waits for the owner to leave it (design 10.2 of
-    // sub-project 7).
-    override suspend fun leaveKestrel(): Boolean =
-        withTimeoutOrNull(OwnerPort.KESTREL_LEAVE_MILLIS) {
-            while (screen.kestrelInFront()) delay(KESTREL_POLL_MILLIS)
-            true
-        } ?: false
+    override suspend fun leaveKestrel(): Boolean = screen.awaitKestrelLeft()
 
     // The card and the spoken question together: the card's button answers here, the voice as an input (D32 item 18).
     private suspend fun confirm(question: ChannelQuestion): CardAnswer {
@@ -152,8 +147,5 @@ internal class VoiceChannel(
 
         /** How long Android takes to report a paused player as stopped. */
         const val AUDIO_SETTLE_MILLIS = 500L
-
-        /** How often [leaveKestrel] reads whether Kestrel's own screen is still in front. */
-        const val KESTREL_POLL_MILLIS = 200L
     }
 }
