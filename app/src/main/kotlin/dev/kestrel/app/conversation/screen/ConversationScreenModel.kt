@@ -1,8 +1,8 @@
 package dev.kestrel.app.conversation.screen
 
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.conversation.engine.ConversationView
-import dev.kestrel.conversation.model.InputIntent
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +41,7 @@ internal class ConversationScreenModel(private val nowWall: () -> Long) {
         it
     }
 
-    fun sent(intent: InputIntent) = step { if (front) ConversationScreenRules.sent(it, intent, view) else it }
+    fun sent(sent: SentInput) = step { if (front) ConversationScreenRules.sent(it, sent) else it }
 
     /**
      * The microphone: [listen] asks for the listening and gives its tap's number, in the same step that arms the screen

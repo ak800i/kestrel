@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation.screen
 
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.app.listen.CommandWaitEnd
 import dev.kestrel.conversation.engine.ConversationView
@@ -25,7 +26,7 @@ internal class ScreenFeed(
     private val model: ConversationScreenModel,
     private val view: StateFlow<ConversationView>,
     private val foreground: Flow<ForegroundState>,
-    private val sent: Flow<InputIntent>,
+    private val sent: Flow<SentInput>,
     private val waitEnds: Flow<CommandWaitEnd>,
     private val submit: (InputIntent) -> Unit,
 ) {

@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation.screen
 
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.machine.QuietClock
@@ -39,7 +40,7 @@ class ConversationScreenModelTest {
         model.viewed(acting)
         model.foreground(inForeground)
         assertEquals(emptyList<ScreenEffect>(), effects)
-        model.sent(InputIntent.Command("Open Viber"))
+        model.sent(SentInput(InputIntent.Command("Open Viber"), before = idle))
 
         assertEquals(listOf(ScreenEffect.Leave), effects)
         assertNull(model.state.value.armed)
@@ -49,14 +50,33 @@ class ConversationScreenModelTest {
     fun anInputWhileTheScreenIsNotInFrontArmsNothingAndLeavingTheFrontDisarms() = runTest {
         collecting()
         model.viewed(idle)
-        model.sent(InputIntent.Command("Open Viber"))
+        model.sent(SentInput(InputIntent.Command("Open Viber"), before = idle))
         assertNull(model.state.value.armed)
 
         model.inFront(true)
-        model.sent(InputIntent.Command("Open Viber"))
+        model.sent(SentInput(InputIntent.Command("Open Viber"), before = idle))
         assertEquals(Arm.Command(1), model.state.value.armed)
         model.inFront(false)
         model.viewed(acting)
+        model.foreground(inForeground)
+
+        assertEquals(emptyList<ScreenEffect>(), effects)
+    }
+
+    // The whole-plan review's M3: the conversation may show the typed command's own view before the screen hears of the
+    // input. The arm takes the view from before the input, so the command's reply without a goal ends it, and a goal that
+    // the owner then starts by voice does not move the screen.
+    @Test
+    fun aTypedCommandsArmEndsWithItsReplyAlsoWhenItsViewCameFirst() = runTest {
+        collecting()
+        model.inFront(true)
+        model.viewed(idle)
+        val replied = idle.copy(command = 2, quiet = QuietClock.Running(2, 0))
+        model.viewed(replied)
+
+        model.sent(SentInput(InputIntent.Command("Remember that the door code is 4521"), before = idle))
+        assertNull(model.state.value.armed)
+        model.viewed(replied.copy(command = 3, goal = GoalPhase.ACTING))
         model.foreground(inForeground)
 
         assertEquals(emptyList<ScreenEffect>(), effects)

@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation.screen
 
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.app.listen.CommandWaitEnd
 import dev.kestrel.conversation.engine.ConversationView
@@ -28,7 +29,7 @@ class ScreenFeedTest {
     private val model = ConversationScreenModel { 0L }
     private val view = MutableStateFlow(idle)
     private val foreground = MutableStateFlow(ForegroundState())
-    private val sent = MutableSharedFlow<InputIntent>()
+    private val sent = MutableSharedFlow<SentInput>()
     private val waitEnds = MutableSharedFlow<CommandWaitEnd>()
     private val submitted = mutableListOf<InputIntent>()
     private val feed = ScreenFeed(model, view, foreground, sent, waitEnds, submitted::add)

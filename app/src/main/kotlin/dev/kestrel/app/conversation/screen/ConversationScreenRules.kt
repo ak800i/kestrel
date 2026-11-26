@@ -1,6 +1,7 @@
 package dev.kestrel.app.conversation.screen
 
 import dev.kestrel.app.conversation.OwnerCard
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.QuestionKind
@@ -150,16 +151,23 @@ internal object ConversationScreenRules {
         return ScreenStep(next, effects)
     }
 
-    /** The owner's [intent] reached the conversation from the screen, while [view] was the conversation's view. */
-    fun sent(state: ScreenState, intent: InputIntent, view: ConversationView): ScreenState = when {
-        !leaves(intent, view) -> state
-        intent is InputIntent.Command -> state.copy(armed = Arm.Command(view.command))
-        else -> state.copy(
-            armed = Arm.Goal(
-                checkNotNull(view.id) { "A goal belongs to an open conversation" },
-                checkNotNull(view.goalRecord) { "An open goal has a record" },
-            ),
-        )
+    /**
+     * The owner's input [sent] reached the conversation from the screen. Its act is read against the view from before the
+     * conversation got it, never against a newer one that may already count it (the whole-plan review's M3).
+     */
+    fun sent(state: ScreenState, sent: SentInput): ScreenState {
+        val intent = sent.intent
+        val view = sent.before
+        return when {
+            !leaves(intent, view) -> state
+            intent is InputIntent.Command -> state.copy(armed = Arm.Command(view.command))
+            else -> state.copy(
+                armed = Arm.Goal(
+                    checkNotNull(view.id) { "A goal belongs to an open conversation" },
+                    checkNotNull(view.goalRecord) { "An open goal has a record" },
+                ),
+            )
+        }
     }
 
     /** The owner's microphone tap number [tap]: the spoken command's goal moves the screen as a typed command's does. */

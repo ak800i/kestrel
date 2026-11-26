@@ -38,6 +38,16 @@ internal interface TypedConversation {
     fun composing(active: Boolean)
 }
 
+/**
+ * An input that the owner's typing or the screen's buttons gave the conversation, with the conversation's view just before
+ * the conversation got it ([before]), which the input cannot have changed yet: the screen arms its act against that view,
+ * whichever of the input and the newer view reaches the screen first (the whole-plan review's M3 of plan 7F). toString
+ * prints the intent's kind, never its words.
+ */
+internal data class SentInput(val intent: InputIntent, val before: ConversationView) {
+    override fun toString(): String = "SentInput(${intent.javaClass.simpleName}, command=${before.command})"
+}
+
 /** Opens the conversation screen with question [question] in focus and the keyboard up ("Reply…", design 10.3). */
 internal fun interface ReplyScreen {
     fun open(question: Int)
@@ -53,7 +63,7 @@ internal fun interface ReplyScreen {
  * The owner's typed words and the screen's buttons become inputs only here: [read] reads typed words against the open
  * question, [input] makes the screen's own inputs (Stop, Continue, New conversation, a past conversation's Continue),
  * [choose] makes a button of the screen's copy of a card the owner's answer, and [submit] gives each to the conversation
- * and to [sent], from which the screen learns that the owner acted on it. The debug hook `conversation-type` types through
+ * and to [sent], from which the screen learns that the owner acted on it, with the view before the input. The debug hook `conversation-type` types through
  * [read] and [submit] too.
  */
 internal class TextChannel(
@@ -68,11 +78,11 @@ internal class TextChannel(
 ) : OwnerChannel {
     override val kind: InputChannel = InputChannel.TEXT
 
-    private val sentIntents = MutableSharedFlow<InputIntent>(extraBufferCapacity = SENT_BUFFER)
+    private val sentInputs = MutableSharedFlow<SentInput>(extraBufferCapacity = SENT_BUFFER)
     private val handOverKeys = AtomicInteger()
 
-    /** Every input that the owner's typing or the screen's buttons gave the conversation, in order. */
-    val sent: SharedFlow<InputIntent> = sentIntents.asSharedFlow()
+    /** Every input that the owner's typing or the screen's buttons gave the conversation, in order, with the view before it. */
+    val sent: SharedFlow<SentInput> = sentInputs.asSharedFlow()
 
     /**
      * The owner tapped [choice] on the screen's copy of the open card [key] (design 10.3): its answer reaches the
@@ -106,10 +116,11 @@ internal class TextChannel(
     /** An input of the conversation screen's own, such as its Stop or its Continue. */
     fun input(intent: InputIntent): OwnerInput = OwnerInput(InputIds.next(), InputChannel.TEXT, intent, clock())
 
-    /** Gives [input] to the conversation and tells [sent]. */
+    /** Gives [input] to the conversation and tells [sent], with the conversation's view from before the conversation got it. */
     fun submit(input: OwnerInput) {
+        val before = conversation.view()
         conversation.submit(input)
-        sentIntents.tryEmit(input.intent)
+        sentInputs.tryEmit(SentInput(input.intent, before))
     }
 
     fun composing(active: Boolean) = conversation.composing(active)

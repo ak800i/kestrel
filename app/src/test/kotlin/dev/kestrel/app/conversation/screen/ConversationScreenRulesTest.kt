@@ -2,6 +2,7 @@ package dev.kestrel.app.conversation.screen
 
 import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.conversation.OwnerCard
+import dev.kestrel.app.conversation.SentInput
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.QuestionKind
@@ -31,7 +32,7 @@ class ConversationScreenRulesTest {
     @Test
     fun aTypedCommandLeavesTheScreenOnlyOnceAndroidAnsweredTheServicesStart() {
         val idle = ConversationView(id = id, command = 1, quiet = QuietClock.Running(1, 0))
-        val armed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
+        val armed = ConversationScreenRules.sent(ScreenState(), SentInput(InputIntent.Command("Open Viber"), idle))
         val acting = idle.copy(command = 2, goal = GoalPhase.ACTING, quiet = QuietClock.Held(HoldReason.GOAL))
 
         // The coordinator has not seen the goal yet, or Android has not answered its start: the screen stays in front.
@@ -49,10 +50,10 @@ class ConversationScreenRulesTest {
     fun aRequestWithoutAGoalKeepsTheScreenAndTheOwnersActionEndsWithItsReply() {
         val idle = ConversationView(id = id, command = 1, quiet = QuietClock.Running(1, 0))
         // "Remember that …" is Kestrel's own request: the screen stays and shows its reply.
-        assertEquals(ScreenState(), ConversationScreenRules.sent(ScreenState(), InputIntent.Remember("door code", "4521"), idle))
+        assertEquals(ScreenState(), ConversationScreenRules.sent(ScreenState(), SentInput(InputIntent.Remember("door code", "4521"), idle)))
 
         // A command that starts no goal, as without a provider profile: its reply ends the wait for work.
-        val armed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
+        val armed = ConversationScreenRules.sent(ScreenState(), SentInput(InputIntent.Command("Open Viber"), idle))
         val replied = ConversationScreenRules.viewed(armed, idle.copy(command = 2, quiet = QuietClock.Running(2, 0)), none, nowWall = 0).state
         assertNull(replied.armed)
         // A later goal that a spoken command started while the screen is in front moves nothing.
@@ -68,7 +69,7 @@ class ConversationScreenRulesTest {
     @Test
     fun anAnswerArmsOnlyForItsOwnGoalAndEndsWhenThatGoalEnds() {
         val asking = ConversationView(id = id, command = 1, goal = GoalPhase.ASKING, asking = QuestionKind.FREE, goalRecord = 1)
-        val answered = ConversationScreenRules.sent(ScreenState(), InputIntent.Answer(ChannelAnswer.Text("Mila")), asking)
+        val answered = ConversationScreenRules.sent(ScreenState(), SentInput(InputIntent.Answer(ChannelAnswer.Text("Mila")), asking))
         val voiceGoal = ConversationView(id = id, command = 2, goal = GoalPhase.ACTING, goalRecord = 2)
 
         // The answered goal ends before a view of it acting meets a settled service: the answer's act is over.
@@ -93,7 +94,7 @@ class ConversationScreenRulesTest {
         // Review M1 of Task 8: the end of another tap's listening ends nothing.
         assertEquals(listening, ConversationScreenRules.heardNoCommand(listening, listOf(1)))
         // A listening without a command ends no typed command's wait.
-        val typed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
+        val typed = ConversationScreenRules.sent(ScreenState(), SentInput(InputIntent.Command("Open Viber"), idle))
         assertEquals(typed, ConversationScreenRules.heardNoCommand(typed, listOf(2)))
     }
 

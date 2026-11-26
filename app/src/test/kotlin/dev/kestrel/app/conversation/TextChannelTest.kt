@@ -182,9 +182,12 @@ class TextChannelTest {
     @Test
     fun typedWordsBecomeTextInputsThatTheScreenHearsOf() = runTest {
         val channel = channel()
-        val sent = mutableListOf<InputIntent>()
+        val sent = mutableListOf<SentInput>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { channel.sent.collect { sent += it } }
-        conversation.view = ConversationView(asking = QuestionKind.YES_NO, question = 2)
+        val asking = ConversationView(asking = QuestionKind.YES_NO, question = 2)
+        conversation.view = asking
+        // The conversation's view moves on as soon as it gets an input, as the engine's may before the screen hears of it.
+        conversation.onSubmit = { conversation.view = ConversationView(command = conversation.submitted.size) }
 
         channel.submit(channel.read("yes")!!)
         channel.submit(channel.input(InputIntent.Stop))
@@ -192,7 +195,9 @@ class TextChannelTest {
         assertEquals(listOf(InputChannel.TEXT, InputChannel.TEXT), conversation.submitted.map { it.channel })
         assertEquals(listOf(1_000L, 1_000L), conversation.submitted.map { it.atMillis })
         assertTrue(conversation.submitted[0].id < conversation.submitted[1].id)
-        assertEquals(listOf(InputIntent.Answer(ChannelAnswer.Yes, question = 2), InputIntent.Stop), sent)
+        assertEquals(listOf(InputIntent.Answer(ChannelAnswer.Yes, question = 2), InputIntent.Stop), sent.map { it.intent })
+        // Each input carries the view from before the conversation got it (the whole-plan review's M3).
+        assertEquals(listOf(asking, ConversationView(command = 1)), sent.map { it.before })
         assertNull(channel.read("  "))
         channel.composing(true)
         assertEquals(listOf(true), conversation.composings)
@@ -228,8 +233,11 @@ class TextChannelTest {
 
         override fun view(): ConversationView = view
 
+        var onSubmit: () -> Unit = {}
+
         override fun submit(input: OwnerInput) {
             submitted += input
+            onSubmit()
         }
 
         override fun replyOpened(question: Int) {
