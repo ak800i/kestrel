@@ -24,10 +24,11 @@ function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join 
 # Runs a command on the device that Assert-TestDevice accepted, checked in the same adb call, and fails when it fails.
 function Invoke-Checked([string]$Command) { Invoke-SettingsCommand -Serial $Serial -Command $Command }
 
+# Turns Kestrel's accessibility service on, and waits until Kestrel's session is open, or off, and waits until Android's
+# accessibility manager has applied the off (Disconnect-AccessibilityService, which keeps every other service).
 function Set-KestrelService([bool]$On) {
     if (-not $On) {
-        Invoke-Checked 'settings delete secure enabled_accessibility_services' | Out-Null
-        Start-Sleep -Seconds 2
+        if (-not (Disconnect-AccessibilityService -Serial $Serial)) { throw "Android did not turn Kestrel's accessibility service off (see the warning above)." }
         return
     }
     # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.

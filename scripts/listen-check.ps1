@@ -262,14 +262,16 @@ function Stop-Kestrel {
     if ((Wait-Mode off 30) -lt 0) { throw 'Kestrel did not turn off within 30 s.' }
 }
 
-# Turns Kestrel's accessibility service on, as the only enabled service, or off, and waits until Kestrel sees it.
+# Turns Kestrel's accessibility service on, as the only enabled service, or off, and waits until Kestrel sees it. The off
+# takes only Kestrel's service out of the list, so other services stay, and waits until Android's accessibility manager
+# has applied it (Disconnect-AccessibilityService).
 function Set-KestrelService([bool]$On) {
     if ($On) {
         # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
         if (-not (Connect-AccessibilityService -Serial $Serial -Services $service)) { throw "Android did not bind Kestrel's accessibility service (see the warning above)." }
         Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
-    } else {
-        Invoke-Checked 'settings delete secure enabled_accessibility_services' | Out-Null
+    } elseif (-not (Disconnect-AccessibilityService -Serial $Serial)) {
+        throw "Android did not turn Kestrel's accessibility service off (see the warning above)."
     }
     $expected = if ($On) { 'screen=on*' } else { 'screen=off*' }
     for ($i = 0; $i -lt 30; $i++) {
