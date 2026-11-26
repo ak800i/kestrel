@@ -1,5 +1,14 @@
 package dev.kestrel.app.listen
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -41,11 +50,49 @@ class ExitRecordsTest {
     }
 
     @Test
-    fun aRecordThatAndroidCannotGiveIsReportedAndCountsAsNone() = runTest {
+    fun everyReaderInAProcessGetsTheOneReadingOfTheRecord() = runTest {
+        // Listening's restore, the conversation's restore and the accessibility check read the record at different
+        // moments; one binder call gives all of them the same record (plan 7E).
+        var reads = 0
+        val answer = CompletableDeferred<Unit>()
+        val record = ExitRecord(ExitReason.OWNER_STOPPED, AT)
+        val previous = PreviousExit({ reads++; answer.await(); record }) { _, _ -> }
+
+        val first = async { previous.get() }
+        val second = async { previous.get() }
+        runCurrent()
+        answer.complete(Unit)
+
+        assertEquals(record, first.await())
+        assertEquals(record, second.await())
+        assertEquals(record, previous.get())
+        assertEquals(1, reads)
+    }
+
+    @Test
+    fun aRecordThatAndroidCannotGiveIsReportedOnceAndCountsAsNoneForEveryReader() = runTest {
         val failures = mutableListOf<String>()
-        val failing = ExitRecords { throw IllegalStateException("no records") }
-        assertNull(readNewestExit(failing) { what, _ -> failures += what })
+        var reads = 0
+        val previous = PreviousExit({ reads++; throw IllegalStateException("no records") }) { what, _ -> failures += what }
+
+        assertNull(previous.get())
+        assertNull(previous.get())
         assertEquals(listOf("Reading how Kestrel's last process ended"), failures)
+        assertEquals(1, reads)
+    }
+
+    @Test
+    fun aFailureOfOneUseOfTheReadingNeverCancelsAnother() = runTest {
+        // The conversation's restore failing must not take the accessibility notice with it (design 10.6 of sub-project 7).
+        val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) + CoroutineExceptionHandler { _, _ -> })
+        val record = ExitRecord(ExitReason.OWNER_STOPPED, AT)
+        var checked: ExitRecord? = null
+        val previous = PreviousExit({ record }) { _, _ -> }
+
+        previous.launchEach(scope, { delay(10_000); checked = it }, { throw IllegalStateException("the restore failed") })
+        advanceUntilIdle()
+
+        assertEquals(record, checked)
     }
 
     private companion object {

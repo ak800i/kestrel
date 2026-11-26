@@ -1626,11 +1626,11 @@ class ListeningTest {
     }
 
     @Test
-    fun aRestoredProcessThatEndedBeforeItsSessionOpenedSaysSoAlsoWithoutTheRecords() = runTest {
+    fun aRestoredProcessThatEndedBeforeItsSessionOpenedSaysSoAlsoWithoutARecord() = runTest {
+        // No record, also when Android could not give it (PreviousExit reports that).
         memory.stored = Mode.OFF
         memory.writtenAt = 500_000
         memory.restoredAt = 500_000
-        exits.failure = SecurityException("No access to the records")
         val listening = listening()
 
         listening.onAccessibilityServiceConnected()
@@ -1638,7 +1638,7 @@ class ListeningTest {
 
         assertEquals(Mode.OFF, listening.state.value.mode)
         assertTrue(log.isEmpty())
-        assertEquals("Reading the exit records", reports.single().first)
+        assertTrue(reports.isEmpty())
         assertEquals(listOf(StopReason.CRASHED_AFTER_RESTORE), notices.shown)
     }
 
@@ -1735,16 +1735,16 @@ class ListeningTest {
     }
 
     @Test
-    fun exitRecordsThatCannotBeReadDoNotStopTheRestore() = runTest {
+    fun withoutARecordTheRestoreStartsInTheStoredMode() = runTest {
+        // No record, also when Android could not give it (PreviousExit reports that).
         memory.stored = Mode.LISTENING
-        exits.failure = SecurityException("No access to the records")
         val listening = listening()
 
         listening.onAccessibilityServiceConnected()
         runCurrent()
 
         assertEquals(Mode.LISTENING, listening.state.value.mode)
-        assertEquals("Reading the exit records", reports.single().first)
+        assertTrue(reports.isEmpty())
     }
 
     @Test
@@ -3116,7 +3116,7 @@ class ListeningTest {
         memory = memory,
         conditions = conditions,
         notices = notices,
-        exits = exits,
+        previousExit = exits::newest,
         clock = { now },
         calls = calls,
         callActions = callActions,
@@ -3299,16 +3299,15 @@ class ListeningTest {
         }
     }
 
-    private class FakeExits : ExitRecords {
+    // The process's one reading of the newest exit record, as PreviousExit gives it.
+    private class FakeExits {
         var record: ExitRecord? = null
-        var failure: Exception? = null
         var reading: CompletableDeferred<Unit>? = null
         var reads = 0
 
-        override suspend fun newest(): ExitRecord? {
+        suspend fun newest(): ExitRecord? {
             reads++
             reading?.await()
-            failure?.let { throw it }
             return record
         }
     }
@@ -3411,7 +3410,7 @@ class ListeningTest {
             openSettings = { SettingsOpening.OPENED },
             conditions = conditions,
             notices = notices,
-            exits = exits,
+            previousExit = exits::newest,
             clock = { now },
             calls = calls,
             callActions = callActions,

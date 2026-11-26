@@ -52,7 +52,6 @@ import dev.kestrel.app.listen.AndroidExitRecords
 import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
-import dev.kestrel.app.listen.ExitRecord
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.LauncherAppLabels
@@ -61,6 +60,7 @@ import dev.kestrel.app.listen.ListeningOptions
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ListeningSetting
 import dev.kestrel.app.listen.ModeMemory
+import dev.kestrel.app.listen.PreviousExit
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.listen.ScreenBoostWords
 import dev.kestrel.app.listen.ScreenTurns
@@ -76,7 +76,6 @@ import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.measuredTooSlow
 import dev.kestrel.app.listen.openWithBoostWords
-import dev.kestrel.app.listen.readNewestExit
 import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.ModelDownloads
@@ -549,15 +548,11 @@ class AppGraph(context: Context) {
      */
     internal val goalStartRefusal = GoalStartRefusal()
 
-    // Android's records of how Kestrel's processes ended: one reader, which listening's restore and the conversation's
-    // restore both read, so that one record has one reading (plan 7E).
-    private val exitRecords: AndroidExitRecords by lazy { AndroidExitRecords(appContext) }
-
     /**
-     * How Kestrel's previous process ended, which the start reads once for the conversation's restore and the check of the
-     * accessibility service (plan 7E).
+     * How Kestrel's previous process ended, read once per process for listening's restore, the conversation's restore and
+     * the check of the accessibility service (section 8.5; plan 7E).
      */
-    internal suspend fun previousExit(): ExitRecord? = readNewestExit(exitRecords, reportFailure)
+    internal val previousExit: PreviousExit by lazy { PreviousExit(AndroidExitRecords(appContext), reportFailure) }
 
     /** At the start, tells the owner when his stop left Kestrel's accessibility service unbound (section 14.6). */
     internal val unboundServiceCheck: UnboundServiceCheck by lazy {
@@ -773,7 +768,7 @@ class AppGraph(context: Context) {
                 override suspend fun write(mode: Mode, writtenAt: Long, restoredAt: Long?) =
                     settings.set(SettingKeys.LISTENING, ListeningSetting(mode, writtenAt, restoredAt))
             },
-            exits = exitRecords,
+            previousExit = previousExit::get,
             // The wall clock, as in Android's exit records.
             clock = System::currentTimeMillis,
             // Section 8.7: the call state, while a voice session is open, from the signals that the conversation shares.

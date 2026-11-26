@@ -21,12 +21,13 @@ class KestrelApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
-        graph.scope.launch {
-            // One reading of how the last process ended, for the conversation's restore and the accessibility notice.
-            val exit = graph.previousExit()
-            launch { graph.unboundServiceCheck.afterStart(exit) }
-            graph.conversations.restore(processEndOf(exit))
-        }
+        // Each from the one reading of how the last process ended, and each on its own, so that a failed restore never
+        // takes the accessibility notice with it.
+        graph.previousExit.launchEach(
+            graph.scope,
+            { exit -> graph.unboundServiceCheck.afterStart(exit) },
+            { exit -> graph.conversations.restore(processEndOf(exit)) },
+        )
         graph.scope.launch { graph.logs.purgeExpired() }
         graph.scope.launch { graph.keepPurgingConversations() }
         // Kestrel creates the folder for its models itself: on Android 17 it can read a folder that adb creates only

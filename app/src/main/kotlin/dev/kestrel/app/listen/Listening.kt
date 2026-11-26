@@ -242,10 +242,11 @@ internal interface StopNotices {
  * listening or paused once a voice session is open, off at once. When Kestrel's accessibility service connects for the
  * first time in a process in which Kestrel has not been on, it stores Off and turns Kestrel on in the stored mode, so
  * that listening comes back after Android ended Kestrel's process or the phone restarted, while a start that ends the
- * process does not come back at every start. It stays off when the newest of [exits] says that the owner stopped
- * Kestrel, or that Kestrel crashed less than 2 minutes after the last restore, and when the restored process ended before
- * its voice session opened. A task never comes back (sections 8.5 and 14.4). [clock] gives the wall-clock time in
- * milliseconds, which the exit records also use.
+ * process does not come back at every start. It stays off when [previousExit], the process's one reading of the newest
+ * exit record (null without one, also when Android could not give it), says that the owner stopped Kestrel, or that
+ * Kestrel crashed less than 2 minutes after the last restore, and when the restored process ended before its voice
+ * session opened. A task never comes back (sections 8.5 and 14.4). [clock] gives the wall-clock time in milliseconds,
+ * which the exit records also use.
  *
  * Threads: the Orchestrator's loop, its effects, the following of the state, the microphone's start and stop, and the
  * open session's events run on [thread], one at a time. A session opens and closes in a coroutine of [scope] behind
@@ -283,7 +284,7 @@ class Listening internal constructor(
     private val memory: ModeMemory,
     private val conditions: ListeningConditions,
     private val notices: StopNotices,
-    private val exits: ExitRecords,
+    private val previousExit: suspend () -> ExitRecord?,
     private val clock: () -> Long,
     private val calls: CallMonitor,
     private val callActions: CallControl,
@@ -616,15 +617,7 @@ class Listening internal constructor(
             if (wasOn || state.value.mode != Mode.OFF) return@launch
             // An Off without the time of a restore is the owner's Off, or a restore's decision to stay off.
             if (stored.mode == Mode.OFF && stored.restoredAt == null) return@launch
-            val exit = try {
-                exits.newest()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Without the record, Kestrel restores as it did before it read records.
-                report("Reading the exit records", e)
-                null
-            }
+            val exit = previousExit()
             // Also when the owner chose a mode while the record was read.
             if (wasOn || state.value.mode != Mode.OFF) return@launch
             // An Off with the time of a restore: that restore turned Kestrel on, and its process ended before the voice

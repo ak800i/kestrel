@@ -7,7 +7,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** How a process of Kestrel's ended, as far as the restore needs to know (design spec, section 8.5). */
@@ -46,24 +50,40 @@ internal fun interface ExitRecords {
 }
 
 /**
- * Reads [exits] once at the start of Kestrel's process, for the conversation's restore and the check of the accessibility
- * service (plan 7E). When Android cannot give its record, [report] gets the failure and the start goes on as without a
- * record.
+ * How Kestrel's previous process ended, read from [exits] once per process: listening's restore, the conversation's restore
+ * and the check of the accessibility service all [get] the same reading, whenever each of them asks, so that one record
+ * has one reading (section 8.5; plan 7E). When Android cannot give its record, [report] gets the failure once and every
+ * reader goes on as without a record.
  */
-internal suspend fun readNewestExit(exits: ExitRecords, report: (String, Throwable) -> Unit): ExitRecord? = try {
-    exits.newest()
-} catch (e: CancellationException) {
-    throw e
-} catch (e: Exception) {
-    report("Reading how Kestrel's last process ended", e)
-    null
+internal class PreviousExit(private val exits: ExitRecords, private val report: (String, Throwable) -> Unit) {
+    private val reading = Mutex()
+
+    // Set once the reading has ended; a reading that was cancelled is not one, so the next reader reads.
+    private var read: Reading? = null
+
+    suspend fun get(): ExitRecord? = reading.withLock { (read ?: Reading(newest()).also { read = it }).record }
+
+    /** Starts each of [uses] in a coroutine of its own in [scope], with the reading, so that a failure of one never cancels another. */
+    fun launchEach(scope: CoroutineScope, vararg uses: suspend (ExitRecord?) -> Unit) {
+        for (use in uses) scope.launch { use(get()) }
+    }
+
+    private suspend fun newest(): ExitRecord? = try {
+        exits.newest()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report("Reading how Kestrel's last process ended", e)
+        null
+    }
+
+    private class Reading(val record: ExitRecord?)
 }
 
 /**
  * Reads `ActivityManager.getHistoricalProcessExitReasons()` on [Dispatchers.IO], with the time of Kestrel's last install or
  * update, which tells the owner's stop from an update on Android 13. It reads only the reason and the times, never the
- * record's description, which can hold the text of an exception (section 13.5). The app graph builds one, which listening's
- * restore and the conversation's restore both read (plan 7E).
+ * record's description, which can hold the text of an exception (section 13.5). Only [PreviousExit] reads it (plan 7E).
  */
 internal class AndroidExitRecords(private val context: Context) : ExitRecords {
     override suspend fun newest(): ExitRecord? = withContext(Dispatchers.IO) {
