@@ -381,6 +381,14 @@ class Listening internal constructor(
     /** One report for every instant command that started: its number, its kind and its outcome, never words. */
     internal val commandReports: SharedFlow<CommandReport> = reports.asSharedFlow()
 
+    private val waitEnds = MutableSharedFlow<CommandWaitEnd>(extraBufferCapacity = 16)
+
+    /**
+     * The end of each wait for the owner's command after "Yes?", with the input that his words gave the conversation or
+     * none, which the conversation screen's microphone follows (plan 7F).
+     */
+    internal val commandWaitEnds: SharedFlow<CommandWaitEnd> = waitEnds.asSharedFlow()
+
     private val recentCommands = RecentCommands()
 
     /**
@@ -488,7 +496,10 @@ class Listening internal constructor(
         perform = ::perform,
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
-        onStep = { event, before, step -> steps?.invoke(event, before, step) },
+        onStep = { event, before, step ->
+            CommandWaitEnd.of(before, step)?.let(waitEnds::tryEmit)
+            steps?.invoke(event, before, step)
+        },
     )
 
     /** The Orchestrator's state after the last event. */

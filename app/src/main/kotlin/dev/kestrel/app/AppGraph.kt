@@ -1,5 +1,6 @@
 package dev.kestrel.app
 
+import android.Manifest
 import android.app.role.RoleManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
@@ -29,9 +30,14 @@ import dev.kestrel.app.conversation.GoalBar
 import dev.kestrel.app.conversation.PermissionDialog
 import dev.kestrel.app.conversation.playerVoices
 import dev.kestrel.app.conversation.storedConversationSettings
+import dev.kestrel.app.conversation.ReplyScreen
+import dev.kestrel.app.conversation.TextChannel
+import dev.kestrel.app.conversation.TypedConversation
 import dev.kestrel.app.conversation.VoiceChannel
+import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.conversation.engine.ConversationEngine
+import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.goal.GoalRunner
 import dev.kestrel.conversation.local.LocalRequests
 import dev.kestrel.conversation.machine.ConversationEvent
@@ -39,6 +45,7 @@ import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.screen.act.ActionResult
@@ -59,6 +66,7 @@ import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.OwnedBar
+import dev.kestrel.app.listen.PhoneStateGrant
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
@@ -520,9 +528,42 @@ class AppGraph(context: Context) {
         )
     }
 
+    /**
+     * Starts the call watch once the owner has granted READ_PHONE_STATE, also outside Kestrel (section 8.7): the
+     * conversation screen and the settings app check it as they come to the front (review B-M2 of plan 7F).
+     */
+    internal val phoneStateGrant: PhoneStateGrant by lazy {
+        PhoneStateGrant({ appContext.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED }, listening::watchCalls)
+    }
+
     /** The conversation's voice (design 11 of sub-project 7), over the Orchestrator, with its own voice while Kestrel is off. */
     private val voiceChannel: VoiceChannel by lazy {
         VoiceChannel(listening.voicePath, ownerSupport, cardDesk, ownerSupport, ownerSupport, permissionDialog, offVoice)
+    }
+
+    /**
+     * The conversation's text channel (design 10, 11 and 12.2 of sub-project 7): the conversation screen's typed words and
+     * buttons, and, through the card desk, the cards of a typed conversation's questions and hand-overs, and of every
+     * question while Kestrel is off. It reaches the engine only through lambdas, because the engine is built with it.
+     */
+    internal val textChannel: TextChannel by lazy {
+        TextChannel(
+            bar = feedbackBar,
+            screen = ownerSupport,
+            cards = cardDesk,
+            handOvers = ownerSupport,
+            permissions = permissionDialog,
+            replies = ReplyScreen { question -> ConversationActivity.reply(appContext, question) },
+            conversation = object : TypedConversation {
+                override fun view(): ConversationView = conversations.view.value
+
+                override fun submit(input: OwnerInput) = conversations.submit(input)
+
+                override fun replyOpened(question: Int) = conversations.replyOpened(question)
+
+                override fun composing(active: Boolean) = conversations.composing(active)
+            },
+        )
     }
 
     /**
@@ -543,7 +584,7 @@ class AppGraph(context: Context) {
      * The conversation (design 5 and 5.6 of sub-project 7): it takes the owner's spoken inputs from Listening, runs goals
      * and Kestrel's own requests, speaks through the voice channel and keeps the archive. KestrelApplication restores it
      * once at the process start; inputs wait for the restore. It reaches Listening only through lambdas and flows, because
-     * Listening is built first. Until plan 7F the voice is its only channel.
+     * Listening is built first. Its text channel takes the conversation screen's typed words and shows the cards (plan 7F).
      */
     internal val conversations: ConversationEngine by lazy {
         ConversationEngine(
@@ -558,7 +599,7 @@ class AppGraph(context: Context) {
                 AndroidConversationClock,
                 reportFailure,
             ),
-            channels = mapOf(InputChannel.VOICE to voiceChannel),
+            channels = mapOf(InputChannel.VOICE to voiceChannel, InputChannel.TEXT to textChannel),
             permissions = { permissions -> Permissions.granted(appContext, permissions) },
             settings = storedSettings,
             testMode = settings.observe(SettingKeys.SAFETY).map { it.testMode },

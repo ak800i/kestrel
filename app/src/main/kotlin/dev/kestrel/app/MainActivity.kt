@@ -26,9 +26,9 @@ import dev.kestrel.app.settings.SettingsApp
 import dev.kestrel.app.settings.SettingsPage
 import dev.kestrel.app.settings.SetupAction
 import dev.kestrel.app.settings.SetupStatus
+import dev.kestrel.app.settings.SetupState
 import dev.kestrel.app.settings.SetupStatusReader
 import dev.kestrel.app.settings.StoredSettingsData
-import dev.kestrel.app.settings.checkModelFiles
 import dev.kestrel.app.settings.writeLogExport
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 import kotlinx.coroutines.launch
@@ -114,19 +114,14 @@ class MainActivity : ComponentActivity() {
         graph.timeline.settingsFocusChanged(hasFocus)
     }
 
-    // Whether READ_PHONE_STATE was granted at the last refresh. A grant in Android's settings does not restart Kestrel,
-    // so the call monitor starts here too (section 8.7).
-    private var phoneStateGranted = false
-
     private fun refresh() {
         // Checking the model files can take seconds the first time, so the other steps show at once, and the model
         // files keep their last known status until the check ends.
         status = SetupStatusReader(this).read().copy(models = status?.models ?: ModelCheck.Checking)
         // Kestrel watches the call state from now on, also while it listens already. refresh() runs in onResume and
-        // after the permission dialog, so this covers a grant in the dialog and one in Android's settings.
-        val granted = checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
-        if (granted && !phoneStateGranted) graph.listening.watchCalls()
-        phoneStateGranted = granted
+        // after the permission dialog, so this covers a grant in the dialog and one in Android's settings; the conversation
+        // screen, which the launcher opens, checks it too (review B-M2 of plan 7F).
+        graph.phoneStateGrant.check()
         checkModels()
     }
 
@@ -137,7 +132,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(graph.errors) {
             val coroutine = coroutineContext
             // A failure is logged by its classes only (section 13.5), and the pages say that the check failed.
-            val models = checkModelFiles({ graph.models.check() }) { error -> graph.errors.handleException(coroutine, error) }
+            val models = SetupState.models(graph) { error -> graph.errors.handleException(coroutine, error) }
             status = status?.copy(models = models)
         }
     }
@@ -204,10 +199,11 @@ class MainActivity : ComponentActivity() {
          * An intent that starts Kestrel's settings app from outside it, such as from the accessibility service or a
          * notification, which Android lets start activities. MainActivity is singleTop, so a settings app on top of its
          * task gets the intent. The intent gets an identifier of its own, so that it never equals the intent that started
-         * Kestrel's task: when something covers the settings app in that task, such as Android's accessibility settings
-         * that its checklist opened or a permission dialog that outlived Kestrel's process, Android then starts the
-         * settings app on top of it, as it does when the launcher started the task, and closes nothing. With an equal
-         * intent, Android only brings the task to the front, and the settings never show.
+         * Kestrel's task, which since plan 7F is the launcher's intent for the conversation screen or an earlier intent of
+         * this kind: when something covers the settings app in that task, such as Android's accessibility settings that
+         * its checklist opened or a permission dialog that outlived Kestrel's process, Android then starts the settings
+         * app on top of it and closes nothing. With an equal intent, Android only brings the task to the front, and the
+         * settings never show.
          */
         fun freshIntent(context: Context): Intent = Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

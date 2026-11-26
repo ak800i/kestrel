@@ -14,7 +14,7 @@ import android.os.IBinder
 import android.os.Looper
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.KestrelNotification
-import dev.kestrel.app.MainActivity
+import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.NotificationGroups
 import dev.kestrel.app.R
 import dev.kestrel.app.orchestrator.Event
@@ -192,13 +192,14 @@ class ListeningService : Service() {
         )
 
         /**
-         * Opens Kestrel's settings app with the launcher's own intent, so that a tap brings Kestrel's task to the front
-         * instead of adding another MainActivity.
+         * Opens Kestrel's conversation screen with the launcher's own intent (design 10.1 of sub-project 7), so that a tap
+         * brings Kestrel's task to the front instead of adding another screen. The listening notification and the goal
+         * notification (plan 7E) share it.
          */
         internal fun openKestrel(context: Context): PendingIntent = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+            Intent(context, ConversationActivity::class.java).setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
             PendingIntent.FLAG_IMMUTABLE,
         )
 

@@ -84,13 +84,7 @@ fun SettingsApp(
     val agentFreeReviewed by data.agentFreeReviewed.collectAsState(initial = false)
     // Release plan: the model step waits for Kokoro's files when the owner chose Kokoro for the download.
     val downloadChoice by data.downloadChoice.collectAsState(initial = null)
-    val states = SetupChecklist.states(
-        status.copy(
-            providerReady = providerReady,
-            agentFreeReviewed = agentFreeReviewed,
-            kokoroWanted = downloadChoice?.voice == VoiceChoice.KOKORO,
-        ),
-    )
+    val states = SetupChecklist.states(SetupState.stored(status, providerReady, agentFreeReviewed, downloadChoice))
     val home = { page = SettingsPage.HOME }
     Box(Modifier.fillMaxSize().safeDrawingPadding()) {
         when (page) {

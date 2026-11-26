@@ -38,10 +38,12 @@ object ConversationTexts {
     const val BACKGROUND_REFUSED = "Android didn't let me start working in the background."
 
     /**
-     * How the owner goes on after a refusal: the Continue of the held goal's notification, which Kestrel posts without the
-     * service (plan 7E). Plan 7F makes it design 10.6's "Open Kestrel and tap Continue." with the conversation screen.
+     * How the owner goes on after a refusal (design 10.6 of sub-project 7): Continue on the conversation screen, which the
+     * launcher and every notification of Kestrel's open and whose start of the goal service comes from Kestrel's screen in
+     * front (plan 7F); the held goal's notification, which Kestrel posts without the service (plan 7E), has its own
+     * Continue too.
      */
-    const val CONTINUE_IN_NOTIFICATION = "Tap Continue in Kestrel's notification."
+    const val OPEN_AND_CONTINUE = "Open Kestrel and tap Continue."
     const val NOT_FOUND = "I didn't find a conversation about that."
     const val GONE = "That conversation is no longer kept."
     const val REBUILDING_PAST = "I'm still rebuilding the index of your past conversations and can't search them yet."
@@ -64,7 +66,7 @@ object ConversationTexts {
     /** How the owner goes on with a goal that [hold] holds (design 6.5, 10.2 and 10.6); the goal notification shows it too. */
     fun held(hold: GoalHold): String = when (hold) {
         GoalHold.KESTREL_SCREEN -> LEAVE_KESTREL
-        GoalHold.BACKGROUND_REFUSED -> CONTINUE_IN_NOTIFICATION
+        GoalHold.BACKGROUND_REFUSED -> OPEN_AND_CONTINUE
         GoalHold.LOCK, GoalHold.INCOMING_CALL, GoalHold.OUTGOING_CALL, GoalHold.LIMIT, GoalHold.TOUCH, GoalHold.RESTART -> GO_ON
     }
 

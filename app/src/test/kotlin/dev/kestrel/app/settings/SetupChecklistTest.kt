@@ -228,4 +228,13 @@ class SetupChecklistTest {
 
         assertEquals(StepState.DONE, SetupChecklist.states(status).getValue(SetupStep.COPY_MODELS))
     }
+
+    // Design 10.1 of sub-project 7: the conversation screen's banner shows while a step is to do or needs attention.
+    @Test
+    fun theSetupIsNeededWhileAStepIsToDoOrNeedsAttention() {
+        assertTrue(SetupChecklist.needsSetup(SetupChecklist.states(nothingSetUp)))
+        val optionalOnly = SetupStep.entries.associateWith { if (it == SetupStep.CALLS) StepState.OPTIONAL else StepState.DONE }
+        assertFalse(SetupChecklist.needsSetup(optionalOnly))
+        assertTrue(SetupChecklist.needsSetup(optionalOnly + (SetupStep.VOICE_ACCESS to StepState.WARNING)))
+    }
 }

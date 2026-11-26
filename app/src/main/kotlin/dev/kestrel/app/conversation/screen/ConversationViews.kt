@@ -141,9 +141,11 @@ private fun GoalRow(goal: GoalControls, actions: ConversationActions) {
  */
 @Composable
 internal fun CardRow(card: OwnerCard, onReply: () -> Unit, actions: ConversationActions) {
-    // Keyed by the card's question number, so that a new question's card starts unarmed.
-    var armed by remember(card.key) { mutableStateOf(false) }
-    LaunchedEffect(card.key) {
+    // Keyed by the card's question number and the screen's visit, so that a new question's card starts unarmed, and so does
+    // the card that the owner finds when he comes back to the screen.
+    val visit = LocalScreenVisit.current
+    var armed by remember(card.key, visit) { mutableStateOf(false) }
+    LaunchedEffect(card.key, visit) {
         delay(CARD_ARMING_MILLIS)
         armed = true
     }

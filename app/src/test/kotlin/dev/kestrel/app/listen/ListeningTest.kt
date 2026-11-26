@@ -164,6 +164,24 @@ class ListeningTest {
         assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel", ListeningTexts.YES), shown)
     }
 
+    // Plan 7F: the conversation screen's microphone learns that the wait for a command ended without one.
+    @Test
+    fun theEndOfAWaitForACommandWithoutOneIsReported() = runTest {
+        val listening = listeningWithSession()
+        val ends = mutableListOf<CommandWaitEnd>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { listening.commandWaitEnds.collect { ends += it } }
+        listening.send(Event.Heard("Kestrel", named = true))
+        runCurrent()
+        sessions.opened.single().replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+        assertEquals(emptyList<CommandWaitEnd>(), ends)
+
+        listening.send(Event.WaitEnded(listening.state.value.wait))
+        runCurrent()
+
+        assertEquals(listOf(CommandWaitEnd(null)), ends)
+    }
+
     @Test
     fun aStopWhileKestrelSpeaksStopsTheReply() = runTest {
         val listening = listeningWithSession()

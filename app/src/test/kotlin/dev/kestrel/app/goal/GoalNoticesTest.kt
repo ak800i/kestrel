@@ -70,7 +70,7 @@ class GoalNoticesTest {
         )
         assertEquals(ConversationTexts.GO_ON, GoalNotices.of(ConversationView(goal = GoalPhase.PAUSED_AT_LIMIT, hold = GoalHold.LIMIT))?.text)
         assertEquals(ConversationTexts.LEAVE_KESTREL, GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.KESTREL_SCREEN))?.text)
-        assertEquals(ConversationTexts.CONTINUE_IN_NOTIFICATION, GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.BACKGROUND_REFUSED))?.text)
+        assertEquals(ConversationTexts.OPEN_AND_CONTINUE, GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.BACKGROUND_REFUSED))?.text)
     }
 
     // An open goal always has its conversation and record; one without them could carry buttons that never count, so its

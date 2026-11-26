@@ -212,16 +212,28 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
-        <!-- singleTop: "What can I say?" while the settings app is in front delivers its page to the open app. -->
+        <!-- Kestrel's conversation screen, the launcher's activity (D20 of sub-project 7). Its only filter is the launcher's,
+             so that no intent carries words to it (design 12.2); singleTask, so that the launcher, the notifications and
+             "Reply…" bring back the one screen. -->
         <activity
-            android:name=".MainActivity"
+            android:name=".conversation.screen.ConversationActivity"
             android:exported="true"
-            android:launchMode="singleTop">
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Kestrel's settings app (design spec, section 15), which the conversation screen's Settings opens. singleTop:
+             "What can I say?" while the settings app is in front delivers its page to the open app. Exported without a
+             filter, so that the scripts and the device tests start it by name; it follows only a page's name and an
+             askable permission. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop" />
 
         <!-- Reads the screen and acts on it (design spec, sections 7.2 and 9.1). -->
         <service

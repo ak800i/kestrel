@@ -116,6 +116,9 @@ object SetupChecklist {
         }
     }
 
+    /** Whether a step is still to do or needs attention: the conversation screen's banner (design 10.1 of sub-project 7). */
+    fun needsSetup(states: Map<SetupStep, StepState>): Boolean = states.values.any { it == StepState.TO_DO || it == StepState.WARNING }
+
     private fun doneIf(done: Boolean) = if (done) StepState.DONE else StepState.TO_DO
 
     // An optional model that the owner did not choose, such as the Kokoro voice, is no problem, also when a download stopped
