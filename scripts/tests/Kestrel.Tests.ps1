@@ -845,7 +845,21 @@ Describe 'The emulator''s window and clipboard sharing' {
         Should -Invoke Invoke-TimedProcess -Times 2 -Exactly
         Should -Invoke Invoke-TimedProcess -Times 0 -Exactly -ParameterFilter { $ArgumentList -contains 'kill' }
     }
+
+    It 'returns why, and throws nothing, when the restarted emulator''s window type cannot be read' {
+        Mock Get-Adb { 'adb' }
+        Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "kestrel-api37`r`nOK" } }
+        Mock Get-EmulatorProcess { }
+        Mock Start-KestrelEmulator { 'emulator-5554' }
+        Mock Assert-TestDevice { }
+        Mock Get-EmulatorWindowType { throw "Not an answer of the emulator's console to 'avd windowtype': 'KO'" }
+
+        $reason = Restart-KestrelEmulator -Serial 'emulator-5554' -Window $false
+
+        $reason | Should -BeExactly "kestrel-api37's window type could not be read: Not an answer of the emulator's console to 'avd windowtype': 'KO'"
+    }
 }
+
 Describe 'Get-LargestRowId' {
     BeforeAll {
         . "$PSScriptRoot\..\lib\Kestrel.ps1"

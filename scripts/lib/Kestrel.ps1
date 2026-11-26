@@ -393,6 +393,7 @@ function Connect-AccessibilityService([string]$Serial, [string]$Services, [strin
     }
     $wait.Reached
 }
+
 # The AVD name in the answer of an emulator's console to 'avd name': the answer's first line, trimmed (the console ends
 # it with 'OK' on a line of its own). $Answer is adb's output as lines, or as one text; without an answer it is ''.
 function ConvertFrom-AvdNameAnswer($Answer) {
@@ -641,6 +642,12 @@ function Get-EmulatorWindowWarning([string]$AvdName, [string]$WindowType, [bool]
     return $null
 }
 
+# Starts kestrel-api37 through scripts\start-emulator.ps1, with its window when $Window and from a cold boot when
+# $ColdBoot, and returns the serial that the script prints last. Throws what the script throws.
+function Start-KestrelEmulator([bool]$Window, [switch]$ColdBoot) {
+    "$(& "$PSScriptRoot\..\start-emulator.ps1" -ColdBoot:$ColdBoot -Window:$Window | Select-Object -Last 1)".Trim()
+}
+
 # Closes the emulator kestrel-api37 on $Serial and starts it again through scripts\start-emulator.ps1, with its window
 # when $Window, and from a cold boot when $ColdBoot. It closes nothing unless the console names kestrel-api37. A start
 # that is not cold brings Android back from the Quick Boot snapshot that the emulator saves when it closes, so its apps
@@ -660,17 +667,18 @@ function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBo
     $left = @(Get-EmulatorProcess 'kestrel-api37')
     if ($left) { return "kestrel-api37 did not close within 2 minutes of 'adb emu kill' (its qemu process has the ID $($left[0].ProcessId))" }
     try {
-        $started = "$(& "$PSScriptRoot\..\start-emulator.ps1" -ColdBoot:$ColdBoot -Window:$Window | Select-Object -Last 1)".Trim()
+        $started = Start-KestrelEmulator -Window $Window -ColdBoot:$ColdBoot
     } catch {
         return "the emulator did not start again: $($_.Exception.Message)"
     }
     if ($started -ne $Serial) { return "kestrel-api37 started again as '$started', not as $Serial" }
     # The serial now names a new emulator, so the device check runs again before any other command.
     try { Assert-TestDevice -Serial $Serial } catch { return $_.Exception.Message }
-    $type = Get-EmulatorWindowType $Serial
+    try { $type = Get-EmulatorWindowType $Serial } catch { return "kestrel-api37's window type could not be read: $($_.Exception.Message)" }
     $wanted = if ($Window) { 'qtwindow' } else { 'headless' }
     if ($type -ne $wanted) { return "kestrel-api37 started again as $type, not as $wanted" }
 }
+
 # Reads the index of a stream's volume from the answer of 'cmd media_session volume --stream <stream> --get', whose line
 # reads '[V] volume is 7 in range [0..25]'. Throws when the answer has no such line.
 function Get-StreamVolume([string[]]$Lines) {
