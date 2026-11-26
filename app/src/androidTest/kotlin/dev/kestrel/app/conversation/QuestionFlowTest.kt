@@ -125,6 +125,9 @@ class QuestionFlowTest {
         check(VoiceTests.waitUntil(10_000) { TypedTests.screenInFront(screen) }) { "Reply… did not open the conversation screen" }
         compose.onNodeWithText(TypedTests.text(R.string.card_reply)).assertIsDisplayed()
         compose.onNodeWithTag(FIELD_TAG).assertIsFocused()
+        // A screen that Android makes again, as after a rotation, keeps the question that "Reply…" named.
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithTag(FIELD_TAG).assertIsFocused()
         compose.onNodeWithTag(FIELD_TAG).performTextInput("Half past seven")
         compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).performClick()
 

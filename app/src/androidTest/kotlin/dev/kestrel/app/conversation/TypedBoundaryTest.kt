@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation
 
+import android.content.Intent
 import android.graphics.Point
 import android.os.Build
 import android.view.ViewGroup
@@ -26,6 +27,7 @@ import dev.kestrel.app.voice.VoiceTests
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -36,7 +38,7 @@ import kotlin.math.roundToInt
 /**
  * The typed-input boundary on kestrel-api37 (design 12.2 of sub-project 7): a tap that passes through another app's
  * window over the conversation screen sends nothing, an intent that names the screen with words and data puts nothing in
- * its field, and only accessibility tools may act on the screen's views.
+ * its field and does not become the screen's intent, and only accessibility tools may act on the screen's views.
  */
 @RunWith(AndroidJUnit4::class)
 class TypedBoundaryTest {
@@ -104,6 +106,11 @@ class TypedBoundaryTest {
 
         compose.onNodeWithTag(FIELD_TAG).assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         assertEquals(before, conversations.view.value.command)
+        // The screen keeps the launcher's intent that started it: neither intent, with its words or data, became its own.
+        val own = compose.activity.intent
+        assertEquals(Intent.ACTION_MAIN, own.action)
+        assertNull(own.data)
+        assertNull(own.getStringExtra(Intent.EXTRA_TEXT))
     }
 
     // From Android 14 only accessibility tools may act on the screen's views (design 12.2): the view that holds the field

@@ -29,7 +29,8 @@ import kotlinx.coroutines.launch
  * text channel the owner's typed words and buttons. Typed words count as the owner's only from here (design 12.2): the
  * window drops a touch that passed through another app's window, from Android 14 only accessibility tools may act on it,
  * and no intent carries words: "Reply…" names only a question's number ([EXTRA_QUESTION]), which puts the keyboard on the
- * field only while that question is open.
+ * field only while that question is open. The screen takes that number from a later intent and keeps the intent that
+ * started it as its own, so that no other app's intent, with its words and data, becomes the screen's.
  */
 class ConversationActivity : ComponentActivity() {
     private val graph by lazy { (application as KestrelApplication).graph }
@@ -41,7 +42,8 @@ class ConversationActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         ScreenGuard.guard(window.decorView)
-        follow(intent)
+        // A screen that Android makes again, as after a rotation, keeps the question that its last intent named.
+        replyTo = question(savedInstanceState ?: intent.extras)
         // A leave that the model asked for while no activity was there, as during a rotation, waits for this one.
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { screen.leaves.collect { moveTaskToBack(true) } } }
         setContent {
@@ -54,8 +56,12 @@ class ConversationActivity : ComponentActivity() {
     // singleTask: the launcher, the notifications and "Reply…" bring this screen back with their intent.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        follow(intent)
+        replyTo = question(intent.extras)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        replyTo?.let { outState.putInt(EXTRA_QUESTION, it) }
     }
 
     override fun onResume() {
@@ -74,9 +80,7 @@ class ConversationActivity : ComponentActivity() {
     }
 
     // Design 12.2: only a question's number, which is no command; any other extra and any data are ignored.
-    private fun follow(intent: Intent) {
-        replyTo = intent.getIntExtra(EXTRA_QUESTION, 0).takeIf { it > 0 }
-    }
+    private fun question(extras: Bundle?): Int? = extras?.getInt(EXTRA_QUESTION, 0)?.takeIf { it > 0 }
 
     private fun openSettings() {
         startActivity(Intent(this, MainActivity::class.java))
