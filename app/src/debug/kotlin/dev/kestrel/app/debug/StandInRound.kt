@@ -32,18 +32,28 @@ import kotlinx.coroutines.flow.emptyFlow
  * the answer to the owner's goal; the model's own summary and a failure's reason have limits, so the reply never goes
  * through them. So the owner can interrupt the reply, stop the goal or say a new command while it waits, with nothing on
  * the phone touched and no provider called. Any other end, such as a stop, keeps Kestrel's own words for it.
+ *
+ * With [handOver], the round's model first proposes a tap on the stand-in screen's "Pay" button as a payment, which the
+ * safety check hands over to the owner (`HandOverKind.PAYMENT`, a hand-over that opens no page and ends only by the owner's
+ * Continue or Cancel, or its 3 minutes), so that a check can answer a hand-over's card (plan 7F's Task 14, Step 8a); the
+ * tap itself never runs, and after the owner's Continue the round finishes as without it.
  */
-internal class StandInRound(private val seconds: Int, private val reply: String) : GoalEnvironment {
+internal class StandInRound(private val seconds: Int, private val reply: String, private val handOver: Boolean = false) : GoalEnvironment {
     override suspend fun prepare(start: RoundStart): RoundSetup {
-        val finishing = ScriptedModel(
-            listOf(ScriptedModel.call(Tools.FINISH, null, null, null, "summary" to SUMMARY, "evidence" to listOf(mapOf("target" to mapOf("label" to HOME))))),
-        )
+        val paying = ScriptedModel.call(Tools.TAP, PAY, null, null, "reason" to PAYING, "category" to PAYMENTS)
+        val finishing = ScriptedModel.call(Tools.FINISH, null, null, null, "summary" to SUMMARY, "evidence" to listOf(mapOf("target" to mapOf("label" to HOME))))
+        val model = ScriptedModel(listOfNotNull(paying.takeIf { handOver }, finishing))
         val ports = AgentPorts(
-            FakeScreen(ScreenBuilder.screen(LAUNCHER) { text(HOME, top = 100) }),
+            FakeScreen(
+                ScreenBuilder.screen(LAUNCHER) {
+                    text(HOME, top = 100)
+                    if (handOver) button(PAY, top = 400)
+                },
+            ),
             FakeEyes(),
             FakeData(),
             start.owner,
-            Waiting(finishing, seconds * 1_000L),
+            Waiting(model, seconds * 1_000L),
             FakeApps(),
             FakeMemory(),
             FakeLog(),
@@ -60,7 +70,7 @@ internal class StandInRound(private val seconds: Int, private val reply: String)
         else -> AgentTexts.sentence(report, ScriptedModel.INFO.providerName)
     }
 
-    override fun toString(): String = "StandInRound(seconds=$seconds, reply=${reply.length} characters)"
+    override fun toString(): String = "StandInRound(seconds=$seconds, reply=${reply.length} characters, handOver=$handOver)"
 
     // The scripted model, which waits before each reply as a slow provider would.
     private class Waiting(private val inner: ModelPort, private val millis: Long) : ModelPort by inner {
@@ -70,9 +80,22 @@ internal class StandInRound(private val seconds: Int, private val reply: String)
         }
     }
 
-    private companion object {
-        const val LAUNCHER = "com.android.launcher3"
-        const val HOME = "Home"
-        const val SUMMARY = "I read the reply."
+    companion object {
+        /**
+         * voice-task's answer for a stand-in round of [seconds] and a reply of [replyLength] characters, which first hands
+         * the owner a payment step when [handOver]: counts and flags only, never the reply's words.
+         */
+        fun answer(seconds: Int, replyLength: Int, handOver: Boolean): String {
+            val first = if (handOver) ", first hands the owner a payment step," else ""
+            return "each goal's round now takes $seconds s$first and then answers with a reply of $replyLength characters, " +
+                "until voice-task -Clear or the end of Kestrel's process"
+        }
+
+        private const val LAUNCHER = "com.android.launcher3"
+        private const val HOME = "Home"
+        private const val SUMMARY = "I read the reply."
+        private const val PAY = "Pay"
+        private const val PAYING = "pay"
+        private const val PAYMENTS = "payments"
     }
 }

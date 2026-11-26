@@ -252,9 +252,10 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         val reply = intent.getStringExtra(EXTRA_REPLY)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es reply <text>")
         // The goal's words are counted as a count, never kept, so that the session can tell a dictated goal that was split.
         VoiceHooks.install(graph)
-        graph.goalEnvironment.standIn = StandInRound(seconds, reply)
-        return "each goal's round now takes $seconds s and then answers with a reply of ${reply.length} characters, until " +
-            "voice-task -Clear or the end of Kestrel's process"
+        // --ez handover true: the round first hands the owner a payment step (plan 7F's Task 14, Step 8a).
+        val handOver = intent.getBooleanExtra(EXTRA_HANDOVER, false)
+        graph.goalEnvironment.standIn = StandInRound(seconds, reply, handOver)
+        return StandInRound.answer(seconds, reply.length, handOver)
     }
 
     private fun clearTask(): String {
@@ -399,6 +400,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         private const val MAX_TASK_SECONDS = 120
         private const val EXTRA_SECONDS = "seconds"
         private const val EXTRA_REPLY = "reply"
+        private const val EXTRA_HANDOVER = "handover"
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_VOICE = "voice"
         private const val EXTRA_CLEAR = "clear"
