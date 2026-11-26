@@ -43,10 +43,14 @@ internal class ConversationScreenModel(private val nowWall: () -> Long) {
 
     fun sent(intent: InputIntent) = step { if (front) ConversationScreenRules.sent(it, intent, view) else it }
 
-    fun listened() = step { ConversationScreenRules.listened(it, view) }
+    /**
+     * The microphone: [listen] asks for the listening and gives its tap's number, in the same step that arms the screen
+     * with it, so that the end of the tap's listening never comes before its arm.
+     */
+    fun listened(listen: () -> Long) = step { ConversationScreenRules.listened(it, view, listen()) }
 
-    /** The listening that the microphone started ended without a command for the conversation. */
-    fun heardNoCommand() = step(ConversationScreenRules::heardNoCommand)
+    /** The listening that the microphone taps [taps] asked for ended without a command for the conversation. */
+    fun heardNoCommand(taps: List<Long>) = step { ConversationScreenRules.heardNoCommand(it, taps) }
 
     fun inFront(inFront: Boolean) = step {
         front = inFront

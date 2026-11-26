@@ -59,7 +59,7 @@ class ConversationScreenRulesTest {
         val later = ConversationScreenRules.viewed(replied, idle.copy(command = 3, goal = GoalPhase.ACTING), inForeground, nowWall = 0)
         assertEquals(emptyList<ScreenEffect>(), later.effects)
         // The microphone waits for the spoken command's goal as a typed command does.
-        val listening = ConversationScreenRules.listened(replied, idle.copy(command = 3))
+        val listening = ConversationScreenRules.listened(replied, idle.copy(command = 3), tap = 1)
         assertEquals(listOf(ScreenEffect.Leave), ConversationScreenRules.viewed(listening, idle.copy(command = 4, goal = GoalPhase.ACTING), inForeground, nowWall = 0).effects)
         assertNull(ConversationScreenRules.left(listening).armed)
     }
@@ -86,12 +86,15 @@ class ConversationScreenRulesTest {
         val idle = ConversationView(id = id, command = 1, quiet = QuietClock.Running(1, 0))
         val voiceGoal = idle.copy(command = 2, goal = GoalPhase.ACTING, goalRecord = 2)
 
-        val unheard = ConversationScreenRules.heardNoCommand(ConversationScreenRules.listened(ScreenState(), idle))
+        val listening = ConversationScreenRules.listened(ScreenState(), idle, tap = 2)
+        val unheard = ConversationScreenRules.heardNoCommand(listening, listOf(2))
         assertNull(unheard.armed)
         assertEquals(emptyList<ScreenEffect>(), ConversationScreenRules.viewed(unheard, voiceGoal, inForeground, nowWall = 0).effects)
+        // Review M1 of Task 8: the end of another tap's listening ends nothing.
+        assertEquals(listening, ConversationScreenRules.heardNoCommand(listening, listOf(1)))
         // A listening without a command ends no typed command's wait.
         val typed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
-        assertEquals(typed, ConversationScreenRules.heardNoCommand(typed))
+        assertEquals(typed, ConversationScreenRules.heardNoCommand(typed, listOf(2)))
     }
 
     @Test

@@ -53,32 +53,49 @@ class ScreenFeedTest {
         assertEquals(listOf<InputIntent>(InputIntent.NewConversation), submitted)
     }
 
-    // Review M1 of Task 6: a tap on the microphone whose listening heard no command is over, so that a goal that the owner
-    // starts later by voice without the screen does not move it.
-    @Test
-    fun aTapOnTheMicrophoneWhoseWaitEndsWithoutACommandLetsNoLaterGoalMoveTheScreen() = runTest {
-        started()
-        model.inFront(true)
-        model.listened()
-
-        waitEnds.emit(CommandWaitEnd(null))
+    private fun TestScope.goalActs() {
         view.value = acting
         foreground.value = ForegroundState(GoalPhase.ACTING, running = true, settled = true)
         runCurrent()
+    }
+
+    // Review M1 of Task 6: a tap on the microphone whose listening heard no command is over, so that a goal that the owner
+    // starts later by voice without the screen does not move it. Review M1 of Task 8: also a tap that started no wait,
+    // whose listening ends at once.
+    @Test
+    fun aTapOnTheMicrophoneWhoseListeningEndsWithoutACommandLetsNoLaterGoalMoveTheScreen() = runTest {
+        started()
+        model.inFront(true)
+        model.listened { 7 }
+
+        waitEnds.emit(CommandWaitEnd(listOf(7), null))
+        goalActs()
 
         assertEquals(0, leaves)
+    }
+
+    // Review M1 of Task 8: the end of an older wait, such as one that "Kestrel" began by voice, that comes after the tap
+    // is not the end of the tap's listening, so the tap's command still moves the screen.
+    @Test
+    fun theEndOfAnotherListeningAfterTheTapKeepsItsArm() = runTest {
+        started()
+        model.inFront(true)
+        model.listened { 7 }
+
+        waitEnds.emit(CommandWaitEnd(listOf(6), null))
+        goalActs()
+
+        assertEquals(1, leaves)
     }
 
     @Test
     fun aTapOnTheMicrophoneWhoseWaitEndsWithACommandLeavesForItsGoal() = runTest {
         started()
         model.inFront(true)
-        model.listened()
+        model.listened { 7 }
 
-        waitEnds.emit(CommandWaitEnd(InputIntent.Command("Open the fixture")))
-        view.value = acting
-        foreground.value = ForegroundState(GoalPhase.ACTING, running = true, settled = true)
-        runCurrent()
+        waitEnds.emit(CommandWaitEnd(listOf(7), InputIntent.Command("Open the fixture")))
+        goalActs()
 
         assertEquals(1, leaves)
     }

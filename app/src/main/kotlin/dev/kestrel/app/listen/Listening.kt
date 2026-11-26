@@ -52,6 +52,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /** Starts and stops ListeningService. Any thread may call it. */
 internal interface ServiceControl {
@@ -359,9 +360,11 @@ class Listening internal constructor(
     private var restoreChecked = false
     private var wasOn = false
 
-    // Only [thread] uses it. The assistant gesture came while no voice session was open: the session asks for the task
-    // once it opens, so that "Yes?" is spoken and the wait counts from there (section 8.6).
-    private var assistWhenOpen = false
+    // Only [thread] uses it, as the Orchestrator does: which assistant taps each wait for a command answers. A tap that came
+    // while no voice session was open waits in it, and the session asks for the task once it opens, so that "Yes?" is
+    // spoken and the wait counts from there (section 8.6).
+    private val commandTaps = CommandTaps()
+    private val tapNumbers = AtomicLong()
 
     // Only [thread] uses these (section 7.3): the running command's job and conversation, the number of the newest command
     // to run, and the newest number that was cancelled, also before its job started. A cancelled job that may still act
@@ -384,8 +387,8 @@ class Listening internal constructor(
     private val waitEnds = MutableSharedFlow<CommandWaitEnd>(extraBufferCapacity = 16)
 
     /**
-     * The end of each wait for the owner's command after "Yes?", with the input that his words gave the conversation or
-     * none, which the conversation screen's microphone follows (plan 7F).
+     * The end of the listening that each [assist] asked for, with the taps that it answers and the input that the owner's
+     * words after "Yes?" gave the conversation or none, which the conversation screen's microphone follows (plan 7F).
      */
     internal val commandWaitEnds: SharedFlow<CommandWaitEnd> = waitEnds.asSharedFlow()
 
@@ -502,7 +505,7 @@ class Listening internal constructor(
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
         onStep = { event, before, step ->
-            CommandWaitEnd.of(before, step)?.let(waitEnds::tryEmit)
+            commandTaps.stepped(event, before, step)?.let(waitEnds::tryEmit)
             steps?.invoke(event, before, step)
         },
     )
@@ -583,18 +586,27 @@ class Listening internal constructor(
     /**
      * The assistant gesture or an earbud's assistant button (section 8.6): Kestrel listens, if it was off or paused, and
      * waits for a task. While no voice session is open, Kestrel turns on if it is off, and asks once the session is open.
-     * Any thread may call it.
+     * Returns the tap's number, which the end of the listening that it asked for carries in [commandWaitEnds]. Any thread
+     * may call it.
      */
-    fun assist() {
+    fun assist(): Long {
+        val tap = tapNumbers.incrementAndGet()
         scope.launch(thread) {
             if (session != null) {
-                send(Event.Assist)
+                assisting(listOf(tap))
             } else {
-                assistWhenOpen = true
+                commandTaps.awaitSession(tap)
                 // Acts only while Kestrel is off; otherwise a start is on its way, and its session asks.
                 send(Event.Start())
             }
         }
+        return tap
+    }
+
+    // On [thread]: the only way that an Event.Assist reaches the Orchestrator, so that [commandTaps] knows its taps.
+    private fun assisting(taps: List<Long>) {
+        commandTaps.assisting(taps)
+        send(Event.Assist)
     }
 
     /**
@@ -906,10 +918,7 @@ class Listening internal constructor(
                 // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
                 // stored.
                 remember(state.value.mode)
-                if (assistWhenOpen) {
-                    assistWhenOpen = false
-                    send(Event.Assist)
-                }
+                commandTaps.opened().takeIf { it.isNotEmpty() }?.let(::assisting)
                 // Last, so that a failure here costs only the call state (section 8.7).
                 startCalls()
             }
@@ -922,8 +931,8 @@ class Listening internal constructor(
         listener?.active = false
         session = null
         listener = null
-        // An assist that waited for a session is forgotten with the start that failed or was turned off.
-        assistWhenOpen = false
+        // An assist that waited for a session is forgotten with the start that failed or was turned off, and its taps end.
+        commandTaps.closed()?.let(waitEnds::tryEmit)
         microphoneOn = false
         serviceState = ServiceState.STOPPED
         requested = false

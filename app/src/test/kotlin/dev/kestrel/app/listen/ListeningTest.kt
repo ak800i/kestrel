@@ -164,9 +164,10 @@ class ListeningTest {
         assertEquals(listOf(ListeningTexts.LISTENING, "Kestrel", ListeningTexts.YES), shown)
     }
 
-    // Plan 7F: the conversation screen's microphone learns that the wait for a command ended without one.
+    // Plan 7F, review M1 of Task 8: the conversation screen's microphone learns how the listening that its tap asked for
+    // ended, and of no other wait; a tap that Kestrel cannot follow with a wait ends at once.
     @Test
-    fun theEndOfAWaitForACommandWithoutOneIsReported() = runTest {
+    fun theEndOfTheListeningThatATapAskedForCarriesTheTap() = runTest {
         val listening = listeningWithSession()
         val ends = mutableListOf<CommandWaitEnd>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { listening.commandWaitEnds.collect { ends += it } }
@@ -174,12 +175,23 @@ class ListeningTest {
         runCurrent()
         sessions.opened.single().replies.single().complete(Spoke.FINISHED)
         runCurrent()
-        assertEquals(emptyList<CommandWaitEnd>(), ends)
-
         listening.send(Event.WaitEnded(listening.state.value.wait))
         runCurrent()
+        assertEquals(emptyList<CommandWaitEnd>(), ends)
 
-        assertEquals(listOf(CommandWaitEnd(null)), ends)
+        val tap = listening.assist()
+        runCurrent()
+        assertEquals(Work.AWAITING_TASK, listening.state.value.work)
+        listening.send(Event.TurnOff)
+        runCurrent()
+        assertEquals(listOf(CommandWaitEnd(listOf(tap), null)), ends)
+
+        services.failure = IllegalStateException("Not allowed in the background")
+        val refused = listening.assist()
+        runCurrent()
+
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(CommandWaitEnd(listOf(refused), null), ends.last())
     }
 
     @Test

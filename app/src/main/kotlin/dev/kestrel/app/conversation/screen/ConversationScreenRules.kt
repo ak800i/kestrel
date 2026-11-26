@@ -47,11 +47,12 @@ internal sealed interface Arm {
     fun over(view: ConversationView): Boolean
 
     /**
-     * A command typed after command number [after], or one spoken after the owner tapped the microphone ([spoken]): any
+     * A command typed after command number [after], or one spoken after the owner's microphone tap number [tap]: any
      * goal that acts is its work, because the view may show the goal before the screen hears of the input (review A2).
-     * It is over once a newer command ended without a goal; a spoken one also when the listening heard no command.
+     * It is over once a newer command ended without a goal; a spoken one also when the listening that its tap asked for
+     * ended without a command (review M1 of Task 8).
      */
-    data class Command(val after: Int, val spoken: Boolean = false) : Arm {
+    data class Command(val after: Int, val tap: Long? = null) : Arm {
         override fun moves(view: ConversationView): Boolean = view.goal == GoalPhase.ACTING
 
         override fun over(view: ConversationView): Boolean = view.goal == null && view.command > after && view.quiet is QuietClock.Running
@@ -161,12 +162,15 @@ internal object ConversationScreenRules {
         )
     }
 
-    /** The owner tapped the microphone: the spoken command's goal moves the screen as a typed command's does. */
-    fun listened(state: ScreenState, view: ConversationView): ScreenState = state.copy(armed = Arm.Command(view.command, spoken = true))
+    /** The owner's microphone tap number [tap]: the spoken command's goal moves the screen as a typed command's does. */
+    fun listened(state: ScreenState, view: ConversationView, tap: Long): ScreenState =
+        state.copy(armed = Arm.Command(view.command, tap))
 
-    /** The listening that the microphone started ended without a command: the tap's act is over. */
-    fun heardNoCommand(state: ScreenState): ScreenState =
-        if ((state.armed as? Arm.Command)?.spoken == true) state.copy(armed = null) else state
+    /** The listening that the microphone taps [taps] asked for ended without a command: the act of the armed one is over. */
+    fun heardNoCommand(state: ScreenState, taps: List<Long>): ScreenState {
+        val tap = (state.armed as? Arm.Command)?.tap ?: return state
+        return if (tap in taps) state.copy(armed = null) else state
+    }
 
     /** The screen left the front: what the owner asked of it there is over. */
     fun left(state: ScreenState): ScreenState = state.copy(armed = null)

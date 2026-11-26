@@ -80,11 +80,11 @@ internal class ConversationScreenViewModel(private val graph: AppGraph) : ViewMo
         graph.textChannel.composing(words && front)
     }
 
-    /** The microphone (design 10.1): as the side key does, Kestrel listens if it is off and waits for one command. */
-    fun listen() {
-        graph.listening.assist()
-        model.listened()
-    }
+    /**
+     * The microphone (design 10.1): as the side key does, Kestrel listens if it is off and waits for one command. The
+     * screen's arm ends with the end of this tap's own listening (review M1 of Task 8).
+     */
+    fun listen() = model.listened(graph.listening::assist)
 
     fun newConversation() = model.newConversation()
 

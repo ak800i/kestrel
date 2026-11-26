@@ -3,6 +3,7 @@ package dev.kestrel.app.conversation.screen
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,11 +62,13 @@ class ConversationViewsTest {
 
     private fun text(@StringRes id: Int, vararg args: Any): String = compose.activity.getString(id, *args)
 
-    private fun show(ui: MutableState<ScreenUi>, setupNeeded: Boolean = false) {
+    private fun show(ui: MutableState<ScreenUi>, setupNeeded: Boolean = false, visit: MutableState<Int> = mutableStateOf(0)) {
         compose.setContent {
             var words by remember { mutableStateOf("") }
             val focus = remember { FocusRequester() }
-            MaterialTheme { ConversationScreen(ui.value, words, { words = it }, setupNeeded, zone, focus, actions) }
+            CompositionLocalProvider(LocalScreenVisit provides visit.value) {
+                MaterialTheme { ConversationScreen(ui.value, words, { words = it }, setupNeeded, zone, focus, actions) }
+            }
         }
     }
 
@@ -129,6 +132,27 @@ class ConversationViewsTest {
 
         compose.onNodeWithTag(FIELD_TAG).assertIsFocused()
         assertEquals(listOf("choose 4 Yes", "choose 4 Reply"), done)
+    }
+
+    // Review M4 of Task 8: the card's buttons arm again on each visit of the screen, so that a tap that the owner aimed at
+    // the app that was in front, as the screen comes back, answers nothing.
+    @Test
+    fun theCardsButtonsArmAgainOnEachVisit() {
+        val card = OwnerCard(7, "Send it to Mila?", listOf(CardChoice.Yes, CardChoice.No), question = 7, kind = QuestionKind.YES_NO)
+        val visit = mutableStateOf(1)
+        compose.mainClock.autoAdvance = false
+        show(mutableStateOf(ScreenUi(emptyList(), GoalControls.Working(), stopAndNew = true, card = card)), visit = visit)
+        compose.mainClock.advanceTimeBy(CARD_ARMING_MILLIS)
+        compose.mainClock.advanceTimeByFrame()
+
+        visit.value = 2
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithText(text(R.string.card_yes)).performClick()
+        compose.mainClock.advanceTimeBy(CARD_ARMING_MILLIS)
+        compose.mainClock.advanceTimeByFrame()
+        compose.onNodeWithText(text(R.string.card_no)).performClick()
+
+        assertEquals(listOf("choose 7 No"), done)
     }
 
     @Test

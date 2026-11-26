@@ -25,7 +25,8 @@ import org.junit.Test
 
 /**
  * "Kestrel, open settings" with Kestrel's accessibility service on (design spec, sections 8.6 and 15), which starts the
- * settings app from the background. It runs only through scripts\command-test.ps1, as the command tests do, because it
+ * settings app from the background, over Android's screen that the setup checklist opened above the conversation screen
+ * and the settings app. It runs only through scripts\command-test.ps1, as the command tests do, because it
  * needs the accessibility service and that script's restores.
  */
 class OpenSettingsTest {
@@ -50,11 +51,15 @@ class OpenSettingsTest {
 
     @Test
     fun openSettingsShowsTheSettingsOverAnotherAppsScreenInKestrelsTaskAndClosesNothing() = runBlocking<Unit> {
-        // A task that the launcher's own intent started, as when the owner opened Kestrel from the launcher.
+        // A task that the launcher's own intent started, as when the owner opened Kestrel from the launcher: since plan 7F
+        // it opens the conversation screen, whose Settings open the settings app in the same task.
+        val launcher = checkNotNull(context.packageManager.getLaunchIntentForPackage(KESTREL)?.component) { "Kestrel has no launcher activity" }
         screen.shell(
             "am start -W --activity-clear-task -a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
-                "-n $KESTREL/.app.MainActivity",
+                "-n ${launcher.flattenToShortString()}",
         )
+        val settings = awaitConversationScreen().bounds
+        screen.shell("input tap ${settings.centerX} ${settings.centerY}")
         awaitKestrel(R.string.settings_checklist)
         // The setup checklist starts Android's screens into Kestrel's task, so one of them now covers the settings app
         // there.
@@ -85,13 +90,19 @@ class OpenSettingsTest {
         assertFalse("Kestrel said that Android blocked its settings", ListeningTexts.SETTINGS_BLOCKED in CommandTests.spoken)
         awaitKestrel(R.string.settings_checklist)
 
-        // Android's screen is still there under the new settings, and the first settings under it.
+        // Android's screen is still there under the new settings, the first settings under it, and the conversation screen
+        // at the root of the task.
         screen.shell("input keyevent KEYCODE_BACK")
         awaitAndroidSettings()
         screen.shell("input keyevent KEYCODE_BACK")
         awaitKestrel(R.string.settings_checklist)
         screen.shell("input keyevent KEYCODE_BACK")
+        awaitConversationScreen()
     }
+
+    // The conversation screen's Settings button.
+    private suspend fun awaitConversationScreen(): ScreenElement =
+        screen.awaitElement(15_000) { it.packageName == KESTREL && it.label == context.getString(R.string.conversation_settings) }
 
     private suspend fun awaitAndroidSettings() = screen.awaitElement(15_000) { it.packageName == "com.android.settings" }
 
