@@ -23,6 +23,7 @@ import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
+import dev.kestrel.voice.listen.MicrophoneBusyException
 import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -783,6 +784,10 @@ class Listening internal constructor(
             try {
                 current.startMicrophone()
                 microphoneOn = true
+            } catch (e: MicrophoneBusyException) {
+                // Nothing opened: the thread of an earlier stop has not ended yet. The restart rule waits and tries once
+                // more, so listening comes back by itself once that thread has ended, and turns Kestrel off otherwise.
+                restartMicrophone(e)
             } catch (e: Exception) {
                 // A start that failed after the microphone opened leaves it open until a stop.
                 releaseMicrophone(current)
@@ -988,8 +993,9 @@ class Listening internal constructor(
 
     /**
      * Section 14.6: a failure of the microphone, such as ERROR_DEAD_OBJECT after Android's audio server restarted, or an
-     * exception that the pipeline threw from a frame, need not end listening. The microphone, which the caller has
-     * stopped, starts again after [MICROPHONE_RESTART_MILLIS] if the state still wants it then; a turn-off or a new
+     * exception that the pipeline threw from a frame, need not end listening, nor does a start that an earlier
+     * microphone thread refused (MicrophoneBusyException). The microphone, which the caller has stopped or which did not
+     * start, starts again after [MICROPHONE_RESTART_MILLIS] if the state still wants it then; a turn-off or a new
      * session cancels the wait in shutdown(). A restart that fails, or a failure within [MICROPHONE_FAILURES_MILLIS] of
      * a restart, turns Kestrel off. The minute counts only from this restart: when the state did not want the microphone
      * as the wait ended, for example because the screen was off, the microphone starts later and no minute counts.
@@ -1006,7 +1012,8 @@ class Listening internal constructor(
             delay(MICROPHONE_RESTART_MILLIS)
             microphoneWait = null
             if (state.value.microphone) restartedLately = scope.launch(thread) { delay(MICROPHONE_FAILURES_MILLIS) }
-            // Starts the microphone if the state wants it; a start that fails turns Kestrel off.
+            // Starts the microphone if the state wants it; a start that fails turns Kestrel off, and so does a second
+            // refusal within the minute.
             followSafely(state.value)
         }
     }

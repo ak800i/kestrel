@@ -42,7 +42,8 @@ interface Microphone {
      * otherwise on that thread as its last act, once its current callback returns. A stop also closes a recording whose
      * thread ended with an error. It releases every part of the recording, also when an earlier part fails, and then
      * throws the first failure, or [IllegalStateException] when the thread did not end in time; that thread then lingers
-     * without another frame, and a stop while it lingers neither waits nor starts anything.
+     * without another frame. A stop while it lingers neither waits nor starts anything, and throws an
+     * [IllegalStateException] that says so. A start while it lingers throws [MicrophoneBusyException].
      */
     fun stop(afterEnd: () -> Unit = {})
 }

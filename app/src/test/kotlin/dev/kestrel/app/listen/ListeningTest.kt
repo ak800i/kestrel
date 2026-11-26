@@ -24,6 +24,7 @@ import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.VoiceChoice
 import dev.kestrel.voice.VoiceOptions
 import dev.kestrel.voice.listen.Microphone
+import dev.kestrel.voice.listen.MicrophoneBusyException
 import dev.kestrel.voice.listen.Recognition
 import dev.kestrel.voice.models.Engine
 import dev.kestrel.voice.speak.Spoke
@@ -2165,6 +2166,48 @@ class ListeningTest {
         advanceTimeBy(1_000)
         runCurrent()
         assertEquals(Mode.LISTENING, listening.state.value.mode)
+    }
+
+    @Test
+    fun aStartThatAnEarlierMicrophoneThreadRefusesIsTriedAgainAfterASecondAndListeningComesBack() = runTest {
+        sessions.microphoneFailure = MicrophoneBusyException("The microphone's thread from the last stop has not ended yet")
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+        assertEquals(listOf("start", "open", "recognition ALL", "microphone on"), log)
+
+        // The earlier thread ends during the wait.
+        sessions.opened.single().microphoneFailure = null
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(listOf("start", "open", "recognition ALL", "microphone on", "microphone on"), log)
+        assertEquals(Mode.LISTENING, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING), shown)
+        assertEquals("The microphone", reports.single().first)
+    }
+
+    @Test
+    fun aStartThatAnEarlierMicrophoneThreadRefusesAgainAfterTheRetryTurnsKestrelOff() = runTest {
+        sessions.microphoneFailure = MicrophoneBusyException("The microphone's thread from the last stop has not ended yet")
+        val listening = listening()
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertEquals(
+            listOf("start", "open", "recognition ALL", "microphone on", "microphone on", "close", "closed", "stop"),
+            log,
+        )
+        assertEquals(Mode.OFF, listening.state.value.mode)
+        assertEquals(listOf(ListeningTexts.LISTENING, ListeningTexts.MICROPHONE_FAILED), shown)
+        assertEquals(listOf("The microphone", "The microphone"), reports.map { it.first })
     }
 
     @Test

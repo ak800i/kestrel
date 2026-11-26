@@ -1,5 +1,6 @@
 package dev.kestrel.voice.listen
 
+import android.util.Log
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
 
@@ -26,8 +27,10 @@ class MicrophoneThread internal constructor(
     private val prepare: () -> Unit,
     private val stopMillis: Long,
     private val park: (Long) -> Unit,
+    private val unreported: (Exception) -> Unit,
 ) {
-    constructor(name: String, prepare: () -> Unit = {}) : this(name, prepare, STOP_MILLIS, LockSupport::parkNanos)
+    constructor(name: String, prepare: () -> Unit = {}) :
+        this(name, prepare, STOP_MILLIS, LockSupport::parkNanos, ::logUnreported)
 
     // The thread that records, until a stop; then the thread that a stop waited for, until it has ended.
     @Volatile
@@ -41,13 +44,14 @@ class MicrophoneThread internal constructor(
         get() = Thread.currentThread().let { it === current?.thread || it === lingering?.thread }
 
     /**
-     * Throws [IllegalStateException] when a [start] now would be refused: while a thread records, or while the thread of
-     * an earlier stop still lingers. A microphone calls it before it opens anything for a start.
+     * Throws when a [start] now would be refused: [IllegalStateException] while a thread records, and
+     * [MicrophoneBusyException] while the thread of an earlier stop still lingers. A microphone calls it before it opens
+     * anything for a start.
      */
     fun checkCanStart() {
         check(current == null) { "The microphone is already recording" }
         val earlier = lingering ?: return
-        check(earlier.ended) { "The microphone's thread from the last stop has not ended yet" }
+        if (!earlier.ended) throw MicrophoneBusyException("The microphone's thread from the last stop has not ended yet")
         lingering = null
     }
 
@@ -76,19 +80,21 @@ class MicrophoneThread internal constructor(
      * Stops the recording thread, and waits until it has ended, for at most [stopMillis], also when the calling thread is
      * interrupted; the interrupt is kept for the caller. Then [afterEnd] runs once, after the microphone's last frame:
      * here, before stop() returns, when the thread has ended or none ran; and otherwise on the lingering thread, as its
-     * last act once its call returns. Returns whether the thread has ended.
+     * last act once its call returns; then stop() throws [IllegalStateException], which says that the thread did not end
+     * in time.
      *
      * A stop while a thread lingers, with nothing recording, does not wait again: it adds its [afterEnd] to that thread's
-     * last acts and returns false at once. An exception from [afterEnd] goes to the caller when it runs here, and to the
-     * start's `onError` when it runs late.
+     * last acts and throws [IllegalStateException] at once, which says that it did not wait because that thread still
+     * lingers. An exception from [afterEnd] goes to the caller when it runs here, and to the start's `onError` when it
+     * runs late.
      */
-    fun stop(afterEnd: () -> Unit = {}): Boolean {
+    fun stop(afterEnd: () -> Unit = {}) {
         checkNotOnTheMicrophonesThread()
         val recording = current
         val run = recording ?: lingering
         if (run == null) {
             afterEnd()
-            return true
+            return
         }
         if (recording != null) {
             current = null
@@ -98,14 +104,22 @@ class MicrophoneThread internal constructor(
             if (recording.awaitEnd(TimeUnit.MILLISECONDS.toNanos(stopMillis))) {
                 lingering = null
                 afterEnd()
-                return true
+                return
             }
         }
-        if (run.defer(afterEnd)) return false
-        // It ended just now, and runs nothing more.
-        lingering = null
-        afterEnd()
-        return true
+        if (!run.defer(afterEnd)) {
+            // It ended just now, and runs nothing more.
+            lingering = null
+            afterEnd()
+            return
+        }
+        throw IllegalStateException(
+            if (recording != null) {
+                "The microphone's thread did not end within $stopMillis ms of the stop"
+            } else {
+                "The stop did not wait: the microphone's thread from an earlier stop has not ended yet"
+            },
+        )
     }
 
     private fun checkNotOnTheMicrophonesThread() {
@@ -190,7 +204,10 @@ class MicrophoneThread internal constructor(
         }
 
         private fun report(e: Exception) {
-            if (reported) return
+            if (reported) {
+                unreported(e)
+                return
+            }
             reported = true
             onError(e)
         }
@@ -207,5 +224,15 @@ class MicrophoneThread internal constructor(
         // one frame, so that a source that cannot tell when its next frame comes is asked once a frame.
         internal const val MIN_WAIT_NANOS = 1_000_000L
         internal const val MAX_WAIT_NANOS = 20_000_000L
+
+        // A failure after the one that onError got, such as a late pause that failed after a frame had failed. Only the
+        // classes of its chain of causes, because a message can hold what Kestrel heard or showed (section 13.5).
+        private fun logUnreported(e: Exception) {
+            val classes = generateSequence<Throwable>(e) { it.cause }.take(MAX_CAUSES).joinToString(" <- ") { it.javaClass.name }
+            Log.w(TAG, "A later failure on the microphone's thread: $classes")
+        }
+
+        private const val TAG = "Kestrel"
+        private const val MAX_CAUSES = 8
     }
 }

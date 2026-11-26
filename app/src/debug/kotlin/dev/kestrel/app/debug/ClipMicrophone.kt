@@ -74,9 +74,8 @@ class ClipMicrophone : Microphone {
         synchronized(this) {
             recordingNow = false
             silencedState.value = false
-            check(threads.stop(afterEnd)) {
-                "The clip microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop"
-            }
+            threads.stop(afterEnd)
+
         }
     }
 

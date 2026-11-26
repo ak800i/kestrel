@@ -212,8 +212,9 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
      * echo canceller and the request for the earbuds, every one also when an earlier one failed, and also a recording
      * whose thread ended with an error. Throws [IllegalStateException] when called from [start]'s callbacks, where the
      * thread would wait for itself. After the release it throws the first failure: [IllegalStateException] when the
-     * thread did not end in time, which then lingers until its [onFrame] returns, without another frame, or the failure
-     * of a step, with the later ones suppressed.
+     * thread did not end in time, which then lingers until its [onFrame] returns, without another frame, or when this
+     * stop did not wait because a thread of an earlier stop still lingers, or else the failure of a step, with the later
+     * ones suppressed.
      */
     override fun stop(afterEnd: () -> Unit) {
         checkNotOnTheMicrophonesThread()
@@ -225,11 +226,8 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         val steps = Steps()
         // The thread first. No read blocks, so it ends within a frame, and it never reads again once it was told to stop,
         // also when it ends only after the recording was released.
-        steps.attempt {
-            check(threads.stop(afterEnd)) {
-                "The microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop"
-            }
-        }
+        steps.attempt { threads.stop(afterEnd) }
+
         if (recorder != null) {
             steps.attempt { recorder.stop() }
             steps.attempt { audio.unregisterAudioRecordingCallback(callback) }

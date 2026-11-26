@@ -2,6 +2,7 @@ package dev.kestrel.voice.listen
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CopyOnWriteArrayList
@@ -15,20 +16,26 @@ class MicrophoneThreadTest {
     private val prepares = AtomicInteger()
     private val frames = AtomicInteger()
     private val errors = CopyOnWriteArrayList<Exception>()
+    private val unreported = CopyOnWriteArrayList<Exception>()
+    private val logged = CountDownLatch(1)
 
     private fun microphone(stopMillis: Long = STOP_MILLIS, park: (Long) -> Unit = LockSupport::parkNanos) =
-        MicrophoneThread("test microphone", { prepares.incrementAndGet() }, stopMillis, park)
+        MicrophoneThread("test microphone", { prepares.incrementAndGet() }, stopMillis, park) {
+            unreported += it
+            logged.countDown()
+        }
 
     private fun MicrophoneThread.start(source: FrameSource, onFrame: (FloatArray) -> Unit = { frames.incrementAndGet() }) =
         start(source, onFrame) { errors += it }
 
-    // Runs stop() on another thread, so that a stop that waits for ever fails the test instead of hanging it.
-    private fun MicrophoneThread.stopWithin(millis: Long, afterEnd: () -> Unit = {}): Boolean {
-        var ended: Boolean? = null
-        val stopper = thread { ended = stop(afterEnd) }
+    // Runs stop() on another thread, so that a stop that waits for ever fails the test instead of hanging it. Returns
+    // the message of the stop's IllegalStateException, or null when the thread ended.
+    private fun MicrophoneThread.stopWithin(millis: Long, afterEnd: () -> Unit = {}): String? {
+        var failure: Throwable? = null
+        val stopper = thread { failure = runCatching { stop(afterEnd) }.exceptionOrNull() }
         stopper.join(millis)
         assertFalse("stop() still waits after $millis ms", stopper.isAlive)
-        return ended ?: error("stop() ended without a result")
+        return failure?.let { (it as IllegalStateException).message }
     }
 
     // Like AudioRecord.read in the call of 2026-11-26, which went on waiting after AudioRecord.stop(): it returns only
@@ -55,7 +62,7 @@ class MicrophoneThreadTest {
         microphone.start(source)
         assertTrue(source.reading.await(5, TimeUnit.SECONDS))
         try {
-            assertFalse(microphone.stopWithin(STOP_MILLIS + 2_000) { ended.countDown() })
+            assertEquals(TIMED_OUT, microphone.stopWithin(STOP_MILLIS + 2_000) { ended.countDown() })
         } finally {
             source.release.countDown()
         }
@@ -76,15 +83,15 @@ class MicrophoneThreadTest {
         val bothRan = CountDownLatch(2)
         val ranOn = CopyOnWriteArrayList<String>()
         try {
-            assertFalse(microphone.stopWithin(STOP_MILLIS + 2_000) {
+            assertEquals(TIMED_OUT, microphone.stopWithin(STOP_MILLIS + 2_000) {
                 ranOn += Thread.currentThread().name
                 firstEnds.incrementAndGet()
                 bothRan.countDown()
             })
             val refused = runCatching { microphone.start(StuckSource()) }.exceptionOrNull()
-            assertTrue("$refused", refused is IllegalStateException)
-            // A second stop does not wait for the stuck thread again, and starts nothing.
-            assertFalse(microphone.stopWithin(STOP_MILLIS / 2) {
+            assertTrue("$refused", refused is MicrophoneBusyException)
+            // A second stop does not wait for the stuck thread again, says so, and starts nothing.
+            assertEquals(DID_NOT_WAIT, microphone.stopWithin(STOP_MILLIS / 2) {
                 secondEnds.incrementAndGet()
                 bothRan.countDown()
             })
@@ -99,11 +106,30 @@ class MicrophoneThreadTest {
         val next = CountDownLatch(1)
         microphone.start(source) { next.countDown() }
         assertTrue(next.await(5, TimeUnit.SECONDS))
-        assertTrue(microphone.stopWithin(STOP_MILLIS + 2_000))
+        assertNull(microphone.stopWithin(STOP_MILLIS + 2_000))
         assertEquals(1, firstEnds.get())
         assertEquals(1, secondEnds.get())
         assertEquals(2, prepares.get())
         assertEquals(emptyList<Exception>(), errors)
+    }
+
+    @Test
+    fun aFailureAfterTheOneThatOnErrorGotIsLoggedInstead() {
+        val source = StuckSource()
+        val microphone = microphone()
+        microphone.start(source)
+        assertTrue(source.reading.await(5, TimeUnit.SECONDS))
+        val first = IllegalArgumentException("first pause")
+        val second = IllegalArgumentException("second pause")
+        try {
+            assertEquals(TIMED_OUT, microphone.stopWithin(STOP_MILLIS + 2_000) { throw first })
+            assertEquals(DID_NOT_WAIT, microphone.stopWithin(STOP_MILLIS / 2) { throw second })
+        } finally {
+            source.release.countDown()
+        }
+        assertTrue(logged.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf<Exception>(first), errors)
+        assertEquals(listOf<Exception>(second), unreported)
     }
 
     @Test
@@ -115,7 +141,7 @@ class MicrophoneThreadTest {
         microphone.start(source)
         assertTrue(source.reading.await(5, TimeUnit.SECONDS))
         try {
-            assertFalse(microphone.stopWithin(STOP_MILLIS + 2_000) { ended.countDown() })
+            assertEquals(TIMED_OUT, microphone.stopWithin(STOP_MILLIS + 2_000) { ended.countDown() })
         } finally {
             source.release.countDown()
         }
@@ -141,7 +167,7 @@ class MicrophoneThreadTest {
         })
         microphone.start(source)
         assertTrue(threeWaits.await(5, TimeUnit.SECONDS))
-        assertTrue(microphone.stopWithin(STOP_MILLIS + 2_000))
+        assertNull(microphone.stopWithin(STOP_MILLIS + 2_000))
         assertEquals(listOf(1_000_000L, 5_000_000L, 20_000_000L), waits.take(3))
         assertEquals(0, frames.get())
     }
@@ -162,7 +188,7 @@ class MicrophoneThreadTest {
             failed.countDown()
         }
         assertTrue(failed.await(5, TimeUnit.SECONDS))
-        assertTrue(microphone.stopWithin(STOP_MILLIS + 2_000))
+        assertNull(microphone.stopWithin(STOP_MILLIS + 2_000))
         assertEquals(1, frames.get())
         assertEquals(1, errors.size)
     }
@@ -172,5 +198,7 @@ class MicrophoneThreadTest {
 
         // Short, so that the cases with a stuck source take little time; the product's limit is MicrophoneThread.STOP_MILLIS.
         const val STOP_MILLIS = 200L
+        const val TIMED_OUT = "The microphone's thread did not end within $STOP_MILLIS ms of the stop"
+        const val DID_NOT_WAIT = "The stop did not wait: the microphone's thread from an earlier stop has not ended yet"
     }
 }
