@@ -67,11 +67,7 @@ class AssistTest {
             VoiceTests.shell("input keyevent KEYCODE_ASSIST")
 
             awaitTheWaitForATask()
-            // The session hides its window at once, so that the window does not cover the app in front (prototype P3).
-            assertFalse(
-                "The assistant session's window has the focus",
-                FOCUSED_SESSION.containsMatchIn(VoiceTests.shell("dumpsys window")),
-            )
+            assertNoSessionWindow()
         }
     }
 
@@ -114,6 +110,7 @@ class AssistTest {
                     "Kestrel's settings came ${resumed - asked} ms after Kestrel asked for them, after its wait",
                     resumed - asked < SettingsOpener.WAIT_MILLIS,
                 )
+                assertNoSessionWindow()
             } finally {
                 VoiceTests.shell("input keyevent KEYCODE_HOME")
             }
@@ -194,6 +191,18 @@ class AssistTest {
         )
     }
 
+    /**
+     * Kestrel's session has shown and has no window. A window would cover the app in front and take the focus (prototype
+     * P3), and a change of its focus that Kestrel's main thread cannot take within 5 s, as while it starts the settings,
+     * is an ANR that ends Kestrel's process. While Kestrel holds the role, only its session can have such a window.
+     */
+    private fun assertNoSessionWindow() {
+        assertFalse(
+            "The assistant session has a window",
+            SESSION_WINDOW.containsMatchIn(VoiceTests.shell("dumpsys window windows")),
+        )
+    }
+
     /** The holders of the assistant role, as `cmd role` prints them: a package name, or nothing. */
     private fun roleHolders(): String = VoiceTests.shell("cmd role get-role-holders $ROLE").trim()
 
@@ -218,7 +227,7 @@ class AssistTest {
 
         // The settings that name the assistant's service, which Android changes with the role (design D2).
         val ASSISTANT_SETTINGS = listOf("assistant", "voice_interaction_service")
-        val FOCUSED_SESSION = Regex("""mCurrentFocus=Window\{[^}]*VoiceInteractionSession""")
+        val SESSION_WINDOW = Regex("""Window\{[0-9a-f]+ u\d+ VoiceInteractionSession\}""")
         // Android 13 prints "  ResumedActivity: ActivityRecord{…}", later versions "topResumedActivity=ActivityRecord{…}".
         val KESTREL_IN_FRONT = Regex("""(?:topResumedActivity=|\bResumedActivity: )ActivityRecord\{[^}]* dev\.kestrel/""")
         val SETTINGS_IN_FRONT =
