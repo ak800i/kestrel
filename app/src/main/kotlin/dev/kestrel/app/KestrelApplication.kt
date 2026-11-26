@@ -2,6 +2,7 @@ package dev.kestrel.app
 
 import android.app.Application
 import android.content.Context
+import dev.kestrel.app.conversation.processEndOf
 import dev.kestrel.privacy.logs.MainThreadErrors
 import dev.kestrel.privacy.logs.MessageFreeCrashHandler
 import kotlinx.coroutines.launch
@@ -22,9 +23,9 @@ class KestrelApplication : Application() {
         graph = AppGraph(this)
         graph.scope.launch {
             // One reading of how the last process ended, for the conversation's restore and the accessibility notice.
-            val end = graph.previousProcessEnd()
-            launch { graph.unboundServiceCheck.afterStart(end) }
-            graph.conversations.restore(end)
+            val exit = graph.previousExit()
+            launch { graph.unboundServiceCheck.afterStart(exit) }
+            graph.conversations.restore(processEndOf(exit))
         }
         graph.scope.launch { graph.logs.purgeExpired() }
         graph.scope.launch { graph.keepPurgingConversations() }

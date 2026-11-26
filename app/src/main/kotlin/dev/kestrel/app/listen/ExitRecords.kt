@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -42,6 +43,20 @@ internal data class ExitRecord(val reason: ExitReason, val timestamp: Long)
 internal fun interface ExitRecords {
     /** The newest record, or null when Android has none. A reboot leaves no record of its own. */
     suspend fun newest(): ExitRecord?
+}
+
+/**
+ * Reads [exits] once at the start of Kestrel's process, for the conversation's restore and the check of the accessibility
+ * service (plan 7E). When Android cannot give its record, [report] gets the failure and the start goes on as without a
+ * record.
+ */
+internal suspend fun readNewestExit(exits: ExitRecords, report: (String, Throwable) -> Unit): ExitRecord? = try {
+    exits.newest()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    report("Reading how Kestrel's last process ended", e)
+    null
 }
 
 /**

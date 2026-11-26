@@ -112,7 +112,7 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
         /** The notification that says why Kestrel stopped listening or could not start. */
         internal val STOPPED_ID = KestrelNotification.PROBLEM_STOPPED.id
 
-        /** The notification that says that Kestrel's accessibility service is off. */
+        /** The notification that says that Kestrel's accessibility service stopped. */
         internal val ACCESSIBILITY_ID = KestrelNotification.PROBLEM_ACCESSIBILITY.id
 
         /** The notification that opens Kestrel's settings after Android kept them back. */

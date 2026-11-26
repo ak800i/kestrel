@@ -148,7 +148,7 @@
     <string name="problem_title_not_started">Kestrel could not start listening</string>
     <string name="problem_start">Start listening</string>
     <string name="accessibility_channel">Accessibility service</string>
-    <string name="problem_service_off_title">Kestrel\'s accessibility service is off</string>
+    <string name="problem_service_off_title">Kestrel\'s accessibility service stopped</string>
     <string name="problem_service_off_text">Kestrel cannot use the screen, the accessibility button or the shortcut until the service runs again. If Kestrel is listening, it goes on listening. Tap to open the accessibility settings, and turn Kestrel\'s service on, or off and on again if it shows as on.</string>
     <string name="problem_settings_title">Open Kestrel\'s settings</string>
     <string name="problem_settings_text">Android did not let Kestrel open its settings from the background. Tap here to open them.</string>

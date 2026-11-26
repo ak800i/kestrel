@@ -1,7 +1,6 @@
 package dev.kestrel.app.settings
 
 import android.Manifest
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
 import android.app.role.RoleManager
 import android.content.ComponentName
@@ -9,8 +8,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
-import android.provider.Settings
-import android.view.accessibility.AccessibilityManager
+import dev.kestrel.app.AccessibilitySettings
 import dev.kestrel.app.KestrelAccessibilityService
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 
@@ -18,11 +16,9 @@ import dev.kestrel.datatools.notifications.KestrelNotificationListener
 class SetupStatusReader(private val context: Context) {
     fun read(): SetupStatus {
         val kestrel = ComponentName(context, KestrelAccessibilityService::class.java)
-        val service = KestrelAccessibilityService.state(context)
         // Only the services that Android runs.
-        val services = context.getSystemService(AccessibilityManager::class.java)
-            .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-            .map { ComponentName(it.resolveInfo.serviceInfo.packageName, it.resolveInfo.serviceInfo.name) }
+        val services = AccessibilitySettings.running(context)
+        val service = AccessibilitySettings.kestrel(context, services)
         return SetupStatus(
             serviceOn = service.running,
             microphoneAllowed = granted(Manifest.permission.RECORD_AUDIO),
@@ -41,16 +37,8 @@ class SetupStatusReader(private val context: Context) {
         )
     }
 
-    // Whether the secure setting [name], a list of components joined by ':', names [service]. Android may refuse an app
-    // some of its settings; then the way to start Kestrel shows as not set.
-    private fun names(name: String, service: ComponentName): Boolean = try {
-        Settings.Secure.getString(context.contentResolver, name).orEmpty()
-            .split(':')
-            .mapNotNull { ComponentName.unflattenFromString(it) }
-            .contains(service)
-    } catch (e: SecurityException) {
-        false
-    }
+    // A setting that Android refuses to Kestrel shows the way to start Kestrel as not set.
+    private fun names(name: String, service: ComponentName): Boolean = AccessibilitySettings.names(context, name, service)
 
     private fun granted(permission: String) =
         context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED

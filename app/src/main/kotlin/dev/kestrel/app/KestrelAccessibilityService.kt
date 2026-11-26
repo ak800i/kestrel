@@ -2,14 +2,8 @@ package dev.kestrel.app
 
 import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityManager
-import dev.kestrel.app.listen.AccessibilityServiceState
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.screen.ScreenSession
 import kotlinx.coroutines.Job
@@ -71,25 +65,6 @@ class KestrelAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         disconnect()
         super.onDestroy()
-    }
-
-    companion object {
-        /**
-         * Whether Android's setting names this service and whether Android runs it. They differ after "Stop app" or Stop
-         * in "Active apps" (prototype P2), which the setup checklist and the notice after the owner's stop both read.
-         */
-        internal fun state(context: Context): AccessibilityServiceState {
-            val kestrel = ComponentName(context, KestrelAccessibilityService::class.java)
-            val running = context.getSystemService(AccessibilityManager::class.java)
-                .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                .any { it.resolveInfo.serviceInfo.packageName == kestrel.packageName && it.resolveInfo.serviceInfo.name == kestrel.className }
-            val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-                .orEmpty()
-                .split(':')
-                .mapNotNull { ComponentName.unflattenFromString(it) }
-                .contains(kestrel)
-            return AccessibilityServiceState(enabled = enabled, running = running)
-        }
     }
 
     private fun disconnect() {

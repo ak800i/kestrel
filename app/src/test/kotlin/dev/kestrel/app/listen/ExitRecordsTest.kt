@@ -1,6 +1,8 @@
 package dev.kestrel.app.listen
 
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ExitRecordsTest {
@@ -36,6 +38,14 @@ class ExitRecordsTest {
         // From Android 14 an update has a reason of its own.
         assertEquals(ExitReason.OWNER_STOPPED, exitReasonOf(10, AT, 34, updatedAt = AT))
         assertEquals(ExitReason.OTHER, exitReasonOf(16, AT, 34, updatedAt = AT))
+    }
+
+    @Test
+    fun aRecordThatAndroidCannotGiveIsReportedAndCountsAsNone() = runTest {
+        val failures = mutableListOf<String>()
+        val failing = ExitRecords { throw IllegalStateException("no records") }
+        assertNull(readNewestExit(failing) { what, _ -> failures += what })
+        assertEquals(listOf("Reading how Kestrel's last process ended"), failures)
     }
 
     private companion object {

@@ -22,7 +22,6 @@ import dev.kestrel.app.agent.Permissions
 import dev.kestrel.app.agent.RoundModels
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.conversation.AndroidOwnerSupport
-import dev.kestrel.app.conversation.readProcessEnd
 import dev.kestrel.app.conversation.ConversationSignals
 import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.conversation.PermissionDialog
@@ -36,7 +35,6 @@ import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.InputChannel
-import dev.kestrel.conversation.model.ProcessEnd
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.app.assist.KestrelAssistantService
@@ -51,10 +49,10 @@ import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
 import dev.kestrel.app.listen.AndroidExitRecords
-import dev.kestrel.app.listen.UnboundServiceCheck
 import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
+import dev.kestrel.app.listen.ExitRecord
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.LauncherAppLabels
@@ -71,12 +69,14 @@ import dev.kestrel.app.listen.SessionListener
 import dev.kestrel.app.listen.SettingsOpener
 import dev.kestrel.app.listen.StoredMode
 import dev.kestrel.app.listen.Timeline
+import dev.kestrel.app.listen.UnboundServiceCheck
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.listen.VoiceSession
 import dev.kestrel.app.listen.VoiceSessions
 import dev.kestrel.app.listen.loadStoredVoice
 import dev.kestrel.app.listen.measuredTooSlow
 import dev.kestrel.app.listen.openWithBoostWords
+import dev.kestrel.app.listen.readNewestExit
 import dev.kestrel.app.listen.realTimeFactor
 import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.ModelDownloads
@@ -553,12 +553,20 @@ class AppGraph(context: Context) {
     // restore both read, so that one record has one reading (plan 7E).
     private val exitRecords: AndroidExitRecords by lazy { AndroidExitRecords(appContext) }
 
-    /** How Kestrel's previous process ended, which the conversation's restore takes at the start (plan 7E). */
-    internal suspend fun previousProcessEnd(): ProcessEnd = readProcessEnd(exitRecords, reportFailure)
+    /**
+     * How Kestrel's previous process ended, which the start reads once for the conversation's restore and the check of the
+     * accessibility service (plan 7E).
+     */
+    internal suspend fun previousExit(): ExitRecord? = readNewestExit(exitRecords, reportFailure)
 
     /** At the start, tells the owner when his stop left Kestrel's accessibility service unbound (section 14.6). */
     internal val unboundServiceCheck: UnboundServiceCheck by lazy {
-        UnboundServiceCheck(service = { KestrelAccessibilityService.state(appContext) }, notify = problems::accessibilityServiceOff)
+        UnboundServiceCheck(
+            service = { AccessibilitySettings.kestrel(appContext) },
+            notify = problems::accessibilityServiceOff,
+            bootedAt = { System.currentTimeMillis() - SystemClock.elapsedRealtime() },
+            main = Dispatchers.Main,
+        )
     }
 
     // Listening gives the conversation the owner's spoken inputs and its wait for a command after "Yes?", and gets the
