@@ -25,7 +25,9 @@ import java.util.UUID
  * words in its field and its buttons through Compose's test rule, and plan 5A's scripted model as each round's model, so
  * that no test calls a provider. Kestrel's listening stays off unless a test turns it on, because the screen works with
  * listening off. Kestrel's data on kestrel-api37 holds the owner's own conversations, so every request that these tests
- * type ends with this run's [marker], and [finish] deletes only the conversations that the tests made ([own]).
+ * type ends with this run's [marker], and [finish] deletes only the conversations that the tests made: those noted with
+ * [own], and every other conversation that opened between the first [prepare] and [finish], whatever a test's assertions
+ * found, such as one that a command made when it got through a boundary that should have stopped it.
  */
 internal object TypedTests {
     val graph: AppGraph get() = AgentTests.graph
@@ -34,6 +36,13 @@ internal object TypedTests {
     val marker: String = "7f-" + UUID.randomUUID().toString().take(8)
 
     private val made = mutableSetOf<ConversationId>()
+
+    /**
+     * The past conversations as the first [prepare] since the last [finish] found them, after it closed the owner's open
+     * one; null outside the tests. Every conversation that is not among them at [finish] was opened by the tests, because
+     * nothing else opens a conversation on kestrel-api37 while they run.
+     */
+    private var pastBefore: Set<ConversationId>? = null
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -49,11 +58,13 @@ internal object TypedTests {
 
     /**
      * No goal and no conversation open, and [model] as the next rounds' model. A conversation that was open before, such as
-     * the owner's own, closes into his list and stays there.
+     * the owner's own, closes into his list and stays there. The first call since the last [finish] notes the past
+     * conversations, so that [finish] finds every conversation that the tests opened.
      */
     fun prepare(model: ModelPort) {
         endGoal()
         closeConversation()
+        if (pastBefore == null) pastBefore = conversationIds()
         graph.roundModels.modelOverride = model
     }
 
@@ -65,7 +76,11 @@ internal object TypedTests {
         } finally {
             graph.roundModels.modelOverride = null
             graph.conversationTimers = null
-            deleteOwn()
+            try {
+                ownOpened()
+            } finally {
+                deleteOwn()
+            }
         }
     }
 
@@ -104,6 +119,18 @@ internal object TypedTests {
         graph.textChannel.submit(graph.textChannel.input(InputIntent.NewConversation))
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
     }
+
+    // Notes every conversation that opened since the first prepare. When the list cannot be read, pastBefore stays for the
+    // next finish, and the next prepare keeps it.
+    private fun ownOpened() {
+        val before = pastBefore ?: return
+        (conversationIds() - before).forEach(::own)
+        pastBefore = null
+    }
+
+    // The past conversations and the open one, which finish could not close when a test left a goal or a step stuck.
+    private fun conversationIds(): Set<ConversationId> =
+        runBlocking { graph.conversationStore.list() }.mapTo(HashSet()) { it.id } + listOfNotNull(graph.conversations.view.value.id)
 
     // A conversation that is still open, because a test failed before it closed, stays noted for the next finish.
     private fun deleteOwn() {

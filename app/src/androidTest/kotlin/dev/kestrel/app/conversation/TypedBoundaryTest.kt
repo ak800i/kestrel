@@ -1,6 +1,8 @@
 package dev.kestrel.app.conversation
 
 import android.graphics.Point
+import android.os.Build
+import android.view.ViewGroup
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -11,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.app.R
@@ -20,8 +23,10 @@ import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.app.voice.VoiceTests
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -30,8 +35,8 @@ import kotlin.math.roundToInt
 
 /**
  * The typed-input boundary on kestrel-api37 (design 12.2 of sub-project 7): a tap that passes through another app's
- * window over the conversation screen sends nothing, and an intent that names the screen with words and data puts
- * nothing in its field.
+ * window over the conversation screen sends nothing, an intent that names the screen with words and data puts nothing in
+ * its field, and only accessibility tools may act on the screen's views.
  */
 @RunWith(AndroidJUnit4::class)
 class TypedBoundaryTest {
@@ -66,22 +71,24 @@ class TypedBoundaryTest {
         screen.open("ObscuringActivity", "Obscuring fixture")
         TypedTests.bringScreen(screen)
         check(VoiceTests.waitUntil(10_000) { screen.showsWindow(OVERLAY) }) { "The fixture's window is not over the screen" }
+        runBlocking { screen.awaitInputWindow(OVERLAY) }
         val before = conversations.view.value.command
         val words = TypedTests.marked(WORDS)
         compose.onNodeWithTag(FIELD_TAG).performTextInput(words)
 
-        tapSend()
+        val send = sendCentre()
+        tap(send)
         Thread.sleep(SETTLE_MILLIS)
 
         assertEquals(before, conversations.view.value.command)
         compose.onNodeWithTag(FIELD_TAG).assertTextContains(words)
 
-        // Without the window, the same tap sends: the tap above was on Send.
+        // Without the window, a tap on the same point sends: the tap above was on Send.
         screen.shell("am force-stop $FIXTURES")
         check(VoiceTests.waitUntil(10_000) { !screen.showsWindow(OVERLAY) }) { "The fixture's window stayed" }
-        tapSend()
+        assertEquals("Send moved between the two taps", send, sendCentre())
+        tap(send)
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.command > before }) { "The tap without the window sent nothing" }
-        conversations.view.value.id?.let(TypedTests::own)
     }
 
     @Test
@@ -99,15 +106,37 @@ class TypedBoundaryTest {
         assertEquals(before, conversations.view.value.command)
     }
 
-    // Send's centre on the screen, read after the keyboard has settled, and tapped with Android's own input command.
-    private fun tapSend() {
+    // From Android 14 only accessibility tools may act on the screen's views (design 12.2): the view that holds the field
+    // inherits the mark from the window's root, and the node that it gives accessibility services carries it. Android
+    // also infers the mark from the root's touch filter, so this checks what the guard gives, not which of its two calls.
+    @Test
+    @SdkSuppress(minSdkVersion = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    fun theScreensViewsAreForAccessibilityToolsOnly() {
+        var view = false
+        var node = false
+        compose.runOnUiThread {
+            val content = compose.activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
+            view = content.isAccessibilityDataSensitive
+            node = content.createAccessibilityNodeInfo().isAccessibilityDataSensitive
+        }
+
+        assertTrue(view)
+        assertTrue(node)
+    }
+
+    // Send's centre on the screen, read after the keyboard has settled.
+    private fun sendCentre(): Point {
         compose.waitForIdle()
         Thread.sleep(SETTLE_MILLIS)
         val bounds = compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         compose.runOnUiThread { compose.activity.window.decorView.getLocationOnScreen(origin) }
-        val centre = Point(origin[0] + bounds.center.x.roundToInt(), origin[1] + bounds.center.y.roundToInt())
-        screen.shell("input tap ${centre.x} ${centre.y}")
+        return Point(origin[0] + bounds.center.x.roundToInt(), origin[1] + bounds.center.y.roundToInt())
+    }
+
+    // A tap with Android's own input command, as a finger's, which passes through the windows over the screen.
+    private fun tap(point: Point) {
+        screen.shell("input tap ${point.x} ${point.y}")
     }
 
     private companion object {
