@@ -47,9 +47,11 @@ class VoiceChannelTest {
     private val offVoice = object : OffVoice {
         override val stops: Long get() = offStops.toLong()
 
+        // As AppOffVoice: words that a stop came after are never spoken.
         override suspend fun speak(text: String, asked: Long) {
-            offSpoken += text
             offAsked += asked
+            if (asked != stops) return
+            offSpoken += text
             offHeld?.await()
         }
 
@@ -253,7 +255,7 @@ class VoiceChannelTest {
     }
 
     // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
-    // speech stops, Kestrel's own voice stops, and the words that wait are dropped; the stop counts in both voices.
+    // speech stops, Kestrel's own voice stops, and the words that wait are not spoken.
     @Test
     fun aStopStopsKestrelsSpeechAndDropsItsWaitingWords() = runTest {
         val channel = channel()
@@ -270,7 +272,7 @@ class VoiceChannelTest {
 
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
-        assertEquals(1L, voice.speechStops)
+        assertEquals(listOf("stop"), voice.order)
     }
 
     // Plan 7F: the count of the owner's Stops for Kestrel's own voice is that voice's own; the channel hands it the count
@@ -286,17 +288,25 @@ class VoiceChannelTest {
         assertEquals(listOf(0L, 1L), offAsked)
     }
 
-    // Plan 7F: the same rule for the voice session: the channel hands the Orchestrator the count of its stops that held
-    // when the words came, and the Rules drop the words after a later stop.
+    // Plan 7F: the same rule for the voice session: the words take their arrival when they come, before they wait for their
+    // turn, so that the Orchestrator learns of them before a stop that comes while they wait, and they are not spoken.
     @Test
-    fun theVoiceSessionGetsTheStopCountThatHeldWhenTheWordsCame() = runTest {
+    fun theVoiceSessionsWordsTakeTheirArrivalWhenTheyCome() = runTest {
         val channel = channel()
-        channel.show(ChannelOutput.Said("One."))
-        channel.stopSpeech()
-        channel.show(ChannelOutput.Report(3, "Two."))
+        voice.holds = true
+        launch { channel.show(ChannelOutput.Said("One.")) }
+        runCurrent()
+        val waiting = async { channel.show(ChannelOutput.Report(3, "Two.")) }
+        runCurrent()
 
-        assertEquals(listOf("One.", "Two."), voice.said)
-        assertEquals(listOf(0L, 1L), voice.askedCounts)
+        channel.stopSpeech()
+        runCurrent()
+        voice.holds = false
+        channel.show(ChannelOutput.Said("Three."))
+
+        assertTrue(waiting.isCompleted)
+        assertEquals(listOf("came 1", "says 1", "came 2", "stop", "says 2", "came 3", "says 3"), voice.order)
+        assertEquals(listOf("One.", "Three."), voice.said)
     }
 
     // Plan 7F: the owner's typed answer, with Kestrel on, cancels the typed question's spoken copy, and the channel
@@ -373,22 +383,30 @@ class VoiceChannelTest {
         // While [holds], each speech lasts until the test ends it, through [ends] in order.
         var holds = false
         val ends = ArrayDeque<CompletableDeferred<Unit>>()
-        override var speechStops = 0L
 
-        // As Listening on the Orchestrator's StopSaying: the speech that plays ends, and the count goes up.
+        // What reaches the Orchestrator, in its order: the words' arrivals, the stops and the says. As in the Rules, a stop
+        // keeps the words that arrived before it unspoken, whenever they are said.
+        val order = mutableListOf<String>()
+        private var arrived = 0L
+        private var stoppedThrough = 0L
+
+        override fun came(): Long = (++arrived).also { order += "came $it" }
+
+        // As the Orchestrator's StopSaying: the speech that plays ends, and the words that came before are not spoken.
         fun stop() {
-            speechStops++
+            order += "stop"
+            stoppedThrough = arrived
             ends.removeFirstOrNull()?.complete(Unit)
         }
 
         val questions = mutableListOf<Int?>()
-        val askedCounts = mutableListOf<Long>()
 
-        override suspend fun say(text: String, asked: Long, final: Boolean, question: Int?) {
+        override suspend fun say(text: String, arrival: Long, final: Boolean, question: Int?) {
+            order += "says $arrival"
+            if (arrival <= stoppedThrough) return
             said += text
             finals += final
             questions += question
-            askedCounts += asked
             if (holds) CompletableDeferred<Unit>().also(ends::addLast).await()
         }
 
@@ -408,8 +426,7 @@ class VoiceChannelTest {
             withdrawn += question
         }
 
-        // As Listening with the Rules: the owner's Stop that did not come by voice counts also while Kestrel does not
-        // speak, and ends the speech that plays.
+        // As Listening with the Rules: the owner's Stop counts also while Kestrel does not speak.
         override fun stopSpeaking() = stop()
     }
 

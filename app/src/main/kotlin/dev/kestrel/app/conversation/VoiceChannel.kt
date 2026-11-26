@@ -47,8 +47,11 @@ internal class VoiceChannel(
 
     // Spoken outputs take turns in the order in which they came: each starts once the one before it has ended, so that a
     // sentence that the engine says at once, as "I got 'X' too late", never plays over a goal's final words. Whatever
-    // stops Kestrel's speech, as the owner's stop does (decision 10), also drops the outputs that wait for their turn, as
-    // it drops the voice session's queued speech: only the outputs that come after it play.
+    // stops Kestrel's speech, as the owner's stop does (decision 10), also keeps the outputs that came before it unspoken,
+    // also those that wait for their turn: each output takes its voice's mark when it comes, before it waits, and that
+    // voice judges it by the mark when its turn comes (one rule for both voices, plan 7F). The voice session's mark is the
+    // output's arrival, which the Orchestrator learns in its own order (`VoicePath.came`); Kestrel's own voice's is the
+    // count of its stops (`OffVoice.stops`).
     private val speaking = Mutex()
 
     override suspend fun show(output: ChannelOutput) {
@@ -58,7 +61,10 @@ internal class VoiceChannel(
             // sub-project 7), in their turn among the spoken outputs, and a stop drops them as it drops the others.
             is ChannelOutput.Said -> said(output)
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
-            is ChannelOutput.Report -> inTurn { came -> voice.say(output.text, came.session, final = true) }
+            is ChannelOutput.Report -> {
+                val arrival = voice.came()
+                inTurn { voice.say(output.text, arrival, final = true) }
+            }
             is ChannelOutput.Shown -> voice.show(output.text)
         }
     }
@@ -68,12 +74,12 @@ internal class VoiceChannel(
     // own voice stops a cancelled reply itself.
     private suspend fun said(output: ChannelOutput.Said) {
         try {
-            inTurn { came ->
-                if (output.ownVoice) {
-                    offVoice.speak(output.text, came.own)
-                } else {
-                    voice.say(output.text, came.session, question = output.question)
-                }
+            if (output.ownVoice) {
+                val asked = offVoice.stops
+                inTurn { offVoice.speak(output.text, asked) }
+            } else {
+                val arrival = voice.came()
+                inTurn { voice.say(output.text, arrival, question = output.question) }
             }
         } catch (e: CancellationException) {
             output.question?.let(voice::withdraw)
@@ -81,23 +87,12 @@ internal class VoiceChannel(
         }
     }
 
-    // The counts of the stops of both voices when words came: the voice session's ([VoicePath.speechStops]) and Kestrel's
-    // own voice's ([OffVoice.stops]).
-    private class Came(val session: Long, val own: Long)
-
-    // One rule for both voices (plan 7F): each owns the count of its stops, and the words carry the counts that held when
-    // they came. Here the words that waited for their turn across a stop of either voice are dropped; the voice that
-    // speaks them drops them too after a stop that comes between this check and its start.
-    private suspend fun inTurn(speak: suspend (Came) -> Unit) {
-        val came = Came(voice.speechStops, offVoice.stops)
-        speaking.withLock { if (voice.speechStops == came.session && offVoice.stops == came.own) speak(came) }
-    }
+    private suspend fun inTurn(speak: suspend () -> Unit) = speaking.withLock { speak() }
 
     /**
-     * The owner's Stop that does not come by voice, typed, on the screen or on the notification (plan 7F): it is the same
-     * stop as a spoken one. The Orchestrator stops the voice session's speech (`VoicePath.stopSpeaking`, its
-     * `Effect.StopSaying`), Kestrel's own voice stops the words that it speaks, and the spoken outputs that wait for their
-     * turn are dropped.
+     * The owner's Stop, however it came: spoken, typed, on the screen or on the notification (plan 7F). The Orchestrator
+     * stops the voice session's speech (`VoicePath.stopSpeaking`, its `Effect.StopSaying`), Kestrel's own voice stops the
+     * words that it speaks, and the outputs that came before it, also those that wait for their turn, are not spoken.
      */
     fun stopSpeech() {
         voice.stopSpeaking()

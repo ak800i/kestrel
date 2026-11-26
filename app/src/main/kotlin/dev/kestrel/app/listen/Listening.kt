@@ -445,16 +445,23 @@ class Listening internal constructor(
     // turn: a question's end stops only its own speech (Effect.StopQuestion; plan 7F).
     private val questionSpeeches = ConcurrentHashMap<Int, Deferred<Spoke>>()
 
+    // The voice channel's arrivals (VoicePath.came): each number is taken and its event sent under the lock, so that the
+    // Orchestrator learns them in the order of their numbers (plan 7F).
+    private val arrivalLock = Any()
+    private var arrivals = 0L
+
     /** The voice channel's way to the Orchestrator (design 11 of sub-project 7). Any thread may use it. */
     internal val voicePath: VoicePath = object : VoicePath {
         override val ready: StateFlow<Boolean> get() = sessionOpen
 
-        override suspend fun say(text: String, asked: Long, final: Boolean, question: Int?) {
+        override fun came(): Long = synchronized(arrivalLock) { (++arrivals).also { send(Event.ChannelCame(it)) } }
+
+        override suspend fun say(text: String, arrival: Long, final: Boolean, question: Int?) {
             val reply = replyNumbers.incrementAndGet()
             val ended = CompletableDeferred<Unit>()
             replies[reply] = ended
             try {
-                send(Event.ChannelSays(reply, text, final, question, asked))
+                send(Event.ChannelSays(reply, text, arrival, final, question))
                 ended.await()
             } finally {
                 replies.remove(reply)
@@ -471,8 +478,6 @@ class Listening internal constructor(
         override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
 
         override fun stopSpeaking() = send(Event.StopSpeaking)
-
-        override val speechStops: Long get() = state.value.speechStops
     }
 
     /**

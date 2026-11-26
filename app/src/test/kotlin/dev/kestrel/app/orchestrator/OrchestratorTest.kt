@@ -336,7 +336,7 @@ class OrchestratorTest {
         orchestrator.send(Event.Toggle)
         orchestrator.send(Event.ConversationChanged(VoiceView(open = true)))
         orchestrator.send(Event.FollowUpLength(4_000))
-        orchestrator.send(Event.ChannelSays(1, "Done.", final = true))
+        orchestrator.send(Event.ChannelSays(1, "Done.", arrival = 1, final = true))
         orchestrator.send(Event.SpeechEnded(spoken = true))
         runCurrent()
         assertEquals(Work.FOLLOWING_UP, orchestrator.state.value.work)
@@ -345,7 +345,7 @@ class OrchestratorTest {
         assertEquals(Work.IDLE, orchestrator.state.value.work)
 
         // An utterance that started inside the window gets the time to end and to be transcribed.
-        orchestrator.send(Event.ChannelSays(2, "Done.", final = true))
+        orchestrator.send(Event.ChannelSays(2, "Done.", arrival = 1, final = true))
         orchestrator.send(Event.SpeechEnded(spoken = true))
         orchestrator.send(Event.Speaking)
         runCurrent()

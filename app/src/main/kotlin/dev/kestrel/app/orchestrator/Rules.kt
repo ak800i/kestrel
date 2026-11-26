@@ -83,9 +83,10 @@ data class VoiceQuestion(val number: Int, val kind: QuestionKind)
  * turns off once the goal has ended and its final reply has been spoken. [followUpMillis] is the follow-up window's length
  * from the Conversations page, and [followUp] the number of the latest window, so that the end of an older one changes
  * nothing; [finalReply]: the number of the final reply that Kestrel speaks now, whose end opens the window once Kestrel
- * has spoken all of it (design 6.6 of sub-project 7). [speechStops] counts the stops of Kestrel's speech: each step that
- * stops it, and each of the owner's Stops that did not come by voice ([Event.StopSpeaking]), also while Kestrel does not
- * speak; a channel's words that came before a later stop are never spoken ([Event.ChannelSays.asked]; plan 7F).
+ * has spoken all of it (design 6.6 of sub-project 7). [arrived] is the number of the voice channel's latest
+ * words that the Rules know of ([Event.ChannelCame]), and [stoppedThrough] the latest of them that a stop of Kestrel's
+ * speech came after: each step that stops it, and each of the owner's Stops ([Event.StopSpeaking]), also while Kestrel does
+ * not speak. Those words, and all before them, are never spoken ([Event.ChannelSays.arrival]; plan 7F).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -119,7 +120,8 @@ data class State(
     val followUpMillis: Long = ConversationSettings().followUpMillis,
     val followUp: Int = 0,
     val finalReply: Int? = null,
-    val speechStops: Long = 0,
+    val arrived: Long = 0,
+    val stoppedThrough: Long = 0,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -153,7 +155,7 @@ data class State(
             "asking=$asking, counting=$counting, lastCommand=${lastCommand?.javaClass?.simpleName}, " +
             "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop, questionEnded=$questionEnded, conversation=$conversation, " +
             "voiceQuestion=$voiceQuestion, voiceAnswers=$voiceAnswers, answered=$answered, offAfterGoal=$offAfterGoal, " +
-            "followUpMillis=$followUpMillis, followUp=$followUp, finalReply=$finalReply, speechStops=$speechStops)"
+            "followUpMillis=$followUpMillis, followUp=$followUp, finalReply=$finalReply, arrived=$arrived, stoppedThrough=$stoppedThrough)"
 
     /** Whether a call rings or is active (section 8.7). */
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
@@ -344,18 +346,26 @@ sealed interface Event {
      * the channel learns when it has been spoken, or that it was only shown ([Effect.EndReply]). [final]: it is a command's
      * or a local request's final reply, whose end opens the follow-up window (design 6.6). [question]: the words are the
      * spoken copy of the conversation's question with this number, as a typed question's with "Speak replies to typed
-     * commands" on, so that the question's end also ends them ([ChannelWithdraws]; plan 7F). [asked]: [State.speechStops]
-     * when the words came to the voice channel; after a later stop they are not spoken (plan 7F).
+     * commands" on, so that the question's end also ends them ([ChannelWithdraws]; plan 7F). [arrival]: the number that the words
+     * got when they came to the voice channel ([ChannelCame]); a stop after that keeps them unspoken (plan 7F).
      */
     data class ChannelSays(
         val reply: Int,
         val text: String,
+        val arrival: Long,
         val final: Boolean = false,
         val question: Int? = null,
-        val asked: Long = 0,
     ) : Event {
-        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final, question=$question, asked=$asked)"
+        override fun toString() =
+            "ChannelSays($reply, ${text.length} characters, arrival=$arrival, final=$final, question=$question)"
     }
+
+    /**
+     * Words came to the voice channel as its [arrival] number, which grows in the order of these events (plan 7F). The
+     * Rules learn of them in the Orchestrator's own order, so that a stop that was sent before them never drops them, and
+     * one that was sent after them always does, whenever their [ChannelSays] comes.
+     */
+    data class ChannelCame(val arrival: Long) : Event
 
     /** The follow-up window's length from the Conversations page (design 6.6 and 13 of sub-project 7); 0 is off. */
     data class FollowUpLength(val millis: Long) : Event
@@ -610,11 +620,11 @@ object Rules {
     fun next(state: State, event: Event): Step =
         countStops(event, silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event))))))
 
-    // Plan 7F: every step that stops Kestrel's speech, and every one of the owner's Stops that did not come by voice, also
-    // while Kestrel does not speak, counts once in State.speechStops.
+    // Plan 7F: every step that stops Kestrel's speech, and every one of the owner's Stops, also while Kestrel does not
+    // speak, keeps the voice channel's words that came before it unspoken.
     private fun countStops(event: Event, step: Step): Step =
         if (event == Event.StopSpeaking || Effect.StopSaying in step.effects) {
-            step.copy(state = step.state.copy(speechStops = step.state.speechStops + 1))
+            step.copy(state = step.state.copy(stoppedThrough = step.state.arrived))
         } else {
             step
         }
@@ -694,6 +704,7 @@ object Rules {
         is Event.FollowUpEnded ->
             if (state.work == Work.FOLLOWING_UP && event.followUp == state.followUp) Step(state.copy(work = Work.IDLE)) else Step(state)
         is Event.ChannelSays -> channelSays(state, event)
+        is Event.ChannelCame -> Step(state.copy(arrived = event.arrival))
         is Event.ChannelShows -> Step(state, listOf(Effect.Show(Feedback.ConversationText(event.text))))
         is Event.ChannelAsks -> channelAsks(state, event)
         is Event.ChannelHandsOver -> channelHandsOver(state, event.text)
@@ -1251,8 +1262,8 @@ object Rules {
     // channel goes on at once.
     private fun channelSays(state: State, event: Event.ChannelSays): Step {
         val finalReply = event.reply.takeIf { event.final }
-        // Words that came before a later stop are dropped, as the voice channel drops those that wait for their turn.
-        if (event.asked < state.speechStops) return Step(state, listOf(Effect.EndReply(event.reply)))
+        // Words that came before a later stop are dropped (plan 7F); the channel goes on at once.
+        if (event.arrival <= state.stoppedThrough) return Step(state, listOf(Effect.EndReply(event.reply)))
         val shown = Effect.Show(Feedback.ConversationText(event.text, finalReply = finalReply))
         if (state.mode == Mode.OFF) return Step(state, listOfNotNull(shown, Effect.EndReply(event.reply), finalReply?.let { Effect.NoFollowUp(it) }))
         return say(state, Reply.Channel(event.reply, event.text, event.question), shown, finalReply = finalReply)

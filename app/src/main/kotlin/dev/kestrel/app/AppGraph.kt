@@ -607,8 +607,8 @@ class AppGraph(context: Context) {
             clock = AndroidConversationClock,
             report = reportFailure,
             onStep = { event, state, step ->
-                // Plan 7F: the owner's Stop that does not come by voice (typed, on the screen or on the notification) is the
-                // same stop as a spoken one: the voice session's speech and Kestrel's own voice stop, and their waiting words go.
+                // Plan 7F: the owner's Stop, however it came (spoken, typed, on the screen or on the notification), stops
+                // the voice session's speech and Kestrel's own voice, and the words that came before it go unspoken.
                 if (event is ConversationEvent.Input && event.input.intent == InputIntent.Stop) voiceChannel.stopSpeech()
                 conversationSteps?.invoke(event, state, step)
             },

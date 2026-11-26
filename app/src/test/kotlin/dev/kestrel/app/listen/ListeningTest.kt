@@ -188,13 +188,14 @@ class ListeningTest {
         listening.send(Event.Heard("Kestrel", named = true))
         runCurrent()
         log.clear()
+        val arrival = listening.voicePath.came()
 
         listening.send(Event.Spotted(Keyword.STOP))
         runCurrent()
 
         assertEquals(listOf("stop speaking"), log)
-        // The voice channel drops the spoken outputs that waited for their turn (decision 10 of sub-project 7).
-        assertEquals(1L, listening.voicePath.speechStops)
+        // The voice channel's words that came before the stop are not spoken (decision 10 of sub-project 7).
+        assertEquals(arrival, listening.state.value.stoppedThrough)
     }
 
     @Test
@@ -272,7 +273,7 @@ class ListeningTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
 
-        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.came()) }
         runCurrent()
         assertEquals(listOf("Done."), session.said)
         assertEquals("Done.", shown.last())
@@ -283,19 +284,19 @@ class ListeningTest {
 
         listening.send(Event.TurnOff)
         runCurrent()
-        val shownOnly = async { listening.voicePath.say("Later.", listening.voicePath.speechStops) }
+        val shownOnly = async { listening.voicePath.say("Later.", listening.voicePath.came()) }
         runCurrent()
         assertTrue(shownOnly.isCompleted)
         assertEquals("Later.", shown.last())
     }
 
-    // Plan 7F: words carry the count of stops that held when they came to the voice channel; a Stop after that, also
-    // while Kestrel does not speak, keeps them unspoken, and words that came after it are spoken.
+    // Plan 7F: words carry the arrival that they got when they came to the voice channel; a Stop after that, also while
+    // Kestrel does not speak, keeps them unspoken, and words that came after it are spoken.
     @Test
     fun wordsThatCameBeforeAStopAreNotSpoken() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        val came = listening.voicePath.speechStops
+        val came = listening.voicePath.came()
 
         listening.voicePath.stopSpeaking()
         runCurrent()
@@ -305,9 +306,27 @@ class ListeningTest {
         assertTrue(dropped.isCompleted)
         assertEquals(emptyList<String>(), session.said)
         assertFalse("Done." in shown)
-        val said = async { listening.voicePath.say("Sent.", listening.voicePath.speechStops) }
+        val said = async { listening.voicePath.say("Sent.", listening.voicePath.came()) }
         runCurrent()
         assertEquals(listOf("Sent."), session.said)
+        session.replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
+    }
+
+    // Plan 7F: words that come after the owner's Stop are spoken, also before the Orchestrator has handled the Stop: their
+    // arrival reaches it in its own order, after the Stop (re-check of the stop counts, Important 1).
+    @Test
+    fun wordsThatCameAfterAStopAreSpokenAlsoBeforeTheStopIsHandled() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+
+        listening.voicePath.stopSpeaking()
+        val arrival = listening.voicePath.came()
+        val said = async { listening.voicePath.say("Done.", arrival, final = true) }
+        runCurrent()
+
+        assertEquals(listOf("Done."), session.said)
         session.replies.single().complete(Spoke.FINISHED)
         runCurrent()
         assertTrue(said.isCompleted)
@@ -320,8 +339,8 @@ class ListeningTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
 
-        val copy = async { listening.voicePath.say("Which one?", listening.voicePath.speechStops, question = 5) }
-        val later = async { listening.voicePath.say("Done.", listening.voicePath.speechStops) }
+        val copy = async { listening.voicePath.say("Which one?", listening.voicePath.came(), question = 5) }
+        val later = async { listening.voicePath.say("Done.", listening.voicePath.came()) }
         runCurrent()
         listening.voicePath.ask(6, "Shall I send it?", QuestionKind.CONFIRM, voice = true)
         runCurrent()
@@ -338,7 +357,7 @@ class ListeningTest {
         assertFalse(session.replies[1].isCompleted)
         assertFalse(later.isCompleted)
         assertFalse("stop speaking" in log)
-        assertEquals(0L, listening.voicePath.speechStops)
+        assertEquals(0L, listening.state.value.stoppedThrough)
         session.replies[1].complete(Spoke.FINISHED)
         runCurrent()
         assertTrue(later.isCompleted)
@@ -351,7 +370,7 @@ class ListeningTest {
         listening.send(Event.ConversationChanged(VoiceView(open = true)))
         listening.send(Event.FollowUpLength(3_000))
 
-        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.came(), final = true) }
         runCurrent()
         session.replies.single().complete(Spoke.FINISHED)
         runCurrent()
@@ -376,7 +395,7 @@ class ListeningTest {
 
         // As when another app takes the audio focus (section 14.6): the owner did not hear the reply.
         for (spoke in listOf(Spoke.INTERRUPTED, Spoke.REFUSED)) {
-            val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
+            val said = async { listening.voicePath.say("Done.", listening.voicePath.came(), final = true) }
             runCurrent()
             session.replies.last().complete(spoke)
             runCurrent()
@@ -395,7 +414,7 @@ class ListeningTest {
         runCurrent()
 
         // The service has not reported the foreground yet, so no session is open.
-        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.came(), final = true) }
         runCurrent()
         assertTrue(said.isCompleted)
         assertEquals(Work.IDLE, listening.state.value.work)
@@ -412,7 +431,7 @@ class ListeningTest {
 
         // "Microphone blocked" stays: it ends the window at once (re-check of Task 4, N1), the countdown stops, and the
         // window's end releases nothing.
-        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.came(), final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -429,7 +448,7 @@ class ListeningTest {
         listening.send(Event.MicBusy(false))
 
         // A question that ends the window stays kept until the voice channel lets it go.
-        val again = async { listening.voicePath.say("Sent.", listening.voicePath.speechStops, final = true) }
+        val again = async { listening.voicePath.say("Sent.", listening.voicePath.came(), final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -1230,7 +1249,7 @@ class ListeningTest {
         runCurrent()
         assertEquals(listOf("open settings"), log.filter { it == "open settings" })
 
-        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.came(), final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -2776,7 +2795,7 @@ class ListeningTest {
     fun eachOfTwoOverlappingRepliesEndsOnce() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.converse = { launch { listening.voicePath.say("Opened.", listening.voicePath.speechStops) } }
+        listening.converse = { launch { listening.voicePath.say("Opened.", listening.voicePath.came()) } }
         listening.send(Event.Heard("Kestrel", named = true))
         runCurrent()
         // A transcript that arrives while "Yes?" still plays goes to the conversation, whose reply queues behind "Yes?".
