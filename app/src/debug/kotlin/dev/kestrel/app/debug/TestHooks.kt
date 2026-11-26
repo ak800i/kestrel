@@ -43,11 +43,6 @@ internal data class HookReply(val code: Int, val text: String) {
 internal class TestHooks(private val graph: AppGraph, private val context: Context) {
     private val cacheDir: File get() = context.cacheDir
 
-    init {
-        // The hooks' own conversations, marked before a restart of Kestrel too (plan 7F).
-        HookConversations.attach(context.noBackupFilesDir)
-    }
-
     suspend fun run(intent: Intent): HookReply = try {
         HookReply.ok(answer(intent))
     } catch (error: HookError) {

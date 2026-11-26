@@ -11,7 +11,11 @@
          so the hook changes no setting of the phone; release builds do not have it. -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
-    <application>
+    <!-- Debug builds start the hooks' process-wide rules as each process starts, before any of the graph's work
+         (DebugKestrelApplication; review I2 of plan 7F). Release builds keep KestrelApplication. -->
+    <application
+        android:name=".debug.DebugKestrelApplication"
+        tools:replace="android:name">
         <!-- Test hooks for adb (design spec, section 16.1). Only callers that hold DUMP, in practice adb shell,
              can send commands. Release builds do not contain this receiver, and the audit checks that. -->
         <receiver

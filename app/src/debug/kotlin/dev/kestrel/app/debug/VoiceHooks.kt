@@ -315,18 +315,16 @@ internal class VoiceHooks(private val graph: AppGraph) {
         fun kindOf(input: OwnerInput): String = input.intent.javaClass.simpleName.lowercase()
 
         /**
-         * Starts the record of the Orchestrator's and the conversation's steps (plan 4D, H1; design 14.4 of sub-project 7),
-         * once per process: a tagged transcript's input gets its options, and each round's witness keeps what it said and
-         * watches its data tools for the run's marker (plan 6B-basefix).
+         * Starts the record of the Orchestrator's steps and the tags of the conversation's inputs (plan 4D, H1; design 14.4
+         * of sub-project 7), once per process: a tagged transcript's input gets its options, and each round's witness keeps
+         * what it said and watches its data tools for the run's marker (plan 6B-basefix). The conversation's steps reach
+         * [tags] from the process's start ([HookConversations.watch]), so that the marks' rule never waits for a hook call.
          */
         @Synchronized
         fun install(graph: AppGraph) {
             val listening = graph.listening
             if (listening.steps != null) return
             listening.inputs = tags::input
-            tags.ownConversation = { HookConversations.own(it) }
-            tags.ownerConversation = { HookConversations.forget(listOf(it)) }
-            graph.conversationSteps = tags::onConversationStep
             graph.goalEnvironment.evidences = RoundEvidences()
             graph.goalEnvironment.witnesses = { options -> DebugTaskWitness.open(options) }
             listening.steps = tags::onStep

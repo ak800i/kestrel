@@ -7,7 +7,7 @@ import dev.kestrel.privacy.logs.MainThreadErrors
 import dev.kestrel.privacy.logs.MessageFreeCrashHandler
 import kotlinx.coroutines.launch
 
-class KestrelApplication : Application() {
+open class KestrelApplication : Application() {
     lateinit var graph: AppGraph
         private set
 
@@ -21,6 +21,7 @@ class KestrelApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
+        graphBuilt(graph)
         // Each from the one reading of how the last process ended, and each on its own, so that a failed restore never
         // takes the accessibility notice with it.
         graph.previousExit.launchEach(
@@ -34,4 +35,11 @@ class KestrelApplication : Application() {
         // after a chmod (design spec, section 8.10).
         graph.scope.launch { graph.models.root.mkdirs() }
     }
+
+    /**
+     * Runs once in each process, after [graph] is built and before any of its work starts, so that what it installs sees
+     * every step of the process. The debug builds' application installs its hooks' process-wide rules here
+     * (`DebugKestrelApplication`); a release build installs nothing.
+     */
+    protected open fun graphBuilt(graph: AppGraph) = Unit
 }

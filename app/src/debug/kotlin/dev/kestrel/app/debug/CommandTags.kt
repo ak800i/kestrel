@@ -59,7 +59,7 @@ internal class CommandTags {
 
     /**
      * Gets the conversation that a tagged input's work opened, which the hooks count as their own (Task 13a);
-     * [VoiceHooks.install] sets it to [HookConversations.own]. It runs under this object's lock.
+     * [HookConversations.watch] sets it at the process's start. It runs under this object's lock.
      */
     @Volatile
     var ownConversation: (ConversationId) -> Unit = {}
@@ -67,7 +67,7 @@ internal class CommandTags {
     /**
      * Gets the conversation that the owner's input with his words or his choice reached (a command, an answer or a
      * switch, never a hook's), which is his and never the hooks' (Task 13a, review low risk and review M1);
-     * [VoiceHooks.install] sets it to [HookConversations.forget]. It runs under this object's lock.
+     * [HookConversations.watch] sets it at the process's start. It runs under this object's lock.
      */
     @Volatile
     var ownerConversation: (ConversationId) -> Unit = {}
