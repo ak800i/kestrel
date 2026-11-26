@@ -73,10 +73,11 @@ internal fun PastPages(state: PastPagesState, past: PastConversations, zone: Zon
     }
     val shown = state.opened
     if (shown == null) {
-        PastListPage(past, state.query, actions.query, state.deletions, notice, openCard, onOpen = actions.open, onDelete = actions.askDelete, onBack = actions.back)
+        PastListPage(past, state, actions.query, notice, openCard, onOpen = actions.open, onDelete = actions.askDelete, onBack = actions.back)
     } else {
         PastTranscriptPage(
             past, shown, zone, notice, openCard,
+            deletable = state.deletable(shown),
             onContinue = { actions.continueConversation(shown) },
             onDelete = { actions.askDelete(shown) },
             onBack = actions.back,
@@ -101,28 +102,31 @@ private sealed interface Loaded<out T> {
     data class Done<T>(val value: T) : Loaded<T>
 }
 
-// The list, read again after each deletion ([deletions]) and, while the owner types, once he stops for a moment, because
-// each search ranks the whole index. It says "Loading past conversations…" until its first read ends; a later read keeps the
-// rows that are shown, under a thin progress line and without their Delete, until its own rows come (review B-M3 and B-N2).
+// The list of [state]'s query, read again after each of its deletions and, while the owner types, once he stops for a
+// moment, because each search ranks the whole index. It says "Loading past conversations…" until its first read ends; a
+// later read keeps the rows that are shown, under a thin progress line and without their Delete, until its own rows come
+// (review B-M3 and B-N2). A row whose deletion runs has no Delete either (review M1 of Task 11).
 @Composable
 private fun PastListPage(
     past: PastConversations,
-    query: String,
+    state: PastPagesState,
     onQuery: (String) -> Unit,
-    deletions: Int,
     @StringRes notice: Int?,
     openCard: @Composable () -> Unit,
     onOpen: (ConversationId) -> Unit,
     onDelete: (ConversationId) -> Unit,
     onBack: () -> Unit,
 ) {
+    val query = state.query
+    val wanted = ListRead(query, state.deletions)
     var rows by remember { mutableStateOf<Loaded<PastListing>>(Loaded.Waiting) }
-    var reading by remember { mutableStateOf(true) }
-    LaunchedEffect(query, deletions) {
-        reading = true
-        if (query.isNotBlank()) delay(SEARCH_DELAY_MILLIS)
-        rows = Loaded.Done(past.rows(query))
-        reading = false
+    var read by remember { mutableStateOf<ListRead?>(null) }
+    // Derived, not set by the read: the frame in which a deletion's count rises already shows the read as running.
+    val reading = read != wanted
+    LaunchedEffect(wanted) {
+        if (wanted.query.isNotBlank()) delay(SEARCH_DELAY_MILLIS)
+        rows = Loaded.Done(past.rows(wanted.query))
+        read = wanted
     }
     Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp)) {
         TopRow(stringResource(R.string.past_title), onBack)
@@ -147,7 +151,7 @@ private fun PastListPage(
                     Note(if (query.isBlank()) R.string.past_empty else R.string.past_none_found)
                 } else {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(listing.rows, key = { it.id.value }) { row -> PastRowCard(row, deletable = !reading, onOpen, onDelete) }
+                        items(listing.rows, key = { it.id.value }) { row -> PastRowCard(row, deletable = !reading && state.deletable(row.id), onOpen, onDelete) }
                     }
                 }
             }
@@ -155,8 +159,8 @@ private fun PastListPage(
     }
 }
 
-// A row's Delete waits while the list is read again (review B-N2 of plan 7F): a row that stays on the screen during the read
-// may be one that the owner has just deleted.
+// A row's Delete waits while its deletion runs and while the list is read again (review B-N2 of plan 7F): a row that stays
+// on the screen during the read may be one that the owner has just deleted.
 @Composable
 private fun PastRowCard(row: PastRow, deletable: Boolean, onOpen: (ConversationId) -> Unit, onDelete: (ConversationId) -> Unit) {
     Card(onClick = { onOpen(row.id) }, modifier = Modifier.fillMaxWidth().testTag(pastRowTag(row.id))) {
@@ -178,6 +182,7 @@ private fun PastTranscriptPage(
     zone: ZoneId,
     @StringRes notice: Int?,
     openCard: @Composable () -> Unit,
+    deletable: Boolean,
     onContinue: () -> Unit,
     onDelete: () -> Unit,
     onBack: () -> Unit,
@@ -197,7 +202,7 @@ private fun PastTranscriptPage(
                 TranscriptList(shown.lines, zone, Modifier.weight(1f).fillMaxWidth())
                 Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = onContinue) { Text(stringResource(R.string.past_continue)) }
-                    OutlinedButton(onClick = onDelete) { Text(stringResource(R.string.past_delete)) }
+                    OutlinedButton(onClick = onDelete, enabled = deletable) { Text(stringResource(R.string.past_delete)) }
                 }
             }
         }
@@ -216,6 +221,9 @@ private fun TopRow(title: String, onBack: () -> Unit) {
 private fun Note(@StringRes text: Int) {
     Text(stringResource(text), Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
 }
+
+/** What one read of the list was for: the search field's text and the deletions that the list had seen. */
+private data class ListRead(val query: String, val deletions: Int)
 
 /** How long the owner's typing pauses before the search runs. */
 private const val SEARCH_DELAY_MILLIS = 300L

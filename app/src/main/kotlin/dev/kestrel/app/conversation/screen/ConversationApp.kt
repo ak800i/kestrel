@@ -70,7 +70,7 @@ internal fun ConversationApp(
                 query = { text -> screen.past { it.copy(query = text) } },
                 open = { id -> screen.past { PastPagesRules.opened(it, id) } },
                 back = { screen.past(PastPagesRules::back) },
-                askDelete = { id -> screen.past { it.copy(deleting = id) } },
+                askDelete = { id -> screen.past { PastPagesRules.askedDelete(it, id) } },
                 dismissDelete = { screen.past { it.copy(deleting = null) } },
                 confirmDelete = screen::confirmDelete,
                 continueConversation = screen::continuePast,

@@ -3,6 +3,7 @@ package dev.kestrel.app.conversation.screen
 import dev.kestrel.conversation.engine.PastDeletion
 import dev.kestrel.conversation.model.ConversationId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -30,5 +31,21 @@ class PastPagesRulesTest {
         assertEquals(PastPagesState(opened = one, notice = PastNotice.OPEN_NOW), PastPagesRules.deleted(shown.copy(notice = null), one, PastDeletion.OPEN))
         assertEquals(PastPagesState(opened = one, notice = PastNotice.UNAVAILABLE), PastPagesRules.deleted(shown, one, PastDeletion.UNAVAILABLE))
         assertEquals(PastPagesState(opened = one, notice = PastNotice.DELETE_FAILED), PastPagesRules.deleted(shown, one, PastDeletion.FAILED))
+    }
+
+    @Test
+    fun aRowWhoseDeletionRunsCannotBeAskedAgainUntilTheEngineAnswers() {
+        val running = PastPagesRules.confirmedDelete(PastPagesRules.askedDelete(PastPagesState(), one))
+
+        assertEquals(PastPagesState(removing = setOf(one)), running)
+        assertFalse(running.deletable(one))
+        assertEquals(running, PastPagesRules.askedDelete(running, one))
+        assertEquals(running.copy(deleting = two), PastPagesRules.askedDelete(running, two))
+
+        val failed = PastPagesRules.deleted(running, one, PastDeletion.FAILED)
+        assertEquals(PastPagesState(notice = PastNotice.DELETE_FAILED), failed)
+        assertEquals(failed.copy(deleting = one), PastPagesRules.askedDelete(failed, one))
+
+        assertEquals(PastPagesState(deletions = 1), PastPagesRules.deleted(running, one, PastDeletion.DELETED))
     }
 }

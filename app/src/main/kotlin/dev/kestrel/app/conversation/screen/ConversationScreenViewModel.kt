@@ -111,13 +111,20 @@ internal class ConversationScreenViewModel(private val graph: AppGraph) : ViewMo
     /** Changes the open pages; a change to null closes them. */
     fun past(change: (PastPagesState) -> PastPagesState?) = pages.update { it?.let(change) }
 
-    /** The owner said yes to the deletion's question: the engine deletes the conversation, which never is the open one. */
+    /**
+     * The owner said yes to the deletion's question: the engine deletes the conversation, which never is the open one. Its
+     * Delete waits from here until the engine's answer comes.
+     */
     fun confirmDelete() {
-        val id = pages.value?.deleting ?: return
-        past { it.copy(deleting = null) }
+        var id: ConversationId? = null
+        past { state ->
+            id = state.deleting
+            PastPagesRules.confirmedDelete(state)
+        }
+        val confirmed = id ?: return
         viewModelScope.launch {
-            val outcome = graph.pastConversations.delete(id)
-            past { PastPagesRules.deleted(it, id, outcome) }
+            val outcome = graph.pastConversations.delete(confirmed)
+            past { PastPagesRules.deleted(it, confirmed, outcome) }
         }
     }
 
