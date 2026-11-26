@@ -157,10 +157,11 @@ class QuestionCardTest {
             }
             found
         }
-        // Review L2: the card arms again where it moved to, so that a tap aimed at what was there answers nothing. A slow
-        // emulator that finds the moved card too late cannot check it.
-        val early = SystemClock.uptimeMillis() - moved < CARD_ARMING_MILLIS - SETTLE_MILLIS / 5
+        // Review L2: the card arms again where it moved to, so that a tap aimed at what was there answers nothing. The clock
+        // is read once the tap has landed, from before the Move tap, so the moved card was showing for less than that; a
+        // slow emulator that finds the moved card or lands the tap too late cannot check it.
         tap(top)
+        val early = SystemClock.uptimeMillis() - moved < CARD_ARMING_MILLIS
         delay(SETTLE_MILLIS / 5)
         if (early) assertFalse("A tap in the moved card's first 600 ms answered it", answer.isCompleted)
         delay(CARD_ARMING_MILLIS)
