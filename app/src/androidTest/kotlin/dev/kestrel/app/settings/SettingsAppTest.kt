@@ -193,13 +193,13 @@ class SettingsAppTest {
         )
         show(NOTHING_SET_UP)
 
-        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+        openFromHome(R.string.settings_activity_log)
         compose.onNodeWithText("Tapped Send").assertIsDisplayed()
         compose.onNodeWithText(text(R.string.log_task, "task-1")).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.log_kind_note)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.settings_back)).performClick()
 
-        compose.onNodeWithText(text(R.string.settings_network_log)).performClick()
+        openFromHome(R.string.settings_network_log)
         compose.onNodeWithText("POST api.example.com/v1/chat").assertIsDisplayed()
         compose.onNodeWithText(text(R.string.log_network_status, 200)).assertIsDisplayed()
         compose.onNodeWithText(text(R.string.log_outcome_completed)).assertIsDisplayed()
@@ -211,7 +211,7 @@ class SettingsAppTest {
     fun deleteHistoryAsksFirst() {
         data.activity = listOf(LogEntry(1, 1_000, ActivityEvent(ActivityKind.NOTE, "Started")))
         show(NOTHING_SET_UP)
-        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+        openFromHome(R.string.settings_activity_log)
 
         compose.onNodeWithText(text(R.string.logs_delete)).performClick()
         compose.onNodeWithText(text(R.string.logs_delete_cancel)).performClick()
@@ -231,7 +231,7 @@ class SettingsAppTest {
         data.activity = listOf(LogEntry(1, 1_000, ActivityEvent(ActivityKind.NOTE, "Started")))
         data.deletion = HistoryDeletion.REFUSED
         show(NOTHING_SET_UP)
-        compose.onNodeWithText(text(R.string.settings_activity_log)).performClick()
+        openFromHome(R.string.settings_activity_log)
 
         compose.onNodeWithText(text(R.string.logs_delete)).performClick()
         compose.onNodeWithText(text(R.string.logs_delete_confirm)).performClick()
