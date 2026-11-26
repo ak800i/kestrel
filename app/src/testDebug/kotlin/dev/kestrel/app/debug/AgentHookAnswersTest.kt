@@ -4,7 +4,9 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
 import dev.kestrel.app.conversation.CardChoice
+import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.app.orchestrator.Work
+import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.engine.ChecklistSummary
 import dev.kestrel.conversation.engine.ConversationView
@@ -182,6 +184,20 @@ class AgentHookAnswersTest {
         assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "confirm", Category.SENDING, null))
         assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "yes", Category.SENDING, null))
         assertNotNull(AgentHookAnswers.answerRefusal(QuestionKind.CONFIRM, "send it", Category.SENDING, null))
+    }
+
+    @Test
+    fun anAnswerTakesOnlyTheCardOfTheTaggedTasksQuestion() {
+        val card = OwnerCard.of(ChannelQuestion(4, "Send it?", QuestionKind.YES_NO), reply = true)
+
+        assertNull(AgentHookAnswers.openCardRefusal(card, "t1", 4, QuestionKind.YES_NO))
+        assertNull(AgentHookAnswers.openCardRefusal(OwnerCard.handOver(-2, "Sign in, then say continue."), "t1", null, null))
+        // Another command's question, also one of the same kind, and a hand-over's card while the task asks.
+        val refusal = "the open card is not the question of the task of tag t1; read agent-state again"
+        assertEquals(refusal, AgentHookAnswers.openCardRefusal(card, "t1", 5, QuestionKind.YES_NO))
+        assertEquals(refusal, AgentHookAnswers.openCardRefusal(card, "t1", 4, QuestionKind.FREE))
+        assertEquals(refusal, AgentHookAnswers.openCardRefusal(card, "t1", null, null))
+        assertEquals(refusal, AgentHookAnswers.openCardRefusal(OwnerCard.handOver(-2, "Sign in."), "t1", 4, QuestionKind.YES_NO))
     }
 
     @Test

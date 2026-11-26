@@ -28,6 +28,20 @@ internal object ConversationHookAnswers {
             "replyChannel=${view.replyChannel.name.lowercase()} testMode=${if (view.testMode) "on" else "off"}"
     }
 
+    /**
+     * Why conversation-type may not type words without [tag] when the call's [extras] (the names of its intent's extras)
+     * hold one of the options `--es model`, `--ez live` and `--es marker`: only a tag links its options to the typed
+     * input, so an untagged one would drop them without a word (Task 13's review M1). Null when it may. The answer names
+     * the options that the call gave, never their values.
+     */
+    fun untaggedOptions(tag: String?, extras: Set<String>): String? {
+        val given = TAGGED_OPTIONS.filterKeys { it in extras }.values
+        return if (tag != null || given.isEmpty()) null else "add --es tag for ${given.joinToString(", ")}: typed words without a tag take no options"
+    }
+
+    // conversation-type's options, which a tag carries to the typed input, by their extras, as a refusal names them.
+    private val TAGGED_OPTIONS = linkedMapOf("model" to "--es model", "live" to "--ez live", "marker" to "--es marker")
+
     /** agent-state's `checklist=`: the goal's done and total items, as "3/7", or none without a checklist. */
     fun checklist(summary: ChecklistSummary?): String = summary?.let { "${it.done}/${it.total}" } ?: "none"
 

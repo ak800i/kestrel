@@ -67,4 +67,16 @@ class ConversationHookAnswersTest {
         assertEquals("500/60/1000", ConversationHookAnswers.limitsText(settings.roundLimits))
         assertEquals(settings, ConversationHookAnswers.limits(settings, ConversationHookAnswers.limitsText(settings.roundLimits)))
     }
+
+    @Test
+    fun typedWordsTakeOptionsOnlyWithATagAndARefusalNamesThemWithoutTheirValues() {
+        assertNull(ConversationHookAnswers.untaggedOptions(null, setOf("text")))
+        assertNull(ConversationHookAnswers.untaggedOptions("t1", setOf("text", "tag", "model", "live", "marker")))
+
+        assertEquals(
+            "add --es tag for --es model, --ez live, --es marker: typed words without a tag take no options",
+            ConversationHookAnswers.untaggedOptions(null, setOf("marker", "text", "live", "model")),
+        )
+        assertEquals("add --es tag for --ez live: typed words without a tag take no options", ConversationHookAnswers.untaggedOptions(null, setOf("text", "live")))
+    }
 }

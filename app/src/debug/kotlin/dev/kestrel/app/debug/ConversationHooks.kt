@@ -29,13 +29,15 @@ internal class ConversationHooks(private val graph: AppGraph) {
     // that they start, as voice heard's does, with the same options. "yes, call" is refused off the emulator (plan 4D).
     // A conversation that the command's work opens becomes the hooks' own, which delete-typed deletes, by the one rule of
     // the conversation's steps (Task 13a's CommandTags.onConversationStep); one that the command joins, which may be the
-    // owner's, does not (review N4, review B-I2). The callers send "do new" first.
+    // owner's, does not (review N4, review B-I2). The callers send "do new" first. Options without a tag are refused, because
+    // only a tag carries them to the input.
     private suspend fun type(intent: Intent): String {
         val text = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text with the words to type")
         if (VoiceHooks.refused(text, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
+        val tag = intent.getStringExtra(EXTRA_TAG)
+        ConversationHookAnswers.untaggedOptions(tag, intent.extras?.keySet().orEmpty())?.let { throw HookError(it) }
         val channel = graph.textChannel
         val input = channel.read(text) ?: throw HookError("add --es text with the words to type")
-        val tag = intent.getStringExtra(EXTRA_TAG)
         val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
         val options = VoiceHooks.taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER))
         channel.submit(if (tag != null) VoiceHooks.typed(graph, tag, input, options) else VoiceHooks.untagged(graph, input))

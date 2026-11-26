@@ -3,6 +3,7 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
 import dev.kestrel.app.conversation.CardChoice
+import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.channel.QuestionKind
@@ -268,6 +269,15 @@ internal object AgentHookAnswers {
         expected == null && asking == QuestionKind.CONFIRM && words !in DECLINING -> "add --es confirming with the open confirmation's category"
         else -> null
     }
+
+    /**
+     * Why agent-answer may not answer [card], the card that is open, for the task of [tag], whose open question has the
+     * number [question] and the kind [asking] (both null for a hand-over), as the conversation's view gives them for that
+     * task; null when it may (Task 13's review M2). The card must be that question's, by its number and kind, so that the
+     * hook never answers another command's card under the tag's name.
+     */
+    fun openCardRefusal(card: OwnerCard, tag: String, question: Int?, asking: QuestionKind?): String? =
+        if (card.question == question && card.kind == asking) null else "the open card is not the question of the task of tag $tag; read agent-state again"
 
     /**
      * agent-memory -Has's answer: yes when one of the facts' [keys] is [key], compared folded as the memory store compares
