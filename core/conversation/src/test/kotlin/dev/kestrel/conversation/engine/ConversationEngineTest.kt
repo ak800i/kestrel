@@ -262,6 +262,27 @@ class ConversationEngineTest {
         assertNull(engine.view.value.goal)
     }
 
+    // Plan 7B's decision 10 (plan 7F): the engine's channels take each output as the engine emits it, also while an earlier
+    // one is still shown, so that a channel can drop the outputs that wait behind one that a stop ended.
+    @Test
+    fun theChannelsTakeEachOutputAsTheEngineEmitsIt() = scope.runTest {
+        val showing = CompletableDeferred<Unit>()
+        text.onShow = { showing.await() }
+        val engine = engine(environment())
+        engine.restore()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
+        runCurrent()
+        engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
+        runCurrent()
+        assertEquals(2, text.taken.size)
+        assertEquals(1, text.shown.size)
+
+        showing.complete(Unit)
+        runCurrent()
+        assertEquals(text.taken, text.shown)
+    }
+
     // Re-review round 2, R2-1: each round's screen turn names the owner's input that lets it act: the command that started
     // the goal, and the Continue that resumed it after a touch, so that only an instant command that he started before that
     // input is cancelled.

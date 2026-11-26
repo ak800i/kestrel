@@ -18,6 +18,14 @@ interface OwnerChannel {
     suspend fun show(output: ChannelOutput)
 
     /**
+     * Takes [output] at the moment the conversation emits it, also while earlier outputs still wait to be shown, and
+     * returns what shows it in its turn. A channel that judges words by when they came, as the voice does against the
+     * stops of Kestrel's speech (plan 7B's decision 10; plan 7F), takes its mark here; [show] is the same as taking and
+     * showing at once.
+     */
+    fun take(output: ChannelOutput): TakenOutput = TakenOutput { show(output) }
+
+    /**
      * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
      * so leaves no screen of Kestrel's, with the number of the owner's tap; an answer that the owner says or types, also
      * after "Reply…", reaches the conversation as an input instead. Cancelling the call withdraws the question.
@@ -37,6 +45,11 @@ interface OwnerChannel {
 
     /** Returns true once no window of Kestrel's own app but its overlays is on the screen, or false after 3 s (design 10.2). */
     suspend fun leaveKestrel(): Boolean
+}
+
+/** An output that a channel took as it was emitted ([OwnerChannel.take]): [show] says or shows it in its turn. */
+fun interface TakenOutput {
+    suspend fun show()
 }
 
 /**

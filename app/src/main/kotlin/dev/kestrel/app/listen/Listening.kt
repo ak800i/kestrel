@@ -453,6 +453,10 @@ class Listening internal constructor(
     private val arrivalLock = Any()
     private var arrivals = 0L
 
+    // What else each Effect.StopSaying stops: Kestrel's own voice, which the voice channel sets (VoicePath.onSpeechStopped).
+    @Volatile
+    private var speechStopped: () -> Unit = {}
+
     /** The voice channel's way to the Orchestrator (design 11 of sub-project 7). Any thread may use it. */
     internal val voicePath: VoicePath = object : VoicePath {
         override val ready: StateFlow<Boolean> get() = sessionOpen
@@ -481,6 +485,10 @@ class Listening internal constructor(
         override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
 
         override fun stopSpeaking() = send(Event.StopSpeaking)
+
+        override fun onSpeechStopped(action: () -> Unit) {
+            speechStopped = action
+        }
     }
 
     /**
@@ -1092,7 +1100,10 @@ class Listening internal constructor(
     private fun performUnguarded(effect: Effect) {
         when (effect) {
             is Effect.Say -> say(effect.reply)
-            Effect.StopSaying -> session?.stopSpeaking()
+            Effect.StopSaying -> {
+                session?.stopSpeaking()
+                speechStopped()
+            }
             // The conversation takes the screen's turn itself before a goal acts (design 7.1 of sub-project 7).
             is Effect.Converse -> {
                 if (effect.intent is InputIntent.Command) timeline.reacted("task")

@@ -112,16 +112,23 @@ class ConversationOwner(
      * Says or shows [output] on the owner's latest channel, and speaks it too when a typed reply is spoken. While Kestrel
      * is off, a spoken conversation's words are only shown, so that no follow-up window opens (design 10.6 and 11).
      */
-    suspend fun show(output: ChannelOutput) {
+    suspend fun show(output: ChannelOutput) = take(output).show()
+
+    /**
+     * Takes [output] as the conversation emits it ([OwnerChannel.take]): the route and the channels' marks are this
+     * moment's, and the result shows it in its turn, as [show] does at once.
+     */
+    fun take(output: ChannelOutput): TakenOutput {
         val route = routing()
-        when {
-            route.channel == InputChannel.TEXT -> {
-                channels[InputChannel.TEXT]?.show(output)
-                if (route.speakTyped) channels[InputChannel.VOICE]?.show(spokenCopy(output))
-            }
-            voiceOn.value -> channels[InputChannel.VOICE]?.show(output)
-            else -> channels[InputChannel.VOICE]?.show(ChannelOutput.Shown(textOf(output)))
+        val parts = when {
+            route.channel == InputChannel.TEXT -> listOfNotNull(
+                channels[InputChannel.TEXT]?.take(output),
+                channels[InputChannel.VOICE]?.takeIf { route.speakTyped }?.take(spokenCopy(output)),
+            )
+            voiceOn.value -> listOfNotNull(channels[InputChannel.VOICE]?.take(output))
+            else -> listOfNotNull(channels[InputChannel.VOICE]?.take(ChannelOutput.Shown(textOf(output))))
         }
+        return TakenOutput { for (part in parts) part.show() }
     }
 
     override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =

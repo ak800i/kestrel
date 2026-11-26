@@ -10,6 +10,7 @@ import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.HandOverPart
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.channel.TakenOutput
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOver
@@ -48,13 +49,20 @@ internal class VoiceChannel(
     // Spoken outputs take turns in the order in which they came: each starts once the one before it has ended, so that a
     // sentence that the engine says at once, as "I got 'X' too late", never plays over a goal's final words. Whatever
     // stops Kestrel's speech, as the owner's stop does (decision 10), also keeps the outputs that came before it unspoken,
-    // also those that wait for their turn: each output takes its voice's mark when it comes, before it waits, and that
-    // voice judges it by the mark when its turn comes (one rule for both voices, plan 7F). The voice session's mark is the
-    // output's arrival, which the Orchestrator learns in its own order (`VoicePath.came`); Kestrel's own voice's is the
-    // count of its stops (`OffVoice.stops`).
+    // also those that wait for their turn here or in the engine: each output takes its voice's mark when the engine emits
+    // it (`take`), and that voice judges it by the mark when its turn comes (one rule for both voices, plan 7F). The voice
+    // session's mark is the output's arrival, which the Orchestrator learns in its own order (`VoicePath.came`); Kestrel's
+    // own voice's is the count of its stops (`OffVoice.stops`), which counts every stop of Kestrel's speech: the owner's
+    // ([stopSpeech]) and each one of the Orchestrator's (`VoicePath.onSpeechStopped`), as the wake word's.
     private val speaking = Mutex()
 
-    override suspend fun show(output: ChannelOutput) {
+    init {
+        voice.onSpeechStopped(offVoice::stop)
+    }
+
+    override suspend fun show(output: ChannelOutput) = take(output).show()
+
+    override fun take(output: ChannelOutput): TakenOutput =
         when (output) {
             // The engine decided how the words are spoken when it routed them (`ConversationOwner`): Kestrel's own voice
             // speaks only a typed conversation's words that it routed while Kestrel was off (design 10.6 and 11 of
@@ -63,27 +71,30 @@ internal class VoiceChannel(
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
             is ChannelOutput.Report -> {
                 val arrival = voice.came()
-                inTurn { voice.say(output.text, arrival, final = true) }
+                TakenOutput { inTurn { voice.say(output.text, arrival, final = true) } }
             }
-            is ChannelOutput.Shown -> voice.show(output.text)
+            is ChannelOutput.Shown -> TakenOutput { voice.show(output.text) }
         }
-    }
 
     // A question's spoken copy ends with the question (plan 7F): the conversation cancels it once the owner answered on
     // another channel, and the question's withdrawal stops Kestrel's speech of it, while the other words go on. Kestrel's
     // own voice stops a cancelled reply itself.
-    private suspend fun said(output: ChannelOutput.Said) {
-        try {
-            if (output.ownVoice) {
-                val asked = offVoice.stops
-                inTurn { offVoice.speak(output.text, asked) }
-            } else {
-                val arrival = voice.came()
-                inTurn { voice.say(output.text, arrival, question = output.question) }
+    private fun said(output: ChannelOutput.Said): TakenOutput {
+        val speak: suspend () -> Unit
+        if (output.ownVoice) {
+            val asked = offVoice.stops
+            speak = { offVoice.speak(output.text, asked) }
+        } else {
+            val arrival = voice.came()
+            speak = { voice.say(output.text, arrival, question = output.question) }
+        }
+        return TakenOutput {
+            try {
+                inTurn(speak)
+            } catch (e: CancellationException) {
+                output.question?.let(voice::withdraw)
+                throw e
             }
-        } catch (e: CancellationException) {
-            output.question?.let(voice::withdraw)
-            throw e
         }
     }
 

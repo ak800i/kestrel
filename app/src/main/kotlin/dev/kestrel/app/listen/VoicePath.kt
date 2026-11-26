@@ -48,4 +48,11 @@ internal interface VoicePath {
      * that came before it unspoken ([came]), also while Kestrel does not speak.
      */
     fun stopSpeaking()
+
+    /**
+     * Sets [action], which runs each time the Orchestrator stops Kestrel's speech (its `Effect.StopSaying`, as for the wake
+     * word or the assistant gesture), on its thread; it must return at once. The voice channel stops Kestrel's own voice
+     * with it, so that every stop of Kestrel's speech counts for both voices (plan 7F).
+     */
+    fun onSpeechStopped(action: () -> Unit)
 }

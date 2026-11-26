@@ -8,6 +8,7 @@ import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.HandOverPart
 import dev.kestrel.conversation.channel.OwnerChannel
+import dev.kestrel.conversation.channel.TakenOutput
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.HandOver
@@ -34,6 +35,14 @@ class FakeChannel(override val kind: InputChannel) : OwnerChannel {
     override suspend fun show(output: ChannelOutput) {
         shown += output
         onShow(output)
+    }
+
+    /** Each output as the engine emitted it, before it was shown ([OwnerChannel.take]). */
+    val taken = mutableListOf<ChannelOutput>()
+
+    override fun take(output: ChannelOutput): TakenOutput {
+        taken += output
+        return TakenOutput { show(output) }
     }
 
     override suspend fun ask(question: ChannelQuestion): CardAnswer {

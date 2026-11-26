@@ -11,6 +11,7 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ConversationOwner
 import dev.kestrel.conversation.channel.OwnerChannel
+import dev.kestrel.conversation.channel.TakenOutput
 import dev.kestrel.conversation.channel.OwnerReply
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.RecordBuilder
@@ -81,8 +82,10 @@ import kotlinx.coroutines.launch
  * stored every write queued before them. The machine's timers are deadlines on the clock that counts the phone's sleep
  * ([ConversationClock.sinceBootMillis]): before it handles any message, an input and a signal too, the loop ends every
  * timer whose deadline has passed, and a coroutine's `delay`, which stops while the phone sleeps, only wakes it. Work that
- * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order, and the end
- * of a final reply's `show` is the machine's `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
+ * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order; each is taken
+ * by its channels as the engine emits it (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs that
+ * wait behind the one that plays (plan 7B's decision 10; plan 7F), and the end of a final reply's `show` is the machine's
+ * `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
  * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class.
  * Every act of the owner's that lets a goal's round act comes with its number among his inputs, an input with its own and a
  * tap on a card with the one that `:app` took as the tap reached Kestrel (plan 7F), so that the screen's turn can tell
@@ -178,7 +181,7 @@ class ConversationEngine(
     private class Deadline(val number: Int, val atMillis: Long, val wake: Job)
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
-    private val outputs = Channel<ChannelOutput>(Channel.UNLIMITED)
+    private val outputs = Channel<Emitted>(Channel.UNLIMITED)
     private val writes = Channel<Write>(Channel.UNLIMITED)
     private val started = CompletableDeferred<Unit>()
     private val outcomes = LinkedHashMap<Int, CommandOutcome>()
@@ -264,7 +267,7 @@ class ConversationEngine(
         }
         scope.launch {
             started.await()
-            for (output in outputs) show(output)
+            for (emitted in outputs) show(emitted)
         }
         scope.launch {
             started.await()
@@ -508,7 +511,7 @@ class ConversationEngine(
             }
             ConversationEffect.AskContinueGoal -> askContinue()
             ConversationEffect.CancelContinueQuestion -> continueJob?.cancel()
-            is ConversationEffect.Output -> outputs.trySend(effect.output)
+            is ConversationEffect.Output -> emit(effect.output)
             is ConversationEffect.AddLine -> edit(effect.conversation, effect.record) {
                 RecordBuilder.line(it, effect.kind, if (effect.kind.owners) RecordText.of(effect.text) else effect.text, effect.channel)
             }
@@ -588,11 +591,11 @@ class ConversationEngine(
         val message = SteeringMessage.of(effect.text, effect.channel)
         val goal = running
         if (goal != null && steer(id, goal, message)) {
-            outputs.trySend(ChannelOutput.Shown(ConversationTexts.GOT_IT))
+            emit(ChannelOutput.Shown(ConversationTexts.GOT_IT))
             return
         }
         state.goal?.let { open -> edit(id, open.record) { RecordBuilder.line(it, LineKind.OWNER_TOO_LATE, message.recorded, message.channel) } }
-        outputs.trySend(ChannelOutput.Said(ConversationTexts.cameTooLate(message)))
+        emit(ChannelOutput.Said(ConversationTexts.cameTooLate(message)))
     }
 
     // The record holds a message that the goal's inbox took, in its record's form, and its verbs join the allowance (D16);
@@ -1035,14 +1038,22 @@ class ConversationEngine(
         replyChannel = state.replyChannel,
     )
 
-    private suspend fun show(output: ChannelOutput) {
+    /** An output as the engine emitted it, and its channels' part, which they took at that moment ([OwnerChannel.take]). */
+    private class Emitted(val output: ChannelOutput, val taken: TakenOutput)
+
+    private fun emit(output: ChannelOutput) {
+        outputs.trySend(Emitted(output, owner.take(output)))
+    }
+
+    private suspend fun show(emitted: Emitted) {
         try {
-            owner.show(output)
+            emitted.taken.show()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             report("Showing Kestrel's words", e)
         }
+        val output = emitted.output
         if (output is ChannelOutput.Report) post(ConversationEvent.ReplyShown(output.command))
     }
 

@@ -19,6 +19,7 @@ import dev.kestrel.safety.HandOver
 import dev.kestrel.safety.HandOverKind
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +67,12 @@ class VoiceChannelTest {
         return VoiceChannel(voice, support, desk, support, support, support, offVoice, audioSettleMillis = AUDIO_SETTLE_MILLIS)
     }
 
+    // As the engine: it hands each output over as it emits it ([VoiceChannel.take]), and shows them one after another.
+    private fun TestScope.emitted(channel: VoiceChannel, vararg outputs: ChannelOutput): Job {
+        val taken = outputs.map(channel::take)
+        return launch { for (output in taken) output.show() }
+    }
+
     @Test
     fun kestrelsWordsAndItsFinalReplyAreSpokenAndShownWordsOnlyShown() = runTest {
         val channel = channel()
@@ -103,30 +110,38 @@ class VoiceChannelTest {
         assertTrue(late.isCompleted)
     }
 
-    // Decision 10: a stop ends Kestrel's speech at once, also the spoken outputs that wait for their turn, such as the "too
-    // late" sentence behind a goal's final words; only the outputs that come after the stop play.
+    // Decision 10: a stop ends Kestrel's speech at once, also the spoken outputs that wait for their turn in the engine,
+    // such as the "too late" sentence behind a goal's final words; only the outputs that come after the stop play.
     @Test
     fun aStopDropsTheSpokenOutputsThatWaitAndOnlyLaterOnesPlay() = runTest {
         val channel = channel()
         val tooLate = ConversationTexts.cameTooLate(SteeringMessage.of("and to Ana", InputChannel.VOICE))
         voice.holds = true
-        val report = async { channel.show(ChannelOutput.Report(3, "Done.")) }
-        runCurrent()
-        val late = async { channel.show(ChannelOutput.Said(tooLate)) }
+        val shown = emitted(channel, ChannelOutput.Report(3, "Done."), ChannelOutput.Said(tooLate))
         runCurrent()
 
         voice.stop()
         runCurrent()
-        assertTrue(report.isCompleted)
-        assertTrue(late.isCompleted)
+        assertTrue(shown.isCompleted)
         assertEquals(listOf("Done."), voice.said)
 
-        val after = async { channel.show(ChannelOutput.Said("Stopped.")) }
+        val after = emitted(channel, ChannelOutput.Said("Stopped."))
         runCurrent()
         assertEquals(listOf("Done.", "Stopped."), voice.said)
         voice.ends.removeFirst().complete(Unit)
         runCurrent()
         assertTrue(after.isCompleted)
+    }
+
+    // Decision 10: outputs that the engine emits after a stop all play.
+    @Test
+    fun outputsThatCameAfterAStopAllPlay() = runTest {
+        val channel = channel()
+        channel.stopSpeech()
+        emitted(channel, ChannelOutput.Said("One."), ChannelOutput.Report(3, "Two."))
+        runCurrent()
+
+        assertEquals(listOf("One.", "Two."), voice.said)
     }
 
     @Test
@@ -261,9 +276,7 @@ class VoiceChannelTest {
         val channel = channel()
         val held = CompletableDeferred<Unit>()
         offHeld = held
-        launch { channel.show(ChannelOutput.Said("One.", ownVoice = true)) }
-        runCurrent()
-        launch { channel.show(ChannelOutput.Said("Two.", ownVoice = true)) }
+        emitted(channel, ChannelOutput.Said("One.", ownVoice = true), ChannelOutput.Said("Two.", ownVoice = true))
         runCurrent()
 
         channel.stopSpeech()
@@ -273,6 +286,24 @@ class VoiceChannelTest {
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
         assertEquals(listOf("stop"), voice.order)
+    }
+
+    // Plan 7F: Kestrel's own voice counts every stop of Kestrel's speech, as the voice session does: also the
+    // Orchestrator's own, as the wake word's.
+    @Test
+    fun kestrelsOwnVoiceCountsEveryStopOfKestrelsSpeech() = runTest {
+        val channel = channel()
+        val held = CompletableDeferred<Unit>()
+        offHeld = held
+        emitted(channel, ChannelOutput.Said("One.", ownVoice = true), ChannelOutput.Said("Two.", ownVoice = true))
+        runCurrent()
+
+        voice.stop()
+        held.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("One."), offSpoken)
+        assertEquals(1, offStops)
     }
 
     // Plan 7F: the count of the owner's Stops for Kestrel's own voice is that voice's own; the channel hands it the count
@@ -288,24 +319,23 @@ class VoiceChannelTest {
         assertEquals(listOf(0L, 1L), offAsked)
     }
 
-    // Plan 7F: the same rule for the voice session: the words take their arrival when they come, before they wait for their
-    // turn, so that the Orchestrator learns of them before a stop that comes while they wait, and they are not spoken.
+    // Plan 7F: the same rule for the voice session: the words take their arrival when the engine emits them, before they
+    // wait for their turn, so that the Orchestrator learns of them before a stop that comes while they wait.
     @Test
     fun theVoiceSessionsWordsTakeTheirArrivalWhenTheyCome() = runTest {
         val channel = channel()
         voice.holds = true
-        launch { channel.show(ChannelOutput.Said("One.")) }
-        runCurrent()
-        val waiting = async { channel.show(ChannelOutput.Report(3, "Two.")) }
+        val waiting = emitted(channel, ChannelOutput.Said("One."), ChannelOutput.Report(3, "Two."))
         runCurrent()
 
         channel.stopSpeech()
         runCurrent()
         voice.holds = false
-        channel.show(ChannelOutput.Said("Three."))
+        emitted(channel, ChannelOutput.Said("Three."))
+        runCurrent()
 
         assertTrue(waiting.isCompleted)
-        assertEquals(listOf("came 1", "says 1", "came 2", "stop", "says 2", "came 3", "says 3"), voice.order)
+        assertEquals(listOf("came 1", "came 2", "says 1", "stop", "says 2", "came 3", "says 3"), voice.order)
         assertEquals(listOf("One.", "Three."), voice.said)
     }
 
@@ -392,11 +422,27 @@ class VoiceChannelTest {
 
         override fun came(): Long = (++arrived).also { order += "came $it" }
 
-        // As the Orchestrator's StopSaying: the speech that plays ends, and the words that came before are not spoken.
+        // As the Orchestrator's own stop of Kestrel's speech, as the wake word's: the words that came before it are not
+        // spoken, the speech that plays ends, and Kestrel's own voice stops too (onSpeechStopped).
         fun stop() {
+            stopsArrivals()
+            sayingStopped()
+        }
+
+        private fun stopsArrivals() {
             order += "stop"
             stoppedThrough = arrived
+        }
+
+        private var speechStopped: () -> Unit = {}
+
+        override fun onSpeechStopped(action: () -> Unit) {
+            speechStopped = action
+        }
+
+        private fun sayingStopped() {
             ends.removeFirstOrNull()?.complete(Unit)
+            speechStopped()
         }
 
         val questions = mutableListOf<Int?>()
@@ -426,8 +472,12 @@ class VoiceChannelTest {
             withdrawn += question
         }
 
-        // As Listening with the Rules: the owner's Stop counts also while Kestrel does not speak.
-        override fun stopSpeaking() = stop()
+        // As Listening with the Rules: the owner's Stop keeps the words that came before it unspoken also while Kestrel
+        // does not speak, and the Orchestrator stops Kestrel's speech only while it speaks.
+        override fun stopSpeaking() {
+            stopsArrivals()
+            if (ends.isNotEmpty()) sayingStopped()
+        }
     }
 
     private class FakeSupport : OwnerScreen, OtherAudio, HandOverSignals, PermissionDialog {
