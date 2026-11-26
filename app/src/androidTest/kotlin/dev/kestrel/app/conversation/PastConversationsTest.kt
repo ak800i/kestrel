@@ -1,5 +1,7 @@
 package dev.kestrel.app.conversation
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -132,8 +134,14 @@ class PastConversationsTest {
         compose.onNodeWithTag(PAST_SEARCH_TAG).performTextInput(query)
     }
 
+    // The row of [id] once the list's read for its search has ended. Until then the list keeps the earlier read's rows, with
+    // their Delete off, under a progress line; the search waits for a pause in the typing with a delay that runs on the
+    // test's clock, which only a wait such as this one moves on.
     private fun awaitRow(id: ConversationId) {
-        compose.waitUntil(10_000) { compose.onAllNodesWithTag(pastRowTag(id)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag(pastRowTag(id)).fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).fetchSemanticsNodes().isEmpty()
+        }
     }
 
     private fun top(id: ConversationId): Float = compose.onNodeWithTag(pastRowTag(id)).fetchSemanticsNode().boundsInRoot.top
