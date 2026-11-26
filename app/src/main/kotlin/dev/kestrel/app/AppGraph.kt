@@ -81,12 +81,10 @@ import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.ModelDownloads
 import dev.kestrel.app.download.downloadBlockedBy
 import dev.kestrel.app.download.gatewayDownloader
-import android.app.ForegroundServiceStartNotAllowedException
 import dev.kestrel.app.download.networkKind
 import dev.kestrel.app.goal.GoalForeground
 import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalService
-import dev.kestrel.app.goal.GoalStartRefusal
 import dev.kestrel.app.orchestrator.Mode
 import dev.kestrel.app.orchestrator.forVoice
 import dev.kestrel.app.phone.AndroidScreenSource
@@ -532,7 +530,7 @@ class AppGraph(context: Context) {
     internal val goalForeground: GoalForeground by lazy {
         GoalForeground(
             start = {
-                if (goalStartRefusal.take()) throw ForegroundServiceStartNotAllowedException("goal-control do=refuse")
+                goalStartGate?.invoke()
                 GoalService.start(appContext)
             },
             holdGoal = { command -> conversations.backgroundRefused(command) },
@@ -542,11 +540,13 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * Debug builds only: when the hook `goal-control do=refuse` armed it, the goal service's next start throws as Android's
-     * refusal does, so that Task 8 of plan 7E checks the held goal's notification that Kestrel posts without the service,
-     * and a tap on it that starts Kestrel's process.
+     * Debug builds only: the gate that every start of the goal service passes first. The debug hooks install it, so that
+     * `goal-control do=refuse` refuses the next start as Android does, and Task 8 of plan 7E checks the held goal's
+     * notification that Kestrel posts without the service, and a tap on it that starts Kestrel's process. Null in a release
+     * build, where only Android refuses a start.
      */
-    internal val goalStartRefusal = GoalStartRefusal()
+    @Volatile
+    internal var goalStartGate: (() -> Unit)? = null
 
     /**
      * How Kestrel's previous process ended, read once per process for listening's restore, the conversation's restore and

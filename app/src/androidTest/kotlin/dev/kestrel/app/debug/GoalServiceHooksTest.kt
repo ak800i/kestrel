@@ -47,7 +47,7 @@ class GoalServiceHooksTest {
     @After
     fun stop() {
         screen.shell("cmd statusbar collapse")
-        graph.goalStartRefusal.take()
+        GoalStartRefusal.of(graph).take()
         AgentTests.stop()
     }
 

@@ -14,6 +14,7 @@ import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.agent.HeldModel
+import dev.kestrel.app.debug.GoalStartRefusal
 import dev.kestrel.app.debug.NoticeButtons
 import dev.kestrel.app.goal.ForegroundType
 import dev.kestrel.app.goal.GoalActionReceiver
@@ -76,7 +77,7 @@ class GoalServiceTest {
     fun stop() {
         wake()
         screen.shell("cmd statusbar collapse")
-        graph.goalStartRefusal.take()
+        GoalStartRefusal.of(graph).take()
         AgentTests.stop()
         check(VoiceTests.waitUntil(15_000) { GoalService.runningTypes() == null }) { "The goal service still runs" }
     }
@@ -106,7 +107,7 @@ class GoalServiceTest {
     @Test
     fun aRefusedStartHoldsTheGoalAndAndroidKeepsShowingItsNoticeWithCancelAndContinue() {
         // Android refuses the service's start, as it may in the background (design 10.6): the seam of plan 7E, Task 8.
-        graph.goalStartRefusal.arm()
+        GoalStartRefusal.of(graph).arm()
         val model = HeldModel(ScriptedModel(listOf(onIt, fail)))
         AgentTests.run("read my newest notification", model)
         check(VoiceTests.waitUntil(15_000) {

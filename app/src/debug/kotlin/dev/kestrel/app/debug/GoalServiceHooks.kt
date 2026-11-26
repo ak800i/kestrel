@@ -41,7 +41,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             graph.goalForeground.status(),
             GoalService.runningTypes(),
             FocusProbe.requests.now(),
-            graph.goalStartRefusal.armed,
+            GoalStartRefusal.of(graph).armed,
         )
         "GOAL_CONTROL" -> control(intent)
         else -> throw HookError("unknown command '$command'")
@@ -65,10 +65,10 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         // The next start of the goal service is refused as Android refuses it, once (plan 7E, Task 8, Step 8a); refuse-off
         // takes an armed refusal back when a check stops before that start.
         "refuse" -> {
-            graph.goalStartRefusal.arm()
+            GoalStartRefusal.of(graph).arm()
             "refuse=armed"
         }
-        "refuse-off" -> GoalServiceAnswers.refuseOff(graph.goalStartRefusal.take())
+        "refuse-off" -> GoalServiceAnswers.refuseOff(GoalStartRefusal.of(graph).take())
         "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
         else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later")
     }
