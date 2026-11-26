@@ -1,5 +1,6 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.KestrelNotification
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -108,13 +109,13 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
 
     companion object {
         /** The notification that says why Kestrel stopped listening or could not start. */
-        internal const val STOPPED_ID = 7_102
+        internal val STOPPED_ID = KestrelNotification.PROBLEM_STOPPED.id
 
         /** The notification that says that Kestrel's accessibility service is off. */
-        internal const val ACCESSIBILITY_ID = 7_103
+        internal val ACCESSIBILITY_ID = KestrelNotification.PROBLEM_ACCESSIBILITY.id
 
         /** The notification that opens Kestrel's settings after Android kept them back. */
-        internal const val SETTINGS_ID = 7_104
+        internal val SETTINGS_ID = KestrelNotification.PROBLEM_SETTINGS.id
         private const val PROBLEMS = "problems"
         private const val ACCESSIBILITY = "accessibility"
     }

@@ -20,6 +20,7 @@ import dev.kestrel.app.goal.GoalActionReceiver
 import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalService
 import dev.kestrel.app.goal.GoalTexts
+import dev.kestrel.app.goal.NoticeKind
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
@@ -75,6 +76,7 @@ class GoalServiceTest {
     fun stop() {
         wake()
         screen.shell("cmd statusbar collapse")
+        graph.goalStartRefusal.take()
         AgentTests.stop()
         check(VoiceTests.waitUntil(15_000) { GoalService.runningTypes() == null }) { "The goal service still runs" }
     }
@@ -99,6 +101,26 @@ class GoalServiceTest {
         model.release()
         assertEquals(EndReason.FAILED_BY_MODEL, AgentTests.ended(command).report.end)
         check(VoiceTests.waitUntil(15_000) { GoalService.runningTypes() == null && shown() == null }) { "The service outlived the goal" }
+    }
+
+    @Test
+    fun aRefusedStartHoldsTheGoalAndAndroidKeepsShowingItsNoticeWithCancelAndContinue() {
+        // Android refuses the service's start, as it may in the background (design 10.6): the seam of plan 7E, Task 8.
+        graph.goalStartRefusal.arm()
+        val model = HeldModel(ScriptedModel(listOf(onIt, fail)))
+        AgentTests.run("read my newest notification", model)
+        check(VoiceTests.waitUntil(15_000) {
+            conversations.view.value.goal == GoalPhase.INTERRUPTED && graph.goalForeground.status().posted?.kind == NoticeKind.HELD
+        }) { "The refused start did not hold the goal with its notice posted" }
+        check(VoiceTests.waitUntil(5_000) { posted()?.channelId == GOALS }) { "Android shows no held goal's notification" }
+
+        // The owner's way back is that notification's Continue. Kestrel's accessibility service going off, as in Task 8's
+        // Step 8a, posts its own notice, which must never take the held goal's place.
+        screen.shell("settings delete secure enabled_accessibility_services")
+        check(VoiceTests.waitUntil(10_000) { graph.screen.value == null }) { "The accessibility service did not go off" }
+
+        assertFalse("The held goal's notification was replaced or taken away", VoiceTests.waitUntil(SETTLE_MILLIS) { posted()?.channelId != GOALS })
+        assertEquals(listOf(GoalTexts.CANCEL, GoalTexts.CONTINUE), checkNotNull(posted()).actions.map { it.title.toString() })
     }
 
     @Test
@@ -308,6 +330,10 @@ class GoalServiceTest {
     private fun notification(): Notification? =
         context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == GoalNotification.SERVICE_ID }?.notification
 
+    // The held goal's notification that Kestrel posted without the service, as Android shows it.
+    private fun posted(): Notification? =
+        context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == GoalNotification.POSTED_ID }?.notification
+
     private fun shown(): Shown? = notification()?.let { notification ->
         Shown(
             notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
@@ -360,5 +386,8 @@ class GoalServiceTest {
     private companion object {
         // How long a test watches a held goal stay held after a button that must not count.
         const val SETTLE_MILLIS = 3_000L
+
+        // The goal notification's channel (GoalNotification).
+        const val GOALS = "goals"
     }
 }

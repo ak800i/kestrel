@@ -1,5 +1,6 @@
 package dev.kestrel.app.goal
 
+import dev.kestrel.app.KestrelNotification
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -21,8 +22,8 @@ import dev.kestrel.app.listen.ListeningService
  * a button that resumes what Kestrel does asks Android for the owner's unlock first (the owner's decision of 2026-11-25).
  */
 internal object GoalNotification {
-    const val SERVICE_ID = 7_102
-    const val POSTED_ID = 7_103
+    val SERVICE_ID = KestrelNotification.GOAL_SERVICE.id
+    val POSTED_ID = KestrelNotification.GOAL_POSTED.id
     private const val CHANNEL = "goals"
 
     fun createChannel(context: Context) {

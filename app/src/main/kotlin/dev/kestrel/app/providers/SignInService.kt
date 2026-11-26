@@ -1,5 +1,6 @@
 package dev.kestrel.app.providers
 
+import dev.kestrel.app.KestrelNotification
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -139,7 +140,7 @@ internal class SignInService : Service() {
 
     companion object {
         private const val CHANNEL = "sign-in"
-        private const val NOTIFICATION_ID = 7_105
+        internal val NOTIFICATION_ID = KestrelNotification.SIGN_IN.id
         private const val EXTRA_PROVIDER = "dev.kestrel.app.extra.PROVIDER"
         private const val ACTION_CANCEL = "dev.kestrel.app.action.CANCEL_SIGN_IN"
         private const val ACTION_RETURN = "dev.kestrel.app.action.RETURN_AFTER_SIGN_IN"

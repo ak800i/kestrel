@@ -1,5 +1,6 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.KestrelNotification
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -155,7 +156,7 @@ class ListeningService : Service() {
         Notification.Action.Builder(null, getString(title), actionIntent(this, action)).build()
 
     companion object {
-        internal const val NOTIFICATION_ID = 7_101
+        internal val NOTIFICATION_ID = KestrelNotification.LISTENING.id
         internal const val ACTION_PAUSE = "dev.kestrel.listen.PAUSE"
         internal const val ACTION_RESUME = "dev.kestrel.listen.RESUME"
         internal const val ACTION_STOP = "dev.kestrel.listen.STOP"
