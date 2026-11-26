@@ -124,4 +124,23 @@ class GoalForegroundTest {
         assertEquals(emptySet<ForegroundType>(), android13.shown.value?.types)
         assertEquals("spoken", android13.whileSpeaking { "spoken" })
     }
+
+    // Plan 7F: the conversation screen leaves the front only once Android has answered the start that the owner began there.
+    @Test
+    fun theScreenSeesTheServiceInTheForegroundOnlyOnceAndroidAnsweredEveryStart() = runTest {
+        val foreground = following()
+        assertEquals(ForegroundState(), foreground.foreground.value)
+
+        views.value = ConversationView(command = 1, goal = GoalPhase.ACTING)
+        assertEquals(ForegroundState(GoalPhase.ACTING, running = false, settled = false), foreground.foreground.value)
+        foreground.started(setOf(ForegroundType.SPECIAL_USE))
+        assertEquals(ForegroundState(GoalPhase.ACTING, running = true, settled = true), foreground.foreground.value)
+
+        // A resume starts the running service again, and the screen waits for Android's answer once more.
+        views.value = ConversationView(command = 1, goal = GoalPhase.INTERRUPTED, hold = GoalHold.TOUCH)
+        views.value = ConversationView(command = 1, goal = GoalPhase.ACTING)
+        assertEquals(ForegroundState(GoalPhase.ACTING, running = true, settled = false), foreground.foreground.value)
+        foreground.started(setOf(ForegroundType.SPECIAL_USE))
+        assertEquals(ForegroundState(GoalPhase.ACTING, running = true, settled = true), foreground.foreground.value)
+    }
 }

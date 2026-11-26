@@ -5,6 +5,7 @@ import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.machine.HoldReason
 import dev.kestrel.conversation.machine.QuietClock
 import dev.kestrel.conversation.model.GoalEnding
+import dev.kestrel.conversation.model.GoalPhase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +59,15 @@ internal data class GoalServiceStatus(
 }
 
 /**
+ * The goal service as the conversation screen waits for it (plan 7F): the goal's phase as the coordinator has seen it,
+ * whether the service is in the foreground ([running]), and whether Android has answered every start that Kestrel asked
+ * for, with the service's start or with a refusal ([settled]). The screen leaves the front only once the start of the
+ * goal's work that the owner began there has been answered, so that Android sees that start while Kestrel's screen is in
+ * front (design 10.6 of sub-project 7).
+ */
+internal data class ForegroundState(val goal: GoalPhase? = null, val running: Boolean = false, val settled: Boolean = true)
+
+/**
  * The goal service's coordinator (design 10.6 of sub-project 7; plan 7E). It follows the conversation's view, applies
  * [GoalServiceRules] one event at a time, asks Android to start the service through [start], which throws what
  * `startForegroundService()` throws, and calls [holdGoal] with the command whose start Android refused when that leaves a
@@ -76,6 +86,13 @@ internal class GoalForeground(
     private val shownNow = MutableStateFlow<Shown?>(null)
     private val postedNow = MutableStateFlow<GoalNotice?>(null)
     private val appliedNow = MutableStateFlow<Set<ForegroundType>?>(null)
+    private val foregroundNow = MutableStateFlow(ForegroundState())
+
+    // How many of Kestrel's starts Android has answered, with the service's start or a refusal.
+    private var answered = 0
+
+    /** What the conversation screen waits for before it leaves the front (plan 7F). */
+    val foreground: StateFlow<ForegroundState> = foregroundNow.asStateFlow()
 
     /** What the goal service shows now, and with which types; null while it should show nothing. */
     val shown: StateFlow<Shown?> = shownNow.asStateFlow()
@@ -156,6 +173,8 @@ internal class GoalForeground(
                 state = it.state
                 shownNow.value = GoalServiceRules.shown(it.state, sdk)
                 postedNow.value = GoalServiceRules.posted(it.state)
+                if (event == GoalServiceEvent.Started || event == GoalServiceEvent.Refused) answered++
+                foregroundNow.value = ForegroundState(it.state.goal, it.state.service == ServiceState.RUNNING, answered >= it.state.starts)
             }
         }
         for (command in step.commands) perform(command)

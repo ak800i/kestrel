@@ -45,7 +45,7 @@ class TextChannelTest {
 
     private fun TestScope.channel(): TextChannel {
         desk = CardDesk(support, backgroundScope)
-        return TextChannel(OwnedBar(support), support, desk, support, support, ReplyScreen { opened += it }, conversation) { 1_000L }
+        return TextChannel(OwnedBar(support, backgroundScope) { testScheduler.currentTime }, support, desk, support, support, ReplyScreen { opened += it }, conversation) { 1_000L }
     }
 
     @Test

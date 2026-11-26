@@ -1916,12 +1916,40 @@ class RulesTest {
         assertEquals(Work.IDLE, Rules.next(other, Event.SpeechEnded(spoken = true)).state.work)
         // A final reply that Kestrel only showed while off.
         assertEquals(
-            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 5)), Effect.EndReply(5)),
+            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 5)), Effect.EndReply(5), Effect.NoFollowUp(5)),
             Rules.next(open.copy(mode = Mode.OFF), Event.ChannelSays(5, "Done.", final = true)).effects,
         )
         // Without its length, or with the screen off.
         assertEquals(Work.IDLE, replied(Rules.next(open, Event.FollowUpLength(0)).state).work)
         assertEquals(Work.IDLE, replied(open.copy(screenOn = false)).work)
+    }
+
+    // Review A-R2 of plan 7F: a final reply's text holds the bar for its window's countdown, so the Rules say when no window
+    // follows it, and only then: it was not spoken to its end, Kestrel turned off, a newer reply came, or no window could
+    // open.
+    @Test
+    fun aFinalReplyThatGetsNoFollowUpWindowIsLetGo() {
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+        val noFollowUp = Effect.NoFollowUp(5)
+
+        assertTrue(noFollowUp in Rules.next(said, Event.SpeechEnded(spoken = false)).effects)
+        assertTrue(noFollowUp in Rules.next(said, Event.TurnOff).effects)
+        assertTrue(noFollowUp in Rules.next(said, Event.ChannelSays(6, "Got it.", final = true)).effects)
+        val withoutLength = Rules.next(Rules.next(open, Event.FollowUpLength(0)).state, Event.ChannelSays(5, "Done.", final = true)).state
+        assertTrue(noFollowUp in Rules.next(withoutLength, Event.SpeechEnded(spoken = true)).effects)
+        // A window that opens takes the reply's text over, and words that are no final reply hold nothing.
+        assertTrue(Rules.next(said, Event.SpeechEnded(spoken = true)).effects.none { it is Effect.NoFollowUp })
+        val words = Rules.next(open, Event.ChannelSays(4, "Opening Viber.")).state
+        assertTrue(Rules.next(words, Event.SpeechEnded(spoken = true)).effects.none { it is Effect.NoFollowUp })
+    }
+
+    // Plan 7F: the owner's Stop that does not come by voice is the same stop as a spoken one for Kestrel's speech.
+    @Test
+    fun theOwnersStopWithoutHisVoiceStopsKestrelsSpeech() {
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+
+        assertEquals(listOf(Effect.StopSaying), Rules.next(said, Event.StopSpeaking).effects)
+        assertEquals(Step(open), Rules.next(open, Event.StopSpeaking))
     }
 
     @Test

@@ -9,6 +9,8 @@ import android.media.AudioManager
 import dev.kestrel.agent.port.MediaAction
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.R
+import dev.kestrel.app.listen.BarOwner
+import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.datatools.media.MediaKeys
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
@@ -99,6 +101,7 @@ internal fun interface PermissionDialog {
 internal class AndroidOwnerSupport(
     private val context: Context,
     private val sessions: StateFlow<ScreenSession?>,
+    private val bar: OwnedBar,
     private val open: suspend (Intent) -> Boolean,
     private val calls: () -> Flow<CallState>,
 ) : TouchWatch, OwnerScreen, OtherAudio, HandOverSignals {
@@ -128,8 +131,9 @@ internal class AndroidOwnerSupport(
 
     override fun locked(): Boolean = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
 
+    // Through the bar's one writer, so that it lets go of only the question's or the hand-over's own text (plan 7F).
     override suspend fun releaseBar() {
-        session()?.releaseFeedback()
+        bar.release(BarOwner.Other)
     }
 
     override fun forgetOwnActions() {

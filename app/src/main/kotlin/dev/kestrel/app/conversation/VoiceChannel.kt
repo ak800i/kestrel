@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The conversation's voice (design 11 of sub-project 7): it speaks and shows through the Orchestrator ([voice]), which
@@ -39,6 +40,7 @@ internal class VoiceChannel(
     private val audio: OtherAudio,
     private val handOvers: HandOverSignals,
     private val permissions: PermissionDialog,
+    private val offVoice: OffVoice,
     private val audioSettleMillis: Long = AUDIO_SETTLE_MILLIS,
 ) : OwnerChannel {
     override val kind: InputChannel = InputChannel.VOICE
@@ -49,9 +51,15 @@ internal class VoiceChannel(
     // it drops the voice session's queued speech: only the outputs that come after it play.
     private val speaking = Mutex()
 
+    // How many times the owner's Stop that did not come by voice stopped Kestrel's speech (plan 7F).
+    private val ownStops = AtomicLong()
+
     override suspend fun show(output: ChannelOutput) {
         when (output) {
-            is ChannelOutput.Said -> inTurn { voice.say(output.text) }
+            // The engine decided how the words are spoken when it routed them (`ConversationOwner`): Kestrel's own voice
+            // speaks only a typed conversation's words that it routed while Kestrel was off (design 10.6 and 11 of
+            // sub-project 7), in their turn among the spoken outputs, and a stop drops them as it drops the others.
+            is ChannelOutput.Said -> inTurn { if (output.ownVoice) offVoice.speak(output.text) else voice.say(output.text) }
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
             is ChannelOutput.Report -> inTurn { voice.say(output.text, final = true) }
             is ChannelOutput.Shown -> voice.show(output.text)
@@ -60,7 +68,20 @@ internal class VoiceChannel(
 
     private suspend fun inTurn(speak: suspend () -> Unit) {
         val came = voice.speechStops
-        speaking.withLock { if (voice.speechStops == came) speak() }
+        val ownCame = ownStops.get()
+        speaking.withLock { if (voice.speechStops == came && ownStops.get() == ownCame) speak() }
+    }
+
+    /**
+     * The owner's Stop that does not come by voice, typed, on the screen or on the notification (plan 7F): it is the same
+     * stop as a spoken one. The Orchestrator stops the voice session's speech (`VoicePath.stopSpeaking`, its
+     * `Effect.StopSaying`), Kestrel's own voice stops the words that it speaks, and the spoken outputs that wait for their
+     * turn are dropped.
+     */
+    fun stopSpeech() {
+        ownStops.incrementAndGet()
+        voice.stopSpeaking()
+        offVoice.stop()
     }
 
     override suspend fun ask(question: ChannelQuestion): CardAnswer = try {

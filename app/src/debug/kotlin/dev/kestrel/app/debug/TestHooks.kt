@@ -173,7 +173,8 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
             "unlabeled" -> session.showNumbers(NumbersMode.UNLABELED)
             "labels" -> session.showLabels()
             "grid" -> session.showGrid()
-            "feedback" -> session.showFeedback(intent.requiredText())
+            // Through the bar's one writer, so that it knows whose text the bar shows (plan 7F).
+            "feedback" -> graph.feedbackBar.show(intent.requiredText())
             "none" -> {
                 session.hideNumbers()
                 session.hideLabels()

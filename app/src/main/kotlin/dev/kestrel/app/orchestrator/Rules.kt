@@ -299,6 +299,12 @@ sealed interface Event {
      */
     data object Assist : Event
 
+    /**
+     * The owner's Stop that did not come by voice: typed, on the conversation screen or on the goal notification (plan 7F).
+     * Kestrel's speech stops as for a spoken stop.
+     */
+    data object StopSpeaking : Event
+
     /** The owner's choices for listening, as Listening read them at its start or after a change (section 15). */
     data class Options(val onWakeUp: WakeUpMode, val pauseAfterSilence: Boolean, val callCommands: Boolean) : Event
 
@@ -501,6 +507,13 @@ sealed interface Effect {
     data class EndReply(val reply: Int) : Effect
 
     /**
+     * No follow-up window follows final reply number [reply] (design 6.6 of sub-project 7): it was not spoken to its end,
+     * Kestrel was or turned off, a newer reply came, or no window could open. Its text no longer waits on the bar for a
+     * countdown (review A-R2 of plan 7F).
+     */
+    data class NoFollowUp(val reply: Int) : Effect
+
+    /**
      * Runs instant command number [command], [parsed] from the transcript [heard], which the executor needs for its
      * fallback to a bare label and for dictation. [spokeAt] is when the owner began to say it, as in [Event.Heard]. It
      * must send [Event.CommandEnded] once it ends (section 7.3).
@@ -569,7 +582,8 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
-    fun next(state: State, event: Event): Step = silenceTimer(state, event, endLateAnswers(endFollowUp(state, react(state, event))))
+    fun next(state: State, event: Event): Step =
+        silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event)))))
 
     private val STOP_WORDS = setOf("stop", "cancel")
 
@@ -634,6 +648,7 @@ object Rules {
         }
         is Event.CallState -> call(state, event.state)
         Event.Assist -> assist(state)
+        Event.StopSpeaking -> Step(state, listOfNotNull(Effect.StopSaying.takeIf { state.speaking }))
         is Event.Options -> Step(
             state.copy(onWakeUp = event.onWakeUp, pauseAfterSilence = event.pauseAfterSilence, callCommands = event.callCommands),
         )
@@ -1142,6 +1157,15 @@ object Rules {
         )
     }
 
+    // Review A-R2 of plan 7F: the final reply that Kestrel was speaking, or had spoken, is no longer one whose end may open
+    // a window, and the step opened none for it, so its text no longer waits on the bar for a countdown.
+    private fun withoutFollowUp(before: State, step: Step): Step {
+        val reply = before.finalReply ?: return step
+        if (step.state.finalReply == reply) return step
+        if (step.effects.any { it is Effect.Show && (it.feedback as? Feedback.FollowUp)?.reply == reply }) return step
+        return step.copy(effects = step.effects + Effect.NoFollowUp(reply))
+    }
+
     // Whether a follow-up window may open or stay open: the conversation is open without a goal, because steering a goal by
     // voice always needs the name (D9 of sub-project 7), and Kestrel is on and can hear the owner, with the screen on,
     // outside a call and with a microphone that Android does not block.
@@ -1191,7 +1215,7 @@ object Rules {
     private fun channelSays(state: State, event: Event.ChannelSays): Step {
         val finalReply = event.reply.takeIf { event.final }
         val shown = Effect.Show(Feedback.ConversationText(event.text, finalReply = finalReply))
-        if (state.mode == Mode.OFF) return Step(state, listOf(shown, Effect.EndReply(event.reply)))
+        if (state.mode == Mode.OFF) return Step(state, listOfNotNull(shown, Effect.EndReply(event.reply), finalReply?.let { Effect.NoFollowUp(it) }))
         return say(state, Reply.Channel(event.reply, event.text), shown, finalReply = finalReply)
     }
 

@@ -34,4 +34,10 @@ internal interface VoicePath {
 
     /** The conversation's question number [question] ended: the voice no longer waits for its answer. */
     fun withdraw(question: Int)
+
+    /**
+     * The owner's Stop that did not come by voice (plan 7F): the Orchestrator stops Kestrel's speech as for a spoken stop,
+     * which counts in [speechStops].
+     */
+    fun stopSpeaking()
 }

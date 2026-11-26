@@ -3105,7 +3105,7 @@ class ListeningTest {
         thread = StandardTestDispatcher(testScheduler),
         sessions = sessions,
         services = services,
-        bar = bar,
+        bar = OwnedBar(bar, backgroundScope) { testScheduler.currentTime },
         report = { what, error -> reports += what to error },
         openSettings = {
             log += "open settings"
@@ -3405,7 +3405,7 @@ class ListeningTest {
             thread = StandardTestDispatcher(testScheduler),
             sessions = sessions,
             services = services,
-            bar = bar,
+            bar = OwnedBar(bar, backgroundScope) { testScheduler.currentTime },
             report = { what, error -> reports += what to error },
             openSettings = { SettingsOpening.OPENED },
             conditions = conditions,

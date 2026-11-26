@@ -87,10 +87,10 @@ class ConversationOwnerTest {
         owner.answer(text.asked.single().number, ChannelAnswer.Text("The first"))
         assertEquals(Answer.Text("The first"), answer.await())
 
-        // A typed conversation's replies are still spoken with the setting on (design 11).
+        // A typed conversation's replies are still spoken with the setting on (design 11), by Kestrel's own voice (plan 7F).
         typed(speak = true)
         owner.show(ChannelOutput.Report(3, "Sent."))
-        assertEquals(ChannelOutput.Said("Sent."), voice.shown.last())
+        assertEquals(ChannelOutput.Said("Sent.", ownVoice = true), voice.shown.last())
     }
 
     @Test
@@ -380,5 +380,20 @@ class ConversationOwnerTest {
         assertEquals(listOf(HandOverPart.CARD), text.handOverParts)
         owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.CONTINUED)
         assertEquals(HandOverEnd.CONTINUED, handing.await())
+    }
+
+    // Plan 7F: the engine's routing decides how Kestrel speaks, and the decision travels with the words: the voice's copy of
+    // a typed conversation's words says that Kestrel's own voice speaks it when Kestrel was off as it was routed, and a
+    // spoken conversation's words while Kestrel is off are only shown (design 11).
+    @Test
+    fun theVoicesCopyOfATypedConversationsWordsSaysWhichVoiceSpeaksThem() = runTest {
+        typed(speak = true)
+        owner.say("On it.")
+        voiceOn.value = false
+        owner.say("Done.")
+        route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
+        owner.say("Looking.")
+
+        assertEquals(listOf(ChannelOutput.Said("On it."), ChannelOutput.Said("Done.", ownVoice = true), ChannelOutput.Shown("Looking.")), voice.shown)
     }
 }

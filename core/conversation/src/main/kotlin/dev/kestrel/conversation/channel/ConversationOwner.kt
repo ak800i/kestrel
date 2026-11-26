@@ -256,7 +256,7 @@ class ConversationOwner(
         }
         if (route.channel == InputChannel.TEXT && route.speakTyped && voice != null) {
             askers += async {
-                voice.show(ChannelOutput.Said(asked.spoken))
+                voice.show(ChannelOutput.Said(asked.spoken, ownVoice = !voiceOn.value))
                 awaitCancellation()
             }
         }
@@ -334,8 +334,13 @@ class ConversationOwner(
         }
     }
 
-    // The voice's copy of a typed conversation's output: a final reply becomes words, because the owner typed (design 11).
-    private fun spokenCopy(output: ChannelOutput): ChannelOutput = if (output is ChannelOutput.Report) ChannelOutput.Said(output.text) else output
+    // The voice's copy of a typed conversation's output: a final reply becomes words, because the owner typed (design 11),
+    // and the words say whether Kestrel's own voice speaks them, because Kestrel is off as they are routed (plan 7F): the
+    // voice channel follows this decision, never the listening mode at the moment it plays them.
+    private fun spokenCopy(output: ChannelOutput): ChannelOutput = when (output) {
+        is ChannelOutput.Shown -> output
+        else -> ChannelOutput.Said(textOf(output), ownVoice = !voiceOn.value)
+    }
 
     private fun textOf(output: ChannelOutput): String = when (output) {
         is ChannelOutput.Said -> output.text

@@ -23,7 +23,9 @@ import dev.kestrel.app.agent.RoundModels
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.conversation.AndroidOwnerSupport
 import dev.kestrel.app.conversation.CardDesk
+import dev.kestrel.app.conversation.AppOffVoice
 import dev.kestrel.app.conversation.ConversationSignals
+import dev.kestrel.app.conversation.GoalBar
 import dev.kestrel.app.conversation.PermissionDialog
 import dev.kestrel.app.conversation.storedConversationSettings
 import dev.kestrel.app.conversation.VoiceChannel
@@ -36,6 +38,7 @@ import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.app.assist.KestrelAssistantService
@@ -54,6 +57,7 @@ import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
 import dev.kestrel.app.listen.FeedbackBar
+import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.LauncherAppLabels
 import dev.kestrel.app.listen.Listening
@@ -410,6 +414,7 @@ class AppGraph(context: Context) {
         AndroidOwnerSupport(
             context = appContext,
             sessions = screen,
+            bar = feedbackBar,
             open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
             calls = { phoneSignals.callStates() },
         )
@@ -474,11 +479,50 @@ class AppGraph(context: Context) {
      * The one card of each question, whichever channel asks it (design 10.3 of sub-project 7; plan 7F): the overlay while
      * the conversation screen is not in front, and the screen's copy while it is.
      */
-    internal val cardDesk: CardDesk by lazy { CardDesk(ownerSupport, scope) }
+    internal val cardDesk: CardDesk by lazy { CardDesk(ownerSupport, scope, notice = { text -> feedbackBar.show(text) }) }
 
-    /** The conversation's voice (design 11 of sub-project 7), over the Orchestrator. */
+    /**
+     * Kestrel's feedback bar with its one writer (design 6.6 and 10.5 of sub-project 7; plan 7F): listening's texts, the
+     * text channel's words, the owner's parts' release of a question's text and a goal's progress. One main-thread task per
+     * call, in order, so that an earlier text never replaces a later one.
+     */
+    internal val feedbackBar: OwnedBar by lazy {
+        OwnedBar(
+            object : FeedbackBar {
+                override fun show(text: String, keep: Boolean) {
+                    scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text, keep) }
+                }
+
+                override fun release() {
+                    scope.launch(Dispatchers.Main) { screen.value?.releaseFeedback() }
+                }
+            },
+            scope,
+            SystemClock::uptimeMillis,
+        )
+    }
+
+    /** Android's permission dialog for Kestrel's own permissions (design D12 of sub-project 5), which both channels show. */
+    private val permissionDialog = PermissionDialog { permissions -> PermissionActivity.ask(appContext, permissions) }
+
+    /**
+     * Kestrel's own voice while it is off, for a typed conversation's spoken replies (design 10.6 and 11 of sub-project 7),
+     * inside the goal service's mediaPlayback; the device tests read how many replies it spoke.
+     */
+    internal val offVoice: AppOffVoice by lazy {
+        AppOffVoice(
+            context = appContext,
+            engines = voice,
+            options = { settings.get(SettingKeys.VOICE).options() },
+            foreground = { block -> goalForeground.whileSpeaking(block) },
+            scope = scope,
+            report = reportFailure,
+        )
+    }
+
+    /** The conversation's voice (design 11 of sub-project 7), over the Orchestrator, with its own voice while Kestrel is off. */
     private val voiceChannel: VoiceChannel by lazy {
-        VoiceChannel(listening.voicePath, ownerSupport, cardDesk, ownerSupport, ownerSupport, PermissionDialog { permissions -> PermissionActivity.ask(appContext, permissions) })
+        VoiceChannel(listening.voicePath, ownerSupport, cardDesk, ownerSupport, ownerSupport, permissionDialog, offVoice)
     }
 
     /**
@@ -521,7 +565,12 @@ class AppGraph(context: Context) {
             voiceOn = listening.state.map { it.mode != Mode.OFF }.distinctUntilChanged(),
             clock = AndroidConversationClock,
             report = reportFailure,
-            onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
+            onStep = { event, state, step ->
+                // Plan 7F: the owner's Stop that does not come by voice (typed, on the screen or on the notification) is the
+                // same stop as a spoken one: the voice session's speech and Kestrel's own voice stop, and their waiting words go.
+                if (event is ConversationEvent.Input && event.input.intent == InputIntent.Stop) voiceChannel.stopSpeech()
+                conversationSteps?.invoke(event, state, step)
+            },
             timerMillis = { timer, millis -> conversationTimers?.invoke(timer, millis) ?: millis },
         ).also(::followConversation)
     }
@@ -534,6 +583,9 @@ class AppGraph(context: Context) {
         scope.launch { ConversationSignals(phoneSignals, callBackstop, scope, engine::signal, reportFailure).follow(engine.view) }
         scope.launch { goalForeground.follow(engine.view) }
         scope.launch { goalForeground.posted.collect { notice -> GoalNotification.post(appContext, notice) } }
+        // Design 10.5 of sub-project 7: the bar shows a goal's progress, and that it is held, for both channels, through its
+        // one writer.
+        scope.launch { GoalBar.follow(engine.view) { text -> feedbackBar.progress(text) } }
     }
 
     /**
@@ -761,16 +813,7 @@ class AppGraph(context: Context) {
                     }
             },
             services = ListeningService.control(appContext),
-            // One main-thread task per call, in order, so that an earlier text never replaces a later one.
-            bar = object : FeedbackBar {
-                override fun show(text: String, keep: Boolean) {
-                    scope.launch(Dispatchers.Main) { screen.value?.showFeedback(text, keep) }
-                }
-
-                override fun release() {
-                    scope.launch(Dispatchers.Main) { screen.value?.releaseFeedback() }
-                }
-            },
+            bar = feedbackBar,
             report = reportFailure,
             notices = problems,
             openSettings = { settingsOpener.open() },

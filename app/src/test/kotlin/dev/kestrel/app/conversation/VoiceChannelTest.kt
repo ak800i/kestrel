@@ -22,6 +22,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
@@ -39,10 +40,24 @@ class VoiceChannelTest {
     private val support = FakeSupport()
     private var taps = 0L
 
+    private val offSpoken = mutableListOf<String>()
+    private var offStops = 0
+    private var offHeld: CompletableDeferred<Unit>? = null
+    private val offVoice = object : OffVoice {
+        override suspend fun speak(text: String) {
+            offSpoken += text
+            offHeld?.await()
+        }
+
+        override fun stop() {
+            offStops++
+        }
+    }
+
     // The voice's cards go through the real desk, which numbers each tap with the next of the owner's inputs.
     private fun TestScope.channel(): VoiceChannel {
         val desk = CardDesk(support, backgroundScope, inputIds = { ++taps })
-        return VoiceChannel(voice, support, desk, support, support, support, audioSettleMillis = AUDIO_SETTLE_MILLIS)
+        return VoiceChannel(voice, support, desk, support, support, support, offVoice, audioSettleMillis = AUDIO_SETTLE_MILLIS)
     }
 
     @Test
@@ -218,6 +233,42 @@ class VoiceChannelTest {
         assertEquals(OwnerPort.KESTREL_LEAVE_MILLIS, currentTime - start)
     }
 
+    // Design 11 of sub-project 7: how Kestrel speaks is the engine's decision, which travels with the words. Only words that
+    // it routed to Kestrel's own voice (a typed conversation's, while Kestrel is off) reach that voice, so a spoken
+    // conversation's words that wait for their turn while the owner turns Kestrel off are never spoken by it (plan 7F).
+    @Test
+    fun onlyWordsRoutedToKestrelsOwnVoiceAreSpokenByIt() = runTest {
+        val channel = channel()
+        channel.show(ChannelOutput.Said("Done.", ownVoice = true))
+        assertEquals(listOf("Done."), offSpoken)
+        assertTrue(voice.said.isEmpty())
+
+        channel.show(ChannelOutput.Said("Sent."))
+        assertEquals(listOf("Sent."), voice.said)
+        assertEquals(1, offSpoken.size)
+    }
+
+    // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
+    // speech stops, Kestrel's own voice stops, and the words that wait are dropped.
+    @Test
+    fun aStopStopsKestrelsSpeechAndDropsItsWaitingWords() = runTest {
+        val channel = channel()
+        val held = CompletableDeferred<Unit>()
+        offHeld = held
+        launch { channel.show(ChannelOutput.Said("One.", ownVoice = true)) }
+        runCurrent()
+        launch { channel.show(ChannelOutput.Said("Two.", ownVoice = true)) }
+        runCurrent()
+
+        channel.stopSpeech()
+        held.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf("One."), offSpoken)
+        assertEquals(1, offStops)
+        assertEquals(1L, voice.speechStops)
+    }
+
     // Without a card, as without a screen session, the voice still answers (plan 7F): the question stays spoken, also
     // when a voice session opens again, and the spoken answer, which withdraws the question, ends it.
     @Test
@@ -299,6 +350,9 @@ class VoiceChannelTest {
         override fun withdraw(question: Int) {
             withdrawn += question
         }
+
+        // As Listening: the Orchestrator's StopSaying for the owner's Stop that did not come by voice.
+        override fun stopSpeaking() = stop()
     }
 
     private class FakeSupport : OwnerScreen, OtherAudio, HandOverSignals, PermissionDialog {

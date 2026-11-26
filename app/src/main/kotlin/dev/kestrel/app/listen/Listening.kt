@@ -278,7 +278,7 @@ class Listening internal constructor(
     private val thread: CoroutineDispatcher,
     sessions: VoiceSessions,
     private val services: ServiceControl,
-    bar: FeedbackBar,
+    private val bar: OwnedBar,
     private val report: (String, Throwable) -> Unit,
     private val openSettings: suspend () -> SettingsOpening,
     private val memory: ModeMemory,
@@ -302,10 +302,6 @@ class Listening internal constructor(
     /** Makes the microphone of the next session. The device tests and the debug hooks replace it. */
     @Volatile
     internal var microphones: () -> Microphone = microphones
-
-    // Every text of Listening reaches the bar through it, so that it knows whose text it shows (design 6.6 of
-    // sub-project 7).
-    private val bar = OwnedBar(bar)
 
     /** Opens the voice sessions. The command device tests replace it with sessions that need no speech models. */
     @Volatile
@@ -465,6 +461,8 @@ class Listening internal constructor(
         override fun handOver(text: String) = send(Event.ChannelHandsOver(text))
 
         override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
+
+        override fun stopSpeaking() = send(Event.StopSpeaking)
 
         override val speechStops: Long get() = stopsOfSpeech.get()
     }
@@ -1080,6 +1078,8 @@ class Listening internal constructor(
                 converse(inputs?.invoke(effect.heard, input) ?: input)
             }
             is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
+            // The final reply's text no longer waits for a countdown, so a goal's progress may follow it (review A-R2).
+            is Effect.NoFollowUp -> bar.release(BarOwner.FinalReply(effect.reply))
             is Effect.RunCommand -> {
                 newestCommand = effect.command
                 timeline.reacted("command")
