@@ -330,9 +330,11 @@ class VoiceSessionFailuresTest {
             onStart?.invoke()
         }
 
-        override fun stop() {
+        override fun stop(afterEnd: () -> Unit) {
             onFrame = null
             closes += "microphone"
+            // As MicCapture does: the thread has ended before a part of the release fails.
+            afterEnd()
             stopFailure?.let { throw it }
         }
 

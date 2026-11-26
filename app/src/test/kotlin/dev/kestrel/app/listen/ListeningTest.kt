@@ -3350,7 +3350,7 @@ class ListeningTest {
 
         override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) = Unit
 
-        override fun stop() = Unit
+        override fun stop(afterEnd: () -> Unit) = afterEnd()
     }
 
     @Test

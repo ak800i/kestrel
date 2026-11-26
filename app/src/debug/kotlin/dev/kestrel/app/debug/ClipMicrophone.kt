@@ -26,15 +26,17 @@ class ClipMicrophone : Microphone {
     private val clips = ConcurrentLinkedQueue<FloatArray>()
     private val silencedState = MutableStateFlow(false)
 
+    private val threads = MicrophoneThread("Kestrel clip microphone")
+
     @Volatile
-    private var capture: MicrophoneThread? = null
+    private var recordingNow = false
 
     override val silenced: StateFlow<Boolean> = silencedState.asStateFlow()
 
     override val echoCancelling = false
 
     /** Whether the microphone records: from [start] until [stop], also after an error. */
-    val recording: Boolean get() = capture != null
+    val recording: Boolean get() = recordingNow
 
     /** Queues [samples] of 16 kHz audio, which the microphone delivers after the clips before them. Any thread. */
     fun play(samples: FloatArray) {
@@ -49,7 +51,7 @@ class ClipMicrophone : Microphone {
      */
     fun silence(on: Boolean) {
         synchronized(this) {
-            check(!on || capture != null) { "The microphone does not record" }
+            check(!on || recordingNow) { "The microphone does not record" }
             silencedState.value = on
         }
     }
@@ -62,25 +64,25 @@ class ClipMicrophone : Microphone {
     override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()
         synchronized(this) {
-            check(capture == null) { "The microphone is already recording" }
-            capture = MicrophoneThread.start("Kestrel clip microphone", ClipFrames(), onFrame, onError)
+            threads.start(ClipFrames(), onFrame, onError)
+            recordingNow = true
         }
     }
 
-    override fun stop() {
+    override fun stop(afterEnd: () -> Unit) {
         checkNotOnTheMicrophonesThread()
         synchronized(this) {
-            val current = capture ?: return
-            val ended = current.stop()
-            capture = null
+            recordingNow = false
             silencedState.value = false
-            check(ended) { "The clip microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop" }
+            check(threads.stop(afterEnd)) {
+                "The clip microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop"
+            }
         }
     }
 
     // Checked before taking the monitor: a stop() on another thread holds it while it waits for the microphone's thread.
     private fun checkNotOnTheMicrophonesThread() {
-        check(capture?.isCurrent != true) { "start() and stop() must not be called from the microphone's thread" }
+        check(!threads.isCurrent) { "start() and stop() must not be called from the microphone's thread" }
     }
 
     // The queued clips in real time, one frame every 20 ms from the start. A slow frame is made up by the next ones, as a

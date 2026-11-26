@@ -50,6 +50,11 @@ internal class VoiceSession(
 ) : Session {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val closed = AtomicBoolean(false)
+
+    // Whether the pipeline may still pause. A pause that runs late, on a microphone's thread that did not end in time,
+    // takes the lock too, so that it never overlaps the pipeline's close. Guarded by [pauseLock].
+    private val pauseLock = Any()
+    private var pipelineOpen = true
     private val player = VoicePlayer(context, synthesizer)
     private val echo = EchoFilter()
 
@@ -92,10 +97,14 @@ internal class VoiceSession(
     }
 
     override fun stopMicrophone() {
-        microphone.stop()
-        // Only after the microphone's thread has ended, because the pipeline serves one thread at a time. After close()
-        // the speech detector is closed, and the pipeline holds nothing.
-        if (!closed.get()) pipeline.pause()
+        // After the microphone's last frame, because the pipeline serves one thread at a time: at once, or, when the
+        // microphone's thread did not end in time, as that thread's last act (Microphone.stop).
+        microphone.stop(afterEnd = ::pauseWhileOpen)
+    }
+
+    // After close() the speech detector is closed, and the pipeline holds nothing.
+    private fun pauseWhileOpen() {
+        synchronized(pauseLock) { if (pipelineOpen) pipeline.pause() }
     }
 
     override fun speak(text: String): Deferred<Spoke> = player.speak(text)
@@ -109,8 +118,10 @@ internal class VoiceSession(
         withContext(NonCancellable) {
             // The microphone first: a recording whose reader stopped stays open, and the engines may close only after the
             // last frame (final review of plan 2B, section 2).
-            errors.attempt { microphone.stop() }
-            errors.attempt { pipeline.pause() }
+            errors.attempt { microphone.stop(afterEnd = ::pauseWhileOpen) }
+            // A microphone's thread that did not end in time skips its pause from here on. The engines wait for a call
+            // in progress when they close, and that thread hands on no frame after the stop.
+            synchronized(pauseLock) { pipelineOpen = false }
             errors.attempt { pipeline.close() }
             errors.attempt { player.close() }
             // An engine waits for a call in progress when it closes, so the engines close on a thread that may wait.

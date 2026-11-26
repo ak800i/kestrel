@@ -56,8 +56,9 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     private val loudest = AtomicInteger()
     private val level = LevelMeter()
 
-    @Volatile
-    private var capture: MicrophoneThread? = null
+    private val threads = MicrophoneThread("Kestrel microphone") {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+    }
 
     @Volatile
     private var record: AudioRecord? = null
@@ -100,13 +101,15 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
      *
      * [onError] is called at most once, and then the thread ends: with an [IllegalStateException] when reading the
      * microphone fails, or with the exception that [onFrame] threw, so that such an exception does not end Kestrel's
-     * process. [onError] itself must not throw. After an error nothing reads the microphone any more, but the recording
-     * stays open, and Android keeps showing that Kestrel uses the microphone, until [stop] closes it. [start] and [stop]
-     * must not be called from [onFrame] or [onError], because [stop] waits for the thread; they throw
-     * [IllegalStateException] there. The caller hands the error to another thread, which then stops the microphone.
+     * process, or with one from a stop's `afterEnd` that ran late ([MicrophoneThread]). [onError] itself must not
+     * throw. After an error nothing reads the microphone any more, but the recording stays open, and Android keeps
+     * showing that Kestrel uses the microphone, until [stop] closes it. [start] and [stop] must not be called from
+     * [onFrame] or [onError], because [stop] waits for the thread; they throw [IllegalStateException] there. The caller
+     * hands the error to another thread, which then stops the microphone.
      *
      * Throws [SecurityException] without the microphone permission and [IllegalStateException] when the microphone does
-     * not start; then it has released everything, also the request for the earbuds, so that a later call can try again.
+     * not start, also while the thread of the last stop still lingers, before anything opens; then it has released
+     * everything, also the request for the earbuds, so that a later call can try again.
      * Only when Android's audio service fails after the microphone opened, or no thread can be created, does [start]
      * throw with the microphone still open; then [stop] releases it.
      *
@@ -120,6 +123,8 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
 
     private fun open(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         check(record == null) { "The microphone is already recording" }
+        // Before anything opens: never two threads (MicrophoneThread).
+        threads.checkCanStart()
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             throw SecurityException("Kestrel may not record audio")
         }
@@ -191,53 +196,57 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         val frames = RecordFrames { samples, offset, count ->
             recorder.read(samples, offset, count, AudioRecord.READ_NON_BLOCKING)
         }
-        capture = MicrophoneThread.start(
-            name = "Kestrel microphone",
+        threads.start(
             source = frames,
             onFrame = { frame ->
                 measure(frame)
                 onFrame(frame)
             },
             onError = onError,
-            prepare = { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) },
         )
     }
 
     /**
-     * Stops recording, and waits until the microphone's thread has finished, for at most [MicrophoneThread.STOP_MILLIS].
-     * It also closes a recording whose thread ended with an error, and withdraws the request for the earbuds. Throws
-     * [IllegalStateException] when called from [start]'s callbacks, where the thread would wait for itself, and, after it
-     * has released everything, when the thread did not end in time; the thread then ends as soon as its [onFrame] returns.
+     * Stops recording, and waits until the microphone's thread has finished, for at most [MicrophoneThread.STOP_MILLIS];
+     * [afterEnd] runs after the last frame ([MicrophoneThread.stop]). It then releases the recording, the callback, the
+     * echo canceller and the request for the earbuds, every one also when an earlier one failed, and also a recording
+     * whose thread ended with an error. Throws [IllegalStateException] when called from [start]'s callbacks, where the
+     * thread would wait for itself. After the release it throws the first failure: [IllegalStateException] when the
+     * thread did not end in time, which then lingers until its [onFrame] returns, without another frame, or the failure
+     * of a step, with the later ones suppressed.
      */
-    override fun stop() {
+    override fun stop(afterEnd: () -> Unit) {
         checkNotOnTheMicrophonesThread()
-        synchronized(this) { close() }
+        synchronized(this) { close(afterEnd) }
     }
 
-    private fun close() {
-        val recorder = record ?: return
+    private fun close(afterEnd: () -> Unit) {
+        val recorder = record
+        val steps = Steps()
         // The thread first. No read blocks, so it ends within a frame, and it never reads again once it was told to stop,
         // also when it ends only after the recording was released.
-        val ended = capture?.stop() ?: true
-        capture = null
-        try {
-            recorder.stop()
-            audio.unregisterAudioRecordingCallback(callback)
+        steps.attempt {
+            check(threads.stop(afterEnd)) {
+                "The microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop"
+            }
+        }
+        if (recorder != null) {
+            steps.attempt { recorder.stop() }
+            steps.attempt { audio.unregisterAudioRecordingCallback(callback) }
             echoCancelling = false
-            canceller?.release()
+            steps.attempt { canceller?.release() }
             canceller = null
-        } finally {
-            // Before the release, as research r12 advises, and also when the stop failed, so that the request for the
-            // earbuds never outlives the recording.
-            route?.close()
+            // Before the release, as research r12 advises, so that the request for the earbuds never outlives the
+            // recording.
+            steps.attempt { route?.close() }
             route = null
+            synchronized(lock) {
+                record = null
+                silencedState.value = false
+            }
+            steps.attempt { recorder.release() }
         }
-        synchronized(lock) {
-            record = null
-            silencedState.value = false
-        }
-        recorder.release()
-        check(ended) { "The microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop" }
+        steps.throwFirst()
     }
 
     // The earbuds went away, or a call took the audio over, and the route has withdrawn its request. Runs on the main
@@ -250,7 +259,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
 
     // Checked before taking the monitor: a stop() on another thread holds it while it waits for the microphone's thread.
     private fun checkNotOnTheMicrophonesThread() {
-        check(capture?.isCurrent != true) { "start() and stop() must not be called from the microphone's thread" }
+        check(!threads.isCurrent) { "start() and stop() must not be called from the microphone's thread" }
     }
 
     // For routeReport: the loudest sample in percent, and the levels.
@@ -268,6 +277,24 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
             val session = record?.audioSessionId ?: return
             val mine = configs.firstOrNull { it.clientAudioSessionId == session } ?: return
             silencedState.value = mine.isClientSilenced
+        }
+    }
+
+    // Runs each step of a release, also after one failed, and keeps the first failure with the others suppressed.
+    private class Steps {
+        private var failure: Exception? = null
+
+        fun attempt(step: () -> Unit) {
+            try {
+                step()
+            } catch (e: Exception) {
+                val first = failure
+                if (first == null) failure = e else first.addSuppressed(e)
+            }
+        }
+
+        fun throwFirst() {
+            failure?.let { throw it }
         }
     }
 

@@ -23,23 +23,26 @@ interface Microphone {
      * Starts recording. [onFrame] gets each 20 ms frame. Both callbacks run on the microphone's own thread.
      *
      * [onError] is called at most once, and then the thread ends: when reading the microphone fails, or with the
-     * exception that [onFrame] threw. [onError] itself must not throw. After an error nothing reads the microphone any
-     * more, but the recording stays open until [stop]. [start] and [stop] throw [IllegalStateException] when they are
-     * called from the callbacks, because [stop] waits for the thread; the caller hands the error to another thread, which
-     * then stops the microphone.
+     * exception that [onFrame] threw while the microphone recorded, or with one from a [stop]'s `afterEnd` that ran late.
+     * [onError] itself must not throw. After an error nothing reads the microphone any more, but the recording stays open
+     * until [stop]. [start] and [stop] throw [IllegalStateException] when they are called from the callbacks, because
+     * [stop] waits for the thread; the caller hands the error to another thread, which then stops the microphone.
      *
      * Throws when the microphone does not start, for example [SecurityException] without the microphone permission; a
      * later [stop] releases whatever the start had opened. Throws [IllegalStateException] while the microphone records,
-     * also after an error until [stop].
+     * also after an error until [stop], and while the thread of an earlier stop still lingers, so that no two threads
+     * ever feed [onFrame]'s receiver ([MicrophoneThread], the one rule for every microphone's thread).
      */
     fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit)
 
     /**
-     * Stops recording, and returns when the microphone's thread has finished, also when the calling thread is interrupted,
-     * but never waits longer than [MicrophoneThread.STOP_MILLIS] for it ([MicrophoneThread], the one rule for every
-     * microphone's thread). It also closes a recording whose thread ended with an error, and does nothing when the
-     * microphone does not record. When the thread did not end in time, it releases everything all the same and then
-     * throws [IllegalStateException]; the thread ends as soon as its current callback returns, without another frame.
+     * Stops recording, and waits until the microphone's thread has finished, also when the calling thread is
+     * interrupted, but never longer than [MicrophoneThread.STOP_MILLIS]. [afterEnd] runs once after the microphone's last
+     * frame, for work that needs the thread ended: before [stop] returns when the thread ended in time or none ran, and
+     * otherwise on that thread as its last act, once its current callback returns. A stop also closes a recording whose
+     * thread ended with an error. It releases every part of the recording, also when an earlier part fails, and then
+     * throws the first failure, or [IllegalStateException] when the thread did not end in time; that thread then lingers
+     * without another frame, and a stop while it lingers neither waits nor starts anything.
      */
-    fun stop()
+    fun stop(afterEnd: () -> Unit = {})
 }
