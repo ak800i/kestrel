@@ -88,14 +88,14 @@ Plans 7D and 7E are built and on `main` at `284eb0ec`. This amendment makes Task
 - **Task 13a** meets Task 1's desk (`inputIds`, `CardTap`), and the hook's press takes its number at the press, as the owner's tap does.
 - **Task 14** is written for a delegated agent, as plan 7E's Task 8: step helpers, `Get-OwnerDataState` and `Compare-OwnerData` before and after every step, the stand-in round set and checked before anything typed reaches a round, a stop and a report at the first failure, the headless emulator and the exact name (`Test-KestrelAvdAnswer`), `Connect-AccessibilityService` to put the accessibility setting back, the typed start's audio focus, and no `--live`.
 - **Task 15** waits for the owner with plan 7E's Task 9 safeguards: the A71 helpers, its data checks, the stand-in before typing, listening off throughout, the shade's rule, and a put-back step that runs whatever ended the task.
-- **The counts.** `:app` JVM A₀ + 66 (783), device AD₀ + 32 (501), `:core:conversation` C₀ + 12 (305), `:core:agent` G₀ (315), `:core:screen` S₀ (101), `:core:privacy` P₀ + 1 (95) and PD₀ + 1 (36), as the rebuild check measured them.
+- **The counts.** `:app` JVM A₀ + 69 (786), device AD₀ + 33 (502), `:core:conversation` C₀ + 12 (305), `:core:agent` G₀ (315), `:core:screen` S₀ (101), `:core:privacy` P₀ + 1 (95) and PD₀ + 1 (36), as the rebuild check measured them.
 - **Decisions** 7, 8, 24, 27, 28, 33 and 34 follow these changes; 36 to 49 are new; 38 (a hand-over's Continue on the card), 39 and 41 to 49 are settled by the controller.
 - **The plan reviews of 2026-11-26** (`review-plan-7f-a.md` and `review-plan-7f-b.md`), each finding fixed at its root:
   - **One hand-over per question (A-I1, Task 4).** `OwnerChannel.handOver(handOver, part)` with `HandOverPart { OWN, CARD }`: beside the voice channel, which owns a spoken conversation's hand-over, the text channel gets `CARD` and shows only the card, so it never calls `HandOverSignals.opened`, and Kestrel turning off reopens no page.
   - **One source decides how words are played (A-I2, Task 5).** `ChannelOutput.Said(text, ownVoice)`: `ConversationOwner` decides as it routes the words, and `VoiceChannel` follows the output and no longer reads listening's state (its `voiceOn` goes), so a spoken word that waited while the owner turned Kestrel off is not spoken.
   - **A typed answer after its question ended (A-M3, Task 4)** shows `ConversationTexts.ANSWER_ENDED` on the bar and is not read again as a command, which could act where the owner meant only to answer (design 12.2); a spoken one is dropped, as before.
   - **The card comes back with a new screen session (A-M4, Task 1).** `OwnerScreen.connections` counts the sessions (`AndroidOwnerSupport` takes the `StateFlow` of sessions), and `CardDesk` shows its card again on each; the desk's own test. The desk shows "Unlock the phone, then tap Continue." through `notice` (nit N4), and the text channel takes the desk as `SharedCards` (N5).
-  - **The bar (A-M5, A-M6, Task 5).** A final reply holds the bar against the progress until its follow-up countdown takes it over; the owner's Stop stops Kestrel's own voice (`OffVoice.stop`, `VoiceChannel.stopOwnVoice`, called from the engine's steps in the app graph); the debug hook `feedback` writes through `OwnedBar`.
+  - **The bar (A-M5, A-M6, Task 5).** A final reply holds the bar against the progress until its follow-up countdown takes it over; the owner's Stop stops Kestrel's own voice (`OffVoice.stop`, `VoiceChannel.stopSpeech`, called from the engine's steps in the app graph); the debug hook `feedback` writes through `OwnedBar`.
   - **Task 1's checks and Task 7's counts (A-I3, A-M1, A-M7)**: Step 6's searches name `AppGraph.kt`'s path and quote their patterns; Task 7 counts from AD₆.
   - **The hooks' tests on kestrel-api37 and the A71 (B-I1, Tasks 14 and 15)** clear the hooks' earlier marks with one `delete-typed` before they type (after the eval suite in Step 7, and before the stand-in), so the last deletion counts exactly 1.
   - **One rule marks the hooks' conversations (B-I2, Tasks 13 and 13a).** `ConversationHooks.type()` marks nothing; Task 13a's step rule also marks the conversation that an untagged typed input of the hook opened (`CommandTags.untagged`), and its test.
@@ -106,6 +106,7 @@ Plans 7D and 7E are built and on `main` at `284eb0ec`. This amendment makes Task
   - **Task 14 puts back the kept set and the overlay's app-op (B-M5)**: Step 1 checks Kestrel's notification listener, and Step 9 gives it back and sets the overlay's mode of Step 1 when a test left another.
   - **One rule for AI Credits (B-M6, Task 12).** `Profile.countsCredits` in `:core:providers`, read by `AppModelPort` and the Conversations page.
   - **Task 15 checks a clean tree (B-M7)** with `git status --short`; nits: Task 13a's Produces line, the self-review's placeholders, the page's KDoc on values that are no choice, `MainActivity.freshIntent`'s KDoc, and `repeatOnLifecycle` for the screen's leaves.
+  - **The re-checks of `297cce7c`** (A: Fix first for R1 and R2; B: Ready, with N1, N2 and two nits): Task 1's and Task 5's per-test counts are current (A-R1). A final reply that gets no follow-up window lets the bar go: the Rules say so (`Effect.NoFollowUp`, one rule over every way that a reply loses its window: unspoken, Kestrel off, a newer reply, no window possible), and listening releases `BarOwner.FinalReply` on it (A-R2, Task 5; `RulesTest` and `OwnedBarTest`). The owner's Stop that does not come by voice is the same stop as a spoken one: `VoiceChannel.stopSpeech` (was `stopOwnVoice`) also stops the voice session's speech through `VoicePath.stopSpeaking` and the Rules' `Event.StopSpeaking` (A's nit). The Conversations page shows a "Delete all" outcome only for a deletion that it started or saw running (B-N1, Task 12; a device test). A row that stays on the list while it is read again has no Delete until the list is current (B-N2, Task 11). `SettingsAppTest`'s line break, and `ProvidersPage.spendingText` reads `Profile.countsCredits` (B's nits).
   - **Commits**: Tasks 4 and 5 commit their `:core:conversation` changes, Task 8 its `PhoneStateGrant`, and Task 12 `Profile.kt` and `AppModelPort.kt`.
 ## File structure
 
@@ -3559,7 +3560,7 @@ import dev.kestrel.app.conversation.CardDesk
 - [ ] **Step 6: Run the tests and the builds**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.OwnerCardTest --tests=dev.kestrel.app.conversation.CardDeskTest --tests=dev.kestrel.app.conversation.VoiceChannelTest`
-Expected: BUILD SUCCESSFUL; `OwnerCardTest` 3, `CardDeskTest` 6 and `VoiceChannelTest` 10 tests pass (plan 7D leaves 9).
+Expected: BUILD SUCCESSFUL; `OwnerCardTest` 3, `CardDeskTest` 7 and `VoiceChannelTest` 10 tests pass (plan 7D leaves 9).
 
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest :core:conversation:test :app:testDebugUnitTest :app:assembleDebugAndroidTest; scripts\gradle.ps1 --stop`
 Expected: BUILD SUCCESSFUL. Count the results as "Before you start" says: `:app` JVM A₀ + 11, `:core:conversation` C₀ + 1, `:core:screen` S₀. The device tests compile; they run in Task 14.
@@ -5676,18 +5677,18 @@ git commit -m "feat(app): the text channel reads the owner's typed words, asks t
 
 ### Task 5: The bar's one writer and its progress, typed replies spoken with listening off, and the service's start for the screen
 
-Design 10.5 of sub-project 7: during a goal the bar shows its progress, "Step 12 · 3 of 7 · Replying to Mila", from the view's step and checklist, and with a goal held it shows briefly "On hold: say 'Kestrel, continue' or open Kestrel."; no earlier plan shows them, and `GoalBar` does it for both channels. The bar has one writer, plan 7D's `OwnedBar`, which knows whose text the bar shows (`BarOwner`), and which the app graph now builds and gives to listening, the text channel (Task 4) and the owner's parts, whose release of a question's or a hand-over's text went to the screen session directly before and now lets go of only that owner's text. Listening's texts, the text channel's words and the progress all pass through it: a goal's progress is its owner of its own (`BarOwner.Progress`, `progress(text)`); a kept text (a question, a hand-over's sentence, the follow-up's count) stays until it is released, and the newest progress waits while a kept text holds the bar or another text showed in the last 4 s, the bar's own time before it fades, and shows once the bar is free, so that it never hides Kestrel's words, replaces only an earlier progress, and "On hold" shows after the held goal's own sentence (review low item b). Design 10.6 and 11: with "Speak replies to typed commands" on, a typed conversation's words are spoken too, and with listening off Kestrel speaks them with its own voice, loaded for that only, inside the goal service's `mediaPlayback` (plan 7E's `whileSpeaking`). Plan 7B's `ConversationOwner` sends a typed conversation's words to the voice channel as `Said` and, while Kestrel is off, a spoken conversation's as `Shown`. Which voice speaks a `Said` is the engine's decision, made once as it routes the words, and it travels with them (`Said.ownVoice`, set while Kestrel is off): the voice channel follows it and never reads listening's state itself, so a word that waited in the channel while the owner turned Kestrel off is not spoken by the Orchestrator, and one that was routed to Kestrel's own voice is not spoken after the owner's Stop (review A-I2 and A-M6, design 11). A typed Stop stops Kestrel's own voice at once (`VoiceChannel.stopOwnVoice`, which the app graph calls on the owner's Stop) and drops its waiting words. Design 10.6: the conversation screen leaves the front only once Android has answered the start of the goal service that the owner began there (Task 6), so `GoalForeground` tells it what it knows of the service: the goal's phase as the coordinator has seen it, whether the service is in the foreground, and whether every start that Kestrel asked for has been answered.
+Design 10.5 of sub-project 7: during a goal the bar shows its progress, "Step 12 · 3 of 7 · Replying to Mila", from the view's step and checklist, and with a goal held it shows briefly "On hold: say 'Kestrel, continue' or open Kestrel."; no earlier plan shows them, and `GoalBar` does it for both channels. The bar has one writer, plan 7D's `OwnedBar`, which knows whose text the bar shows (`BarOwner`), and which the app graph now builds and gives to listening, the text channel (Task 4) and the owner's parts, whose release of a question's or a hand-over's text went to the screen session directly before and now lets go of only that owner's text. Listening's texts, the text channel's words and the progress all pass through it: a goal's progress is its owner of its own (`BarOwner.Progress`, `progress(text)`); a kept text (a question, a hand-over's sentence, the follow-up's count) stays until it is released, and the newest progress waits while a kept text holds the bar or another text showed in the last 4 s, the bar's own time before it fades, and shows once the bar is free, so that it never hides Kestrel's words, replaces only an earlier progress, and "On hold" shows after the held goal's own sentence (review low item b). Design 10.6 and 11: with "Speak replies to typed commands" on, a typed conversation's words are spoken too, and with listening off Kestrel speaks them with its own voice, loaded for that only, inside the goal service's `mediaPlayback` (plan 7E's `whileSpeaking`). Plan 7B's `ConversationOwner` sends a typed conversation's words to the voice channel as `Said` and, while Kestrel is off, a spoken conversation's as `Shown`. Which voice speaks a `Said` is the engine's decision, made once as it routes the words, and it travels with them (`Said.ownVoice`, set while Kestrel is off): the voice channel follows it and never reads listening's state itself, so a word that waited in the channel while the owner turned Kestrel off is not spoken by the Orchestrator, and one that was routed to Kestrel's own voice is not spoken after the owner's Stop (review A-I2 and A-M6, design 11). A typed Stop stops Kestrel's own voice at once (`VoiceChannel.stopSpeech`, which the app graph calls on the owner's Stop) and drops its waiting words. Design 10.6: the conversation screen leaves the front only once Android has answered the start of the goal service that the owner began there (Task 6), so `GoalForeground` tells it what it knows of the service: the goal's phase as the coordinator has seen it, whether the service is in the foreground, and whether every start that Kestrel asked for has been answered.
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/conversation/GoalBar.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/OffVoice.kt`
-- Modify: `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/OwnerChannel.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/OwnerSupport.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalForeground.kt`, `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`
-- Test: create `app/src/test/kotlin/dev/kestrel/app/conversation/GoalBarTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/OwnedBarTest.kt`; modify `core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/ConversationOwnerTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/TextChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, `app/src/test/kotlin/dev/kestrel/app/goal/GoalForegroundTest.kt`
+- Modify: `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/OwnerChannel.kt`, `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/OwnerSupport.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, `app/src/main/kotlin/dev/kestrel/app/goal/GoalForeground.kt`, `app/src/main/kotlin/dev/kestrel/app/AppGraph.kt`, `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, `app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt`
+- Test: create `app/src/test/kotlin/dev/kestrel/app/conversation/GoalBarTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/OwnedBarTest.kt`; modify `core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/ConversationOwnerTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/conversation/TextChannelTest.kt`, `app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt`, `app/src/test/kotlin/dev/kestrel/app/goal/GoalForegroundTest.kt`, `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`
 
 **Interfaces:**
 - Consumes: plan 7B's `ConversationView` (`goal`, `step`, `checklist`) and `ChecklistSummary(done, total, current)`; plan 7D's `VoiceChannel`, `AppGraph.voiceChannel`, `ownerSupport` and `followConversation`, `Listening.state`, `Mode.OFF`, `FeedbackBar`, `OwnedBar` (`show`, `takeOver`, `release`) and `BarOwner`, `AndroidOwnerSupport.releaseBar`; Task 4's `TextChannel(bar: OwnedBar, …)`; plan 7E's `GoalForeground` (`whileSpeaking`, `started`, its rules' `starts`) and `GoalServiceRules`; Task 1's `AppGraph.cardDesk`; `VoiceEngines.synthesizer(options)`, `VoicePlayer(context, synthesizer)` with `speak(text): Deferred<Spoke>` and `close()`, `SettingKeys.VOICE` and `VoiceOptionsSetting.options()`.
-- Produces: `internal object GoalBar { const val ON_HOLD; fun text(view: ConversationView): String?; suspend fun follow(views: Flow<ConversationView>, show: suspend (String?) -> Unit) }`; `internal class OwnedBar(bar: FeedbackBar, scope: CoroutineScope, clock: () -> Long)` (in place of `OwnedBar(bar)`) with `BarOwner.Progress` and `progress(text: String?)`, where null drops a waiting line, and `OTHERS_MILLIS = 4_000L`; `Listening(…, bar: OwnedBar, …)` and `AndroidOwnerSupport(context, sessions, bar: OwnedBar, open, calls)`; a final reply's kept text holds the bar against the progress for its follow-up countdown (review A-M5); `AppGraph.feedbackBar: OwnedBar`, the bar's one writer, which listening, the text channel and the owner's parts write through; `internal data class ForegroundState(goal, running, settled)` and `GoalForeground.foreground: StateFlow<ForegroundState>`; `internal interface OffVoice { suspend fun speak(text: String); fun stop() }`; `ChannelOutput.Said(text, ownVoice: Boolean = false)`, which `ConversationOwner` sets when the voice's copy of a typed conversation's words is to be spoken by Kestrel's own voice because Kestrel is off, so that the engine's decision travels with the output (review A-I2); `internal class AppOffVoice(context, engines: VoiceEngines, options: suspend () -> VoiceOptions, foreground: suspend (suspend () -> Unit) -> Unit, scope: CoroutineScope, report: (String, Throwable) -> Unit, idleMillis: Long = IDLE_MILLIS) : OffVoice` with `replies: Int` and `IDLE_MILLIS = 30_000L`; `VoiceChannel(voice, screen, cards, audio, handOvers, permissions, offVoice: OffVoice, audioSettleMillis)` with `stopOwnVoice()`, which the app graph calls on the owner's Stop (review A-M6); `AppGraph.offVoice: AppOffVoice` and the private `permissionDialog`, which Task 8's text channel shares.
+- Produces: `internal object GoalBar { const val ON_HOLD; fun text(view: ConversationView): String?; suspend fun follow(views: Flow<ConversationView>, show: suspend (String?) -> Unit) }`; `internal class OwnedBar(bar: FeedbackBar, scope: CoroutineScope, clock: () -> Long)` (in place of `OwnedBar(bar)`) with `BarOwner.Progress` and `progress(text: String?)`, where null drops a waiting line, and `OTHERS_MILLIS = 4_000L`; `Listening(…, bar: OwnedBar, …)` and `AndroidOwnerSupport(context, sessions, bar: OwnedBar, open, calls)`; a final reply's kept text holds the bar against the progress for its follow-up countdown (review A-M5) and is let go when none follows it: the Rules' `Effect.NoFollowUp(reply)`, on which listening releases `BarOwner.FinalReply(reply)` (review A-R2); `Event.StopSpeaking` and `VoicePath.stopSpeaking()`, the owner's Stop that did not come by voice, which stops Kestrel's speech as a spoken stop does; `AppGraph.feedbackBar: OwnedBar`, the bar's one writer, which listening, the text channel and the owner's parts write through; `internal data class ForegroundState(goal, running, settled)` and `GoalForeground.foreground: StateFlow<ForegroundState>`; `internal interface OffVoice { suspend fun speak(text: String); fun stop() }`; `ChannelOutput.Said(text, ownVoice: Boolean = false)`, which `ConversationOwner` sets when the voice's copy of a typed conversation's words is to be spoken by Kestrel's own voice because Kestrel is off, so that the engine's decision travels with the output (review A-I2); `internal class AppOffVoice(context, engines: VoiceEngines, options: suspend () -> VoiceOptions, foreground: suspend (suspend () -> Unit) -> Unit, scope: CoroutineScope, report: (String, Throwable) -> Unit, idleMillis: Long = IDLE_MILLIS) : OffVoice` with `replies: Int` and `IDLE_MILLIS = 30_000L`; `VoiceChannel(voice, screen, cards, audio, handOvers, permissions, offVoice: OffVoice, audioSettleMillis)` with `stopSpeech()`, which the app graph calls on the owner's Stop that did not come by voice: the voice session's speech stops (`VoicePath.stopSpeaking`), Kestrel's own voice stops, and the waiting words go (review A-M6 and its re-check); `AppGraph.offVoice: AppOffVoice` and the private `permissionDialog`, which Task 8's text channel shares.
 
-Counts: `:app` JVM A₄ + 10 (`GoalBarTest` 3, `OwnedBarTest` 4, `VoiceChannelTest` + 2, `GoalForegroundTest` + 1), where A₄ is the count after Task 4. `:core:conversation` C₄ + 1 (`ConversationOwnerTest` + 1), where C₄ is the count after Task 4.
+Counts: `:app` JVM A₄ + 13 (`GoalBarTest` 3, `OwnedBarTest` 5, `VoiceChannelTest` + 2, `GoalForegroundTest` + 1, `RulesTest` + 2), where A₄ is the count after Task 4. `:core:conversation` C₄ + 1 (`ConversationOwnerTest` + 1), where C₄ is the count after Task 4.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5812,9 +5813,10 @@ with:
         assertEquals(1, offSpoken.size)
     }
 
-    // Plan 7F: the owner's Stop on the screen or on the notification stops Kestrel's own voice and drops its words that wait.
+    // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
+    // speech stops, Kestrel's own voice stops, and the words that wait are dropped.
     @Test
-    fun aStopStopsKestrelsOwnVoiceAndDropsItsWaitingWords() = runTest {
+    fun aStopStopsKestrelsSpeechAndDropsItsWaitingWords() = runTest {
         val held = CompletableDeferred<Unit>()
         offHeld = held
         launch { channel.show(ChannelOutput.Said("One.", ownVoice = true)) }
@@ -5822,12 +5824,13 @@ with:
         launch { channel.show(ChannelOutput.Said("Two.", ownVoice = true)) }
         runCurrent()
 
-        channel.stopOwnVoice()
+        channel.stopSpeech()
         held.complete(Unit)
         runCurrent()
 
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
+        assertEquals(1L, voice.speechStops)
     }
 
     // Without a card, as without a screen session, the voice still answers (plan 7F).
@@ -5913,6 +5916,23 @@ class OwnedBarTest {
         runCurrent()
 
         assertEquals(listOf("Done." to false, "Go on… 5" to true, "On hold" to false), shown)
+    }
+
+    // Review A-R2 of plan 7F: a final reply that gets no follow-up window (unspoken, Kestrel off, or no window could open)
+    // is let go by listening, and a later progress then shows.
+    @Test
+    fun aFinalReplyWithoutACountdownLetsALaterProgressShowOnceItIsLetGo() = runTest {
+        val bar = bar()
+        bar.show("Done.", owner = BarOwner.FinalReply(3))
+        bar.progress("Step 1")
+        advanceTimeBy(OwnedBar.OTHERS_MILLIS * 2)
+        runCurrent()
+        assertEquals(listOf("Done." to false), shown)
+
+        bar.release(BarOwner.FinalReply(3))
+        runCurrent()
+
+        assertEquals(listOf("Done." to false, "Step 1" to false), shown)
     }
     // Review L1 of plan 7F: a progress line that waits for the bar never shows once its goal has ended.
     @Test
@@ -6040,12 +6060,87 @@ In `core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/Conversat
     }
 ```
 
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 5)), Effect.EndReply(5)),
+```
+
+with:
+
+```kotlin
+            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 5)), Effect.EndReply(5), Effect.NoFollowUp(5)),
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt`, replace:
+
+```kotlin
+    @Test
+    fun turnOffAloneInTheFollowUpWindowTurnsKestrelOffAndReachesNoConversation() {
+```
+
+with:
+
+```kotlin
+    // Review A-R2 of plan 7F: a final reply's text holds the bar for its window's countdown, so the Rules say when no window
+    // follows it, and only then: it was not spoken to its end, Kestrel turned off, a newer reply came, or no window could
+    // open.
+    @Test
+    fun aFinalReplyThatGetsNoFollowUpWindowIsLetGo() {
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+        val noFollowUp = Effect.NoFollowUp(5)
+
+        assertTrue(noFollowUp in Rules.next(said, Event.SpeechEnded(spoken = false)).effects)
+        assertTrue(noFollowUp in Rules.next(said, Event.TurnOff).effects)
+        assertTrue(noFollowUp in Rules.next(said, Event.ChannelSays(6, "Got it.", final = true)).effects)
+        val withoutLength = Rules.next(Rules.next(open, Event.FollowUpLength(0)).state, Event.ChannelSays(5, "Done.", final = true)).state
+        assertTrue(noFollowUp in Rules.next(withoutLength, Event.SpeechEnded(spoken = true)).effects)
+        // A window that opens takes the reply's text over, and words that are no final reply hold nothing.
+        assertTrue(Rules.next(said, Event.SpeechEnded(spoken = true)).effects.none { it is Effect.NoFollowUp })
+        val words = Rules.next(open, Event.ChannelSays(4, "Opening Viber.")).state
+        assertTrue(Rules.next(words, Event.SpeechEnded(spoken = true)).effects.none { it is Effect.NoFollowUp })
+    }
+
+    // Plan 7F: the owner's Stop that does not come by voice is the same stop as a spoken one for Kestrel's speech.
+    @Test
+    fun theOwnersStopWithoutHisVoiceStopsKestrelsSpeech() {
+        val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
+
+        assertEquals(listOf(Effect.StopSaying), Rules.next(said, Event.StopSpeaking).effects)
+        assertEquals(Step(open), Rules.next(open, Event.StopSpeaking))
+    }
+
+    @Test
+    fun turnOffAloneInTheFollowUpWindowTurnsKestrelOffAndReachesNoConversation() {
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, replace:
+
+```kotlin
+        override fun withdraw(question: Int) {
+            withdrawn += question
+        }
+    }
+```
+
+with:
+
+```kotlin
+        override fun withdraw(question: Int) {
+            withdrawn += question
+        }
+
+        // As Listening: the Orchestrator's StopSaying for the owner's Stop that did not come by voice.
+        override fun stopSpeaking() = stop()
+    }
+```
+
 - [ ] **Step 2: Run the tests to see them fail**
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.channel.ConversationOwnerTest`
 Expected: FAIL: the compiler does not know `ChannelOutput.Said.ownVoice`.
-Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.GoalBarTest --tests=dev.kestrel.app.conversation.VoiceChannelTest --tests=dev.kestrel.app.listen.OwnedBarTest --tests=dev.kestrel.app.goal.GoalForegroundTest`
-Expected: FAIL: the compiler does not know `GoalBar`, `OffVoice`, `OwnedBar.progress`, `OwnedBar.OTHERS_MILLIS`, `ForegroundState` and `GoalForeground.foreground`, `OwnedBar` takes no scope and no clock, and `VoiceChannel` takes no voice for while Kestrel is off.
+Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.GoalBarTest --tests=dev.kestrel.app.conversation.VoiceChannelTest --tests=dev.kestrel.app.listen.OwnedBarTest --tests=dev.kestrel.app.goal.GoalForegroundTest --tests=dev.kestrel.app.orchestrator.RulesTest`
+Expected: FAIL: the compiler does not know `GoalBar`, `OffVoice`, `OwnedBar.progress`, `OwnedBar.OTHERS_MILLIS`, `ForegroundState` and `GoalForeground.foreground`, `OwnedBar` takes no scope and no clock, and `VoiceChannel` takes no voice for while Kestrel is off; nor does it know `Effect.NoFollowUp`, `Event.StopSpeaking` and `VoicePath.stopSpeaking`.
 
 - [ ] **Step 3: The bar's line for a goal**
 
@@ -6401,6 +6496,154 @@ with:
             // Through the bar's one writer, so that it knows whose text the bar shows (plan 7F).
             "feedback" -> graph.feedbackBar.show(intent.requiredText())
 ```
+A final reply's text holds the bar for its follow-up window's countdown (`OwnedBar`), so the Rules, which decide whether a window opens, also say when none follows a final reply (`Effect.NoFollowUp`), and listening lets the reply's text go then (review A-R2). The owner's Stop that does not come by voice reaches the Rules as `Event.StopSpeaking`, which stops Kestrel's speech as a spoken stop does (`Effect.StopSaying`).
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+    data object Assist : Event
+```
+
+with:
+
+```kotlin
+    data object Assist : Event
+
+    /**
+     * The owner's Stop that did not come by voice: typed, on the conversation screen or on the goal notification (plan 7F).
+     * Kestrel's speech stops as for a spoken stop.
+     */
+    data object StopSpeaking : Event
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+    /** Reply number [reply] of the conversation was only shown, because Kestrel is off: its channel goes on at once. */
+    data class EndReply(val reply: Int) : Effect
+```
+
+with:
+
+```kotlin
+    /** Reply number [reply] of the conversation was only shown, because Kestrel is off: its channel goes on at once. */
+    data class EndReply(val reply: Int) : Effect
+
+    /**
+     * No follow-up window follows final reply number [reply] (design 6.6 of sub-project 7): it was not spoken to its end,
+     * Kestrel was or turned off, a newer reply came, or no window could open. Its text no longer waits on the bar for a
+     * countdown (review A-R2 of plan 7F).
+     */
+    data class NoFollowUp(val reply: Int) : Effect
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+    fun next(state: State, event: Event): Step = silenceTimer(state, event, endLateAnswers(endFollowUp(state, react(state, event))))
+```
+
+with:
+
+```kotlin
+    fun next(state: State, event: Event): Step =
+        silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event)))))
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+        Event.Assist -> assist(state)
+```
+
+with:
+
+```kotlin
+        Event.Assist -> assist(state)
+        Event.StopSpeaking -> Step(state, listOfNotNull(Effect.StopSaying.takeIf { state.speaking }))
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+        if (state.mode == Mode.OFF) return Step(state, listOf(shown, Effect.EndReply(event.reply)))
+```
+
+with:
+
+```kotlin
+        if (state.mode == Mode.OFF) return Step(state, listOfNotNull(shown, Effect.EndReply(event.reply), finalReply?.let { Effect.NoFollowUp(it) }))
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt`, replace:
+
+```kotlin
+    // Whether a follow-up window may open or stay open:
+```
+
+with:
+
+```kotlin
+    // Review A-R2 of plan 7F: the final reply that Kestrel was speaking, or had spoken, is no longer one whose end may open
+    // a window, and the step opened none for it, so its text no longer waits on the bar for a countdown.
+    private fun withoutFollowUp(before: State, step: Step): Step {
+        val reply = before.finalReply ?: return step
+        if (step.state.finalReply == reply) return step
+        if (step.effects.any { it is Effect.Show && (it.feedback as? Feedback.FollowUp)?.reply == reply }) return step
+        return step.copy(effects = step.effects + Effect.NoFollowUp(reply))
+    }
+
+    // Whether a follow-up window may open or stay open:
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt`, replace:
+
+```kotlin
+    /** The conversation's question number [question] ended: the voice no longer waits for its answer. */
+    fun withdraw(question: Int)
+```
+
+with:
+
+```kotlin
+    /** The conversation's question number [question] ended: the voice no longer waits for its answer. */
+    fun withdraw(question: Int)
+
+    /**
+     * The owner's Stop that did not come by voice (plan 7F): the Orchestrator stops Kestrel's speech as for a spoken stop,
+     * which counts in [speechStops].
+     */
+    fun stopSpeaking()
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+        override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
+```
+
+with:
+
+```kotlin
+        override fun withdraw(question: Int) = send(Event.ChannelWithdraws(question))
+
+        override fun stopSpeaking() = send(Event.StopSpeaking)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
+
+```kotlin
+            is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
+```
+
+with:
+
+```kotlin
+            is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
+            // The final reply's text no longer waits for a countdown, so a goal's progress may follow it (review A-R2).
+            is Effect.NoFollowUp -> bar.release(BarOwner.FinalReply(effect.reply))
+```
+
 - [ ] **Step 5: Kestrel's own voice while it is off**
 
 Create `app/src/main/kotlin/dev/kestrel/app/conversation/OffVoice.kt`:
@@ -6617,12 +6860,14 @@ with:
     }
 
     /**
-     * The owner's Stop that does not come by voice, typed, on the screen or on the notification (plan 7F): Kestrel's own
-     * voice stops the words that it speaks, and the spoken outputs that wait for their turn are dropped, as a spoken stop
-     * drops them (`VoicePath.speechStops`).
+     * The owner's Stop that does not come by voice, typed, on the screen or on the notification (plan 7F): it is the same
+     * stop as a spoken one. The Orchestrator stops the voice session's speech (`VoicePath.stopSpeaking`, its
+     * `Effect.StopSaying`), Kestrel's own voice stops the words that it speaks, and the spoken outputs that wait for their
+     * turn are dropped.
      */
-    fun stopOwnVoice() {
+    fun stopSpeech() {
         ownStops.incrementAndGet()
+        voice.stopSpeaking()
         offVoice.stop()
     }
 ```
@@ -6665,9 +6910,9 @@ with:
 
 ```kotlin
             onStep = { event, state, step ->
-                // Plan 7F: the owner's Stop that does not come by voice (typed, on the screen or on the notification) also
-                // stops Kestrel's own voice, which speaks while Kestrel is off; a spoken stop stops a voice session's speech.
-                if (event is ConversationEvent.Input && event.input.intent == InputIntent.Stop) voiceChannel.stopOwnVoice()
+                // Plan 7F: the owner's Stop that does not come by voice (typed, on the screen or on the notification) is the
+                // same stop as a spoken one: the voice session's speech and Kestrel's own voice stop, and their waiting words go.
+                if (event is ConversationEvent.Input && event.input.intent == InputIntent.Stop) voiceChannel.stopSpeech()
                 conversationSteps?.invoke(event, state, step)
             },
 ```
@@ -6840,15 +7085,15 @@ import dev.kestrel.conversation.store.HistorySearch
 - [ ] **Step 6: Run the tests**
 
 Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversation.*`
-Expected: BUILD SUCCESSFUL; `GoalBarTest` 3, `VoiceChannelTest` 11, `TextChannelTest` 9 and `CardDeskTest` 6 tests pass.
+Expected: BUILD SUCCESSFUL; `GoalBarTest` 3, `OwnedBarTest` 5, `VoiceChannelTest` 12, `TextChannelTest` 10 and `CardDeskTest` 7 tests pass.
 
 Run: `scripts\gradle.ps1 :core:conversation:test :app:testDebugUnitTest :app:assembleDebug; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `:app` JVM A₄ + 10, `:core:conversation` C₄ + 1.
+Expected: BUILD SUCCESSFUL; `:app` JVM A₄ + 13, `:core:conversation` C₄ + 1.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/src/main/kotlin/dev/kestrel/app/conversation/GoalBar.kt app/src/main/kotlin/dev/kestrel/app/conversation/OffVoice.kt app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt app/src/main/kotlin/dev/kestrel/app/conversation/OwnerSupport.kt app/src/main/kotlin/dev/kestrel/app/goal/GoalForeground.kt app/src/main/kotlin/dev/kestrel/app/AppGraph.kt app/src/test/kotlin/dev/kestrel/app/conversation/GoalBarTest.kt app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt app/src/test/kotlin/dev/kestrel/app/listen/OwnedBarTest.kt app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt app/src/test/kotlin/dev/kestrel/app/conversation/TextChannelTest.kt app/src/test/kotlin/dev/kestrel/app/goal/GoalForegroundTest.kt app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/channel core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/ConversationOwnerTest.kt
+git add app/src/main/kotlin/dev/kestrel/app/conversation/GoalBar.kt app/src/main/kotlin/dev/kestrel/app/conversation/OffVoice.kt app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt app/src/main/kotlin/dev/kestrel/app/listen/OwnedBar.kt app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt app/src/main/kotlin/dev/kestrel/app/conversation/OwnerSupport.kt app/src/main/kotlin/dev/kestrel/app/goal/GoalForeground.kt app/src/main/kotlin/dev/kestrel/app/AppGraph.kt app/src/test/kotlin/dev/kestrel/app/conversation/GoalBarTest.kt app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt app/src/test/kotlin/dev/kestrel/app/listen/OwnedBarTest.kt app/src/test/kotlin/dev/kestrel/app/listen/ListeningTest.kt app/src/test/kotlin/dev/kestrel/app/conversation/TextChannelTest.kt app/src/test/kotlin/dev/kestrel/app/goal/GoalForegroundTest.kt app/src/main/kotlin/dev/kestrel/app/orchestrator/Rules.kt app/src/main/kotlin/dev/kestrel/app/listen/VoicePath.kt app/src/test/kotlin/dev/kestrel/app/orchestrator/RulesTest.kt app/src/debug/kotlin/dev/kestrel/app/debug/TestHooks.kt core/conversation/src/main/kotlin/dev/kestrel/conversation/channel core/conversation/src/test/kotlin/dev/kestrel/conversation/channel/ConversationOwnerTest.kt
 git commit -m "feat(app): the bar has one writer, which shows a goal's progress and its hold, Kestrel speaks a typed conversation's replies with its own voice while it is off, and the screen can read when Android answered the goal service's start" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -10602,7 +10847,7 @@ private sealed interface Loaded<out T> {
 
 // The list, read again after each deletion ([deletions]) and, while the owner types, once he stops for a moment, because
 // each search ranks the whole index. It says "Loading past conversations…" until its first read ends; a later read keeps the
-// rows that are shown, under a thin progress line, until its own rows come (review B-M3).
+// rows that are shown, under a thin progress line and without their Delete, until its own rows come (review B-M3 and B-N2).
 @Composable
 private fun PastListPage(
     past: PastConversations,
@@ -10646,7 +10891,7 @@ private fun PastListPage(
                     Note(if (query.isBlank()) R.string.past_empty else R.string.past_none_found)
                 } else {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(listing.rows, key = { it.id.value }) { row -> PastRowCard(row, onOpen, onDelete) }
+                        items(listing.rows, key = { it.id.value }) { row -> PastRowCard(row, deletable = !reading, onOpen, onDelete) }
                     }
                 }
             }
@@ -10654,15 +10899,17 @@ private fun PastListPage(
     }
 }
 
+// A row's Delete waits while the list is read again (review B-N2 of plan 7F): a row that stays on the screen during the read
+// may be one that the owner has just deleted.
 @Composable
-private fun PastRowCard(row: PastRow, onOpen: (ConversationId) -> Unit, onDelete: (ConversationId) -> Unit) {
+private fun PastRowCard(row: PastRow, deletable: Boolean, onOpen: (ConversationId) -> Unit, onDelete: (ConversationId) -> Unit) {
     Card(onClick = { onOpen(row.id) }, modifier = Modifier.fillMaxWidth().testTag(pastRowTag(row.id))) {
         Column(Modifier.padding(start = 16.dp, top = 12.dp, end = 8.dp)) {
             Text(row.date, style = MaterialTheme.typography.labelMedium)
             Text(row.request, style = MaterialTheme.typography.bodyLarge)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(pluralStringResource(R.plurals.past_commands, row.commands, row.commands), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { onDelete(row.id) }) { Text(stringResource(R.string.past_delete)) }
+                TextButton(onClick = { onDelete(row.id) }, enabled = deletable) { Text(stringResource(R.string.past_delete)) }
             }
         }
     }
@@ -11034,14 +11281,14 @@ Design 13 of sub-project 7: a settings page "Conversations", stored encrypted in
 
 **Files:**
 - Create: `app/src/main/kotlin/dev/kestrel/app/settings/ConversationsPage.kt`, `app/src/main/res/values/strings_conversations_page.xml`
-- Modify: `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsData.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppModelPort.kt`, `core/providers/src/main/kotlin/dev/kestrel/providers/profiles/Profile.kt`
+- Modify: `app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/SettingsData.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt`, `app/src/main/kotlin/dev/kestrel/app/agent/AppModelPort.kt`, `app/src/main/kotlin/dev/kestrel/app/settings/ProvidersPage.kt`, `core/providers/src/main/kotlin/dev/kestrel/providers/profiles/Profile.kt`
 - Test: modify `app/src/androidTest/kotlin/dev/kestrel/app/settings/SettingsAppTest.kt`
 
 **Interfaces:**
 - Consumes: plan 7B's `ConversationSettings` (`QUIET_CHOICES`, `FOLLOW_UP_CHOICES`, `RETENTION_CHOICES`, `REPLIES`, `WORK_MINUTES`, `CREDITS`) and `GoalLimits`; plan 7C's `SettingKeys.CONVERSATIONS`; Task 3's `ConversationEngine.deleteAllPast`, `allPastDeletion`, `PastDeletion` and `AllPastDeletion`; Task 7's `GuardWindow`; `ProvidersSetting.defaultProfile`; the Listening page's `OptionSwitch`.
-- Produces: `SettingsPage.CONVERSATIONS`; `SettingsData.conversations: Flow<ConversationSettings>`, `setConversations(settings)`, `countsCredits: Flow<Boolean>`, `deleteAllPast(): PastDeletion` and `allPastDeletion: Flow<AllPastDeletion>`; `@Composable internal fun ConversationsPage(data, onBack)`; `internal object ConversationsTags` (`QUIET`, `FOLLOW_UP`, `RETENTION`, `REPLIES`, `MINUTES`, `CREDITS`); `internal val REPLY_CHOICES`, `MINUTE_CHOICES`, `CREDIT_CHOICES`; the strings `settings_conversations*` and `conversations_*`; `Profile.countsCredits` (`:core:providers`), the one rule that only Copilot counts AI Credits, which `AppModelPort` reads too; `OptionSwitch` becomes internal.
+- Produces: `SettingsPage.CONVERSATIONS`; `SettingsData.conversations: Flow<ConversationSettings>`, `setConversations(settings)`, `countsCredits: Flow<Boolean>`, `deleteAllPast(): PastDeletion` and `allPastDeletion: Flow<AllPastDeletion>`; `@Composable internal fun ConversationsPage(data, onBack)`; `internal object ConversationsTags` (`QUIET`, `FOLLOW_UP`, `RETENTION`, `REPLIES`, `MINUTES`, `CREDITS`); `internal val REPLY_CHOICES`, `MINUTE_CHOICES`, `CREDIT_CHOICES`; the strings `settings_conversations*` and `conversations_*`; `Profile.countsCredits` (`:core:providers`), the one rule that only Copilot counts AI Credits, which `AppModelPort` and the profile page's cost read too; `OptionSwitch` becomes internal.
 
-Counts: `:app` device tests AD₁₁ + 4 (`SettingsAppTest` + 4), where AD₁₁ is the count after Task 11. JVM counts unchanged (the engine's test of the deletion's state is in Task 3).
+Counts: `:app` device tests AD₁₁ + 5 (`SettingsAppTest` + 5), where AD₁₁ is the count after Task 11. JVM counts unchanged (the engine's test of the deletion's state is in Task 3).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -11171,7 +11418,19 @@ with:
         compose.onNodeWithText(text(R.string.conversations_delete_all)).assertIsEnabled()
     }
 
-    private fun openConversations() {        compose.onNodeWithText(text(R.string.settings_conversations)).performScrollTo().performClick()
+    // Review B-N1 of plan 7F: the outcome of a deletion that the page did not see running is not shown or read out again.
+    @Test
+    fun anEarlierDeletionsOutcomeIsNotShownAgain() {
+        data.allPastDeletion.value = AllPastDeletion.Ended(PastDeletion.DELETED)
+        show(NOTHING_SET_UP)
+        openConversations()
+
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).performScrollTo().assertIsEnabled()
+        compose.onAllNodesWithText(text(R.string.conversations_deleted)).assertCountEquals(0)
+    }
+
+    private fun openConversations() {
+        compose.onNodeWithText(text(R.string.settings_conversations)).performScrollTo().performClick()
     }
 
     // The choice labelled with plural [id] of [count] in the group with [tag]: the groups share labels such as "30 seconds".
@@ -11346,6 +11605,18 @@ with:
             countsCredits = profile.countsCredits,
 ```
 
+The profile page shows a month's cost in AI Credits by the same rule. In `app/src/main/kotlin/dev/kestrel/app/settings/ProvidersPage.kt`, replace:
+
+```kotlin
+        profile.providerId == CatalogLoader.COPILOT -> stringResource(R.string.providers_cost_credits, decimal(use.credits))
+```
+
+with:
+
+```kotlin
+        profile.countsCredits -> stringResource(R.string.providers_cost_credits, decimal(use.credits))
+```
+
 - [ ] **Step 4: The strings and the page**
 
 Create `app/src/main/res/values/strings_conversations_page.xml`:
@@ -11431,6 +11702,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -11495,6 +11767,10 @@ internal fun ConversationsPage(data: SettingsData, onBack: () -> Unit) {
     // The engine holds the deletion's state, so a deletion that runs shows also after the owner left the page (review B-M4).
     val deletion by data.allPastDeletion.collectAsState(initial = AllPastDeletion.Idle)
     val deleting = deletion == AllPastDeletion.Running
+    // An outcome shows only for a deletion that this page started or saw running, so that an earlier one, which the engine
+    // keeps for the process's life, is not shown and read out again on a later visit (review B-N1).
+    var watched by remember { mutableStateOf(false) }
+    LaunchedEffect(deleting) { if (deleting) watched = true }
     val change: ((ConversationSettings) -> ConversationSettings) -> Unit = { edit ->
         (written ?: stored)?.let { current ->
             val next = edit(current)
@@ -11560,7 +11836,7 @@ internal fun ConversationsPage(data: SettingsData, onBack: () -> Unit) {
     }
     Button(onClick = { asking = true }, Modifier.padding(top = 24.dp), enabled = !deleting) { Text(stringResource(R.string.conversations_delete_all)) }
     // The deletion may wait for the index of past conversations (review N2); its outcome is read out when it comes.
-    val result = (deletion as? AllPastDeletion.Ended)?.outcome
+    val result = (deletion as? AllPastDeletion.Ended)?.outcome?.takeIf { watched }
     if (deleting) {
         Text(stringResource(R.string.conversations_deleting), Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium)
     } else if (result != null) {
@@ -11587,6 +11863,7 @@ internal fun ConversationsPage(data: SettingsData, onBack: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = {
                     asking = false
+                    watched = true
                     // The engine runs the deletion in its own scope, so leaving the page stops nothing; the page shows its state.
                     scope.launch { data.deleteAllPast() }
                 }) { Text(stringResource(R.string.conversations_delete_all_confirm)) }
@@ -11693,7 +11970,7 @@ Expected: BUILD SUCCESSFUL; `:app` JVM unchanged. The 3 device tests run in Task
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/src/main/kotlin/dev/kestrel/app/settings/ConversationsPage.kt app/src/main/res/values/strings_conversations_page.xml app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt app/src/main/kotlin/dev/kestrel/app/settings/SettingsData.kt app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt app/src/main/kotlin/dev/kestrel/app/agent/AppModelPort.kt core/providers/src/main/kotlin/dev/kestrel/providers/profiles/Profile.kt app/src/androidTest/kotlin/dev/kestrel/app/settings/SettingsAppTest.kt
+git add app/src/main/kotlin/dev/kestrel/app/settings/ConversationsPage.kt app/src/main/res/values/strings_conversations_page.xml app/src/main/kotlin/dev/kestrel/app/settings/SettingsApp.kt app/src/main/kotlin/dev/kestrel/app/settings/SettingsData.kt app/src/main/kotlin/dev/kestrel/app/settings/ListeningPage.kt app/src/main/kotlin/dev/kestrel/app/agent/AppModelPort.kt app/src/main/kotlin/dev/kestrel/app/settings/ProvidersPage.kt core/providers/src/main/kotlin/dev/kestrel/providers/profiles/Profile.kt app/src/androidTest/kotlin/dev/kestrel/app/settings/SettingsAppTest.kt
 git commit -m "feat(app): the Conversations settings page: quiet time, follow-up window, spoken typed replies, retention, round limits and Delete all past conversations" -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 ```
 
@@ -13099,7 +13376,7 @@ Design 15.2 of sub-project 7 on kestrel-api37: this plan's device tests and the 
 - Consumes: every earlier task, Task 13's `conversation-type` and `conversation-control --es do delete-typed` among them; plan 7D's hooks `conversation-state`, `conversation-control` and `voice-task` (its stand-in round, and `voice-task -Clear`, whose answer is `each task ends at once again`); `voice -Send toggle|pause|off|heard`; plan 7E's hooks `goal-service-state` and `goal-control` (`do=tap`, `do=speak`); `scripts\install.ps1`, `scripts\connected-test.ps1`, `scripts\voice-test.ps1`, `scripts\command-test.ps1`, `scripts\eval.ps1`, `scripts\hook.ps1`; `scripts\lib\Kestrel.ps1`'s `Assert-TestDevice`, `Test-KestrelAvdAnswer`, `Get-EmulatorWindowType`, `Connect-AccessibilityService`, `Get-AccessibilityServiceState`, `Format-ServiceState` and `Test-ServiceListed`, and `scripts\lib\DeviceGuard.ps1`'s `Get-OwnerDataState`, `Compare-OwnerData` and `Format-OwnerDataState`.
 - Produces: the results in `.superpowers\sdd\progress.md`, under "## Plan 7F", with spike S9's typed start on kestrel-api37.
 
-Counts: none change. The device tests that run are this plan's AD₀ + 32 of `:app` and the PD₀ + 1 of `:core:privacy` (Task 3 adds `KestrelDatabaseTest`'s test of `deleteClosed`; the rest is a regression), across Steps 3 to 6.
+Counts: none change. The device tests that run are this plan's AD₀ + 33 of `:app` and the PD₀ + 1 of `:core:privacy` (Task 3 adds `KestrelDatabaseTest`'s test of `deleteClosed`; the rest is a regression), across Steps 3 to 6.
 
 **The build and the emulator.** Task 14 installs `sp3` at Task 13a's commit or a later commit, which contains plans 7D and 7E as built (`284eb0ec` or later, so the build keeps kestrel-api37's database at version 3 and has plan 7E's device-found fixes, notification IDs and accessibility helpers); Step 1 checks it. kestrel-api37 runs without a window: `scripts\start-emulator.ps1` starts it with `-no-window`, because the window links Android's clipboard to Windows' clipboard, which makes `ClipboardHookTest` fail now and then (README). No step needs the window, so the task never starts it with `-Window`; Step 1 reads the window type from the emulator's console (`Get-EmulatorWindowType`) and stops unless it says `headless`. Every check of the emulator's name requires its exact name (`Test-KestrelAvdAnswer`, as the scripts do), so an AVD such as `kestrel-api37-old` never passes it.
 
@@ -13134,7 +13411,7 @@ Expected: BUILD SUCCESSFUL and `exit: 0`; PD₀ + 1 tests (36 with PD₀ = 35), 
 - [ ] **Step 4: Every device test of `:app` but the voice's**
 
 Run: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; $adb = Get-Adb; if (-not (Test-KestrelAvdAnswer @(& $adb -s emulator-5554 emu avd name))) { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.notPackage=dev.kestrel.app.voice'; "exit: $LASTEXITCODE"; "overlay app-op: $("$(& $adb -s emulator-5554 shell appops get dev.kestrel.testapp SYSTEM_ALERT_WINDOW)".Trim())"; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL and `exit: 0`; no test fails, among them this plan's `QuestionCardTest` (6), `GridBarAndCardTest`, `ConversationViewsTest` (7), `ConversationScreenTest` (4), `QuestionFlowTest` (9, with D21's waits divided by 60), `TypedBoundaryTest` (2), `PastConversationsTest` (2), `SettingsAppTest` (4 new), `ConversationHooksTest` (3) and `RoomRecordArchiveTest` (1 new), and the earlier plans' tests of `dev.kestrel.app.agent`, `dev.kestrel.app.conversation` (`GoalServiceTest`, `GoalPauseTest`), `AgentEndToEndTest` with the card's new title, `ClipboardHookTest` (reliable only while kestrel-api37 runs without a window, Step 1) and `AgentHooksTest`; the overlay app-op is the one of Step 1. Against plan 7E's Task 8, Step 3 on the same device (373 run, 258 passed and 115 skipped, or 259 passed and 114 skipped when Kestrel holds the phone-state permission), this run has this plan's 32 tests more, all of which run: 405 run and 0 failed, with the skipped tests of plan 7E's run (`GoalServiceTest.aCallPausesTheGoalWithListeningOffUntilTheNotificationsContinue` while Kestrel lacks the phone-state permission, `ConversationSearchSpeedTest` without its argument, the tests of `dev.kestrel.app.commands`, which skip themselves without `scripts\command-test.ps1`'s argument, and the tests that skipped before plan 7E for a precondition that their assumption names). A skip of `QuestionFlowTest`'s speech test means that the emulator lacks the voice's models: note it. The script reports no change of Kestrel's install, of the Google accounts or of Kestrel's profiles. The tests delete only the conversations that they made (`TypedTests`), so the owner's own past conversations on kestrel-api37 stay. A failure of `TypedBoundaryTest.aTapThatPassesThroughAnotherAppsWindowSendsNothing` at its first tap is a finding about design 12.2 (Android passed the touch to the screen): stop, run the data check, and report it as that finding. When the only failures are in `dev.kestrel.app.screen.SystemUiFilterTest`, which is known to be flaky on the emulator (plan 7D's gate), run that class alone once: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if (-not (Test-KestrelAvdAnswer @(& (Get-Adb) -s emulator-5554 emu avd name))) { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.screen.SystemUiFilterTest'; "exit: $LASTEXITCODE"; scripts\gradle.ps1 --stop`; when it passes, note "flaky, passed when run again" and go on. Then the data check. Any other failure, or a second failure of that class: stop, run the data check, and report.
+Expected: BUILD SUCCESSFUL and `exit: 0`; no test fails, among them this plan's `QuestionCardTest` (6), `GridBarAndCardTest`, `ConversationViewsTest` (7), `ConversationScreenTest` (4), `QuestionFlowTest` (9, with D21's waits divided by 60), `TypedBoundaryTest` (2), `PastConversationsTest` (2), `SettingsAppTest` (5 new), `ConversationHooksTest` (3) and `RoomRecordArchiveTest` (1 new), and the earlier plans' tests of `dev.kestrel.app.agent`, `dev.kestrel.app.conversation` (`GoalServiceTest`, `GoalPauseTest`), `AgentEndToEndTest` with the card's new title, `ClipboardHookTest` (reliable only while kestrel-api37 runs without a window, Step 1) and `AgentHooksTest`; the overlay app-op is the one of Step 1. Against plan 7E's Task 8, Step 3 on the same device (373 run, 258 passed and 115 skipped, or 259 passed and 114 skipped when Kestrel holds the phone-state permission), this run has this plan's 33 tests more, all of which run: 406 run and 0 failed, with the skipped tests of plan 7E's run (`GoalServiceTest.aCallPausesTheGoalWithListeningOffUntilTheNotificationsContinue` while Kestrel lacks the phone-state permission, `ConversationSearchSpeedTest` without its argument, the tests of `dev.kestrel.app.commands`, which skip themselves without `scripts\command-test.ps1`'s argument, and the tests that skipped before plan 7E for a precondition that their assumption names). A skip of `QuestionFlowTest`'s speech test means that the emulator lacks the voice's models: note it. The script reports no change of Kestrel's install, of the Google accounts or of Kestrel's profiles. The tests delete only the conversations that they made (`TypedTests`), so the owner's own past conversations on kestrel-api37 stay. A failure of `TypedBoundaryTest.aTapThatPassesThroughAnotherAppsWindowSendsNothing` at its first tap is a finding about design 12.2 (Android passed the touch to the screen): stop, run the data check, and report it as that finding. When the only failures are in `dev.kestrel.app.screen.SystemUiFilterTest`, which is known to be flaky on the emulator (plan 7D's gate), run that class alone once: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if (-not (Test-KestrelAvdAnswer @(& (Get-Adb) -s emulator-5554 emu avd name))) { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }; scripts\connected-test.ps1 -Serial emulator-5554 :app:connectedDebugAndroidTest '-Pandroid.testInstrumentationRunnerArguments.class=dev.kestrel.app.screen.SystemUiFilterTest'; "exit: $LASTEXITCODE"; scripts\gradle.ps1 --stop`; when it passes, note "flaky, passed when run again" and go on. Then the data check. Any other failure, or a second failure of that class: stop, run the data check, and report.
 
 - [ ] **Step 5: The voice's device tests**
 
@@ -13259,15 +13536,15 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7F": the build's commit on
 |---|---|---|---|
 | `:core:agent`, Tasks A1 and A2 (before plan 7B's Task 8) | Gₐ | Gₐ + 1 | Task A1 (`AgentToolsTest` + 1) |
 | `:core:conversation`, Tasks A1 and A2 | Cₐ | Cₐ + 2 | Task A1 (`ConversationOwnerTest` + 1), Task A2 (`ConversationMachineTest` + 1) |
-| `:app` JVM (with `app/src/testDebug`) | A₀ | A₀ + 66 | Task 1 + 11, Task 2 + 0 (no steps), Task 4 + 14, Task 5 + 10, Task 6 + 12, Task 8 + 2, Task 10 + 2, Task 11 + 4, Task 13 + 3, Task 13a + 8 |
-| `:app` device tests | AD₀ | AD₀ + 32 | Task 1 + 2 (`QuestionCardTest` 6 for `ConfirmationCardTest`'s 4), Task 3 + 1, Task 7 + 6, Task 8 + 4, Task 9 + 9, Task 10 + 2, Task 11 + 3, Task 12 + 4, Task 13 + 1 |
+| `:app` JVM (with `app/src/testDebug`) | A₀ | A₀ + 69 | Task 1 + 11, Task 2 + 0 (no steps), Task 4 + 14, Task 5 + 13, Task 6 + 12, Task 8 + 2, Task 10 + 2, Task 11 + 4, Task 13 + 3, Task 13a + 8 |
+| `:app` device tests | AD₀ | AD₀ + 33 | Task 1 + 2 (`QuestionCardTest` 6 for `ConfirmationCardTest`'s 4), Task 3 + 1, Task 7 + 6, Task 8 + 4, Task 9 + 9, Task 10 + 2, Task 11 + 3, Task 12 + 5, Task 13 + 1 |
 | `:core:conversation`, Tasks 1 to 15 | C₀ | C₀ + 12 | Task 1 + 1 (`ConversationEngineTest`: the hand-over card's Continue; its case of the card's yes is rewritten), Task 3 + 8, Task 4 + 2, Task 5 + 1 |
 | `:core:agent`, Tasks 1 to 15 | G₀ | G₀ | none |
 | `:core:screen` JVM | S₀ | S₀ | none |
 | `:core:privacy` JVM and device tests | P₀, PD₀ | P₀ + 1, PD₀ + 1 | Task 3 (`ConversationArchiveStoreTest` + 1, `KestrelDatabaseTest` + 1); Task 14 runs the device tests |
 | `:tools:eval`, `build-logic`, Pester | E₀, … | unchanged | none |
 
-At `284eb0ec` (the amendment of 2026-11-26) the base is A₀ = 717, C₀ = 293, G₀ = 315, S₀ = 101, P₀ = 94, AD₀ = 469 and PD₀ = 35, so the end is `:app` JVM 783, device 501, `:core:conversation` 305, `:core:agent` 315, `:core:screen` 101, `:core:privacy` JVM 95 and device 36; the amendment's rebuild check, with every task's code applied, measured exactly these.
+At `284eb0ec` (the amendment of 2026-11-26) the base is A₀ = 717, C₀ = 293, G₀ = 315, S₀ = 101, P₀ = 94, AD₀ = 469 and PD₀ = 35, so the end is `:app` JVM 786, device 502, `:core:conversation` 305, `:core:agent` 315, `:core:screen` 101, `:core:privacy` JVM 95 and device 36; the amendment's rebuild check, with every task's code applied, measured exactly these.
 
 ## Interfaces for 7G
 
@@ -13281,12 +13558,12 @@ Plan 7G (the hooks' script entries, `:tools:eval`'s turns, typed answers and the
 - **The question card** is `:core:screen`'s `QuestionCard`, whose window title is "Kestrel question" (`CARD_TITLE`; it was "Kestrel confirmation"), with the arming delay `CARD_ARMING_MILLIS` (600 ms). Its buttons' labels are `strings_card.xml`'s: Yes, No, Confirm, Cancel, Continue, Stop and "Reply…", a pick's own labels (up to 4, from the agent's question since Task A1), and for a pick without choices a low keypad (a row with the number, "Delete digit", OK and Move; the digits 1 to 5 and 6 to 0) with Cancel, which gives only a number from 1 to the pick's highest number, and whose Move takes the card to the other end of the screen.
 - **The card desk** (`AppGraph.cardDesk`, `CardDesk(screen, scope, notice, replyOpenMillis, inputIds, clock) : SharedCards, OverlayCards`): one card per question number for both channels; a card that got no answer shows again when a new screen session connects (`OwnerScreen.connections`, which `AndroidOwnerSupport(context, sessions: StateFlow<ScreenSession?>, bar, open, calls)` counts); a Continue tapped while the phone is locked waits for the unlock, and `notice` shows `CardDesk.UNLOCK_FIRST` ("Unlock the phone, then tap Continue.") on the bar meanwhile; each tap that answers takes its number among the owner's inputs as it reaches the desk, and every caller that it answers gets `CardTap(choice, act)` with that one number; `open: StateFlow<OwnerCard?>` (with `answersOnScreen`, false for a confirmation, a hand-over and a pick, and `takes(choice)`, which takes a keypad's number within the pick's range), `screenInFront(front)`; and, for debug code only, `OverlayCards.withShown(block)` and `locked()` (Task 13a).
 - **The text channel** (`AppGraph.textChannel`): `sent: SharedFlow<InputIntent>`, `read(text)` (`TypedInputs.read(text, view)`: plan 7D's typed reading, `Requests.typed`, in which only the exact name counts and the voice's own requests such as "never mind" stay the owner's words, and an answer to the view's open question names its number, `InputIntent.Answer(answer, question)`), `input(intent)` (with the next `InputIds` number, taken as the input arrives), `submit(input)`, `choose(key, choice)` and `composing(active)`; its `ask` returns a card's answer with the number of the owner's tap (`CardAnswer`), and its words reach the bar through `AppGraph.feedbackBar`. Its `handOver(handOver, part)` owns the hand-over (`HandOverSignals.opened`, the page, its end by itself) only for `HandOverPart.OWN`; beside the voice channel, which owns a spoken conversation's hand-over, it gets `HandOverPart.CARD` and shows only the hand-over's card, so a question has one hand-over (review A-I1). A typed answer whose question had ended is not read as a command: the bar shows `ConversationTexts.ANSWER_ENDED` ("That question had ended, so I didn't use your answer.", review A-M3).
-- **The voice channel** (`AppGraph.voiceChannel`, `VoiceChannel(voice, screen, cards, audio, handOvers, permissions, offVoice, audioSettleMillis)`): it speaks a `ChannelOutput.Said` with Kestrel's own voice exactly when the output says so (`Said.ownVoice`, which `ConversationOwner` sets as it routes a typed conversation's words while Kestrel is off) and never reads listening's state itself (review A-I2); `stopOwnVoice()`, which the app graph calls on the owner's Stop, stops Kestrel's own voice (`OffVoice.stop()`) and drops its waiting words (review A-M6).
+- **The voice channel** (`AppGraph.voiceChannel`, `VoiceChannel(voice, screen, cards, audio, handOvers, permissions, offVoice, audioSettleMillis)`): it speaks a `ChannelOutput.Said` with Kestrel's own voice exactly when the output says so (`Said.ownVoice`, which `ConversationOwner` sets as it routes a typed conversation's words while Kestrel is off) and never reads listening's state itself (review A-I2); `stopSpeech()`, which the app graph calls on the owner's Stop that did not come by voice, is the same stop as a spoken one: it stops the voice session's speech (`VoicePath.stopSpeaking`, the Rules' `Event.StopSpeaking`), Kestrel's own voice (`OffVoice.stop()`), and drops the waiting words (review A-M6).
 - **The owner port** (Task A1): `OwnerPort.ask(question, kind, choices = emptyList(), highest = 0)` with `OwnerPort.MAX_CHOICES = 4`; a choice answers as `Answer.Number(position)`; `ChannelQuestion.highest`. **The answer's question** (Task A2): `InputIntent.Answer(answer, question = null)`; an answer that names another question than the open one answers nothing.
 - **The device tests' seams:** `AppGraph.conversationTimers: ((Timer, Long) -> Long)?` and the instrumentation argument `kestrelWaitDivisor` (60 when it is not given); `AppGraph.offVoice.replies`; the androidTest helper `TypedTests` (`graph`, `marker`, `marked(words)`, `own(id)`, `prepare(model)`, `finish()`, which deletes only the conversations that the tests made, `bringScreen(screen)`, `screenInFront(screen)`, `send(nodes, words)`, `text(id, args)`); the Compose tags `FIELD_TAG` (`conversation-field`), `PAST_SEARCH_TAG` (`past-search`) and `pastRowTag(id)`; the fixture `ObscuringActivity` of `:testapp`, whose window "Obscuring overlay" needs the app-op `SYSTEM_ALERT_WINDOW`.
 - **Past conversations:** `ConversationEngine.deletePast(id)` (checked by the engine's loop, done by its writer) and `deleteAllPast()` (after the writer's barrier, beside the engine's inbox, in its scope; it keeps every conversation that is open at some moment before its transaction) with `PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }`; a `deleteAllPast()` while one runs waits for it and deletes nothing again, and `allPastDeletion: StateFlow<AllPastDeletion>` (`Idle`, `Running`, `Ended(outcome)`) says which stands (review B-M4); `ConversationStore.deleteClosed(keep)`, which reads the keep-set under its lock, raises the store's generation and throws `PastUnavailableException` while the index cannot be read, over the port's `RecordArchive.deleteClosed(keep, index)`, which keeps the open row, the logs and the key; `HistorySearch.matching(text): PastMatches` (`All`, `Only(ids)`, `Rebuilding`, `Failed`), over plan 7B's index's shards; `AppGraph.pastConversations`.
-- **The Conversations page:** `SettingsPage.CONVERSATIONS` (so `MainActivity`'s `EXTRA_PAGE` `CONVERSATIONS` opens it); `SettingsData.conversations`, `setConversations`, `countsCredits` (`Profile.countsCredits` of the default profile, the one rule that only Copilot counts AI Credits, which `AppModelPort` reads too; review B-M6), `deleteAllPast` and `allPastDeletion`.
-- **The bar:** `GoalBar.text(view)` gives design 10.5's "Step 12 · 3 of 7 · …" and `GoalBar.ON_HOLD`; `AppGraph.feedbackBar` (plan 7D's `OwnedBar`, now `OwnedBar(bar, scope, clock)`) is the bar's one writer, which listening, the text channel and the owner's parts (`AndroidOwnerSupport.releaseBar`, `BarOwner.Other`) write through, with `BarOwner.Progress` and `progress(text: String?)`, which shows the newest progress once no other owner's text holds the bar, and drops a waiting line when it gets null at the goal's end; a final reply's kept text (`BarOwner.FinalReply`) holds the bar for its follow-up countdown (review A-M5); `OwnedBar.OTHERS_MILLIS = 4_000L`. The debug hook `feedback` writes the bar through it too.
+- **The Conversations page:** `SettingsPage.CONVERSATIONS` (so `MainActivity`'s `EXTRA_PAGE` `CONVERSATIONS` opens it); `SettingsData.conversations`, `setConversations`, `countsCredits` (`Profile.countsCredits` of the default profile, the one rule that only Copilot counts AI Credits, which `AppModelPort` and the profile page's cost read too; review B-M6), `deleteAllPast` and `allPastDeletion`; the page shows a deletion's outcome only for a deletion that it started or saw running (review B-N1).
+- **The bar:** `GoalBar.text(view)` gives design 10.5's "Step 12 · 3 of 7 · …" and `GoalBar.ON_HOLD`; `AppGraph.feedbackBar` (plan 7D's `OwnedBar`, now `OwnedBar(bar, scope, clock)`) is the bar's one writer, which listening, the text channel and the owner's parts (`AndroidOwnerSupport.releaseBar`, `BarOwner.Other`) write through, with `BarOwner.Progress` and `progress(text: String?)`, which shows the newest progress once no other owner's text holds the bar, and drops a waiting line when it gets null at the goal's end; a final reply's kept text (`BarOwner.FinalReply`) holds the bar for its follow-up countdown (review A-M5), and listening lets it go when the Rules say that no window follows it (`Effect.NoFollowUp`, review A-R2); `OwnedBar.OTHERS_MILLIS = 4_000L`. The debug hook `feedback` writes the bar through it too.
 - **The goal service for the screen:** `GoalForeground.foreground: StateFlow<ForegroundState>` (`goal`, `running`, `settled`).
 - **The call watch:** `AppGraph.phoneStateGrant` (`PhoneStateGrant.check()`) starts `Listening.watchCalls` once after a grant of READ_PHONE_STATE; `ConversationActivity` and `MainActivity` call it as they come to the front (review B-M2).
 - **The held goal's sentence after Android's refusal:** `ConversationTexts.OPEN_AND_CONTINUE` ("Open Kestrel and tap Continue.") in place of `CONTINUE_IN_NOTIFICATION`, since Task 8.
@@ -13341,10 +13618,10 @@ Each item is a reading of the design that the design leaves open, or a choice of
 42. **How words are played is decided once, where they are routed** (decided, review A-I2): `Said.ownVoice` travels with the output, and the voice channel follows it (design 11).
 43. **A typed answer that came after its question ended** (decided, review A-M3) is not used: the bar says "That question had ended, so I didn't use your answer." Reading it as a new command could act on words that the owner meant only as an answer (design 12.2); he types it again as a command if he wants it.
 44. **A card that got no answer shows again when the screen session comes back** (decided, review A-M4), through the desk's count of sessions.
-45. **The bar and Kestrel's own voice** (decided, review A-M5 and A-M6): a final reply holds the bar for its follow-up countdown; the owner's Stop, typed or spoken, stops Kestrel's own voice at once.
+45. **The bar and Kestrel's own voice** (decided, review A-M5 and A-M6, and their re-check): a final reply holds the bar for its follow-up countdown and lets it go when the Rules say that none follows it; the owner's Stop, typed or spoken, is one stop: Kestrel's speech and its own voice stop at once.
 46. **One rule marks the hooks' conversations** (decided, review B-I2): Task 13a's step rule, for tagged inputs and the hook's untagged typed ones; Task 13's view-based marking goes.
 47. **The call watch after a grant starts on every path to Kestrel's front** (decided, review B-M2), through `PhoneStateGrant`.
-48. **The list keeps its rows while it searches, and "Delete all" lives in the engine** (decided, review B-M3 and B-M4): a second "Delete all" while one runs waits for it and deletes nothing again, which the page cannot offer anyway while the engine says that one runs.
+48. **The list keeps its rows while it searches, and "Delete all" lives in the engine** (decided, review B-M3 and B-M4): a second "Delete all" while one runs waits for it and deletes nothing again, which the page cannot offer anyway while the engine says that one runs; the page shows an outcome only for a deletion that it saw (review B-N1), and the rows that a re-read keeps have no Delete until the list is current (review B-N2).
 49. **Only Copilot counts AI Credits, by one rule** (decided, review B-M6): `Profile.countsCredits`.
 
 ## Self-review
@@ -13354,4 +13631,4 @@ Each item is a reading of the design that the design leaves open, or a choice of
 - **Placeholder scan.** No step says "to be decided", "as needed" or "similar to"; every step that changes code gives the whole code, and every replacement names its old text. Tasks 14 and 15 name the values that the controller fills in from an earlier step: Task 14's listening mode, accessibility setting and overlay's mode of Step 1, and Task 15's listening mode, "stay awake" setting and accessibility setting of Step 2.
 - **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `SharedCards`, `CardTap`, `CardAnswer`, `OwnerReply`, `HandOverAnswer`, `HandOverPart`, `ChannelOutput.Said.ownVoice`, `OffVoice`, `ConversationTexts.ANSWER_ENDED`, `OwnerScreen.connections`, `PhoneStateGrant`, `AllPastDeletion`, `Profile.countsCredits`, `TextChannel`, `TypedInputs`, `GoalBar`, `OwnedBar.progress`, `BarOwner.Progress`, `GoalControls.Working(behindCommand)`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
 - **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `c1ff29ac` (plans 7A and 7B, this plan's Tasks A1 and A2, plan 7C's Tasks 1 to 6, 9 and 9b, and plan 7D's Tasks 1 and 2 built; plan 7B's engine after the fixes of its Task 10, its re-checks (`e76ad7a6`, `50b99c61`), its whole-plan review (`a05ea85a`) and that review's re-check (`4b0cf87f`: `Message.Reopened` carries the chosen and the closed conversation, and the switch's end is `switchEnd`); plan 7C's archive after `ae33cfda` and `6999fa5c`), it runs clean over plan 7C's Task 7, plan 7D from its Task 3 (as committed in `c1ff29ac`, with its writes held during the settings page's "Delete history", which this plan's single deletion joins through `send`, and `inTurn` for spoken outputs), plan 7E (`0b60ddea`) and this plan's Tasks 1 to 13a (241 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
-- **The amendment of 2026-11-26.** The plan checker runs clean against `284eb0ec` alone from Task 1 (341 operations, 118 files), and from Tasks 4, 8 and 11 on the simulated files of the tasks before them; every task's code, applied to `284eb0ec` in order, builds, and `:core:conversation:test :core:agent:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug :core:privacy:testDebugUnitTest :core:screen:testDebugUnitTest` pass with the end's counts, and `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` fails without Task 1's change of the hand-over; every PowerShell command of Tasks 14 and 15 parses in PowerShell 7 and 5.1 with the step helpers before it. Plans 7D's and 7E's findings: `ScreenTurns`' final rule (Task 2), the numbered answers and the inputs' numbers at arrival (Tasks 1 and 4), the one bar writer (Task 5), the one card per question number (Task 1), no new notification (so no new `KestrelNotification` ID), the screen's Continue in the refusal's sentence (Task 8), `waitsBehindCommand` on the screen (Tasks 6 and 7), and the setup state read through `SetupStatusReader` and `AccessibilitySettings` (Task 8's `SetupState`).
+- **The amendment of 2026-11-26.** The plan checker runs clean against `284eb0ec` alone from Task 1 (354 operations, 122 files), and from Tasks 4, 8 and 11 on the simulated files of the tasks before them; every task's code, applied to `284eb0ec` in order, builds, and `:core:conversation:test :core:agent:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug :core:privacy:testDebugUnitTest :core:screen:testDebugUnitTest` pass with the end's counts, and `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` fails without Task 1's change of the hand-over; every PowerShell command of Tasks 14 and 15 parses in PowerShell 7 and 5.1 with the step helpers before it. Plans 7D's and 7E's findings: `ScreenTurns`' final rule (Task 2), the numbered answers and the inputs' numbers at arrival (Tasks 1 and 4), the one bar writer (Task 5), the one card per question number (Task 1), no new notification (so no new `KestrelNotification` ID), the screen's Continue in the refusal's sentence (Task 8), `waitsBehindCommand` on the screen (Tasks 6 and 7), and the setup state read through `SetupStatusReader` and `AccessibilitySettings` (Task 8's `SetupState`).
