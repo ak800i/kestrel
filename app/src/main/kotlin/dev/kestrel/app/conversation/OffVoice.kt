@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Kestrel's own voice while no voice session is open (design 10.6 and 11 of sub-project 7). It owns the one count of the
@@ -123,7 +122,6 @@ internal class AppOffVoice(
     @Volatile
     private var loaded: Loaded? = null
     private var closing: Job? = null
-    private val spoken = AtomicInteger()
 
     // A reply starts only under [stopLock] and only while [stopCount] is the count that held when its words came, and a
     // stop counts and stops the voice under the same lock, so that no reply starts after a stop that came after its words.
@@ -140,9 +138,6 @@ internal class AppOffVoice(
     override fun mark(asked: Long): OwnVoiceMark = OwnVoiceMark(asked, synchronized(stopLock) { endCount })
 
     override val stops: Long get() = synchronized(stopLock) { stopCount }
-
-    /** How many replies it has spoken in this process, for the device tests. */
-    val replies: Int get() = spoken.get()
 
     override suspend fun speak(text: String, mark: OwnVoiceMark): Boolean =
         mutex.withLock {
@@ -200,7 +195,6 @@ internal class AppOffVoice(
             if (!reply.isCompleted) voice.stop()
             synchronized(stopLock) { playing = null }
         }
-        spoken.incrementAndGet()
         return true
     }
 
@@ -245,7 +239,7 @@ internal class AppOffVoice(
         }
     }
 
-    override fun toString(): String = "AppOffVoice(loaded=${loaded != null}, replies=$replies)"
+    override fun toString(): String = "AppOffVoice(loaded=${loaded != null})"
 
     companion object {
         /** How long the voice stays loaded after the last reply. */

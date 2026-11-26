@@ -274,17 +274,20 @@ class QuestionFlowTest {
         VoiceTests.assumeModels(Engine.TTS)
         val stored = graph.settings.get(SettingKeys.CONVERSATIONS)
         graph.settings.set(SettingKeys.CONVERSATIONS, stored.copy(speakTypedReplies = true))
+        // The one count of what Kestrel's own voice spoke (the whole-plan review's M4): a refused reply is not heard.
+        val watch = OwnVoiceWatch { false }
+        graph.ownVoicePlayback = watch::wrap
         try {
             screen.open("ViewsActivity", "Views fixture")
             TypedTests.bringScreen(screen, compose)
-            val before = graph.offVoice.replies
             TypedTests.prepare(ScriptedModel(listOf(onIt, fail)))
 
             AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
 
             // "On it." (design 11): spoken by Kestrel's own voice, because Kestrel is off.
-            check(VoiceTests.waitUntil(60_000) { graph.offVoice.replies > before }) { "Kestrel's own voice did not speak the goal's words" }
+            check(VoiceTests.waitUntil(60_000) { watch.ended(Spoke.FINISHED) > 0 }) { "Kestrel's own voice did not speak the goal's words" }
         } finally {
+            graph.ownVoicePlayback = null
             graph.settings.set(SettingKeys.CONVERSATIONS, stored)
         }
     }
@@ -316,13 +319,15 @@ class QuestionFlowTest {
             compose.onNodeWithTag(FIELD_TAG).performTextInput("Half past seven")
             check(VoiceTests.waitUntil(60_000) { watch.holding }) { "Kestrel's own voice did not speak the question" }
             // Kestrel's own voice speaks one reply at a time, so that every reply before the question's copy has ended.
-            val before = graph.offVoice.replies
+            val heardBefore = watch.ended(Spoke.FINISHED)
+            val stoppedBefore = watch.ended(Spoke.STOPPED)
             TypedTests.tapSend(compose)
 
             check(VoiceTests.waitUntil(COPY_END_MILLIS) { !watch.holding && !watch.playing }) { "The question's spoken copy went on after the answer" }
             check(VoiceTests.waitUntil(30_000) { model.calls == 2 }) { "The answer did not reach the goal" }
-            // The answer ended the copy: a copy that ended in any other way would count.
-            assertEquals(before, graph.offVoice.replies)
+            // The answer ended the copy with a stop: it never counted as heard.
+            assertEquals(heardBefore, watch.ended(Spoke.FINISHED))
+            assertEquals(stoppedBefore + 1, watch.ended(Spoke.STOPPED))
             val heard = watch.ended(Spoke.FINISHED)
 
             repeat(REPLIES) { model.release() }

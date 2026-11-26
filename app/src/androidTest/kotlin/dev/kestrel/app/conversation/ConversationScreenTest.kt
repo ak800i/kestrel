@@ -14,11 +14,13 @@ import dev.kestrel.agent.testing.ScriptedModel.Companion.call
 import dev.kestrel.app.R
 import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.conversation.screen.ConversationActivity
+import dev.kestrel.app.debug.OwnVoiceWatch
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.KESTREL
 import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -79,17 +81,24 @@ class ConversationScreenTest {
         TypedTests.bringScreen(screen, compose)
         val model = ScriptedModel(listOf(onIt, fail))
         TypedTests.prepare(model)
-        val spoken = graph.offVoice.replies
+        // The one count of what Kestrel's own voice spoke (the whole-plan review's M4).
+        val watch = OwnVoiceWatch { false }
+        graph.ownVoicePlayback = watch::wrap
+        try {
+            val ended = AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
 
-        val ended = AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
-
-        assertEquals(EndReason.FAILED_BY_MODEL, ended.report.end)
-        // The round's first observation was the fixture's, so the screen had left before the goal looked (design 10.2).
-        assertTrue(AgentTests.texts(model).contains("Views fixture"))
-        assertFalse(TypedTests.screenInFront(screen))
-        assertEquals(InputChannel.TEXT, graph.conversations.view.value.records.single().channel)
-        // A typed command's words are written, not spoken (design 11): with the setting off nothing was spoken.
-        assertEquals(spoken, graph.offVoice.replies)
+            assertEquals(EndReason.FAILED_BY_MODEL, ended.report.end)
+            // The round's first observation was the fixture's, so the screen had left before the goal looked (design 10.2).
+            assertTrue(AgentTests.texts(model).contains("Views fixture"))
+            assertFalse(TypedTests.screenInFront(screen))
+            assertEquals(InputChannel.TEXT, graph.conversations.view.value.records.single().channel)
+            // A typed command's words are written, not spoken (design 11): with the setting off Kestrel's own voice played
+            // no reply.
+            assertFalse(watch.playing)
+            assertEquals(0, Spoke.entries.sumOf { watch.ended(it) })
+        } finally {
+            graph.ownVoicePlayback = null
+        }
     }
 
     @Test

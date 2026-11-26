@@ -524,7 +524,7 @@ class AppGraph(context: Context) {
 
     /**
      * Kestrel's own voice while it is off, for a typed conversation's spoken replies (design 10.6 and 11 of sub-project 7),
-     * inside the goal service's mediaPlayback; the device tests read how many replies it spoke.
+     * inside the goal service's mediaPlayback; the device tests watch its replies through [ownVoicePlayback].
      */
     internal val offVoice: AppOffVoice by lazy {
         AppOffVoice(
