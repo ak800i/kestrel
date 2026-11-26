@@ -3,19 +3,17 @@ package dev.kestrel.app.settings
 import android.Manifest
 import android.app.ActivityManager
 import android.app.role.RoleManager
-import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import dev.kestrel.app.AccessibilitySettings
-import dev.kestrel.app.KestrelAccessibilityService
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 
 /** Reads what Kestrel can find out about its own setup, for the setup checklist (design spec, section 15). */
 class SetupStatusReader(private val context: Context) {
     fun read(): SetupStatus {
-        val kestrel = ComponentName(context, KestrelAccessibilityService::class.java)
+        val kestrel = AccessibilitySettings.kestrelComponent(context)
         // Only the services that Android runs.
         val services = AccessibilitySettings.running(context)
         val service = AccessibilitySettings.kestrel(context, services)

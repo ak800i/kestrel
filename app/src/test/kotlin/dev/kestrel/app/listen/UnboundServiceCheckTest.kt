@@ -1,5 +1,6 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.AccessibilityServiceState
 import java.util.concurrent.Executors
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch

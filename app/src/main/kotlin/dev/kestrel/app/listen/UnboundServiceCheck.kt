@@ -1,14 +1,9 @@
 package dev.kestrel.app.listen
 
+import dev.kestrel.app.AccessibilityServiceState
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-
-/**
- * Kestrel's accessibility service as Android holds it: [enabled] when Android's setting names it, [running] when Android
- * runs it. Enabled and not running is the state that only the owner can end, by turning the service off and on.
- */
-internal data class AccessibilityServiceState(val enabled: Boolean, val running: Boolean)
 
 /**
  * Tells the owner, at the start of Kestrel's process, that Android left Kestrel's accessibility service unbound after he

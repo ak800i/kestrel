@@ -5,10 +5,18 @@ import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
-import dev.kestrel.app.listen.AccessibilityServiceState
+
+/**
+ * Kestrel's accessibility service as Android holds it: [enabled] when Android's setting names it, [running] when Android
+ * runs it. Enabled and not running is the state that only the owner can end, by turning the service off and on.
+ */
+internal data class AccessibilityServiceState(val enabled: Boolean, val running: Boolean)
 
 /** What Android's accessibility settings and its accessibility manager say about accessibility services. */
 internal object AccessibilitySettings {
+    /** Kestrel's accessibility service, as Android's settings and its manager name it. */
+    fun kestrelComponent(context: Context): ComponentName = ComponentName(context, KestrelAccessibilityService::class.java)
+
     /** The accessibility services that Android runs: not those that it holds as crashed or is still binding. */
     fun running(context: Context): List<ComponentName> =
         context.getSystemService(AccessibilityManager::class.java)
@@ -34,7 +42,7 @@ internal object AccessibilitySettings {
      * owner's stop both read.
      */
     fun kestrel(context: Context, running: List<ComponentName> = running(context)): AccessibilityServiceState {
-        val service = ComponentName(context, KestrelAccessibilityService::class.java)
+        val service = kestrelComponent(context)
         return AccessibilityServiceState(
             enabled = names(context, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, service),
             running = service in running,
