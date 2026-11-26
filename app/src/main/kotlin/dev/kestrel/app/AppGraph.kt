@@ -27,6 +27,7 @@ import dev.kestrel.app.conversation.CardDesk
 import dev.kestrel.app.conversation.AppOffVoice
 import dev.kestrel.app.conversation.ConversationSignals
 import dev.kestrel.app.conversation.GoalBar
+import dev.kestrel.app.conversation.LoadedVoice
 import dev.kestrel.app.conversation.PermissionDialog
 import dev.kestrel.app.conversation.playerVoices
 import dev.kestrel.app.conversation.storedConversationSettings
@@ -525,8 +526,16 @@ class AppGraph(context: Context) {
             foreground = { block -> goalForeground.whileSpeaking(block) },
             scope = scope,
             report = reportFailure,
+            playback = { voice -> ownVoicePlayback?.invoke(voice) ?: voice },
         )
     }
+
+    /**
+     * Device tests only: what Kestrel's own voice plays each reply on, such as a watch that holds a question's spoken copy
+     * until the test lets it go (plan 7F). Null, and so the loaded voice itself, outside those tests.
+     */
+    @Volatile
+    internal var ownVoicePlayback: ((LoadedVoice) -> LoadedVoice)? = null
 
     /**
      * Starts the call watch once the owner has granted READ_PHONE_STATE, also outside Kestrel (section 8.7): the

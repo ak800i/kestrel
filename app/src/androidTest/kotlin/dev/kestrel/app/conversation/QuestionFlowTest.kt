@@ -1,8 +1,6 @@
 package dev.kestrel.app.conversation
 
 import android.graphics.Rect
-import android.media.AudioAttributes
-import android.media.AudioManager
 import android.os.SystemClock
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -23,6 +21,7 @@ import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.agent.HeldModel
 import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.conversation.screen.FIELD_TAG
+import dev.kestrel.app.debug.OwnVoiceWatch
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
 import dev.kestrel.app.voice.VoiceTests
@@ -34,6 +33,7 @@ import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
 import dev.kestrel.voice.models.Engine
+import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -67,14 +67,12 @@ class QuestionFlowTest {
     private val onIt = call("say", null, null, null, "text" to "On it.")
     private val done = call("say", null, null, null, "text" to "Done.")
     private val fail = call("fail", null, null, null, "reason" to "I stop here.")
-    private val ask = call("ask_user", null, null, null, "question" to "Which time?")
-    private val longAsk = call("ask_user", null, null, null, "question" to LONG_QUESTION)
+    private val ask = call("ask_user", null, null, null, "question" to QUESTION)
     private val delete = call("tap", "Delete chat", null, null, "reason" to "the next step", "category" to "deleting")
     private val notifications = call("list_notifications")
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val listener by lazy { KestrelNotificationListener.component(context).flattenToString() }
-    private val audio by lazy { context.getSystemService(AudioManager::class.java) }
 
     // D21's waits, divided by the instrumentation argument (design 15.2 of sub-project 7).
     private val divisor = InstrumentationRegistry.getArguments().getString(WAIT_DIVISOR)?.toLongOrNull()?.takeIf { it > 0 } ?: DEFAULT_DIVISOR
@@ -287,17 +285,20 @@ class QuestionFlowTest {
 
     // Plan 7F: a typed question's spoken copy ends with the question. The owner's typed answer, given while Kestrel's own
     // voice speaks the copy, ends that copy at once (the conversation cancels it, and the voice stops that reply alone,
-    // which then does not count as spoken), and the replies after it are still spoken. The model's next reply waits, so that
-    // nothing else plays when the test listens for the copy's end.
+    // which then does not count as spoken), and the replies after it are still spoken and heard. The watch on Kestrel's own
+    // voice holds the copy until a stop ends it, so that it still plays when the answer comes however long its audio is,
+    // and it reads only Kestrel's own player. The model's next reply waits, so that nothing else plays meanwhile.
     @Test
     fun aTypedAnswerEndsItsQuestionsSpokenCopyAndTheNextRepliesAreStillSpoken() = runBlocking {
         VoiceTests.assumeModels(Engine.TTS)
         val stored = graph.settings.get(SettingKeys.CONVERSATIONS)
         graph.settings.set(SettingKeys.CONVERSATIONS, stored.copy(speakTypedReplies = true))
+        val watch = OwnVoiceWatch { text -> QUESTION in text }
+        graph.ownVoicePlayback = watch::wrap
         try {
             screen.open("ViewsActivity", "Views fixture")
             TypedTests.bringScreen(screen)
-            val scripted = ScriptedModel(listOf(longAsk, onIt, done, fail))
+            val scripted = ScriptedModel(listOf(ask, onIt, done, fail))
             val model = HeldModel(scripted)
             TypedTests.prepare(model)
             val command = TypedTests.send(compose, "Set a reminder")
@@ -307,30 +308,28 @@ class QuestionFlowTest {
             tapCard(TypedTests.text(R.string.card_reply))
             check(VoiceTests.waitUntil(10_000) { TypedTests.screenInFront(screen) }) { "Reply… did not open the conversation screen" }
             compose.onNodeWithTag(FIELD_TAG).performTextInput("Half past seven")
-            check(VoiceTests.waitUntil(60_000) { assistantPlays() }) { "Kestrel's own voice did not speak the question" }
+            check(VoiceTests.waitUntil(60_000) { watch.holding }) { "Kestrel's own voice did not speak the question" }
             // Kestrel's own voice speaks one reply at a time, so that every reply before the question's copy has ended.
             val before = graph.offVoice.replies
             compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).performClick()
 
-            check(VoiceTests.waitUntil(COPY_END_MILLIS) { !assistantPlays() }) { "The question's spoken copy went on after the answer" }
+            check(VoiceTests.waitUntil(COPY_END_MILLIS) { !watch.holding && !watch.playing }) { "The question's spoken copy went on after the answer" }
             check(VoiceTests.waitUntil(30_000) { model.calls == 2 }) { "The answer did not reach the goal" }
-            // The copy ended before its end: a reply that played to its end would count.
+            // The answer ended the copy: a copy that ended in any other way would count.
             assertEquals(before, graph.offVoice.replies)
+            val heard = watch.ended(Spoke.FINISHED)
 
             repeat(REPLIES) { model.release() }
             assertEquals(EndReason.FAILED_BY_MODEL, AgentTests.ended(command).report.end)
             assertTrue(AgentTests.texts(scripted).contains("Half past seven"))
-            // "On it." and "Done.", spoken after the copy that the answer ended.
-            check(VoiceTests.waitUntil(60_000) { graph.offVoice.replies >= before + 2 }) { "Kestrel's own voice did not speak the replies after the answer" }
+            // "On it." and "Done.", which Kestrel's own player played to their end after the copy that the answer ended.
+            check(VoiceTests.waitUntil(60_000) { watch.ended(Spoke.FINISHED) >= heard + 2 }) { "Kestrel's own voice did not speak the replies after the answer" }
         } finally {
+            graph.ownVoicePlayback = null
+            watch.release()
             graph.settings.set(SettingKeys.CONVERSATIONS, stored)
         }
     }
-
-    // Whether Kestrel's voice plays now: the player keeps its track only while a reply plays, and Kestrel is off, so that
-    // only Kestrel's own voice speaks.
-    private fun assistantPlays(): Boolean =
-        audio.activePlaybackConfigurations.any { it.audioAttributes.usage == AudioAttributes.USAGE_ASSISTANT }
 
     // A typed goal on the fixture whose first model reply waits, and the owner's touch, which interrupts it (D13; the
     // conversation takes the touch as the touch watcher gives it, as in plan 7E's GoalServiceTest).
@@ -379,13 +378,8 @@ class QuestionFlowTest {
         /** How long the test watches a held goal stay held. */
         const val HELD_MILLIS = 3_000L
 
-        /**
-         * A question near the 200 characters that the agent may ask, so that its spoken copy, which takes some ten seconds,
-         * still plays when the typed answer comes.
-         */
-        const val LONG_QUESTION =
-            "Which time should the reminder have? Say a time of day, such as half past seven in the evening, " +
-                "or a day and a time, such as tomorrow at nine in the morning, and I will set it then."
+        /** The question that the scripted model asks. */
+        const val QUESTION = "Which time?"
 
         /** How soon after the tap on Send the question's spoken copy must have ended. */
         const val COPY_END_MILLIS = 1_500L

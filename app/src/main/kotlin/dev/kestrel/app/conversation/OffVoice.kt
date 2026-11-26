@@ -102,6 +102,9 @@ private class PlayerVoice(private val player: VoicePlayer, private val synthesiz
  * starts, whether it waits for its turn, for the voice to load or for the service's mediaPlayback. A reply whose caller is
  * cancelled ends as well. Turning Kestrel on ([endSpeech]) ends the reply that plays, and a reply whose mark came before it
  * does not start: it goes back to the voice channel for the voice session.
+ *
+ * Each reply plays on [playback] of the loaded voice, which is the voice itself outside the device tests, and its stops go
+ * to that voice too.
  */
 internal class AppOffVoice(
     private val load: suspend (VoiceOptions) -> LoadedVoice,
@@ -110,12 +113,13 @@ internal class AppOffVoice(
     private val scope: CoroutineScope,
     private val report: (String, Throwable) -> Unit,
     private val idleMillis: Long = IDLE_MILLIS,
+    private val playback: (LoadedVoice) -> LoadedVoice = { it },
 ) : OffVoice {
     private class Loaded(val options: VoiceOptions, val voice: LoadedVoice)
 
     private val mutex = Mutex()
 
-    // Changed under the mutex; read by stop() without it.
+    // Changed under the mutex; read by toString() without it.
     @Volatile
     private var loaded: Loaded? = null
     private var closing: Job? = null
@@ -129,6 +133,9 @@ internal class AppOffVoice(
     // How many times Kestrel turned on (endSpeech): a reply starts only while this is the count that held when the voice
     // channel chose this voice for it.
     private var endCount = 0L
+
+    // The voice that plays the reply now, which a stop ends. Set and cleared under stopLock.
+    private var playing: LoadedVoice? = null
 
     override fun mark(asked: Long): OwnVoiceMark = OwnVoiceMark(asked, synchronized(stopLock) { endCount })
 
@@ -175,10 +182,14 @@ internal class AppOffVoice(
         return took
     }
 
-    private suspend fun play(voice: LoadedVoice, text: String, mark: OwnVoiceMark): Boolean {
+    private suspend fun play(loadedVoice: LoadedVoice, text: String, mark: OwnVoiceMark): Boolean {
+        val voice = playback(loadedVoice)
         val reply = synchronized(stopLock) {
             when (startOf(mark)) {
-                Start.GO -> voice.speak(text)
+                Start.GO -> {
+                    playing = voice
+                    voice.speak(text)
+                }
                 Start.STOPPED -> return true
                 Start.SWITCHED -> return false
             }
@@ -187,6 +198,7 @@ internal class AppOffVoice(
             reply.await()
         } finally {
             if (!reply.isCompleted) voice.stop()
+            synchronized(stopLock) { playing = null }
         }
         spoken.incrementAndGet()
         return true
@@ -222,14 +234,14 @@ internal class AppOffVoice(
     override fun stop() {
         synchronized(stopLock) {
             stopCount++
-            loaded?.voice?.stop()
+            playing?.stop()
         }
     }
 
     override fun endSpeech() {
         synchronized(stopLock) {
             endCount++
-            loaded?.voice?.stop()
+            playing?.stop()
         }
     }
 

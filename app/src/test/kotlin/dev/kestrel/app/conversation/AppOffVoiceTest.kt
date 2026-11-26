@@ -25,7 +25,7 @@ class AppOffVoiceTest {
     private var applying: CompletableDeferred<Unit>? = null
     private val reports = mutableListOf<Pair<String, Throwable>>()
 
-    private fun TestScope.offVoice() = AppOffVoice(
+    private fun TestScope.offVoice(playback: (LoadedVoice) -> LoadedVoice = { it }) = AppOffVoice(
         load = {
             loads++
             loading?.await()
@@ -39,6 +39,7 @@ class AppOffVoiceTest {
         scope = backgroundScope,
         report = { what, error -> reports += what to error },
         idleMillis = IDLE_MILLIS,
+        playback = playback,
     )
 
     // The idle unload runs in the background scope, so the test lets its time pass and runs what is due.
@@ -136,6 +137,23 @@ class AppOffVoiceTest {
         voice.finishes = true
         assertTrue(offVoice.speak("Sent.", offVoice.mark(came)))
         assertEquals(listOf("Sent."), voice.spoken)
+    }
+
+    // The device tests' playback (AppGraph.ownVoicePlayback): a reply plays on the voice that it gives, and a stop ends the
+    // reply there.
+    @Test
+    fun aReplyPlaysOnItsPlaybackAndAStopEndsItThere() = runTest {
+        val playback = FakeVoice()
+        val offVoice = offVoice { playback }
+        val speaking = launch { offVoice.speak("Done.", offVoice.mark(offVoice.stops)) }
+        runCurrent()
+        assertEquals(listOf("Done."), playback.spoken)
+
+        offVoice.stop()
+        runCurrent()
+
+        assertTrue(speaking.isCompleted)
+        assertEquals(1, playback.stops)
     }
 
     // The owner's typed answer to a question cancels the question's spoken copy (ConversationOwner.race): its words end, and
