@@ -80,7 +80,7 @@ class KestrelSessionService : VoiceInteractionSessionService() {
  * task. A session that [KestrelAssistantService.openSettings] asked for starts Kestrel's settings instead. The session
  * has no window: a shown window covers the screen and takes the focus (prototype P3), and when it loses the focus while
  * Kestrel's main thread is busy for 5 s, as while the settings that the session started draw their first frame, Android
- * declares an ANR and ends Kestrel's process. The session hides itself at once, which ends its show.
+ * declares an ANR (it asks the owner to wait or close Kestrel). The session hides itself at once, which ends its show.
  */
 private class AssistSession(context: Context) : VoiceInteractionSession(context) {
     override fun onCreate() {

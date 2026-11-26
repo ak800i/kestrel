@@ -192,9 +192,9 @@ class AssistTest {
     }
 
     /**
-     * Kestrel's session has shown and has no window. A window would cover the app in front and take the focus (prototype
-     * P3), and a change of its focus that Kestrel's main thread cannot take within 5 s, as while it starts the settings,
-     * is an ANR that ends Kestrel's process. While Kestrel holds the role, only its session can have such a window.
+     * Kestrel's session has no window. A window would cover the app in front and take the focus (prototype P3), and a
+     * change of its focus that Kestrel's main thread cannot take within 5 s, as while it starts the settings, is an ANR,
+     * which ends an instrumentation run. While Kestrel holds the role, only its session can have such a window.
      */
     private fun assertNoSessionWindow() {
         assertFalse(
