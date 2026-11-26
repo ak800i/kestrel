@@ -40,6 +40,9 @@ import java.time.ZoneId
 /** The list's search field, by which the device tests find it. */
 internal const val PAST_SEARCH_TAG = "past-search"
 
+/** The list's progress line while it reads its rows again, by which the device tests know that a read has ended. */
+internal const val PAST_READING_TAG = "past-reading"
+
 /** A row of the list, by which the device tests find a conversation's row. */
 internal fun pastRowTag(id: ConversationId): String = "past-row-${id.value}"
 
@@ -143,7 +146,7 @@ private fun PastListPage(
         if (loaded is Loaded.Waiting) {
             Note(R.string.past_loading)
         } else if (loaded is Loaded.Done) {
-            if (reading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+            if (reading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp).testTag(PAST_READING_TAG))
             when (val listing = loaded.value) {
                 PastListing.Unavailable -> Note(R.string.past_unavailable)
                 PastListing.Failed -> Note(R.string.past_failed)

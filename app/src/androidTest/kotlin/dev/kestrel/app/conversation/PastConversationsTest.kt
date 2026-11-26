@@ -1,7 +1,5 @@
 package dev.kestrel.app.conversation
 
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -21,6 +19,7 @@ import dev.kestrel.app.R
 import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.conversation.screen.FIELD_TAG
+import dev.kestrel.app.conversation.screen.PAST_READING_TAG
 import dev.kestrel.app.conversation.screen.PAST_SEARCH_TAG
 import dev.kestrel.app.conversation.screen.pastRowTag
 import dev.kestrel.app.screen.ScreenServiceRule
@@ -138,12 +137,12 @@ class PastConversationsTest {
     }
 
     // The row of [id] once the list's read for its search has ended. Until then the list keeps the earlier read's rows, with
-    // their Delete off, under a progress line; the search waits for a pause in the typing with a delay that runs on the
+    // their Delete off, under its progress line; the search waits for a pause in the typing with a delay that runs on the
     // test's clock, which only a wait such as this one moves on.
     private fun awaitRow(id: ConversationId) {
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag(pastRowTag(id)).fetchSemanticsNodes().isNotEmpty() &&
-                compose.onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).fetchSemanticsNodes().isEmpty()
+                compose.onAllNodesWithTag(PAST_READING_TAG).fetchSemanticsNodes().isEmpty()
         }
     }
 
