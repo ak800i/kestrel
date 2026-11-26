@@ -44,6 +44,7 @@ class VoiceChannelTest {
     private val offSpoken = mutableListOf<String>()
     private val offAsked = mutableListOf<Long>()
     private var offStops = 0
+    private var offEnds = 0
     private var offHeld: CompletableDeferred<Unit>? = null
     private val offVoice = object : OffVoice {
         override val stops: Long get() = offStops.toLong()
@@ -59,6 +60,12 @@ class VoiceChannelTest {
         override fun stop() {
             offStops++
         }
+
+        // As AppOffVoice: turning Kestrel on ends the words that it speaks now.
+        override fun endSpeech() {
+            offEnds++
+            offHeld?.complete(Unit)
+        }
     }
 
     // The voice's cards go through the real desk, which numbers each tap with the next of the owner's inputs.
@@ -69,8 +76,8 @@ class VoiceChannelTest {
 
     // As the engine: it hands each output over as it emits it ([VoiceChannel.take]), and shows them one after another.
     private fun TestScope.emitted(channel: VoiceChannel, vararg outputs: ChannelOutput): Job {
-        val taken = outputs.map(channel::take)
-        return launch { for (output in taken) output.show() }
+        val slots = outputs.map { it to channel.take() }
+        return launch { for ((output, slot) in slots) slot.show(output) }
     }
 
     @Test
@@ -254,18 +261,21 @@ class VoiceChannelTest {
         assertEquals(OwnerPort.KESTREL_LEAVE_MILLIS, currentTime - start)
     }
 
-    // Design 11 of sub-project 7: how Kestrel speaks is the engine's decision, which travels with the words. Only words that
-    // it routed to Kestrel's own voice (a typed conversation's, while Kestrel is off) reach that voice, so a spoken
-    // conversation's words that wait for their turn while the owner turns Kestrel off are never spoken by it (plan 7F).
+    // Design 11 of sub-project 7: Kestrel's own voice speaks only a typed conversation's words, and only while Kestrel is
+    // off at their turn; a spoken conversation's words go to the voice session, whose Rules only show them while Kestrel is
+    // off (plan 7F).
     @Test
-    fun onlyWordsRoutedToKestrelsOwnVoiceAreSpokenByIt() = runTest {
+    fun onlyATypedConversationsWordsWhileKestrelIsOffAreSpokenByItsOwnVoice() = runTest {
         val channel = channel()
-        channel.show(ChannelOutput.Said("Done.", ownVoice = true))
+        channel.show(ChannelOutput.Said("Done.", typedCopy = true))
         assertEquals(listOf("Done."), offSpoken)
         assertTrue(voice.said.isEmpty())
 
         channel.show(ChannelOutput.Said("Sent."))
         assertEquals(listOf("Sent."), voice.said)
+        voice.kestrelOn = true
+        channel.show(ChannelOutput.Said("Opened.", typedCopy = true))
+        assertEquals(listOf("Sent.", "Opened."), voice.said)
         assertEquals(1, offSpoken.size)
     }
 
@@ -276,7 +286,7 @@ class VoiceChannelTest {
         val channel = channel()
         val held = CompletableDeferred<Unit>()
         offHeld = held
-        emitted(channel, ChannelOutput.Said("One.", ownVoice = true), ChannelOutput.Said("Two.", ownVoice = true))
+        emitted(channel, ChannelOutput.Said("One.", typedCopy = true), ChannelOutput.Said("Two.", typedCopy = true))
         runCurrent()
 
         channel.stopSpeech()
@@ -285,7 +295,28 @@ class VoiceChannelTest {
 
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
-        assertEquals(listOf("stop"), voice.order)
+        assertEquals(listOf("came 1", "came 2", "stop"), voice.order)
+    }
+
+    // Plan 7F: turning Kestrel on is a switch of voice, not a stop: Kestrel's own voice ends what it speaks, so that only
+    // one voice speaks, and the typed conversation's words that wait go to the voice session.
+    @Test
+    fun turningKestrelOnEndsTheOwnVoiceAndTheWaitingWordsGoToTheSession() = runTest {
+        val channel = channel()
+        val held = CompletableDeferred<Unit>()
+        offHeld = held
+        val shown = emitted(channel, ChannelOutput.Said("One.", typedCopy = true), ChannelOutput.Said("Two.", typedCopy = true))
+        runCurrent()
+        assertEquals(listOf("One."), offSpoken)
+
+        voice.turnOn()
+        runCurrent()
+
+        assertTrue(shown.isCompleted)
+        assertEquals(1, offEnds)
+        assertEquals(0, offStops)
+        assertEquals(listOf("One."), offSpoken)
+        assertEquals(listOf("Two."), voice.said)
     }
 
     // Plan 7F: Kestrel's own voice counts every stop of Kestrel's speech, as the voice session does: also the
@@ -295,7 +326,7 @@ class VoiceChannelTest {
         val channel = channel()
         val held = CompletableDeferred<Unit>()
         offHeld = held
-        emitted(channel, ChannelOutput.Said("One.", ownVoice = true), ChannelOutput.Said("Two.", ownVoice = true))
+        emitted(channel, ChannelOutput.Said("One.", typedCopy = true), ChannelOutput.Said("Two.", typedCopy = true))
         runCurrent()
 
         voice.stop()
@@ -311,9 +342,9 @@ class VoiceChannelTest {
     @Test
     fun kestrelsOwnVoiceGetsTheStopCountThatHeldWhenTheWordsCame() = runTest {
         val channel = channel()
-        channel.show(ChannelOutput.Said("One.", ownVoice = true))
+        channel.show(ChannelOutput.Said("One.", typedCopy = true))
         channel.stopSpeech()
-        channel.show(ChannelOutput.Said("Two.", ownVoice = true))
+        channel.show(ChannelOutput.Said("Two.", typedCopy = true))
 
         assertEquals(listOf("One.", "Two."), offSpoken)
         assertEquals(listOf(0L, 1L), offAsked)
@@ -438,6 +469,19 @@ class VoiceChannelTest {
 
         override fun onSpeechStopped(action: () -> Unit) {
             speechStopped = action
+        }
+
+        override var kestrelOn = false
+        private var turnedOn: () -> Unit = {}
+
+        override fun onKestrelOn(action: () -> Unit) {
+            turnedOn = action
+        }
+
+        // As the Orchestrator when Kestrel turns on: Effect.EndOwnVoice, a switch of voice, not a stop.
+        fun turnOn() {
+            kestrelOn = true
+            turnedOn()
         }
 
         private fun sayingStopped() {

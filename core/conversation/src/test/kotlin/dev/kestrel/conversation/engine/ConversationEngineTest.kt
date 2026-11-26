@@ -275,12 +275,12 @@ class ConversationEngineTest {
         runCurrent()
         engine.submit(input(InputChannel.TEXT, InputIntent.Continue))
         runCurrent()
-        assertEquals(2, text.taken.size)
+        assertEquals(2, text.takes)
         assertEquals(1, text.shown.size)
 
         showing.complete(Unit)
         runCurrent()
-        assertEquals(text.taken, text.shown)
+        assertEquals(2, text.shown.size)
     }
 
     // Re-review round 2, R2-1: each round's screen turn names the owner's input that lets it act: the command that started

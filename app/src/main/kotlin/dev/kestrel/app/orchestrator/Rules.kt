@@ -524,6 +524,19 @@ sealed interface Effect {
     data object StopSaying : Effect
 
     /**
+     * Kestrel turned off: the voice session's speech that plays now ends. A switch of voice, not a stop (plan 7F): the
+     * conversation's words that wait are not dropped, and they are shown, as Kestrel is off, or spoken by Kestrel's own voice
+     * for a typed conversation.
+     */
+    data object EndSpeech : Effect
+
+    /**
+     * Kestrel turned on: Kestrel's own voice ends the words that it speaks now, so that only one voice speaks. A switch of
+     * voice, not a stop (plan 7F): the words that wait go to the voice session.
+     */
+    data object EndOwnVoice : Effect
+
+    /**
      * Gives the conversation the owner's [intent] (design 5.5 of sub-project 7): a command, an answer, a stop or one of
      * Kestrel's own requests. [heard] is the transcript that said it, or null for the end of an answer wait or the
      * conversation's own question that the name withdrew; the debug hooks find a tagged transcript's options by it.
@@ -619,10 +632,25 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
     fun next(state: State, event: Event): Step =
-        countStops(event, silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event))))))
+        countStops(
+            event,
+            switchVoices(state, silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event)))))),
+        )
+
+    // Plan 7F: turning Kestrel on or off is a switch of voice, never the owner's Stop. Turning off ends the session's speech
+    // and drops nothing; turning on ends what Kestrel's own voice speaks, so that one voice speaks at a time.
+    private fun switchVoices(before: State, step: Step): Step {
+        val wasOff = before.mode == Mode.OFF
+        val isOff = step.state.mode == Mode.OFF
+        return when {
+            !wasOff && isOff -> step.copy(effects = step.effects.map { if (it == Effect.StopSaying) Effect.EndSpeech else it })
+            wasOff && !isOff -> step.copy(effects = step.effects + Effect.EndOwnVoice)
+            else -> step
+        }
+    }
 
     // Plan 7F: every step that stops Kestrel's speech, and every one of the owner's Stops, also while Kestrel does not
-    // speak, keeps the voice channel's words that came before it unspoken.
+    // speak, keeps the voice channel's words that came before it unspoken; a switch of voice ([switchVoices]) is no stop.
     private fun countStops(event: Event, step: Step): Step =
         if (event == Event.StopSpeaking || Effect.StopSaying in step.effects) {
             step.copy(state = step.state.copy(stoppedThrough = step.state.arrived))

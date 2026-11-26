@@ -55,4 +55,13 @@ internal interface VoicePath {
      * with it, so that every stop of Kestrel's speech counts for both voices (plan 7F).
      */
     fun onSpeechStopped(action: () -> Unit)
+
+    /**
+     * Sets [action], which runs each time Kestrel turns on (`Effect.EndOwnVoice`), on the Orchestrator's thread; it must
+     * return at once. The voice channel ends Kestrel's own voice's speech with it: a switch of voice, not a stop (plan 7F).
+     */
+    fun onKestrelOn(action: () -> Unit)
+
+    /** Whether Kestrel is on now (its mode is not OFF), so that a typed conversation's words go to the voice session. */
+    val kestrelOn: Boolean
 }

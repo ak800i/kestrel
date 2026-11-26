@@ -8,9 +8,9 @@ import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.HandOverPart
+import dev.kestrel.conversation.channel.OutputSlot
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.channel.QuestionKind
-import dev.kestrel.conversation.channel.TakenOutput
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOver
@@ -49,52 +49,57 @@ internal class VoiceChannel(
     // Spoken outputs take turns in the order in which they came: each starts once the one before it has ended, so that a
     // sentence that the engine says at once, as "I got 'X' too late", never plays over a goal's final words. Whatever
     // stops Kestrel's speech, as the owner's stop does (decision 10), also keeps the outputs that came before it unspoken,
-    // also those that wait for their turn here or in the engine: each output takes its voice's mark when the engine emits
-    // it (`take`), and that voice judges it by the mark when its turn comes (one rule for both voices, plan 7F). The voice
-    // session's mark is the output's arrival, which the Orchestrator learns in its own order (`VoicePath.came`); Kestrel's
-    // own voice's is the count of its stops (`OffVoice.stops`), which counts every stop of Kestrel's speech: the owner's
-    // ([stopSpeech]) and each one of the Orchestrator's (`VoicePath.onSpeechStopped`), as the wake word's.
+    // also those that wait for their turn here or in the engine: each output takes both voices' marks when the engine
+    // emits it (`take`), and the voice that speaks it judges it by its mark when its turn comes (one rule for both voices,
+    // plan 7F). The voice session's mark is the output's arrival, which the Orchestrator learns in its own order
+    // (`VoicePath.came`); Kestrel's own voice's is the count of its stops (`OffVoice.stops`), which counts every stop of
+    // Kestrel's speech: the owner's ([stopSpeech]) and each one of the Orchestrator's (`VoicePath.onSpeechStopped`), as the
+    // wake word's. Turning Kestrel on or off is a switch of voice, never a stop: it drops nothing that waits, and which
+    // voice speaks a typed conversation's words is decided at their turn (`VoicePath.kestrelOn`); turning on ends what
+    // Kestrel's own voice speaks (`VoicePath.onKestrelOn`), so that only one voice speaks.
     private val speaking = Mutex()
 
     init {
         voice.onSpeechStopped(offVoice::stop)
+        voice.onKestrelOn(offVoice::endSpeech)
     }
 
-    override suspend fun show(output: ChannelOutput) = take(output).show()
+    // The marks of both voices when an output was emitted: the voice session's arrival and Kestrel's own voice's stops.
+    private class Marks(val arrival: Long, val ownStops: Long)
 
-    override fun take(output: ChannelOutput): TakenOutput =
+    override suspend fun show(output: ChannelOutput) = take().show(output)
+
+    override fun take(): OutputSlot {
+        val marks = Marks(voice.came(), offVoice.stops)
+        return OutputSlot { output -> shown(output, marks) }
+    }
+
+    private suspend fun shown(output: ChannelOutput, marks: Marks) {
         when (output) {
-            // The engine decided how the words are spoken when it routed them (`ConversationOwner`): Kestrel's own voice
-            // speaks only a typed conversation's words that it routed while Kestrel was off (design 10.6 and 11 of
-            // sub-project 7), in their turn among the spoken outputs, and a stop drops them as it drops the others.
-            is ChannelOutput.Said -> said(output)
+            is ChannelOutput.Said -> said(output, marks)
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
-            is ChannelOutput.Report -> {
-                val arrival = voice.came()
-                TakenOutput { inTurn { voice.say(output.text, arrival, final = true) } }
-            }
-            is ChannelOutput.Shown -> TakenOutput { voice.show(output.text) }
+            is ChannelOutput.Report -> inTurn { voice.say(output.text, marks.arrival, final = true) }
+            is ChannelOutput.Shown -> voice.show(output.text)
         }
+    }
 
-    // A question's spoken copy ends with the question (plan 7F): the conversation cancels it once the owner answered on
+    // Kestrel's own voice speaks only a typed conversation's words while Kestrel is off at their turn (design 10.6 and 11
+    // of sub-project 7); all other words go to the voice session, whose Rules only show them while Kestrel is off. A
+    // question's spoken copy ends with the question (plan 7F): the conversation cancels it once the owner answered on
     // another channel, and the question's withdrawal stops Kestrel's speech of it, while the other words go on. Kestrel's
     // own voice stops a cancelled reply itself.
-    private fun said(output: ChannelOutput.Said): TakenOutput {
-        val speak: suspend () -> Unit
-        if (output.ownVoice) {
-            val asked = offVoice.stops
-            speak = { offVoice.speak(output.text, asked) }
-        } else {
-            val arrival = voice.came()
-            speak = { voice.say(output.text, arrival, question = output.question) }
-        }
-        return TakenOutput {
-            try {
-                inTurn(speak)
-            } catch (e: CancellationException) {
-                output.question?.let(voice::withdraw)
-                throw e
+    private suspend fun said(output: ChannelOutput.Said, marks: Marks) {
+        try {
+            inTurn {
+                if (output.typedCopy && !voice.kestrelOn) {
+                    offVoice.speak(output.text, marks.ownStops)
+                } else {
+                    voice.say(output.text, marks.arrival, question = output.question)
+                }
             }
+        } catch (e: CancellationException) {
+            output.question?.let(voice::withdraw)
+            throw e
         }
     }
 

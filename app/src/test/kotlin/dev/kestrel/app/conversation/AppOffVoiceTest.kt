@@ -113,6 +113,28 @@ class AppOffVoiceTest {
         assertEquals(1, voice.closes)
     }
 
+    // Plan 7F: turning Kestrel on ends the reply that has its turn now, also one that still waits for mediaPlayback, but it
+    // is no stop: it does not count in the stops, so words that came before it are still spoken in their turn.
+    @Test
+    fun turningKestrelOnEndsOnlyTheReplyThatHasItsTurn() = runTest {
+        val offVoice = offVoice()
+        applying = CompletableDeferred()
+        val came = offVoice.stops
+        val speaking = launch { offVoice.speak("Done.", came) }
+        runCurrent()
+
+        offVoice.endSpeech()
+        applying!!.complete(Unit)
+        runCurrent()
+
+        assertTrue(speaking.isCompleted)
+        assertEquals(emptyList<String>(), voice.spoken)
+        assertEquals(came, offVoice.stops)
+        voice.finishes = true
+        offVoice.speak("Sent.", came)
+        assertEquals(listOf("Sent."), voice.spoken)
+    }
+
     // The owner's typed answer to a question cancels the question's spoken copy (ConversationOwner.race): its words end, and
     // the voice still unloads.
     @Test

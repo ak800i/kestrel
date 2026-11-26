@@ -21,10 +21,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Kestrel's own voice while no voice session is open (design 10.6 and 11 of sub-project 7). It owns the one count of the
- * owner's Stops for it ([stops]): words carry the count that held when they came, and a later Stop keeps them unspoken.
+ * stops of Kestrel's speech for it ([stops]): words carry the count that held when they came, and a later stop keeps them
+ * unspoken. Turning Kestrel on is no stop ([endSpeech]).
  */
 internal interface OffVoice {
-    /** How many times the owner stopped this voice ([stop]) in this process. */
+    /** How many times Kestrel's speech was stopped for this voice ([stop]) in this process. */
     val stops: Long
 
     /**
@@ -35,8 +36,14 @@ internal interface OffVoice {
      */
     suspend fun speak(text: String, asked: Long)
 
-    /** The owner's Stop (plan 7F): counts in [stops] and ends the words that it speaks, or would speak, now. */
+    /** A stop of Kestrel's speech (plan 7F): counts in [stops] and ends the words that it speaks, or would speak, now. */
     fun stop()
+
+    /**
+     * Kestrel turned on (plan 7F): ends the words that it speaks, or would speak, now, so that only the voice session
+     * speaks. A switch of voice, not a stop: it does not count in [stops], and words that wait for their turn keep it.
+     */
+    fun endSpeech()
 }
 
 /** A voice that [AppOffVoice] loaded: it speaks one reply at a time, and stops and closes as [VoicePlayer] does. */
@@ -82,7 +89,7 @@ private class PlayerVoice(private val player: VoicePlayer, private val synthesiz
  *
  * The one stop rule: the owner's [stop] ends the reply that it speaks, and a reply whose words came before the stop never
  * starts, whether it waits for its turn, for the voice to load or for the service's mediaPlayback. A reply whose caller is
- * cancelled ends as well.
+ * cancelled ends as well. Turning Kestrel on ([endSpeech]) ends only the reply that has its turn now.
  */
 internal class AppOffVoice(
     private val load: suspend (VoiceOptions) -> LoadedVoice,
@@ -107,6 +114,10 @@ internal class AppOffVoice(
     private val stopLock = Any()
     private var stopCount = 0L
 
+    // How many times Kestrel turned on (endSpeech): the reply that has its turn starts only while this is the count that
+    // held when its turn came.
+    private var endCount = 0L
+
     override val stops: Long get() = synchronized(stopLock) { stopCount }
 
     /** How many replies it has spoken in this process, for the device tests. */
@@ -115,8 +126,9 @@ internal class AppOffVoice(
     override suspend fun speak(text: String, asked: Long) {
         mutex.withLock {
             closing?.cancel()
+            val turn = synchronized(stopLock) { endCount }
             try {
-                say(text, asked)
+                say(text, Mark(asked, turn))
             } finally {
                 closing = scope.launch {
                     delay(idleMillis)
@@ -126,7 +138,10 @@ internal class AppOffVoice(
         }
     }
 
-    private suspend fun say(text: String, asked: Long) {
+    // The counts that a reply must still find to start: of the stops when its words came, and of the switches at its turn.
+    private class Mark(val stops: Long, val switches: Long)
+
+    private suspend fun say(text: String, asked: Mark) {
         val voice = try {
             voiceFor(options())
         } catch (e: CancellationException) {
@@ -145,8 +160,8 @@ internal class AppOffVoice(
         }
     }
 
-    private suspend fun play(voice: LoadedVoice, text: String, asked: Long) {
-        val reply = synchronized(stopLock) { if (stopCount == asked) voice.speak(text) else null } ?: return
+    private suspend fun play(voice: LoadedVoice, text: String, asked: Mark) {
+        val reply = synchronized(stopLock) { if (holds(asked)) voice.speak(text) else null } ?: return
         try {
             reply.await()
         } finally {
@@ -155,7 +170,10 @@ internal class AppOffVoice(
         spoken.incrementAndGet()
     }
 
-    private fun stoppedSince(asked: Long): Boolean = synchronized(stopLock) { stopCount != asked }
+    private fun stoppedSince(asked: Mark): Boolean = synchronized(stopLock) { !holds(asked) }
+
+    // Under stopLock.
+    private fun holds(asked: Mark): Boolean = stopCount == asked.stops && endCount == asked.switches
 
     private suspend fun voiceFor(wanted: VoiceOptions): LoadedVoice {
         loaded?.takeIf { it.options == wanted }?.let { return it.voice }
@@ -176,6 +194,13 @@ internal class AppOffVoice(
     override fun stop() {
         synchronized(stopLock) {
             stopCount++
+            loaded?.voice?.stop()
+        }
+    }
+
+    override fun endSpeech() {
+        synchronized(stopLock) {
+            endCount++
             loaded?.voice?.stop()
         }
     }

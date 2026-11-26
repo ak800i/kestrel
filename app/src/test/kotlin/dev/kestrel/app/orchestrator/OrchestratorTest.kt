@@ -69,6 +69,7 @@ class OrchestratorTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
+                Effect.EndOwnVoice,
                 Effect.Show(Feedback.Heard("Kestrel, open the settings.")),
                 Effect.Converse(InputIntent.Command("open the settings."), Event.Heard("Kestrel, open the settings.", named = true)),
             ),
@@ -256,6 +257,7 @@ class OrchestratorTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.ModeChanged(Mode.LISTENING)),
+                Effect.EndOwnVoice,
                 Effect.Converse(InputIntent.Command("open the settings."), Event.Heard("Kestrel, open the settings.", named = true)),
             ),
             performed,

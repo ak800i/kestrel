@@ -115,20 +115,25 @@ class ConversationOwner(
     suspend fun show(output: ChannelOutput) = take(output).show()
 
     /**
-     * Takes [output] as the conversation emits it ([OwnerChannel.take]): the route and the channels' marks are this
-     * moment's, and the result shows it in its turn, as [show] does at once.
+     * Takes [output] as the conversation emits it ([OwnerChannel.take]): its places on the channels, with their marks, are
+     * this moment's, and the result shows it in its turn, routed as the mode is then, so that turning Kestrel on or off,
+     * which is never a stop, sends the waiting words to the voice that fits (plan 7F). [show] does both at once.
      */
     fun take(output: ChannelOutput): TakenOutput {
+        val slots = channels.mapValues { (_, channel) -> channel.take() }
+        return TakenOutput { routed(output, slots) }
+    }
+
+    private suspend fun routed(output: ChannelOutput, slots: Map<InputChannel, OutputSlot>) {
         val route = routing()
-        val parts = when {
-            route.channel == InputChannel.TEXT -> listOfNotNull(
-                channels[InputChannel.TEXT]?.take(output),
-                channels[InputChannel.VOICE]?.takeIf { route.speakTyped }?.take(spokenCopy(output)),
-            )
-            voiceOn.value -> listOfNotNull(channels[InputChannel.VOICE]?.take(output))
-            else -> listOfNotNull(channels[InputChannel.VOICE]?.take(ChannelOutput.Shown(textOf(output))))
+        when {
+            route.channel == InputChannel.TEXT -> {
+                slots[InputChannel.TEXT]?.show(output)
+                if (route.speakTyped) slots[InputChannel.VOICE]?.show(spokenCopy(output))
+            }
+            voiceOn.value -> slots[InputChannel.VOICE]?.show(output)
+            else -> slots[InputChannel.VOICE]?.show(ChannelOutput.Shown(textOf(output)))
         }
-        return TakenOutput { for (part in parts) part.show() }
     }
 
     override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =
@@ -263,7 +268,7 @@ class ConversationOwner(
         }
         if (route.channel == InputChannel.TEXT && route.speakTyped && voice != null) {
             askers += async {
-                voice.show(ChannelOutput.Said(asked.spoken, ownVoice = !voiceOn.value, question = asked.number))
+                voice.show(ChannelOutput.Said(asked.spoken, typedCopy = true, question = asked.number))
                 awaitCancellation()
             }
         }
@@ -342,11 +347,10 @@ class ConversationOwner(
     }
 
     // The voice's copy of a typed conversation's output: a final reply becomes words, because the owner typed (design 11),
-    // and the words say whether Kestrel's own voice speaks them, because Kestrel is off as they are routed (plan 7F): the
-    // voice channel follows this decision, never the listening mode at the moment it plays them.
+    // which the voice speaks with the voice that fits when their turn comes (plan 7F).
     private fun spokenCopy(output: ChannelOutput): ChannelOutput = when (output) {
         is ChannelOutput.Shown -> output
-        else -> ChannelOutput.Said(textOf(output), ownVoice = !voiceOn.value)
+        else -> ChannelOutput.Said(textOf(output), typedCopy = true)
     }
 
     private fun textOf(output: ChannelOutput): String = when (output) {

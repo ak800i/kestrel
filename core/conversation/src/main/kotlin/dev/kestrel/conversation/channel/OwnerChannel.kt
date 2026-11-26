@@ -18,12 +18,12 @@ interface OwnerChannel {
     suspend fun show(output: ChannelOutput)
 
     /**
-     * Takes [output] at the moment the conversation emits it, also while earlier outputs still wait to be shown, and
-     * returns what shows it in its turn. A channel that judges words by when they came, as the voice does against the
-     * stops of Kestrel's speech (plan 7B's decision 10; plan 7F), takes its mark here; [show] is the same as taking and
-     * showing at once.
+     * Takes an output's place at the moment the conversation emits it, also while earlier outputs still wait to be shown;
+     * what the place shows is decided at its turn, from the mode of that moment (plan 7F). A channel that judges words by
+     * when they came, as the voice does against the stops of Kestrel's speech (plan 7B's decision 10; plan 7F), takes its
+     * marks here; [show] is the same as taking a place and showing at once.
      */
-    fun take(output: ChannelOutput): TakenOutput = TakenOutput { show(output) }
+    fun take(): OutputSlot = OutputSlot { output -> show(output) }
 
     /**
      * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
@@ -47,7 +47,12 @@ interface OwnerChannel {
     suspend fun leaveKestrel(): Boolean
 }
 
-/** An output that a channel took as it was emitted ([OwnerChannel.take]): [show] says or shows it in its turn. */
+/** An output's place on a channel, taken as the output was emitted ([OwnerChannel.take]): [show] says or shows it. */
+fun interface OutputSlot {
+    suspend fun show(output: ChannelOutput)
+}
+
+/** An output that the conversation emitted, with its channels' places ([ConversationOwner.take]): [show] shows it. */
 fun interface TakenOutput {
     suspend fun show()
 }
@@ -83,13 +88,14 @@ enum class HandOverPart { OWN, CARD }
 /** What a channel says or shows (design 11 of sub-project 7). toString prints no words. */
 sealed interface ChannelOutput {
     /**
-     * Kestrel's words: spoken by the voice channel, and shown on the bar and in the transcript. [ownVoice]: the engine
-     * routed them while Kestrel was off, as a typed conversation's words with "Speak replies to typed commands" on, so that
-     * Kestrel's own voice speaks them, never a voice session (design 11 of sub-project 7; plan 7F). [question]: they are
+     * Kestrel's words: spoken by the voice channel, and shown on the bar and in the transcript. [typedCopy]: they are the
+     * spoken copy of a typed conversation's words, with "Speak replies to typed commands" on; the voice speaks them with
+     * Kestrel's own voice while Kestrel is off and with the voice session while it is on, as Kestrel is when their turn
+     * comes (design 11 of sub-project 7; plan 7F). [question]: they are
      * the spoken copy of the conversation's question with this number, whose end also ends them (plan 7F).
      */
-    data class Said(val text: String, val ownVoice: Boolean = false, val question: Int? = null) : ChannelOutput {
-        override fun toString(): String = "Said(${text.length} chars, ownVoice=$ownVoice, question=$question)"
+    data class Said(val text: String, val typedCopy: Boolean = false, val question: Int? = null) : ChannelOutput {
+        override fun toString(): String = "Said(${text.length} chars, typedCopy=$typedCopy, question=$question)"
     }
 
     /** Shown on the bar and in the transcript, never spoken: "Got it." for steering, a replaced goal's report. */

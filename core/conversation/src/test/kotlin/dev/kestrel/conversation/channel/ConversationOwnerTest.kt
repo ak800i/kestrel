@@ -70,7 +70,7 @@ class ConversationOwnerTest {
 
         assertEquals(Answer.Text("The first"), answer.await())
         assertEquals(listOf(ChannelOutput.Said("Looking.")), text.shown)
-        assertEquals(listOf(ChannelOutput.Said("Looking."), ChannelOutput.Said("Which one?", question = text.asked.single().number)), voice.shown)
+        assertEquals(listOf(ChannelOutput.Said("Looking.", typedCopy = true), ChannelOutput.Said("Which one?", typedCopy = true, question = text.asked.single().number)), voice.shown)
         assertTrue(voice.asked.isEmpty())
     }
 
@@ -90,7 +90,7 @@ class ConversationOwnerTest {
         // A typed conversation's replies are still spoken with the setting on (design 11), by Kestrel's own voice (plan 7F).
         typed(speak = true)
         owner.show(ChannelOutput.Report(3, "Sent."))
-        assertEquals(ChannelOutput.Said("Sent.", ownVoice = true), voice.shown.last())
+        assertEquals(ChannelOutput.Said("Sent.", typedCopy = true), voice.shown.last())
     }
 
     @Test
@@ -131,7 +131,7 @@ class ConversationOwnerTest {
         owner.show(ChannelOutput.Report(4, "Done."))
 
         assertEquals(listOf(ChannelOutput.Report(4, "Done.")), text.shown)
-        assertEquals(listOf(ChannelOutput.Said("Done.")), voice.shown)
+        assertEquals(listOf(ChannelOutput.Said("Done.", typedCopy = true)), voice.shown)
     }
 
     @Test
@@ -382,11 +382,10 @@ class ConversationOwnerTest {
         assertEquals(HandOverEnd.CONTINUED, handing.await())
     }
 
-    // Plan 7F: the engine's routing decides how Kestrel speaks, and the decision travels with the words: the voice's copy of
-    // a typed conversation's words says that Kestrel's own voice speaks it when Kestrel was off as it was routed, and a
-    // spoken conversation's words while Kestrel is off are only shown (design 11).
+    // Plan 7F: the voice's copy of a typed conversation's words says only that it is one, and the voice channel picks the
+    // voice at its turn; a spoken conversation's words while Kestrel is off are only shown (design 11).
     @Test
-    fun theVoicesCopyOfATypedConversationsWordsSaysWhichVoiceSpeaksThem() = runTest {
+    fun theVoicesCopyOfATypedConversationsWordsIsMarkedAsOne() = runTest {
         typed(speak = true)
         owner.say("On it.")
         voiceOn.value = false
@@ -394,6 +393,25 @@ class ConversationOwnerTest {
         route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
         owner.say("Looking.")
 
-        assertEquals(listOf(ChannelOutput.Said("On it."), ChannelOutput.Said("Done.", ownVoice = true), ChannelOutput.Shown("Looking.")), voice.shown)
+        assertEquals(
+            listOf(ChannelOutput.Said("On it.", typedCopy = true), ChannelOutput.Said("Done.", typedCopy = true), ChannelOutput.Shown("Looking.")),
+            voice.shown,
+        )
+    }
+
+    // Plan 7F: an output takes its places on the channels when the conversation emits it, and is routed as the mode is when
+    // its turn comes: turning Kestrel off or on while it waits is a switch of voice, so it reaches the voice that fits.
+    @Test
+    fun anOutputIsRoutedAsTheModeIsWhenItsTurnComes() = runTest {
+        val report = owner.take(ChannelOutput.Report(2, "Done."))
+        val words = owner.take(ChannelOutput.Said("Sent."))
+        assertEquals(2, voice.takes)
+
+        voiceOn.value = false
+        report.show()
+        voiceOn.value = true
+        words.show()
+
+        assertEquals(listOf(ChannelOutput.Shown("Done."), ChannelOutput.Said("Sent.")), voice.shown)
     }
 }

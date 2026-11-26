@@ -43,7 +43,8 @@ class RulesTest {
         val started = Rules.next(State(), Event.Toggle)
 
         assertEquals(Mode.LISTENING, started.state.mode)
-        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING))), started.effects)
+        // Turning on ends what Kestrel's own voice speaks (plan 7F).
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)), Effect.EndOwnVoice), started.effects)
         assertEquals(Mode.PAUSED, Rules.next(started.state, Event.Toggle).state.mode)
         assertEquals(Mode.LISTENING, Rules.next(paused, Event.Toggle).state.mode)
     }
@@ -61,13 +62,14 @@ class RulesTest {
     }
 
     @Test
-    fun turningOffStopsTheSpeechButNotTheGoal() {
+    fun turningOffEndsTheSpeechButNotTheGoal() {
         val busy = acting.copy(speeches = 1, micBusy = true)
 
         val off = Rules.next(busy, Event.TurnOff)
 
-        // Plan 7B's decision 10: turning off changes only the mode, and the goal goes on.
-        assertEquals(listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService), off.effects)
+        // Plan 7B's decision 10: turning off changes only the mode, and the goal goes on; it ends the session's speech as a
+        // switch of voice, not a stop (plan 7F).
+        assertEquals(listOf(Effect.EndSpeech, Effect.Show(Feedback.ModeChanged(Mode.OFF)), Effect.StopService), off.effects)
         assertEquals(GoalPhase.ACTING, off.state.goal)
         assertEquals(0, off.state.speeches)
         assertFalse(off.state.micBusy)
@@ -681,9 +683,11 @@ class RulesTest {
             speaking to Event.Spotted(Keyword.KESTREL),
             asking to Event.Heard("Kestrel, turn off.", named = true),
         )) {
+            // Turning off ends the speech as a switch of voice, not a stop (plan 7F).
+            val ends = if (event is Event.Spotted) Effect.StopSaying else Effect.EndSpeech
             val effects = Rules.next(from, event).effects
-            assertEquals("$event", 1, effects.count { it == Effect.StopSaying })
-            assertTrue("$event", effects.indexOf(Effect.StopSaying) > effects.indexOf(Effect.CancelCommand))
+            assertEquals("$event", 1, effects.count { it == Effect.StopSaying || it == Effect.EndSpeech })
+            assertTrue("$event", effects.indexOf(ends) > effects.indexOf(Effect.CancelCommand))
         }
     }
 
@@ -898,7 +902,7 @@ class RulesTest {
         val started = Rules.next(State(), Event.Start())
 
         assertEquals(Mode.LISTENING, started.state.mode)
-        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING))), started.effects)
+        assertEquals(listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)), Effect.EndOwnVoice), started.effects)
         assertEquals(Mode.PAUSED, Rules.next(State(), Event.Start(paused = true)).state.mode)
         // A start that comes late must not toggle anything.
         assertEquals(Step(listening), Rules.next(listening, Event.Start(paused = true)))
@@ -1420,6 +1424,31 @@ class RulesTest {
         val speaking = Rules.next(after, Event.ChannelSays(4, "Sent.", arrival = 2)).state
         val spotted = Rules.next(Rules.next(speaking, Event.ChannelCame(3)).state, Event.Spotted(Keyword.STOP)).state
         assertEquals(listOf(Effect.EndReply(5)), Rules.next(spotted, Event.ChannelSays(5, "Next.", arrival = 3)).effects)
+    }
+
+    // Plan 7F: turning Kestrel on or off is a switch of voice, never the owner's Stop. Turning off ends the session's speech
+    // and drops nothing: the words that wait are shown, as Kestrel is off. Turning on ends what Kestrel's own voice speaks.
+    // A real Stop still drops what waits.
+    @Test
+    fun turningKestrelOnOrOffSwitchesTheVoiceAndDropsNothing() {
+        val came = Rules.next(listening, Event.ChannelCame(1)).state
+        val speaking = Rules.next(came, Event.ChannelSays(1, "Working.", arrival = 1)).state
+        val waiting = Rules.next(speaking, Event.ChannelCame(2)).state
+
+        val off = Rules.next(waiting, Event.TurnOff)
+        assertTrue(Effect.EndSpeech in off.effects)
+        assertFalse(Effect.StopSaying in off.effects)
+        assertEquals(
+            listOf(Effect.Show(Feedback.ConversationText("Done.", finalReply = 3)), Effect.EndReply(3), Effect.NoFollowUp(3)),
+            Rules.next(off.state, Event.ChannelSays(3, "Done.", arrival = 2, final = true)).effects,
+        )
+
+        val on = Rules.next(off.state, Event.Toggle)
+        assertEquals(Effect.EndOwnVoice, on.effects.last())
+        assertTrue(Effect.Say(Reply.Channel(4, "Sent.")) in Rules.next(on.state, Event.ChannelSays(4, "Sent.", arrival = 2)).effects)
+
+        val stopped = Rules.next(Rules.next(on.state, Event.ChannelCame(3)).state, Event.StopSpeaking).state
+        assertEquals(listOf(Effect.EndReply(5)), Rules.next(stopped, Event.ChannelSays(5, "Next.", arrival = 3)).effects)
     }
 
     // The voice's answer names the question that the voice read it for, so that an answer that comes after that question
