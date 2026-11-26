@@ -22,8 +22,10 @@ internal data class AccessibilityServiceState(val enabled: Boolean, val running:
  * After a crash, a low-memory kill or a reboot Android binds the service again by itself, at times that it decides (a
  * crashed service's restart waits longer each time), so a check there would tell the owner about a state that ends
  * without him. A stop from before the current boot does not count: a reboot leaves no exit record of its own, and it
- * clears Android's crashed state. The check waits [GRACE_MILLIS] first, because Android may have started the process to
- * bind the service.
+ * clears Android's crashed state. Both times come from the wall clock, so a jump of the clock forward between the boot and
+ * the stop that is larger than the time between them makes the stop look older than the boot: then no notice comes, but
+ * never a false one, and the setup checklist still warns. The check waits [GRACE_MILLIS] first, because Android may have
+ * started the process to bind the service.
  *
  * [service] reads the service's state and [notify] posts the notice, both in [main], the main thread, where the service's
  * `onServiceConnected` cancels the notice: so a bind at the end of the wait either shows in the read or cancels the notice

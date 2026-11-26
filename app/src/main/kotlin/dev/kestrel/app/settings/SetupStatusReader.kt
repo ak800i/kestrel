@@ -31,14 +31,12 @@ class SetupStatusReader(private val context: Context) {
             samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true),
             callsAllowed = granted(Manifest.permission.READ_PHONE_STATE) && granted(Manifest.permission.ANSWER_PHONE_CALLS),
             assistantRole = context.getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT),
-            shortcutTarget = names(SHORTCUT_TARGET, kestrel),
-            buttonTarget = names(BUTTON_TARGETS, kestrel) || names(GESTURE_TARGETS, kestrel),
+            shortcutTarget = AccessibilitySettings.names(context, SHORTCUT_TARGET, kestrel),
+            buttonTarget = AccessibilitySettings.names(context, BUTTON_TARGETS, kestrel) ||
+                AccessibilitySettings.names(context, GESTURE_TARGETS, kestrel),
             notificationAccess = KestrelNotificationListener.hasAccess(context),
         )
     }
-
-    // A setting that Android refuses to Kestrel shows the way to start Kestrel as not set.
-    private fun names(name: String, service: ComponentName): Boolean = AccessibilitySettings.names(context, name, service)
 
     private fun granted(permission: String) =
         context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
