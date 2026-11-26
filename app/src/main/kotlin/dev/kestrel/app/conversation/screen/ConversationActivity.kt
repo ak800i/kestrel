@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -36,18 +37,19 @@ class ConversationActivity : ComponentActivity() {
     private val graph by lazy { (application as KestrelApplication).graph }
     private val screen: ConversationScreenViewModel by viewModels { viewModelFactory { initializer { ConversationScreenViewModel(graph) } } }
     private var setupNeeded by mutableStateOf(false)
-    private var replyTo by mutableStateOf<Int?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         ScreenGuard.guard(window.decorView)
-        // A screen that Android makes again, as after a rotation, keeps the question that its last intent named.
-        replyTo = question(savedInstanceState ?: intent.extras)
+        // After a rotation the view model keeps the question that the last intent named. Reopened from the recent apps,
+        // Android gives the screen the task's first intent again, which may be an old "Reply…".
+        if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) screen.reply(question(intent.extras))
         // A leave that the model asked for while no activity was there, as during a rotation, waits for this one.
         lifecycleScope.launch { repeatOnLifecycle(Lifecycle.State.STARTED) { screen.leaves.collect { moveTaskToBack(true) } } }
         setContent {
             MaterialTheme {
+                val replyTo by screen.replyTo.collectAsState()
                 ConversationApp(screen, setupNeeded, replyTo, ::openSettings, ::openChecklist) { moveTaskToBack(true) }
             }
         }
@@ -56,12 +58,7 @@ class ConversationActivity : ComponentActivity() {
     // singleTask: the launcher, the notifications and "Reply…" bring this screen back with their intent.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        replyTo = question(intent.extras)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        replyTo?.let { outState.putInt(EXTRA_QUESTION, it) }
+        screen.reply(question(intent.extras))
     }
 
     override fun onResume() {

@@ -61,6 +61,19 @@ internal class ConversationScreenViewModel(private val graph: AppGraph) : ViewMo
 
     val pastConversations: PastConversations get() = graph.pastConversations
 
+    private val replying = MutableStateFlow<Int?>(null)
+
+    /**
+     * The question that "Reply…" opened the screen for (design 10.3), kept across a rotation but not across the process,
+     * whose question numbers start again.
+     */
+    val replyTo: StateFlow<Int?> = replying.asStateFlow()
+
+    /** The screen came to the front for question [question], or, with null, for no question. */
+    fun reply(question: Int?) {
+        replying.value = question
+    }
+
     init {
         feed.start(viewModelScope)
     }
