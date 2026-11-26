@@ -63,15 +63,36 @@ internal class CommandTags {
         tags[tag] = Tagged(Role.PENDING, 0, read)
         waiting[event] = tag
         if (options.isNotEmpty()) this.options[tag] = options
+        dropOldest()
+        return true
+    }
+
+    /**
+     * Links [tag] to [input], which the hook `conversation-type` gives the conversation as if the owner had typed it on the
+     * conversation screen (design 14.4 of sub-project 7), and returns the input with the hook's [options]; null when the
+     * tag is among the newest ones already. [read] is the input's kind. The conversation's step that starts work for the
+     * input then gives the tag the command's number, as for a transcript's input ([onConversationStep]).
+     */
+    @Synchronized
+    fun typed(tag: String, input: OwnerInput, read: String, options: Map<String, String> = emptyMap()): OwnerInput? {
+        if (tag in tags) return null
+        tags[tag] = Tagged(Role.CONVERSE, 0, read)
+        inputs[input.id] = tag
+        dropOldest()
+        while (inputs.size > MAX_TAGS) inputs.remove(inputs.keys.first())
+        return if (options.isEmpty()) input else input.copy(options = options)
+    }
+
+    // Keeps the newest MAX_TAGS tags, with what each one waits for.
+    private fun dropOldest() {
         while (tags.size > MAX_TAGS) {
             val oldest = tags.keys.first()
             tags.remove(oldest)
             waiting.values.remove(oldest)
             conversing.values.remove(oldest)
             inputs.values.remove(oldest)
-            this.options.remove(oldest)
+            options.remove(oldest)
         }
-        return true
     }
 
     @Synchronized

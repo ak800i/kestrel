@@ -13,6 +13,7 @@ import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Requests
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.app.settings.speedText
+import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.VoiceChoice
@@ -277,6 +278,19 @@ internal class VoiceHooks(private val graph: AppGraph) {
                 throw HookError("the tag $tag is in use; give each transcript a new tag")
             }
         }
+
+        /**
+         * Links [tag] and [options] to [input], which the hook `conversation-type` gives the conversation as typed words
+         * (design 14.4 of sub-project 7), and starts the record of the steps ([install]); returns the input with the options.
+         */
+        fun typed(graph: AppGraph, tag: String, input: OwnerInput, options: Map<String, String> = emptyMap()): OwnerInput {
+            if (!TAG.matches(tag)) throw HookError("add --es tag with 1 to 32 letters, digits, '-' and '_'")
+            install(graph)
+            return tags.typed(tag, input, kindOf(input), options) ?: throw HookError("the tag $tag is in use; give each transcript a new tag")
+        }
+
+        /** A typed input's kind in lower case, such as command, answer or stop: never its words. */
+        fun kindOf(input: OwnerInput): String = input.intent.javaClass.simpleName.lowercase()
 
         /**
          * Starts the record of the Orchestrator's and the conversation's steps (plan 4D, H1; design 14.4 of sub-project 7),

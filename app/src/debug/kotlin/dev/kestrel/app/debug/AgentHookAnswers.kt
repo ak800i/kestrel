@@ -2,6 +2,7 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.channel.QuestionKind
@@ -225,6 +226,23 @@ internal object AgentHookAnswers {
         answer.matches(Regex("\\d{1,3}")) -> answer
         answer.startsWith("text:") && answer.length > 5 -> answer.substring(5)
         else -> null
+    }
+
+    /**
+     * The button of a card with [choices] that agent-answer's [words] press, as the owner's tap on it (design 10.3 of
+     * sub-project 7): yes, no, confirm, cancel, continue, stop or a pick's number; null when the card has no such button.
+     */
+    fun cardChoice(words: String, choices: List<CardChoice>): CardChoice? {
+        val named = when (words) {
+            "yes" -> CardChoice.Yes
+            "no" -> CardChoice.No
+            "confirm" -> CardChoice.Confirm
+            "cancel" -> CardChoice.Cancel
+            "continue" -> CardChoice.Continue
+            "stop" -> CardChoice.Stop
+            else -> words.toIntOrNull()?.let(CardChoice::Pick)
+        }
+        return named?.takeIf { it in choices }
     }
 
     /**

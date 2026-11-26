@@ -3,6 +3,7 @@ package dev.kestrel.app.debug
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.TaskReport
 import dev.kestrel.app.agent.TaskEvidence
+import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.engine.ChecklistSummary
@@ -245,5 +246,19 @@ class AgentHookAnswersTest {
         assertTrue(line, line.endsWith(" ownerTouches=0 signals=0 markerSaid=1 markerInData=1 digits=1"))
         assertTrue(AgentHookAnswers.result(AgentHookAnswers.Ended(report, "Kestrel test maple heron."), "maple heron", null).endsWith(" markerSaid=0 markerInData=none"))
         assertFalse(line.contains("reminder"))
+    }
+
+    // Design 10.3 of sub-project 7: agent-answer --es channel text presses the card's button that its words name.
+    @Test
+    fun anAnswerOnTheTextChannelPressesTheButtonThatItsWordsName() {
+        val confirmation = listOf(CardChoice.Confirm, CardChoice.Cancel)
+        val pick = listOf(CardChoice.Pick(1), CardChoice.Pick(2), CardChoice.Reply)
+
+        assertEquals(CardChoice.Confirm, AgentHookAnswers.cardChoice("confirm", confirmation))
+        assertEquals(CardChoice.Cancel, AgentHookAnswers.cardChoice("cancel", confirmation))
+        assertNull(AgentHookAnswers.cardChoice("yes", confirmation))
+        assertEquals(CardChoice.Pick(2), AgentHookAnswers.cardChoice("2", pick))
+        assertNull(AgentHookAnswers.cardChoice("3", pick))
+        assertNull(AgentHookAnswers.cardChoice("Half past seven", listOf(CardChoice.Reply, CardChoice.Cancel)))
     }
 }

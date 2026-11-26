@@ -144,4 +144,19 @@ class CommandTagsTest {
 
         assertEquals(CommandTags.Role.NONE, tags.tagged("go-on")?.role)
     }
+
+    // Design 14.4 of sub-project 7: conversation-type tags a typed input, which carries the tag's options.
+    @Test
+    fun aTypedInputsTagGetsTheCommandThatItStartedAndATagIsUsedOnce() {
+        val typed = OwnerInput(11, InputChannel.TEXT, InputIntent.Command("open the maps"), 0)
+        val input = checkNotNull(tags.typed("typed", typed, "command", mapOf("model" to "test-model")))
+        assertEquals(mapOf("model" to "test-model"), input.options)
+        assertEquals(CommandTags.Tagged(CommandTags.Role.CONVERSE, 0, "command"), tags.tagged("typed"))
+
+        val started = ConversationEffect.StartGoal(4, 1, input, "open the maps")
+        tags.onConversationStep(ConversationEvent.Input(input), ConversationState(), MachineStep(ConversationState(), listOf(started)))
+
+        assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "command", task = 4), tags.tagged("typed"))
+        assertNull(tags.typed("typed", typed.copy(id = 12), "command"))
+    }
 }

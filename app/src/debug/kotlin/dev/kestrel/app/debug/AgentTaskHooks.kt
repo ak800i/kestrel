@@ -58,8 +58,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         return AgentHookAnswers.result(ended, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS))
     }
 
-    // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>], as the owner's
-    // voice would answer; an answer to a confirmation other than no or cancel needs the category that agent-state read.
+    // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>]
+    // [--es channel text], as the owner's voice would answer, or with --es channel text as he answers on the card or the
+    // conversation screen; an answer to a confirmation other than no or cancel needs the category that agent-state read.
     fun answer(intent: Intent): String {
         val (tag, number) = taggedTask(intent)
         val reply = intent.getStringExtra(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
@@ -72,6 +73,11 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         if (asking == null && !handedOver) throw HookError("the task of tag $tag asks nothing")
         val confirming = graph.conversations.owner.confirming?.takeIf { asking == QuestionKind.CONFIRM }
         AgentHookAnswers.answerRefusal(asking, words, confirming, intent.getStringExtra(EXTRA_CONFIRMING))?.let { throw HookError(it) }
+        when (val channel = intent.getStringExtra(EXTRA_CHANNEL)) {
+            null, "voice" -> Unit
+            "text" -> return typedAnswer(tag, words, asking)
+            else -> throw HookError("add --es channel with voice or text, not $channel")
+        }
         val event = if (asking == null) {
             // A hand-over is not a question: it ends with "Kestrel, continue" or "cancel" (design D2).
             when (words) {
@@ -86,6 +92,19 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"}"
     }
 
+    // Design 10.3, 12.2 and 12.3 of sub-project 7: the open card's button that the words name, as the owner's tap on the
+    // screen's copy, which reaches the conversation as an input, or else the words typed on the screen. A confirmation, a
+    // hand-over and a pick are answered only on the card over the app, which the caller taps with `input tap`.
+    private fun typedAnswer(tag: String, words: String, asking: QuestionKind?): String {
+        val card = graph.cardDesk.open.value ?: throw HookError("no card is open: Kestrel listens, and the conversation is spoken")
+        if (!card.answersOnScreen) throw HookError("only the card over the app answers this; tap its button with input tap")
+        val channel = graph.textChannel
+        when (val choice = AgentHookAnswers.cardChoice(words, card.choices)) {
+            null -> channel.submit(channel.read(words) ?: throw HookError("the answer holds no words"))
+            else -> channel.choose(card.key, choice)
+        }
+        return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=text"
+    }
     // agent-script --es file <name> | --ez clear true
     suspend fun script(intent: Intent): String {
         if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
@@ -353,6 +372,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         private const val EXTRA_RECIPIENT = "recipient"
         private const val EXTRA_ANSWER = "answer"
         private const val EXTRA_CONFIRMING = "confirming"
+        private const val EXTRA_CHANNEL = "channel"
         private const val EXTRA_CLEAR = "clear"
         private const val EXTRA_FILE = "file"
         private const val EXTRA_FIELD = "field"

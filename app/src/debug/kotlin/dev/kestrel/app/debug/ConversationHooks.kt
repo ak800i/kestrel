@@ -1,25 +1,45 @@
 package dev.kestrel.app.debug
 
 import android.content.Intent
+import android.os.Build
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.debug.TestHooks.HookError
+import dev.kestrel.conversation.engine.PastDeletion
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 
 /**
- * The conversation's hooks (design 14.4 of sub-project 7): conversation-state reads the open conversation, and
- * conversation-control starts a new one, ends the quiet time, sets a round's limits or says what the restore found. The
- * answers never contain words.
+ * The conversation's hooks (design 14.4 of sub-project 7): conversation-state reads the open conversation,
+ * conversation-control starts a new one, ends the quiet time, sets a round's limits or says what the restore found, and
+ * conversation-type types words as the owner does on the conversation screen (plan 7F). The answers never contain words.
  */
 internal class ConversationHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "CONVERSATION_STATE" ->
             ConversationHookAnswers.state(graph.conversations.view.value, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis())
         "CONVERSATION_CONTROL" -> control(intent)
+        "CONVERSATION_TYPE" -> type(intent)
         else -> throw HookError("unknown command '$command'")
+    }
+
+    // The words go through the text channel, which reads them as the screen does; a tag names the conversation's command
+    // that they start, as voice heard's does, with the same options. "yes, call" is refused off the emulator (plan 4D).
+    // A conversation that the command's work opens becomes the hooks' own, which delete-typed deletes, by the one rule of
+    // the conversation's steps (Task 13a's CommandTags.onConversationStep); one that the command joins, which may be the
+    // owner's, does not (review N4, review B-I2). The callers send "do new" first.
+    private suspend fun type(intent: Intent): String {
+        val text = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text with the words to type")
+        if (VoiceHooks.refused(text, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
+        val channel = graph.textChannel
+        val input = channel.read(text) ?: throw HookError("add --es text with the words to type")
+        val tag = intent.getStringExtra(EXTRA_TAG)
+        val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
+        val options = VoiceHooks.taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER))
+        channel.submit(if (tag != null) VoiceHooks.typed(graph, tag, input, options) else input)
+        return "typed read=${VoiceHooks.kindOf(input)}" + (tag?.let { " tag=$it" } ?: "")
     }
 
     private suspend fun control(intent: Intent): String = when (intent.getStringExtra(EXTRA_DO)) {
@@ -36,7 +56,15 @@ internal class ConversationHooks(private val graph: AppGraph) {
         }
         "limits" -> limits(intent.getStringExtra(EXTRA_LIMITS))
         "restore-check" -> "restored=${ConversationHookAnswers.restored(graph.conversations.restored)}"
-        else -> throw HookError("add --es do with one of new, expire, limits or restore-check")
+        // The conversations that the hooks opened (HookConversations), never the owner's: each closed one is deleted and its
+        // mark cleared, and one that is open or failed stays marked for a later call.
+        "delete-typed" -> {
+            val ended = HookConversations.all().associateWith { graph.conversations.deletePast(it) }
+            HookConversations.forget(ended.filterValues { it == PastDeletion.DELETED }.keys)
+            "deleted=${ended.values.count { it == PastDeletion.DELETED }} open=${ended.values.count { it == PastDeletion.OPEN }} " +
+                "failed=${ended.values.count { it == PastDeletion.FAILED }}"
+        }
+        else -> throw HookError("add --es do with one of new, expire, limits, restore-check or delete-typed")
     }
 
     // The page's smallest limits, or with --es limits those that a check stored before, so that it can put them back.
@@ -49,8 +77,13 @@ internal class ConversationHooks(private val graph: AppGraph) {
     }
 
     companion object {
-        val COMMANDS = setOf("CONVERSATION_STATE", "CONVERSATION_CONTROL")
+        val COMMANDS = setOf("CONVERSATION_STATE", "CONVERSATION_CONTROL", "CONVERSATION_TYPE")
         private const val EXTRA_DO = "do"
         private const val EXTRA_LIMITS = "limits"
+        private const val EXTRA_TEXT = "text"
+        private const val EXTRA_TAG = "tag"
+        private const val EXTRA_MODEL = "model"
+        private const val EXTRA_LIVE = "live"
+        private const val EXTRA_MARKER = "marker"
     }
 }
