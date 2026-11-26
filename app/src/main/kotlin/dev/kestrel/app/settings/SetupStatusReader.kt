@@ -18,23 +18,19 @@ import dev.kestrel.datatools.notifications.KestrelNotificationListener
 class SetupStatusReader(private val context: Context) {
     fun read(): SetupStatus {
         val kestrel = ComponentName(context, KestrelAccessibilityService::class.java)
+        val service = KestrelAccessibilityService.state(context)
         // Only the services that Android runs.
         val services = context.getSystemService(AccessibilityManager::class.java)
             .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
             .map { ComponentName(it.resolveInfo.serviceInfo.packageName, it.resolveInfo.serviceInfo.name) }
-        // Also the services that Android does not run, as after "Stop app" (prototype P2).
-        val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-            .orEmpty()
-            .split(':')
-            .mapNotNull { ComponentName.unflattenFromString(it) }
         return SetupStatus(
-            serviceOn = kestrel in services,
+            serviceOn = service.running,
             microphoneAllowed = granted(Manifest.permission.RECORD_AUDIO),
             notificationsAllowed = granted(Manifest.permission.POST_NOTIFICATIONS),
             batteryUnrestricted = context.getSystemService(PowerManager::class.java)
                 .isIgnoringBatteryOptimizations(context.packageName),
             voiceAccessOn = services.any { it.packageName == VOICE_ACCESS },
-            serviceEnabled = kestrel in enabled,
+            serviceEnabled = service.enabled,
             batteryRestricted = context.getSystemService(ActivityManager::class.java).isBackgroundRestricted,
             samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true),
             callsAllowed = granted(Manifest.permission.READ_PHONE_STATE) && granted(Manifest.permission.ANSWER_PHONE_CALLS),

@@ -1062,6 +1062,7 @@ Spoken conversations keep today's waits: 15 s to start an answer and 35 s once s
   - kestrel-api37 (Android 17) checks this with `GoalServiceTest`; the A71's run (plan 7E, Task 9) is where Android 13 is checked.
 - Its actions reach Kestrel through a receiver that only Kestrel's own notification can reach, as the listening notification's actions do (spec 8.6). There is no inline reply (`RemoteInput`), because typed input comes only from Kestrel's own screen (D8).
 - Tapping the notification opens the conversation screen. While the goal acts, that tap is a touch and interrupts it (D13).
+- **Stop in "Active apps".** The owner's Stop there kills Kestrel's process and ends the goal at the next start (`ProcessEnd.OwnerStopped`, 6.7), and Android leaves Kestrel's accessibility service unbound until the owner turns it off and on, so at that start Kestrel posts its notice "Kestrel's accessibility service is off" (spec 14.6), which says so and opens Android's accessibility settings.
 
 **Its foreground-service type.**
 

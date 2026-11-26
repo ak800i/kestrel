@@ -47,7 +47,8 @@ internal class ProblemNotifications(private val context: Context) : StopNotices 
     /**
      * Kestrel's accessibility service disconnected, for example because the owner turned it off. Kestrel cannot use the
      * screen, the accessibility button or the shortcut until the service is on again; if Kestrel is listening, it goes
-     * on listening (prototype P2). A tap opens Android's accessibility settings, where the owner turns the service on.
+     * on listening (prototype P2). A tap opens Android's accessibility settings, where the owner turns the service on, or
+     * off and on again when his stop in "Active apps" left it unbound while the setting still names it (UnboundServiceCheck).
      * Android's page of one service (ACTION_ACCESSIBILITY_DETAILS_SETTINGS) is a system API, and its activity needs a
      * permission that only the system and the installer hold. The channel makes no sound, because the owner usually
      * turned the service off on purpose.

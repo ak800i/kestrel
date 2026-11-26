@@ -51,6 +51,7 @@ import dev.kestrel.app.listen.AndroidCallApi
 import dev.kestrel.app.listen.AndroidCallMonitor
 import dev.kestrel.app.listen.AndroidCallScreen
 import dev.kestrel.app.listen.AndroidExitRecords
+import dev.kestrel.app.listen.UnboundServiceCheck
 import dev.kestrel.app.listen.AndroidListeningConditions
 import dev.kestrel.app.listen.BoostWordSource
 import dev.kestrel.app.listen.CallActions
@@ -554,6 +555,11 @@ class AppGraph(context: Context) {
 
     /** How Kestrel's previous process ended, which the conversation's restore takes at the start (plan 7E). */
     internal suspend fun previousProcessEnd(): ProcessEnd = readProcessEnd(exitRecords, reportFailure)
+
+    /** At the start, tells the owner when his stop left Kestrel's accessibility service unbound (section 14.6). */
+    internal val unboundServiceCheck: UnboundServiceCheck by lazy {
+        UnboundServiceCheck(service = { KestrelAccessibilityService.state(appContext) }, notify = problems::accessibilityServiceOff)
+    }
 
     // Listening gives the conversation the owner's spoken inputs and its wait for a command after "Yes?", and gets the
     // follow-up window's length from the Conversations page (design 6.6 of sub-project 7).
