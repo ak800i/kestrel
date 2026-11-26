@@ -58,9 +58,14 @@ class GoalServiceAnswersTest {
     }
 
     @Test
-    fun aPressInTheShadeSaysWhetherTheShadeClosedAgain() {
-        assertEquals("tapped=continue shade=closed", GoalServiceAnswers.tapped(GoalAction.CONTINUE, shadeClosed = true))
-        assertEquals("tapped=stop shade=open", GoalServiceAnswers.tapped(GoalAction.STOP, shadeClosed = false))
+    fun aPressInTheShadeSaysWhatItExpandedAndWhetherTheShadeClosedAgain() {
+        assertEquals("tapped=continue expanded=none shade=closed", GoalServiceAnswers.tapped(GoalAction.CONTINUE, emptyList(), shadeClosed = true))
+        assertEquals("tapped=stop expanded=row shade=open", GoalServiceAnswers.tapped(GoalAction.STOP, listOf(ShadeExpansion.ROW), shadeClosed = false))
+        assertEquals("tapped=open expanded=group shade=closed", GoalServiceAnswers.tapped(GoalAction.OPEN, listOf(ShadeExpansion.GROUP), shadeClosed = true))
+        assertEquals(
+            "tapped=cancel expanded=group,row shade=closed",
+            GoalServiceAnswers.tapped(GoalAction.CANCEL, listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW), shadeClosed = true),
+        )
         assertEquals(
             "the goal notification's cancel is not in the shade; shade=closed",
             GoalServiceAnswers.notTapped("the goal notification's cancel is not in the shade", shadeClosed = true),

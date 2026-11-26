@@ -26,7 +26,8 @@ import kotlinx.coroutines.withContext
  * The goal service's hooks (plan 7E; design 10.6 of sub-project 7). goal-service-state reads the service, whether a
  * refusal of its next start is armed, and the audio-focus requests. goal-control presses a button of the goal notification
  * in SystemUI's shade by its key, so that SystemUI sends the button's broadcast as it does for the owner's finger and
- * Android's rules for a start from a notification apply, and closes the shade again however the press ends; gives the
+ * Android's rules for a start from a notification apply, says which collapsed rows it had to expand before the press, and
+ * closes the shade again however the press ends; gives the
  * conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
  * asks Android for the audio focus with and without the speech's types (spike S9); arms or takes back a refusal of the
  * service's next start; or has a button's own PendingIntent sent a few seconds later, to a process that has ended
@@ -81,9 +82,13 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         // is as the hook found it (AGENTS.md's limits on the A71).
         val seen = ShadeSeen()
         var shadeClosed = false
+        var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            pressInShade(session, notice, action, seen)
+            val found = buttonInShade(session, notice, action, seen)
+            expanded = found.expanded
+            found.key?.let { pressInShade(session, notice, action, it) }
+                ?: "the goal notification's ${action.name.lowercase()} is not in the shade"
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -92,7 +97,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             shadeClosed = withContext(NonCancellable) { closeShade(session, seen) }
         }
         if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
-        return GoalServiceAnswers.tapped(action, shadeClosed)
+        return GoalServiceAnswers.tapped(action, expanded, shadeClosed)
     }
 
     /**
@@ -111,10 +116,8 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         return false
     }
 
-    // Null once the button was pressed, else why not.
-    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): String? {
-        val key = buttonInShade(session, notice, action, seen)
-            ?: return "the goal notification's ${action.name.lowercase()} is not in the shade"
+    // Null once the button with [key] was pressed, else why not.
+    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, key: String): String? {
         // By the button's key, which the press checks again in every snapshot that it acts on: a row that a new notification
         // moved, or another app's button, is never pressed in its place (AGENTS.md's limits on the A71). Once only, so that a
         // Continue is never sent twice.
@@ -152,19 +155,20 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         ?: throw HookError("add --es action with one of stop, open, continue or cancel")
 
     // The shade opens with an animation, and a notification shows its buttons only once its row, and the row of the group
-    // that Android put it in, are expanded: the key of the button in Kestrel's own row, or null, after it asked to expand
-    // those rows, one in each snapshot, the group's first. Each snapshot tells [seen] whether the open shade shows tiles that
-    // Kestrel knows.
-    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): String? {
-        repeat(SHADE_TRIES) {
-            delay(SHADE_MILLIS)
-            val snapshot = session.snapshots.current().snapshot
-            if (buttons.showsTiles(snapshot)) seen.tilesKnown = true
-            buttons.button(snapshot, notice.title, action.label)?.let { return it }
-            buttons.collapsedRow(snapshot, notice.title)?.let { session.actions.expand(it) }
-        }
-        return null
-    }
+    // that Android put it in, are expanded: the key of the button in Kestrel's own row, or null, and the expansions that the
+    // search asked for, one in each snapshot, the group's first ([NoticeButtons.find]). Each snapshot tells [seen] whether
+    // the open shade shows tiles that Kestrel knows.
+    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): NoticeButtons.Found =
+        buttons.find(
+            notice.title,
+            action.label,
+            SHADE_TRIES,
+            look = {
+                delay(SHADE_MILLIS)
+                session.snapshots.current().snapshot.also { if (buttons.showsTiles(it)) seen.tilesKnown = true }
+            },
+            expand = { session.actions.expand(it) },
+        )
 
     /**
      * What one press saw of the shade that it opened: whether the shade showed a Quick Settings tile that

@@ -7,6 +7,7 @@ import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.WindowKind
 import dev.kestrel.screen.model.WindowSummary
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -39,6 +40,29 @@ class NoticeButtonsTest {
     )
 
     private fun row(key: String, parent: Int?, action: ElementAction) = element(key, parent, actions = setOf(action), viewId = ROW)
+
+    // Kestrel's held goal in the group that Android put it in, with listening's notification: each row expanded or collapsed,
+    // and Continue only while both are expanded, as SystemUI shows it.
+    private fun grouped(group: ElementAction, kestrel: ElementAction) = ScreenSnapshot(
+        takenAtMillis = 0,
+        windows = listOf(shade),
+        elements = listOfNotNull(
+            row("group", null, group),
+            row("row-kestrel", 0, kestrel),
+            element("kestrel-title", 1, text = "Continue the goal?"),
+            row("row-listening", 0, ElementAction.EXPAND),
+            element("listening-title", 3, text = "Kestrel is listening"),
+            element("kestrel-continue", 1, text = "Continue", clickable = true)
+                .takeIf { group == ElementAction.COLLAPSE && kestrel == ElementAction.COLLAPSE },
+        ),
+    )
+
+    // The search of the hook goal-control over [shown], one snapshot after another, with the rows that it asked to expand.
+    private suspend fun find(vararg shown: ScreenSnapshot): Pair<NoticeButtons.Found, List<String>> {
+        val looks = shown.iterator()
+        val asked = mutableListOf<String>()
+        return buttons.find("Continue the goal?", "Continue", tries = 5, look = { looks.next() }, expand = { asked += it }) to asked
+    }
 
     @Test
     fun theButtonIsTheOneInKestrelsRowNotAnotherAppsWithTheSameLabel() {
@@ -79,33 +103,68 @@ class NoticeButtonsTest {
         )
 
         assertNull(buttons.button(snapshot, "Kestrel is working", "Stop"))
-        assertEquals("row-kestrel", buttons.collapsedRow(snapshot, "Kestrel is working"))
+        assertEquals(NoticeButtons.Collapsed("row-kestrel", ShadeExpansion.ROW), buttons.collapsedRow(snapshot, "Kestrel is working"))
     }
 
     @Test
     fun aCollapsedGroupOfKestrelsNotificationsIsExpandedBeforeTheNotificationsOwnRow() {
         // While Android's group is collapsed, its rows show one line each, and an expanded row in it still shows no buttons.
-        fun shade(group: ElementAction, kestrel: ElementAction, buttons: Boolean) = ScreenSnapshot(
-            takenAtMillis = 0,
-            windows = listOf(shade),
-            elements = listOfNotNull(
-                row("group", null, group),
-                row("row-kestrel", 0, kestrel),
-                element("kestrel-title", 1, text = "Continue the goal?"),
-                row("row-listening", 0, ElementAction.EXPAND),
-                element("listening-title", 3, text = "Kestrel is listening"),
-                element("kestrel-continue", 1, text = "Continue", clickable = true).takeIf { buttons },
-            ),
-        )
-
-        val closed = shade(ElementAction.EXPAND, ElementAction.EXPAND, buttons = false)
+        val closed = grouped(ElementAction.EXPAND, ElementAction.EXPAND)
         assertNull(buttons.button(closed, "Continue the goal?", "Continue"))
-        assertEquals("group", buttons.collapsedRow(closed, "Continue the goal?"))
-        assertEquals("group", buttons.collapsedRow(shade(ElementAction.EXPAND, ElementAction.COLLAPSE, buttons = false), "Continue the goal?"))
-        assertEquals("row-kestrel", buttons.collapsedRow(shade(ElementAction.COLLAPSE, ElementAction.EXPAND, buttons = false), "Continue the goal?"))
-        val open = shade(ElementAction.COLLAPSE, ElementAction.COLLAPSE, buttons = true)
+        assertEquals(NoticeButtons.Collapsed("group", ShadeExpansion.GROUP), buttons.collapsedRow(closed, "Continue the goal?"))
+        assertEquals(
+            NoticeButtons.Collapsed("group", ShadeExpansion.GROUP),
+            buttons.collapsedRow(grouped(ElementAction.EXPAND, ElementAction.COLLAPSE), "Continue the goal?"),
+        )
+        assertEquals(
+            NoticeButtons.Collapsed("row-kestrel", ShadeExpansion.ROW),
+            buttons.collapsedRow(grouped(ElementAction.COLLAPSE, ElementAction.EXPAND), "Continue the goal?"),
+        )
+        val open = grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE)
         assertNull(buttons.collapsedRow(open, "Continue the goal?"))
         assertEquals("kestrel-continue", buttons.button(open, "Continue the goal?", "Continue"))
+    }
+
+    @Test
+    fun aRowThatShowsItsButtonsAtOnceIsPressedWithoutAnyExpansion() = runTest {
+        val (found, asked) = find(grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
+
+        assertEquals(NoticeButtons.Found("kestrel-continue", emptyList()), found)
+        assertEquals(emptyList<String>(), asked)
+    }
+
+    @Test
+    fun aCollapsedRowIsExpandedAndNamedOnceAlsoWhenSystemUiKeepsItCollapsed() = runTest {
+        val collapsed = grouped(ElementAction.COLLAPSE, ElementAction.EXPAND)
+
+        val (found, asked) = find(collapsed, grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
+
+        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.ROW)), found)
+        assertEquals(listOf("row-kestrel"), asked)
+        // Each look asks again, and the answer names the row once.
+        val (never, askedEach) = find(collapsed, collapsed, collapsed, collapsed, collapsed)
+        assertEquals(NoticeButtons.Found(null, listOf(ShadeExpansion.ROW)), never)
+        assertEquals(List(5) { "row-kestrel" }, askedEach)
+    }
+
+    @Test
+    fun aCollapsedGroupAroundAnExpandedRowIsTheOnlyExpansion() = runTest {
+        val (found, asked) = find(grouped(ElementAction.EXPAND, ElementAction.COLLAPSE), grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
+
+        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.GROUP)), found)
+        assertEquals(listOf("group"), asked)
+    }
+
+    @Test
+    fun aCollapsedGroupAndRowAreExpandedTheGroupFirst() = runTest {
+        val (found, asked) = find(
+            grouped(ElementAction.EXPAND, ElementAction.EXPAND),
+            grouped(ElementAction.COLLAPSE, ElementAction.EXPAND),
+            grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE),
+        )
+
+        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW)), found)
+        assertEquals(listOf("group", "row-kestrel"), asked)
     }
 
     @Test

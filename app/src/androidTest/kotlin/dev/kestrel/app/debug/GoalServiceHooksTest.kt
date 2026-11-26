@@ -96,7 +96,7 @@ class GoalServiceHooksTest {
         }) { "The touch did not hold the goal" }
         val starts = graph.goalForeground.status().starts
 
-        assertEquals("tapped=continue shade=closed", hook("GOAL_CONTROL", "do" to "tap", "action" to "continue"))
+        assertEquals("tapped=continue expanded=none shade=closed", hook("GOAL_CONTROL", "do" to "tap", "action" to "continue"))
 
         check(VoiceTests.waitUntil(30_000) { model.calls == 2 }) { "The goal did not go on" }
         check(VoiceTests.waitUntil(15_000) { graph.goalForeground.status().starts == starts + 1 }) { "The goal service was not started again" }

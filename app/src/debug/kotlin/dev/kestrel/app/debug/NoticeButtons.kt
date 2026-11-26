@@ -29,13 +29,42 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
         element.packageName == SYSTEM_UI && element.clickable && named(element, label)
 
     /**
-     * The key of the next collapsed notification row around the title [title], so that it can be expanded to show the
-     * row's buttons; null when none is collapsed. While a group's row is collapsed, each row in it shows one line and no
-     * buttons, even when it is expanded itself, so the outermost collapsed row comes first, the group's before the
-     * notification's own. Only notification rows count, never another of SystemUI's containers that offers expand.
+     * The next collapsed notification row around the title [title], so that it can be expanded to show the row's buttons;
+     * null when none is collapsed. While a group's row is collapsed, each row in it shows one line and no buttons, even when
+     * it is expanded itself, so the outermost collapsed row comes first, the group's before the notification's own. Only
+     * notification rows count, never another of SystemUI's containers that offers expand.
      */
-    fun collapsedRow(snapshot: ScreenSnapshot, title: String): String? =
-        rows(snapshot, title).lastOrNull { ElementAction.EXPAND in snapshot.elements[it].actions }?.let { snapshot.elements[it].key }
+    fun collapsedRow(snapshot: ScreenSnapshot, title: String): Collapsed? {
+        val rows = rows(snapshot, title)
+        val index = rows.indexOfLast { ElementAction.EXPAND in snapshot.elements[it].actions }.takeIf { it >= 0 } ?: return null
+        return Collapsed(snapshot.elements[rows[index]].key, if (index == 0) ShadeExpansion.ROW else ShadeExpansion.GROUP)
+    }
+
+    /**
+     * Looks in the shade up to [tries] times for the button [label] of the row whose title is [title], and asks to expand
+     * the next collapsed row around it ([collapsedRow]) after each look that does not show the button. [look] gives the
+     * shade's snapshot after the shade's own wait, and [expand] asks SystemUI to expand the row with the key. The answer
+     * names the button's key, null when no look showed it, and the expansions that the search asked for, in their order,
+     * each once: whether the row showed its buttons without any (design 10.6 of sub-project 7).
+     */
+    suspend fun find(
+        title: String,
+        label: String,
+        tries: Int,
+        look: suspend () -> ScreenSnapshot,
+        expand: suspend (String) -> Unit,
+    ): Found {
+        val expanded = mutableListOf<ShadeExpansion>()
+        repeat(tries) {
+            val snapshot = look()
+            button(snapshot, title, label)?.let { return Found(it, expanded) }
+            collapsedRow(snapshot, title)?.let { row ->
+                expand(row.key)
+                if (row.expansion !in expanded) expanded += row.expansion
+            }
+        }
+        return Found(null, expanded)
+    }
 
     /**
      * Whether SystemUI's shade may be open: false only when the screen shows that it is closed. One of SystemUI's windows is
@@ -74,4 +103,13 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
 
     private fun named(element: ScreenElement, words: String): Boolean =
         element.text.equals(words, ignoreCase = true) || element.contentDescription.equals(words, ignoreCase = true)
+
+    /** A collapsed notification row with its [key], and which [expansion] expanding it is. */
+    data class Collapsed(val key: String, val expansion: ShadeExpansion)
+
+    /** What [find] found: the button's [key], or null, and the [expanded] rows before it, in their order. */
+    data class Found(val key: String?, val expanded: List<ShadeExpansion>)
 }
+
+/** A collapsed row that the hook goal-control expanded in the shade: the notification's own [ROW], or the [GROUP] that Android put it in. */
+internal enum class ShadeExpansion { ROW, GROUP }

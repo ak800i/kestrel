@@ -34,11 +34,16 @@ internal object GoalServiceAnswers {
     }
 
     /**
-     * goal-control's press in SystemUI's shade, which closes the shade again however the press ended. [shadeClosed] only
-     * when the screen showed the shade closed: `shade=open` also when the hook could not tell ([NoticeButtons.shadeOpen]),
-     * so that a caller collapses the shade.
+     * goal-control's press in SystemUI's shade, which closes the shade again however the press ended:
+     * `tapped=<action> expanded=<rows> shade=closed|open`. [expanded] names the collapsed rows that the hook asked to expand
+     * before the press, in their order, each once: `none` when the row showed its buttons without any expansion, as design
+     * 10.6 of sub-project 7 asks, else `row`, `group` or `group,row` ([ShadeExpansion]). [shadeClosed] only when the screen
+     * showed the shade closed: `shade=open` also when the hook could not tell ([NoticeButtons.shadeOpen]), so that a caller
+     * collapses the shade.
      */
-    fun tapped(action: GoalAction, shadeClosed: Boolean): String = "tapped=${action.name.lowercase()} ${shade(shadeClosed)}"
+    fun tapped(action: GoalAction, expanded: List<ShadeExpansion>, shadeClosed: Boolean): String =
+        "tapped=${action.name.lowercase()} expanded=${expanded.takeIf { it.isNotEmpty() }?.joinToString(",") { it.name.lowercase() } ?: "none"} " +
+            shade(shadeClosed)
 
     /** The error of a press that did not happen, for the [reason] (a hook's own sentence, never the screen's words). */
     fun notTapped(reason: String, shadeClosed: Boolean): String = "${reason.trimEnd('.')}; ${shade(shadeClosed)}"
