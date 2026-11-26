@@ -47,9 +47,11 @@ internal data class GoalServiceStatus(
     val refusals: Int,
 ) {
     /**
-     * The notice whose buttons count now, and where it shows: the service's, or else the one posted without it. The rules
-     * never show both (`GoalServiceRules.posted` needs a stopped service, `shown` one that is not), so the order only
-     * names the rule once, for the coordinator and the hooks alike.
+     * The notice that shows now, and where: the service's, or else the one posted without it. The rules never show both
+     * (`GoalServiceRules.posted` needs a stopped service, `shown` one that is not), so the order only names the rule once,
+     * for the coordinator and the hooks alike. Whether a tap counts is not decided here: the receiver judges each tap
+     * against the restored conversation's view (`GoalNotices.of` and `GoalButtons.input`), because after a restart this
+     * status can lag behind that view.
      */
     val counting: PlacedNotice?
         get() = notice?.let { PlacedNotice(it, NoticePlace.SERVICE) } ?: posted?.let { PlacedNotice(it, NoticePlace.POSTED) }
@@ -81,7 +83,7 @@ internal class GoalForeground(
     /** The held goal's notice that Kestrel posts without the service after a refusal; null otherwise. */
     val posted: StateFlow<GoalNotice?> = postedNow.asStateFlow()
 
-    /** The notice whose buttons count now ([GoalServiceStatus.counting]). */
+    /** The notice that shows now ([GoalServiceStatus.counting]). */
     fun notice(): GoalNotice? = status().counting?.notice
 
     /** Follows the conversation's [views] for as long as it runs. */
