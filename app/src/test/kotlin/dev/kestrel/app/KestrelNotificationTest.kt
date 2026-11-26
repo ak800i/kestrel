@@ -1,6 +1,6 @@
 package dev.kestrel.app
 
-import dev.kestrel.app.goal.GoalNotification
+import dev.kestrel.app.goal.NoticePlace
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.listen.ProblemNotifications
 import dev.kestrel.app.providers.SignInService
@@ -18,8 +18,8 @@ class KestrelNotificationTest {
             ProblemNotifications.ACCESSIBILITY_ID,
             ProblemNotifications.SETTINGS_ID,
             SignInService.NOTIFICATION_ID,
-            GoalNotification.SERVICE_ID,
-            GoalNotification.POSTED_ID,
+            NoticePlace.SERVICE.id,
+            NoticePlace.POSTED.id,
         )
 
         assertEquals(ids.size, ids.toSet().size)

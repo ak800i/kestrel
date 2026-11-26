@@ -28,19 +28,24 @@ class GoalNoticesTest {
     private val goal = NoticeGoal(id, 2)
 
     // The open goal of record 2 in the conversation [id], in [phase].
-    private fun view(phase: GoalPhase, hold: GoalHold? = null) = ConversationView(id = id, goal = phase, hold = hold, goalRecord = 2)
+    private fun view(
+        phase: GoalPhase,
+        hold: GoalHold? = null,
+        checklist: ChecklistSummary? = null,
+        waitsBehindCommand: Boolean = false,
+    ) = ConversationView(id = id, goal = phase, hold = hold, goalRecord = 2, checklist = checklist, waitsBehindCommand = waitsBehindCommand)
 
     @Test
     fun aWorkingGoalShowsItsCurrentItemAndProgressWithStopAndOpen() {
-        val notice = GoalNotices.of(ConversationView(goal = GoalPhase.ACTING, checklist = ChecklistSummary(3, 7, "Reply to Mila")))
-        assertEquals(GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Reply to Mila", NoticeProgress(3, 7), working), notice)
+        val notice = GoalNotices.of(view(GoalPhase.ACTING, checklist = ChecklistSummary(3, 7, "Reply to Mila")))
+        assertEquals(GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Reply to Mila", NoticeProgress(3, 7), working, goal), notice)
         // The item may hold a name, so the notice prints none.
         assertFalse(notice.toString().contains("Mila"))
 
         // Without a checklist there is neither an item nor a bar; a goal that asks or has handed a step over still works.
-        val bare = GoalNotice(NoticeKind.WORKING, "Kestrel is working", null, null, working)
-        assertEquals(bare, GoalNotices.of(ConversationView(goal = GoalPhase.ASKING)))
-        assertEquals(bare, GoalNotices.of(ConversationView(goal = GoalPhase.HANDED_OVER, checklist = ChecklistSummary(0, 0, null))))
+        val bare = GoalNotice(NoticeKind.WORKING, "Kestrel is working", null, null, working, goal)
+        assertEquals(bare, GoalNotices.of(view(GoalPhase.ASKING)))
+        assertEquals(bare, GoalNotices.of(view(GoalPhase.HANDED_OVER, checklist = ChecklistSummary(0, 0, null))))
         assertNull(GoalNotices.of(ConversationView()))
     }
 
@@ -48,10 +53,10 @@ class GoalNoticesTest {
     // why the goal does not move, in place of the current item; the progress and the buttons stay.
     @Test
     fun aRoundThatWaitsBehindTheOwnersCommandSaysSoInPlaceOfItsItem() {
-        val view = ConversationView(goal = GoalPhase.ACTING, checklist = ChecklistSummary(3, 7, "Reply to Mila"), waitsBehindCommand = true)
+        val waiting = view(GoalPhase.ACTING, checklist = ChecklistSummary(3, 7, "Reply to Mila"), waitsBehindCommand = true)
         assertEquals(
-            GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Waiting for your command to finish", NoticeProgress(3, 7), working),
-            GoalNotices.of(view),
+            GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Waiting for your command to finish", NoticeProgress(3, 7), working, goal),
+            GoalNotices.of(waiting),
         )
     }
 
@@ -60,12 +65,23 @@ class GoalNoticesTest {
         // Cancel first: a tap meant as Stop, while a touch holds the goal, lands on Cancel (the owner's decision).
         val held = listOf(GoalAction.CANCEL, GoalAction.CONTINUE)
         assertEquals(
-            GoalNotice(NoticeKind.HELD, "Continue the goal?", ConversationTexts.GO_ON, null, held),
-            GoalNotices.of(ConversationView(goal = GoalPhase.PAUSED, hold = GoalHold.LOCK, checklist = ChecklistSummary(3, 7, "Reply to Mila"))),
+            GoalNotice(NoticeKind.HELD, "Continue the goal?", ConversationTexts.GO_ON, null, held, goal),
+            GoalNotices.of(view(GoalPhase.PAUSED, GoalHold.LOCK, ChecklistSummary(3, 7, "Reply to Mila"))),
         )
         assertEquals(ConversationTexts.GO_ON, GoalNotices.of(ConversationView(goal = GoalPhase.PAUSED_AT_LIMIT, hold = GoalHold.LIMIT))?.text)
         assertEquals(ConversationTexts.LEAVE_KESTREL, GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.KESTREL_SCREEN))?.text)
         assertEquals(ConversationTexts.CONTINUE_IN_NOTIFICATION, GoalNotices.of(ConversationView(goal = GoalPhase.INTERRUPTED, hold = GoalHold.BACKGROUND_REFUSED))?.text)
+    }
+
+    // An open goal always has its conversation and record; one without them could carry buttons that never count, so its
+    // notice shows none (the whole-plan review's nit).
+    @Test
+    fun aGoalWithoutItsNameShowsNoButtons() {
+        assertEquals(
+            GoalNotice(NoticeKind.WORKING, "Kestrel is working", "Reply to Mila", NoticeProgress(3, 7), emptyList()),
+            GoalNotices.of(ConversationView(goal = GoalPhase.ACTING, checklist = ChecklistSummary(3, 7, "Reply to Mila"))),
+        )
+        assertEquals(emptyList<GoalAction>(), GoalNotices.of(ConversationView(id = id, goal = GoalPhase.INTERRUPTED, hold = GoalHold.TOUCH))?.actions)
     }
 
     @Test

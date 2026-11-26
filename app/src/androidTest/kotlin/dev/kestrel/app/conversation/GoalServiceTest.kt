@@ -22,6 +22,7 @@ import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalService
 import dev.kestrel.app.goal.GoalTexts
 import dev.kestrel.app.goal.NoticeKind
+import dev.kestrel.app.goal.NoticePlace
 import dev.kestrel.app.listen.ListeningService
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
@@ -113,15 +114,18 @@ class GoalServiceTest {
         check(VoiceTests.waitUntil(15_000) {
             conversations.view.value.goal == GoalPhase.INTERRUPTED && graph.goalForeground.status().posted?.kind == NoticeKind.HELD
         }) { "The refused start did not hold the goal with its notice posted" }
-        check(VoiceTests.waitUntil(5_000) { posted()?.channelId == GOALS }) { "Android shows no held goal's notification" }
+        check(VoiceTests.waitUntil(5_000) { posted()?.channelId == GoalNotification.CHANNEL }) { "Android shows no held goal's notification" }
 
         // The owner's way back is that notification's Continue. Kestrel's accessibility service going off, as in Task 8's
         // Step 8a, posts its own notice, which must never take the held goal's place.
         screen.shell("settings delete secure enabled_accessibility_services")
         check(VoiceTests.waitUntil(10_000) { graph.screen.value == null }) { "The accessibility service did not go off" }
 
-        assertFalse("The held goal's notification was replaced or taken away", VoiceTests.waitUntil(SETTLE_MILLIS) { posted()?.channelId != GOALS })
+        assertFalse("The held goal's notification was replaced or taken away", VoiceTests.waitUntil(SETTLE_MILLIS) { posted()?.channelId != GoalNotification.CHANNEL })
         assertEquals(listOf(GoalTexts.CANCEL, GoalTexts.CONTINUE), checkNotNull(posted()).actions.map { it.title.toString() })
+        // A plain notification: Android colorizes only a foreground service's (design 10.6).
+        assertFalse(checkNotNull(posted()).extras.getBoolean(Notification.EXTRA_COLORIZED))
+        assertEquals(Notification.COLOR_DEFAULT, checkNotNull(posted()).color)
     }
 
     @Test
@@ -331,11 +335,11 @@ class GoalServiceTest {
     private class Shown(val title: String?, val text: String?, val actions: List<String>)
 
     private fun notification(): Notification? =
-        context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == GoalNotification.SERVICE_ID }?.notification
+        context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == NoticePlace.SERVICE.id }?.notification
 
     // The held goal's notification that Kestrel posted without the service, as Android shows it.
     private fun posted(): Notification? =
-        context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == GoalNotification.POSTED_ID }?.notification
+        context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull { it.id == NoticePlace.POSTED.id }?.notification
 
     private fun shown(): Shown? = notification()?.let { notification ->
         Shown(
@@ -389,8 +393,5 @@ class GoalServiceTest {
     private companion object {
         // How long a test watches a held goal stay held after a button that must not count.
         const val SETTLE_MILLIS = 3_000L
-
-        // The goal notification's channel (GoalNotification).
-        const val GOALS = "goals"
     }
 }

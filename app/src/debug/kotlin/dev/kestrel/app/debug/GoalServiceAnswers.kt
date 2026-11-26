@@ -15,7 +15,7 @@ import dev.kestrel.app.goal.GoalServiceStatus
  */
 internal object GoalServiceAnswers {
     fun state(status: GoalServiceStatus, android: Set<ForegroundType>?, focus: FocusRecord, refuseArmed: Boolean): String {
-        val counting = status.notice ?: status.posted
+        val counting = status.counting?.notice
         val last = focus.last
         val focusBy = when {
             last == null -> "none"

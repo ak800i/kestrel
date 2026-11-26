@@ -1,5 +1,6 @@
 package dev.kestrel.app.goal
 
+import dev.kestrel.app.KestrelNotification
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.machine.HoldReason
 import dev.kestrel.conversation.machine.QuietClock
@@ -12,6 +13,23 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Where a goal's notice shows (design 10.6 of sub-project 7; plan 7E): in [SERVICE], the goal service's notification in the
+ * foreground, or in [POSTED], the held goal's notification that Kestrel posts without the service after a refusal, each
+ * with its notification's [id]. Android colorizes only a foreground service's notification, so only [SERVICE] is built as
+ * one ([foreground]); the posted one is a plain notification.
+ */
+internal enum class NoticePlace(private val notification: KestrelNotification, val foreground: Boolean) {
+    SERVICE(KestrelNotification.GOAL_SERVICE, foreground = true),
+    POSTED(KestrelNotification.GOAL_POSTED, foreground = false),
+    ;
+
+    val id: Int get() = notification.id
+}
+
+/** A goal's [notice] and the [place] where it shows. */
+internal data class PlacedNotice(val notice: GoalNotice, val place: NoticePlace)
 
 /**
  * The goal service as the hooks read it: the coordinator's [service], the [notice] that the service shows (null while it
@@ -27,7 +45,15 @@ internal data class GoalServiceStatus(
     val applied: Set<ForegroundType>?,
     val starts: Int,
     val refusals: Int,
-)
+) {
+    /**
+     * The notice whose buttons count now, and where it shows: the service's, or else the one posted without it. The rules
+     * never show both (`GoalServiceRules.posted` needs a stopped service, `shown` one that is not), so the order only
+     * names the rule once, for the coordinator and the hooks alike.
+     */
+    val counting: PlacedNotice?
+        get() = notice?.let { PlacedNotice(it, NoticePlace.SERVICE) } ?: posted?.let { PlacedNotice(it, NoticePlace.POSTED) }
+}
 
 /**
  * The goal service's coordinator (design 10.6 of sub-project 7; plan 7E). It follows the conversation's view, applies
@@ -55,8 +81,8 @@ internal class GoalForeground(
     /** The held goal's notice that Kestrel posts without the service after a refusal; null otherwise. */
     val posted: StateFlow<GoalNotice?> = postedNow.asStateFlow()
 
-    /** The notice whose buttons count now: the service's, or else the one posted without it. */
-    fun notice(): GoalNotice? = shownNow.value?.notice ?: postedNow.value
+    /** The notice whose buttons count now ([GoalServiceStatus.counting]). */
+    fun notice(): GoalNotice? = status().counting?.notice
 
     /** Follows the conversation's [views] for as long as it runs. */
     suspend fun follow(views: Flow<ConversationView>) {

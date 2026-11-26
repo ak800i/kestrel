@@ -85,6 +85,26 @@ class GoalForegroundTest {
         )
     }
 
+    // One rule for the notice whose buttons count, which the hooks read too (the whole-plan review's M2): the service's
+    // notice while the service runs or starts, else the held goal's notice that Kestrel posted without it.
+    @Test
+    fun theNoticeWhoseButtonsCountIsTheServicesElseTheOnePostedWithoutIt() = runTest {
+        val foreground = following()
+        refuse = true
+        views.value = ConversationView(command = 1, goalCommand = 1, goal = GoalPhase.ACTING)
+        views.value = ConversationView(command = 1, goalCommand = 1, goal = GoalPhase.INTERRUPTED, hold = GoalHold.BACKGROUND_REFUSED)
+        assertEquals(PlacedNotice(GoalNotices.of(views.value)!!, NoticePlace.POSTED), foreground.status().counting)
+
+        refuse = false
+        views.value = ConversationView(command = 2, goalCommand = 2, goal = GoalPhase.ACTING)
+        assertEquals(PlacedNotice(GoalNotices.of(views.value)!!, NoticePlace.SERVICE), foreground.status().counting)
+        foreground.started(setOf(ForegroundType.SPECIAL_USE))
+        assertEquals(foreground.status().counting?.notice, foreground.notice())
+
+        views.value = ConversationView(command = 2)
+        assertNull(foreground.status().counting)
+    }
+
     @Test
     fun aSpeechWaitsUntilTheServiceAddedMediaPlaybackAndAndroid13NeedsNoType() = runTest {
         val foreground = following()

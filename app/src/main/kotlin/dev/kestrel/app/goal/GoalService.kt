@@ -49,7 +49,7 @@ class GoalService : Service() {
         val shown = foreground.shown.value
         val wanted = shown?.types ?: GoalServiceRules.types(Build.VERSION.SDK_INT, speaking = false)
         try {
-            startForeground(GoalNotification.SERVICE_ID, GoalNotification.build(this, shown?.notice ?: GoalNotices.CLOSING), mask(wanted))
+            startForeground(NoticePlace.SERVICE.id, GoalNotification.build(this, shown?.notice ?: GoalNotices.CLOSING, NoticePlace.SERVICE), mask(wanted))
         } catch (e: Exception) {
             // For example ForegroundServiceStartNotAllowedException: Android refused the start (design 10.6 of sub-project 7).
             // A service that is in the foreground already stays, as the rules say.
@@ -83,7 +83,7 @@ class GoalService : Service() {
         }
         if (shown.types != types) {
             try {
-                startForeground(GoalNotification.SERVICE_ID, GoalNotification.build(this, shown.notice), mask(shown.types))
+                startForeground(NoticePlace.SERVICE.id, GoalNotification.build(this, shown.notice, NoticePlace.SERVICE), mask(shown.types))
                 types = shown.types
                 foreground.applied(shown.types)
                 return
@@ -91,7 +91,7 @@ class GoalService : Service() {
                 graph.report("Changing the goal service's types", e)
             }
         }
-        notifications.notify(GoalNotification.SERVICE_ID, GoalNotification.build(this, shown.notice))
+        notifications.notify(NoticePlace.SERVICE.id, GoalNotification.build(this, shown.notice, NoticePlace.SERVICE))
     }
 
     companion object {

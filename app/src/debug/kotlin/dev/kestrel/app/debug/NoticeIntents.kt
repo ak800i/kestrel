@@ -1,7 +1,6 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.app.goal.GoalAction
-import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalServiceStatus
 
 /**
@@ -13,15 +12,8 @@ internal object NoticeIntents {
     /** One of Kestrel's posted notifications: its ID and its buttons, each as its label and its intent. */
     data class Posted<T>(val id: Int, val buttons: List<Pair<String, T>>)
 
-    /**
-     * The ID of the notification that shows [action] now: the held goal's notification that Kestrel posted without the
-     * service, or else the service's own; null when neither offers [action].
-     */
-    fun idOf(status: GoalServiceStatus, action: GoalAction): Int? = when {
-        status.posted?.actions?.contains(action) == true -> GoalNotification.POSTED_ID
-        status.notice?.actions?.contains(action) == true -> GoalNotification.SERVICE_ID
-        else -> null
-    }
+    /** The ID of the notification whose buttons count now ([GoalServiceStatus.counting]); null when it does not offer [action]. */
+    fun idOf(status: GoalServiceStatus, action: GoalAction): Int? = status.counting?.takeIf { action in it.notice.actions }?.place?.id
 
     /** The intent of the button [label] on Kestrel's posted notification [id]; null when Android shows no such button. */
     fun <T> intentOf(posted: List<Posted<T>>, id: Int, label: String): T? =

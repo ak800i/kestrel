@@ -82,7 +82,8 @@ internal data class GoalNotice(
  * acts, asks or has handed a step over): "Kestrel is working", the current checklist item, or "Waiting for your command
  * to finish" while its round waits behind the owner's instant command, the checklist's progress, Stop and Open. While it
  * is held: "Continue the goal?", how to go on for its hold (the sentence that Kestrel says), Cancel and then Continue, so
- * that the first button always ends the goal. Without a goal: none.
+ * that the first button always ends the goal. Without a goal: none. Buttons need the goal's name ([NoticeGoal]), which an
+ * open goal always has; a goal without it gets no buttons, because none of them could ever count.
  */
 internal object GoalNotices {
     /** The notice after the goal's end while its final reply is said or waits, and of a start that came after the end. */
@@ -91,14 +92,15 @@ internal object GoalNotices {
     fun of(view: ConversationView): GoalNotice? {
         val phase = view.goal ?: return null
         val goal = view.id?.let { id -> view.goalRecord?.let { NoticeGoal(id, it) } }
+        fun buttons(vararg actions: GoalAction) = if (goal == null) emptyList() else actions.toList()
         if (phase in GoalState.HELD) {
             val how = view.hold?.let(ConversationTexts::held)
-            return GoalNotice(NoticeKind.HELD, ConversationTexts.CONTINUE_GOAL, how, null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE), goal)
+            return GoalNotice(NoticeKind.HELD, ConversationTexts.CONTINUE_GOAL, how, null, buttons(GoalAction.CANCEL, GoalAction.CONTINUE), goal)
         }
         val checklist = view.checklist
         val progress = checklist?.takeIf { it.total > 0 }?.let { NoticeProgress(it.done, it.total) }
         val text = if (view.waitsBehindCommand) GoalTexts.BEHIND_COMMAND else checklist?.current
-        return GoalNotice(NoticeKind.WORKING, GoalTexts.WORKING, text, progress, listOf(GoalAction.STOP, GoalAction.OPEN), goal)
+        return GoalNotice(NoticeKind.WORKING, GoalTexts.WORKING, text, progress, buttons(GoalAction.STOP, GoalAction.OPEN), goal)
     }
 }
 
