@@ -17,7 +17,7 @@ $ErrorActionPreference = 'Stop'
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
 $adb = Get-Adb
-$service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+$service = $KestrelAccessibilityService
 
 function Invoke-Shell([string]$Command) { (& $adb -s $Serial shell $Command) -join "`n" }
 function Invoke-Hook { (& "$PSScriptRoot\hook.ps1" -Serial $Serial @args) -join "`n" }
@@ -30,7 +30,8 @@ function Set-KestrelService([bool]$On) {
         Start-Sleep -Seconds 2
         return
     }
-    Invoke-Checked "settings put secure enabled_accessibility_services $service" | Out-Null
+    # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+    if (-not (Connect-AccessibilityService -Serial $Serial -Services $service)) { throw "Android did not bind Kestrel's accessibility service (see the warning above)." }
     Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
     for ($i = 0; $i -lt 30; $i++) {
         if ((Invoke-Hook state) -like 'screen=on*') { return }
@@ -114,16 +115,9 @@ $savedAccessibility = Get-AccessibilitySettings -Serial $Serial
 $grantedBefore = Get-GrantedPermissions $permissions
 $notGrantedBefore = @($permissions | Where-Object { $_ -notin $grantedBefore })
 $revokeByHand = @($notGrantedBefore | ForEach-Object { "pm revoke dev.kestrel android.permission.$_" }) -join '; '
-# The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
-# list of services first, and they delete the list and the switch if these were not there before.
-$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($savedAccessibility.Keys) | Select-Object -Unique) {
-        $value = if ($savedAccessibility.Contains($setting)) { $savedAccessibility[$setting] } else { 'null' }
-        if ($value -ne 'null') {
-            "settings put secure $setting '$($value -replace "'", "'\''")'"
-        } elseif ($setting -in 'enabled_accessibility_services', 'accessibility_enabled') {
-            "settings delete secure $setting"
-        }
-    }) -join '; '
+# The commands that put back the accessibility settings by hand (Get-AccessibilityRestoreCommands): the list of services
+# first, and they delete the list and the switch if these were not there before.
+$accessibilityByHand = @(Get-AccessibilityRestoreCommands -Saved $savedAccessibility) -join '; '
 $completed = $false
 $failed = $false
 $restoresAtEnd = @(

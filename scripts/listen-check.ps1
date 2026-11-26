@@ -98,7 +98,7 @@ Use-KestrelToolchain
 # No command reaches the device before this check.
 Assert-TestDevice -Serial $Serial
 $adb = Get-Adb
-$service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+$service = $KestrelAccessibilityService
 $tile = 'dev.kestrel/dev.kestrel.app.listen.KestrelTileService'
 # How sysui_qs_tiles names Kestrel's tile, as add-tile writes it.
 $tileSpec = 'custom(dev.kestrel/.app.listen.KestrelTileService)'
@@ -936,16 +936,9 @@ $lockScreenOff = $isEmulator -and ((Invoke-Checked 'cmd lock_settings get-disabl
 # The check's calls are newer than the newest row of the call log now. The query reads only the rows' IDs.
 $callLogLargest = if ($isEmulator) { Get-LargestRowId -Rows (Invoke-Checked 'content query --uri content://call_log/calls --projection _id') } else { 0 }
 $callLogDelete = "content delete --uri content://call_log/calls --where '_id>$callLogLargest AND number=$testNumber'"
-# The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
-# list of services first, and they delete the settings that the script changes if these were not there before.
-$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled', 'accessibility_shortcut_target_service') + @($savedAccessibility.Keys) | Select-Object -Unique) {
-        $value = if ($savedAccessibility.Contains($setting)) { $savedAccessibility[$setting] } else { 'null' }
-        if ($value -ne 'null') {
-            "settings put secure $setting '$($value -replace "'", "'\''")'"
-        } else {
-            "settings delete secure $setting"
-        }
-    }) -join '; '
+# The commands that put back the accessibility settings by hand (Get-AccessibilityRestoreCommands): the list of services
+# first, and they delete the settings that the script changes if these were not there before.
+$accessibilityByHand = @(Get-AccessibilityRestoreCommands -Saved $savedAccessibility -Delete 'enabled_accessibility_services', 'accessibility_enabled', 'accessibility_shortcut_target_service') -join '; '
 # The call check's choice "Commands during a call", which it turns on for the mute check and puts back.
 $callCommandsBefore = $isEmulator -and (Invoke-Hook voice-call-commands) -eq 'callCommands=on'
 # The holders of the assistant role and the settings that name the assistant's services, which the role check changes.

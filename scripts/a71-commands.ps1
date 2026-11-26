@@ -249,7 +249,7 @@ foreach ($row in @(Read-Corpus -Path $corpusFile) + @(Read-Corpus -Path (Join-Pa
 $generated = Join-Path $PSScriptRoot '..\corpus\generated'
 $synthFile = Join-Path $owner 'commands-synth.wav'
 $remote = Get-EvalFolder
-$service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+$service = $KestrelAccessibilityService
 $testApp = 'dev.kestrel.testapp'
 $streams = @(0, 2, 3, 4, 5)
 $gradleUsed = $false

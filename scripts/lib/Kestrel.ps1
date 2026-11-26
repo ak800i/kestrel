@@ -79,11 +79,22 @@ function Get-SecureSetting([string]$Serial, [string]$Name) {
     (Invoke-SettingsCommand -Serial $Serial -Command "settings get secure $Name") -join "`n"
 }
 
+# The device shell's command that gives the secure setting the value that Get-SecureSetting read, deleting it for 'null'.
+function Format-SecureSettingCommand([string]$Name, [string]$Value) {
+    # A single quote would end the device shell's quoting, so it becomes '\''.
+    if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$($Value -replace "'", "'\''")'" }
+}
+
+# A command that runs the device shell's command on the device when it is pasted into PowerShell.
+function Format-PasteCommand([string]$Serial, [string]$Command) {
+    $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
+    "& $(& $literal (Get-Adb)) -s $Serial shell $(& $literal $Command)"
+}
+
 # Puts back a secure setting that Get-SecureSetting read, deleting it for 'null', and returns whether the device took it.
 # When it did not, it warns with a command that puts the setting back when it is pasted into PowerShell.
 function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
-    # A single quote would end the device shell's quoting, so it becomes '\''.
-    $command = if ($Value -eq 'null') { "settings delete secure $Name" } else { "settings put secure $Name '$($Value -replace "'", "'\''")'" }
+    $command = Format-SecureSettingCommand -Name $Name -Value $Value
     $reason = ''
     $now = try {
         Invoke-SettingsCommand -Serial $Serial -Command $command | Out-Null
@@ -93,8 +104,7 @@ function Set-SecureSetting([string]$Serial, [string]$Name, [string]$Value) {
         $null
     }
     if ($now -ceq $Value) { return $true }
-    $literal = { param($text) "'" + ($text -replace "'", "''") + "'" }
-    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: & $(& $literal (Get-Adb)) -s $Serial shell $(& $literal $command)"
+    Write-Warning "Could not put back the setting $Name of $Serial$reason. Run: $(Format-PasteCommand -Serial $Serial -Command $command)"
     $false
 }
 
@@ -149,27 +159,52 @@ function Get-AccessibilitySettings([string]$Serial) {
 # Puts back the settings that Get-AccessibilitySettings read, and deletes those that were not there. The list of enabled
 # services goes first, so that the shortcuts point to services that are on again. When that list holds Kestrel's
 # service, it goes back through Connect-AccessibilityService, which also binds Kestrel's service again after a stop or a
-# crash of Kestrel, when the list itself may be unchanged. Returns whether everything is back.
+# crash of Kestrel, when the list itself may be unchanged. Android changes other settings itself while it applies the
+# list: it clears the shortcut and button targets of a service that it unbinds, and it writes accessibility_enabled. So
+# the other settings are read again after the list, and compared with that read. Returns whether everything is back.
 function Restore-AccessibilitySettings([string]$Serial, $Saved) {
-    try {
-        $now = Get-AccessibilitySettings -Serial $Serial
-    } catch {
+    $warnUnread = {
+        param($Reason)
         $before = @($Saved.Keys | ForEach-Object { "$_=$($Saved[$_])" }) -join "`n"
-        Write-Warning "Could not read the accessibility settings of $Serial ($($_.Exception.Message)), so they were not put back. Before, they were:`n$before"
-        return $false
+        Write-Warning "Could not read the accessibility settings of $Serial ($Reason), so they were not put back. Before, they were:`n$before"
     }
+    $list = 'enabled_accessibility_services'
+    try { $now = Get-AccessibilitySettings -Serial $Serial } catch { & $warnUnread $_.Exception.Message; return $false }
     $back = $true
-    $names = @('enabled_accessibility_services', 'accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique)
+    $value = if ($Saved.Contains($list)) { $Saved[$list] } else { 'null' }
+    $current = if ($now.Contains($list)) { $now[$list] } else { 'null' }
+    if (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService) {
+        if (-not (Connect-AccessibilityService -Serial $Serial -Services $value)) { $back = $false }
+    } elseif ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $list -Value $value)) { $back = $false }
+    try { $now = Get-AccessibilitySettings -Serial $Serial } catch { & $warnUnread $_.Exception.Message; return $false }
+    $names = @('accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique) | Where-Object { $_ -ne $list }
     foreach ($name in ($names | Select-Object -Unique)) {
         $value = if ($Saved.Contains($name)) { $Saved[$name] } else { 'null' }
         $current = if ($now.Contains($name)) { $now[$name] } else { 'null' }
-        if ($name -eq 'enabled_accessibility_services' -and (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService)) {
-            if (-not (Connect-AccessibilityService -Serial $Serial -Services $value)) { $back = $false }
-        } elseif ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
+        if ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
     }
     $back
 }
 
+# The commands for the device's shell that put back the accessibility settings that Get-AccessibilitySettings read, for a
+# warning that the owner pastes when a script could not put them back itself. As Restore-AccessibilitySettings does, they
+# put back the list of services first. When that list holds Kestrel's service, they first take the service out of the
+# list and wait up to 30 s until 'dumpsys accessibility' names it no more, so that the list's return binds it also when
+# a stop or a crash of Kestrel left it crashed (Connect-AccessibilityService); the settings after the list, which include
+# the shortcut and button targets that Android clears for a service that it unbinds, then go back too. A setting in
+# $Delete that was not there before is deleted. Returns the commands in their order.
+function Get-AccessibilityRestoreCommands($Saved, [string[]]$Delete = @('enabled_accessibility_services', 'accessibility_enabled')) {
+    $list = 'enabled_accessibility_services'
+    foreach ($name in (@($list, 'accessibility_enabled') + @($Delete) + @($Saved.Keys) | Select-Object -Unique)) {
+        $value = if ($Saved.Contains($name)) { "$($Saved[$name])" } else { 'null' }
+        if ($name -eq $list -and (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService)) {
+            $others = @($value -split ':' | Where-Object { $_ -and $_ -cne $KestrelAccessibilityService }) -join ':'
+            Format-SecureSettingCommand -Name $list -Value $(if ($others) { $others } else { 'null' })
+            'i=0; while [ $i -lt 30 ] && dumpsys accessibility | grep -qF ''{' + $KestrelAccessibilityService + '}''; do sleep 1; i=$((i+1)); done'
+        }
+        if ($value -ne 'null' -or $name -in $Delete) { Format-SecureSettingCommand -Name $name -Value $value }
+    }
+}
 $KestrelAccessibilityService = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
 
 # Whether the value of the setting enabled_accessibility_services ('null', empty, or components separated by ':') lists
@@ -233,6 +268,18 @@ function Format-ServiceState($State) {
     "enabled=$($State.Enabled) binding=$($State.Binding) crashed=$($State.Crashed) bound=$($State.Bound)"
 }
 
+# The API level of the device's Android (ro.build.version.sdk), or $null when it could not be read.
+function Get-DeviceSdk([string]$Serial) {
+    try { [int]"$(Invoke-SettingsCommand -Serial $Serial -Command 'getprop ro.build.version.sdk')".Trim() } catch { $null }
+}
+
+# Android 14 (API 34) and later drop a service that is no longer enabled from the accessibility manager's binding set
+# (AOSP's AccessibilityUserState.removeDisabledServicesFromTemporaryStatesLocked). Android 13's settings observer runs
+# updateCrashedServicesIfNeededLocked instead, which drops it only from the crashed set, so there a binding ends only
+# when the bind finishes (AccessibilityServiceConnection.initializeService), the package is updated, removed or force
+# stopped, or the user changes; no write of the list ends it.
+$OffEndsBindingSdk = 34
+
 # Reads the accessibility service's state once a second until $Until accepts it or $TimeoutSeconds have passed, and
 # returns the last state with whether $Until accepted it.
 function Wait-AccessibilityServiceState([string]$Serial, [string]$Component, [scriptblock]$Until, [int]$TimeoutSeconds) {
@@ -245,47 +292,86 @@ function Wait-AccessibilityServiceState([string]$Serial, [string]$Component, [sc
     [pscustomobject]@{ Reached = $false; State = $state }
 }
 
+# Reads the list of enabled accessibility services. Returns $null after a warning when the device does not answer, so
+# that the callers report a failure instead of throwing in the middle of a restore.
+function Read-ServiceList([string]$Serial, [string]$Then) {
+    try {
+        Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+    } catch {
+        Write-Warning "Could not read the accessibility services of $Serial ($($_.Exception.Message)), so $Then"
+        $null
+    }
+}
+
+# Whether two values of enabled_accessibility_services name the same services. Android's accessibility manager reads
+# the list as a set, so a change of order alone is no change for it.
+function Test-SameServiceSet([string]$A, [string]$B) {
+    $set = { param($Value) @("$Value" -split ':' | Where-Object { $_ -and $_ -ne 'null' } | Sort-Object -Unique -CaseSensitive) -join ':' }
+    (& $set $A) -ceq (& $set $B)
+}
+
+# The explanation for a service that Android still binds after an off on Android 13 ($OffEndsBindingSdk).
+function Format-BindingNote([int]$Sdk) {
+    "Android $Sdk ends a binding only when the bind finishes, or when the app is updated or force stopped; turning the service off does not end it."
+}
+
 # Takes the component out of the list of enabled accessibility services, keeping every other service, and waits up to
 # $TimeoutSeconds until Android's accessibility manager has applied that: it lists the component neither as enabled,
-# binding nor crashed, and the service is unbound. The manager's settings observer then runs AOSP's
-# AccessibilityUserState.removeDisabledServicesFromTemporaryStatesLocked, which drops a service that is no longer
-# enabled from its crashed and binding sets. Returns whether the service is off; otherwise it warns with the state.
+# binding nor crashed, and the service is unbound. The manager's settings observer drops a service that is no longer
+# enabled from its crashed set, and from Android 14 on also from its binding set ($OffEndsBindingSdk); on Android 13 a
+# binding ends only when the bind finishes, and the warning says so. Android also clears the shortcut and button targets
+# of a service that it unbinds (AOSP's removeShortcutTargetForUnboundServiceLocked), which Restore-AccessibilitySettings
+# puts back. Returns whether the service is off; otherwise it warns with the state.
 function Disconnect-AccessibilityService([string]$Serial, [string]$Component = $KestrelAccessibilityService, [int]$TimeoutSeconds = 30) {
-    $services = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+    $services = Read-ServiceList -Serial $Serial -Then "$Component was not turned off."
+    if ($null -eq $services) { return $false }
     $others = @("$services" -split ':' | Where-Object { $_ -and $_ -ne 'null' -and $_ -cne $Component }) -join ':'
     $without = if ($others) { $others } else { 'null' }
     if ($services -cne $without -and -not (Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $without)) { return $false }
     $wait = Wait-AccessibilityServiceState -Serial $Serial -Component $Component -Until { param($State) Test-ServiceOff $State } -TimeoutSeconds $TimeoutSeconds
     if (-not $wait.Reached) {
-        Write-Warning "Android did not turn $Component off on $Serial within $TimeoutSeconds s ($(Format-ServiceState $wait.State))."
+        $sdk = Get-DeviceSdk -Serial $Serial
+        $note = if ($wait.State -and $wait.State.Binding -and $sdk -and $sdk -lt $OffEndsBindingSdk) { " $(Format-BindingNote $sdk)" } else { '' }
+        Write-Warning "Android did not turn $Component off on $Serial within $TimeoutSeconds s ($(Format-ServiceState $wait.State)).$note"
     }
     $wait.Reached
 }
 
 # Puts the list of enabled accessibility services to $Services, which lists the component, and makes sure that Android
-# has bound the component then. Android's accessibility manager binds an enabled service only when the list changes,
-# and never a service that it holds as crashed or binding (AOSP's AccessibilityManagerService.updateServicesLocked).
-# A stop of the app, such as the Stop of Android's "Active apps" ('cmd activity stop-app'), or a crash, leaves its
-# service crashed while the list still names it, and writing the same list again changes nothing. So unless the service
-# is already bound with the list as $Services, the service goes off first (Disconnect-AccessibilityService), and then
-# the list goes back, after which the function waits up to $TimeoutSeconds until the service is bound. When the off does
-# not apply, the list still goes back. Returns whether the service is bound with the list as $Services; otherwise it
-# warns with the state and what the owner can do.
+# has bound the component then. Android's accessibility manager binds an enabled service only when the set of enabled
+# services changes, and never a service that it holds as crashed or binding (AOSP's
+# AccessibilityManagerService.updateServicesLocked). A stop of the app, such as the Stop of Android's "Active apps"
+# ('cmd activity stop-app'), or a crash, leaves its service crashed while the list still names it, and writing the same
+# list again changes nothing. So the service goes off first (Disconnect-AccessibilityService) only when Android holds it
+# as crashed or binding, or when the list already names it and Android does not run it; an off of a bound service would
+# make Android clear its shortcut and button targets, and a bound service stays bound when the list changes around it.
+# On Android 13 a binding does not end with an off ($OffEndsBindingSdk), so there the function waits for the bind
+# instead. Then the list goes back, also when the off did not apply, and the function waits up to $TimeoutSeconds until
+# the service is bound. Returns whether it is bound with the list as $Services; otherwise, also when the device does
+# not answer, it warns with what it saw and what to do, and returns $false.
 function Connect-AccessibilityService([string]$Serial, [string]$Services, [string]$Component = $KestrelAccessibilityService, [int]$TimeoutSeconds = 30) {
     if (-not (Test-ServiceListed -Services $Services -Component $Component)) { throw "The list '$Services' does not hold $Component." }
-    $now = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
-    if ($now -ceq $Services -and (Test-ServiceConnected (Get-AccessibilityServiceState -Serial $Serial -Component $Component))) { return $true }
-    $off = Disconnect-AccessibilityService -Serial $Serial -Component $Component -TimeoutSeconds $TimeoutSeconds
-    if (-not (Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $Services)) { return $false }
+    $putBack = Format-PasteCommand -Serial $Serial -Command (Format-SecureSettingCommand -Name enabled_accessibility_services -Value $Services)
+    $now = Read-ServiceList -Serial $Serial -Then "the list was not put back. Run: $putBack"
+    if ($null -eq $now) { return $false }
+    $state = Get-AccessibilityServiceState -Serial $Serial -Component $Component
+    $sdk = $null
+    if ($state -and $state.Binding) { $sdk = Get-DeviceSdk -Serial $Serial }
+    $bindingEndsWithOff = -not ($sdk -and $sdk -lt $OffEndsBindingSdk)
+    $stuck = $state -and ($state.Crashed -or ($state.Binding -and $bindingEndsWithOff) -or
+        (-not $state.Binding -and -not $state.Bound -and (Test-SameServiceSet $now $Services)))
+    $off = $true
+    if ($stuck) { $off = Disconnect-AccessibilityService -Serial $Serial -Component $Component -TimeoutSeconds $TimeoutSeconds }
+    if (($stuck -or $now -cne $Services) -and -not (Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $Services)) { return $false }
     if (-not $off) { return $false }
     $wait = Wait-AccessibilityServiceState -Serial $Serial -Component $Component -Until { param($State) Test-ServiceConnected $State } -TimeoutSeconds $TimeoutSeconds
     if (-not $wait.Reached) {
-        Write-Warning ("Android did not bind $Component on $Serial within $TimeoutSeconds s after it was turned on again " +
-            "($(Format-ServiceState $wait.State)). Turn it off and on in Settings > Accessibility.")
+        $note = if ($sdk -and -not $bindingEndsWithOff) { " $(Format-BindingNote $sdk)" } else { '' }
+        Write-Warning ("Android did not bind $Component on $Serial within $TimeoutSeconds s after the list went back " +
+            "($(Format-ServiceState $wait.State)).$note Turn it off and on in Settings > Accessibility.")
     }
     $wait.Reached
 }
-
 # The AVD name in the answer of an emulator's console to 'avd name': the answer's first line, trimmed (the console ends
 # it with 'OK' on a line of its own). $Answer is adb's output as lines, or as one text; without an answer it is ''.
 function ConvertFrom-AvdNameAnswer($Answer) {

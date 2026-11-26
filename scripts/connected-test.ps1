@@ -48,16 +48,9 @@ $ownerBefore = if (Test-OwnerDataDevice -Serial $Serial) { Get-OwnerDataState -S
 if ($ownerBefore -and -not $ownerBefore.Profiles) {
     Write-Warning "Could not read Kestrel's profiles on $Serial before the tests ($($ownerBefore.ProfilesUnread)), so the script compares only the Google accounts there."
 }
-# The commands that put the device back by hand. As Restore-AccessibilitySettings does, they put back the list of
-# services first, and they delete the list and the switch if these were not there before.
-$byHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($saved.Keys) | Select-Object -Unique) {
-        $value = if ($saved.Contains($setting)) { $saved[$setting] } else { 'null' }
-        if ($value -ne 'null') {
-            "settings put secure $setting '$($value -replace "'", "'\''")'"
-        } elseif ($setting -in 'enabled_accessibility_services', 'accessibility_enabled') {
-            "settings delete secure $setting"
-        }
-    })
+# The commands that put the device back by hand (Get-AccessibilityRestoreCommands): the list of services first, and
+# they delete the list and the switch if these were not there before.
+$byHand = @(Get-AccessibilityRestoreCommands -Saved $saved)
 $byHand += Format-TestPackageRemoval -Keep $packagesBefore.TestPackages
 # The script runs in the caller's PowerShell, so ANDROID_SERIAL is put back afterwards.
 $callerSerial = $env:ANDROID_SERIAL

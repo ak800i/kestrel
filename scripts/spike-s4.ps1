@@ -23,7 +23,7 @@ $adb = Get-Adb
 $port = 8765
 $url = "http://localhost:$port/page.html"
 $packages = @{ chrome = 'com.android.chrome'; firefox = 'org.mozilla.firefox'; samsung = 'com.sec.android.app.sbrowser' }
-$service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+$service = $KestrelAccessibilityService
 $heading = 'Kestrel browser check'
 # Buttons of the browsers' first-run screens and prompts, in the order in which the script prefers them. Cancel declines
 # Android's question whether the browser should become the default one.
@@ -130,16 +130,9 @@ function Format-AdbCommand([string]$Arguments) { "Run: & '$($adb -replace "'", "
 function Format-DeviceCommand([string]$Command) { Format-AdbCommand "shell '$($Command -replace "'", "''")'" }
 
 $savedAccessibility = Get-AccessibilitySettings -Serial $Serial
-# The commands that put back the accessibility settings by hand. As Restore-AccessibilitySettings does, they put back the
-# list of services first, and they delete the list and the switch if these were not there before.
-$accessibilityByHand = @(foreach ($setting in @('enabled_accessibility_services', 'accessibility_enabled') + @($savedAccessibility.Keys) | Select-Object -Unique) {
-        $value = if ($savedAccessibility.Contains($setting)) { $savedAccessibility[$setting] } else { 'null' }
-        if ($value -ne 'null') {
-            "settings put secure $setting '$($value -replace "'", "'\''")'"
-        } elseif ($setting -in 'enabled_accessibility_services', 'accessibility_enabled') {
-            "settings delete secure $setting"
-        }
-    }) -join '; '
+# The commands that put back the accessibility settings by hand (Get-AccessibilityRestoreCommands): the list of services
+# first, and they delete the list and the switch if these were not there before.
+$accessibilityByHand = @(Get-AccessibilityRestoreCommands -Saved $savedAccessibility) -join '; '
 $server = $null
 $reverseAdded = $false
 $scrollFailed = @()
@@ -180,7 +173,8 @@ try {
     # When its accessibility service connects, Kestrel would bring back a listening mode that it stored, and this script
     # never turns it off. The hook's off stops that and stores Off.
     Invoke-Hook voice -Send off | Out-Null
-    Invoke-Checked "settings put secure enabled_accessibility_services $service" | Out-Null
+    # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+    if (-not (Connect-AccessibilityService -Serial $Serial -Services $service)) { throw "Android did not bind Kestrel's accessibility service (see the warning above)." }
     Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
     for ($i = 0; (Invoke-Hook state) -notlike 'screen=on*'; $i++) {
         if ($i -ge 30) { throw "Kestrel's accessibility service did not connect within 30 s." }

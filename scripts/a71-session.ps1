@@ -121,7 +121,7 @@ $config = Read-A71Config (Join-Path $PSScriptRoot '..\corpus\owner\a71-config.js
 $testApp = 'dev.kestrel.testapp'
 # The gain at which this computer's clips reach the phone at the owner's target, once Initialize-Air has measured it.
 $gain = $null
-$service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+$service = $KestrelAccessibilityService
 $assistantRole = 'android.app.role.ASSISTANT'
 $gradleUsed = $false
 $prepared = $false
@@ -696,7 +696,8 @@ function Invoke-BatteryRulesStep {
         foreach ($restricted in $false, $true) {
             $label = if ($restricted) { 'with the battery restriction' } else { 'without the battery restriction' }
             Invoke-Checked "cmd appops set dev.kestrel RUN_ANY_IN_BACKGROUND $(if ($restricted) { 'ignore' } else { 'allow' })" | Out-Null
-            Invoke-Checked (Get-ServicesCommand (@($others) + $service)) | Out-Null
+            # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+            if (-not (Connect-AccessibilityService -Serial $Serial -Services ((@($others) + $service) -join ':'))) { throw "Android did not bind Kestrel's accessibility service (see the warning above)." }
             Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
             Start-Kestrel
             $start = Get-ForegroundRecord -Dump @(Invoke-Checked 'dumpsys activity services dev.kestrel')
@@ -784,7 +785,9 @@ function Invoke-ActivationStep {
     try {
         # Kestrel's service must be on for the shortcut and the button; the owner's other services stay on. Android shows
         # its dialog about the shortcut only once, and this setting says that it was shown; the restore puts it back.
-        Invoke-Checked (Get-ServicesCommand (@(Get-OtherServices $restore.Data) + $service)) | Out-Null
+        if (-not (Connect-AccessibilityService -Serial $Serial -Services ((@(Get-OtherServices $restore.Data) + $service) -join ':'))) {
+            throw "Android did not bind Kestrel's accessibility service (see the warning above)."
+        }
         Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
         Invoke-Checked "settings put secure accessibility_shortcut_target_service $service" | Out-Null
         Invoke-Checked "settings put secure accessibility_button_targets $service" | Out-Null

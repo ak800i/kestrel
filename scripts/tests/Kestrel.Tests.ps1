@@ -21,11 +21,12 @@ Describe 'The settings helpers' {
         # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says. It is
         # kestrel-api37 unless -Avd and -Model say otherwise. With -KeepsTiles, its SystemUI keeps the list of Quick
         # Settings tiles itself, as on Android 17 (observed). -Accessibility gives its accessibility manager the
-        # components that it has bound, is binding, holds as crashed and never binds (fake-adb.ps1).
+        # components that it has bound, is binding, holds as crashed, never binds and that request the accessibility
+        # button, and -Sdk its API level (fake-adb.ps1).
         function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0, [string]$Avd = 'kestrel-api37',
-            [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles, [System.Collections.IDictionary]$Accessibility = @{}) {
+            [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles, [System.Collections.IDictionary]$Accessibility = @{}, [int]$Sdk = 37) {
             $state = [ordered]@{
-                avd = $Avd; model = $Model; settings = $Settings; keepsTiles = [bool]$KeepsTiles; failures = $Failures; calls = @(); refused = @()
+                avd = $Avd; model = $Model; sdk = $Sdk; settings = $Settings; keepsTiles = [bool]$KeepsTiles; failures = $Failures; calls = @(); refused = @()
                 accessibility = $Accessibility
             }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
@@ -264,6 +265,63 @@ Describe 'The settings helpers' {
             @($device.accessibility.bound) | Should -BeExactly @($kestrel)
             @($device.accessibility.crashed) | Should -HaveCount 0
         }
+
+        Context "after a71-session.ps1's shortcut step" {
+            BeforeAll {
+                $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+                $reader = 'com.example.reader/com.example.reader.ReaderService'
+                # What Invoke-ActivationStep leaves: the owner's other services and Kestrel's, Kestrel bound, and Kestrel as
+                # the target of the accessibility shortcut and of the button.
+                function Set-ShortcutStepDevice {
+                    Set-FakeDevice -Settings ([ordered]@{
+                            accessibility_button_targets          = $kestrel
+                            accessibility_enabled                 = '1'
+                            accessibility_shortcut_target_service = $kestrel
+                            enabled_accessibility_services        = "$reader`:$kestrel"
+                        }) -Accessibility @{ bound = @($reader, $kestrel); requestsButton = @($kestrel) }
+                }
+            }
+
+            It "keeps Kestrel bound and its targets when the saved list names the same services in another order" {
+                Set-ShortcutStepDevice
+                $saved = [ordered]@{
+                    accessibility_button_targets = $kestrel; accessibility_enabled = '1'; enabled_accessibility_services = "$kestrel`:$reader"
+                }
+
+                Restore-AccessibilitySettings -Serial emulator-5554 -Saved $saved | Should -BeExactly $true
+
+                $device = Get-FakeDevice
+                $device.settings.enabled_accessibility_services | Should -BeExactly "$kestrel`:$reader"
+                $device.settings.accessibility_button_targets | Should -BeExactly $kestrel
+                $device.settings.PSObject.Properties.Name | Should -Not -Contain 'accessibility_shortcut_target_service'
+                @($device.accessibility.bound) | Should -Contain $kestrel
+            }
+
+            It 'puts back a target that Android cleared when the restore turned Kestrel off' {
+                Set-ShortcutStepDevice
+                # The owner had chosen Kestrel for the shortcut, which may name a service that is off.
+                $saved = [ordered]@{ accessibility_enabled = '1'; accessibility_shortcut_target_service = $kestrel; enabled_accessibility_services = $reader }
+
+                Restore-AccessibilitySettings -Serial emulator-5554 -Saved $saved | Should -BeExactly $true
+
+                $device = Get-FakeDevice
+                $device.settings.enabled_accessibility_services | Should -BeExactly $reader
+                @($device.accessibility.bound) | Should -Not -Contain $kestrel
+                $device.settings.accessibility_shortcut_target_service | Should -BeExactly $kestrel
+                $device.settings.PSObject.Properties.Name | Should -Not -Contain 'accessibility_button_targets'
+            }
+        }
+
+        It 'goes on with the other settings, and returns $false, when the list cannot be put back' {
+            $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+            Set-FakeDevice -Settings ([ordered]@{ accessibility_enabled = '0'; enabled_accessibility_services = $kestrel }) -Accessibility @{ crashed = @($kestrel) }
+            Mock Get-SecureSetting -ParameterFilter { $Name -eq 'enabled_accessibility_services' } { throw 'Bad arguments' }
+
+            $output = Restore-AccessibilitySettings -Serial emulator-5554 -Saved ([ordered]@{ accessibility_enabled = '1'; enabled_accessibility_services = $kestrel }) 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            (Get-FakeDevice).settings.accessibility_enabled | Should -BeExactly '1'
+        }
     }
 
     Context 'Connect-AccessibilityService' {
@@ -314,13 +372,95 @@ Describe 'The settings helpers' {
             $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
             $warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
             $warnings | Should -HaveCount 1
-            $warnings[0].Message | Should -BeLike "Android did not bind $kestrel on emulator-5554 within 1 s after it was turned on again (enabled=True binding=True crashed=False bound=False).*"
+            $warnings[0].Message | Should -BeLike "Android did not bind $kestrel on emulator-5554 within 1 s after the list went back (enabled=True binding=True crashed=False bound=False). Turn it off*"
             (Get-FakeDevice).settings.enabled_accessibility_services | Should -BeExactly "$reader`:$kestrel"
         }
 
         It 'throws when the list does not hold the component' {
             { Connect-AccessibilityService -Serial emulator-5554 -Services $reader } | Should -Throw "*does not hold $kestrel*"
             Get-ServiceWrites | Should -HaveCount 0
+        }
+
+        It 'leaves a bound service bound under a different list, so that Android keeps its shortcut and button targets' {
+            Set-FakeDevice -Settings ([ordered]@{ accessibility_button_targets = $kestrel; enabled_accessibility_services = $kestrel }) -Accessibility @{
+                bound = @($kestrel); requestsButton = @($kestrel)
+            }
+
+            Connect-AccessibilityService -Serial emulator-5554 -Services "$reader`:$kestrel" | Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            @($device.accessibility.bound) | Should -BeExactly @($kestrel, $reader)
+            $device.settings.accessibility_button_targets | Should -BeExactly $kestrel
+            Get-ServiceWrites | Should -BeExactly @("settings put secure enabled_accessibility_services '$reader`:$kestrel'")
+        }
+
+        It 'writes the list back and returns $false with the warning of the off when Android does not apply the off' {
+            # On Android 13 an off drops the service from the crashed set, but a binding that never finishes stays.
+            Set-FakeDevice -Sdk 33 -Settings @{ enabled_accessibility_services = $kestrel } -Accessibility @{ crashed = @($kestrel); binding = @($kestrel); neverBinds = @($kestrel) }
+
+            $output = Connect-AccessibilityService -Serial emulator-5554 -Services $kestrel -TimeoutSeconds 1 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            $warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $warnings | Should -HaveCount 1
+            $warnings[0].Message | Should -BeLike "Android did not turn $kestrel off on emulator-5554 within 1 s (enabled=False binding=True crashed=False bound=False). Android 33 ends a binding only when the bind finishes*"
+            (Get-FakeDevice).settings.enabled_accessibility_services | Should -BeExactly $kestrel
+        }
+
+        It 'waits for the bind without an off on Android 13, where an off does not end a binding' {
+            Set-FakeDevice -Sdk 33 -Settings @{ enabled_accessibility_services = $kestrel } -Accessibility @{ binding = @($kestrel); neverBinds = @($kestrel) }
+
+            $output = Connect-AccessibilityService -Serial emulator-5554 -Services $kestrel -TimeoutSeconds 1 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })[0].Message |
+                Should -BeLike '*(enabled=True binding=True crashed=False bound=False). Android 33 ends a binding only when the bind finishes*'
+            Get-ServiceWrites | Should -HaveCount 0
+        }
+
+        It 'returns $false with the command that puts the list back, instead of throwing, when the device does not answer' {
+            Set-FakeDevice -Settings @{ enabled_accessibility_services = $kestrel } -Failures 3
+
+            $output = Connect-AccessibilityService -Serial emulator-5554 -Services $kestrel 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            $message = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })[0].Message
+            $message | Should -BeLike "Could not read the accessibility services of emulator-5554 (*Bad arguments), so the list was not put back. Run: *"
+            Set-FakeDevice -Settings @{} -Accessibility @{ crashed = @() }
+            Invoke-Expression $message.Substring($message.IndexOf('Run: ') + 'Run: '.Length)
+            (Get-FakeDevice).settings.enabled_accessibility_services | Should -BeExactly $kestrel
+        }
+    }
+
+    Context 'Disconnect-AccessibilityService' {
+        It 'returns $false with a warning, instead of throwing, when the device does not answer' {
+            Set-FakeDevice -Failures 3
+
+            $output = Disconnect-AccessibilityService -Serial emulator-5554 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })[0].Message |
+                Should -BeLike 'Could not read the accessibility services of emulator-5554 (*), so dev.kestrel/dev.kestrel.app.KestrelAccessibilityService was not turned off.'
+        }
+    }
+
+    Context 'Get-AccessibilityRestoreCommands' {
+        It "takes Kestrel's service out of the list and waits until Android names it no more before the list goes back" {
+            $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+            $saved = [ordered]@{ accessibility_button_targets = $kestrel; enabled_accessibility_services = "com.example.reader/.Reader`:$kestrel" }
+
+            Get-AccessibilityRestoreCommands -Saved $saved | Should -BeExactly @(
+                "settings put secure enabled_accessibility_services 'com.example.reader/.Reader'"
+                "i=0; while [ `$i -lt 30 ] && dumpsys accessibility | grep -qF '{$kestrel}'; do sleep 1; i=`$((i+1)); done"
+                "settings put secure enabled_accessibility_services 'com.example.reader/.Reader`:$kestrel'"
+                'settings delete secure accessibility_enabled'
+                "settings put secure accessibility_button_targets '$kestrel'"
+            )
+        }
+
+        It 'deletes the names of -Delete that were not there, and leaves a list without Kestrel as it is' {
+            Get-AccessibilityRestoreCommands -Saved ([ordered]@{ enabled_accessibility_services = 'com.example.reader/.Reader' }) -Delete 'accessibility_shortcut_target_service' |
+                Should -BeExactly @("settings put secure enabled_accessibility_services 'com.example.reader/.Reader'", 'settings delete secure accessibility_shortcut_target_service')
         }
     }
 }

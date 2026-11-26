@@ -13,12 +13,16 @@
 #               setting. Otherwise SystemUI follows the setting, and set-tiles changes nothing.
 #   packages    the installed packages, each with its first-install time, which 'dumpsys package' shows for user 0
 #   accounts    how many Google accounts 'dumpsys account' lists
+#   sdk         the device's ro.build.version.sdk; 37 when it is missing
 #   accessibility  Android's accessibility manager, as AOSP's AccessibilityManagerService keeps it: the components that it
-#               has bound ('bound'), is binding ('binding') or holds as crashed ('crashed'), and those that it never
-#               finishes binding ('neverBinds'). A write of enabled_accessibility_services that changes the list drops
-#               every component that the list no longer holds from those sets, and binds each listed component that is
-#               in none of them; one that never binds stays binding. A write that leaves the list as it was changes
-#               nothing. 'dumpsys accessibility' and 'dumpsys activity services <component>' show the state.
+#               has bound ('bound'), is binding ('binding') or holds as crashed ('crashed'), those that it never
+#               finishes binding ('neverBinds'), and those that request the accessibility button ('requestsButton'). A
+#               write of enabled_accessibility_services that changes the set of services (Android reads the list as a
+#               set, so a change of order alone is none) drops every component that the set no longer holds from the
+#               crashed set, and from the binding set from API 34 on; it unbinds such a component, and clears the
+#               shortcut and button targets of one that requests the button; and it binds each listed component that is
+#               in none of the sets, while one that never binds stays binding. 'dumpsys accessibility' and 'dumpsys
+#               activity services <component>' show the state.
 #   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
 #   calls       every settings command that it received and did not refuse, in order, without the check
 #   refused     every settings command that the check kept from running, in order
@@ -48,7 +52,8 @@ $command = $args[3..($args.Count - 1)] -join ' '
 $state = [IO.File]::ReadAllText($statePath) | ConvertFrom-Json
 $avd = [string]$state.avd
 $model = [string]$state.model
-$properties = @{ 'ro.boot.qemu.avd_name' = $avd; 'ro.product.model' = $model }
+$sdk = if ($state.sdk) { [int]$state.sdk } else { 37 }
+$properties = @{ 'ro.boot.qemu.avd_name' = $avd; 'ro.product.model' = $model; 'ro.build.version.sdk' = "$sdk" }
 if ($command -match '^getprop (\S+)$') {
     [Console]::Out.WriteLine([string]$properties[$Matches[1]])
     exit 0
@@ -59,7 +64,7 @@ $packages = [ordered]@{}
 if ($state.packages) { foreach ($property in $state.packages.PSObject.Properties) { $packages[$property.Name] = [string]$property.Value } }
 $accounts = [int]$state.accounts
 $accessibility = [ordered]@{}
-foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds') {
+foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds', 'requestsButton') {
     $accessibility[$set] = [string[]]@(@($state.accessibility.$set) | Where-Object { $_ })
 }
 $keepsTiles = [bool]$state.keepsTiles
@@ -69,7 +74,7 @@ $refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object 
 
 function Save-State {
     $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
-            avd = $avd; model = $model; settings = $settings; packages = $packages; accounts = $accounts; accessibility = $accessibility
+            avd = $avd; model = $model; sdk = $sdk; settings = $settings; packages = $packages; accounts = $accounts; accessibility = $accessibility
             keepsTiles = $keepsTiles; failures = $failures; calls = [string[]]$calls; refused = [string[]]$refused
         })
     [IO.File]::WriteAllText($statePath, $json)
@@ -80,8 +85,14 @@ function Get-EnabledServices { @("$($settings['enabled_accessibility_services'])
 # What the accessibility manager's settings observer does after a write of enabled_accessibility_services.
 function Update-Accessibility([string[]]$Before) {
     $enabled = @(Get-EnabledServices)
-    if (($Before -join ':') -ceq ($enabled -join ':')) { return }
-    foreach ($set in 'bound', 'binding', 'crashed') {
+    if ((@($Before | Sort-Object -Unique -CaseSensitive) -join ':') -ceq (@($enabled | Sort-Object -Unique -CaseSensitive) -join ':')) { return }
+    $sets = if ($sdk -ge 34) { 'bound', 'binding', 'crashed' } else { 'bound', 'crashed' }
+    foreach ($component in @($accessibility.bound | Where-Object { $enabled -cnotcontains $_ -and $accessibility.requestsButton -ccontains $_ })) {
+        foreach ($target in 'accessibility_shortcut_target_service', 'accessibility_button_targets', 'accessibility_qs_targets', 'accessibility_gesture_targets') {
+            if ($settings.Contains($target)) { $settings[$target] = @($settings[$target] -split ':' | Where-Object { $_ -and $_ -cne $component }) -join ':' }
+        }
+    }
+    foreach ($set in $sets) {
         $accessibility[$set] = [string[]]@($accessibility[$set] | Where-Object { $enabled -ccontains $_ })
     }
     foreach ($component in $enabled) {
@@ -122,7 +133,9 @@ $deviceCommand = if ($withMarker) { $command.Substring(0, $command.Length - $mar
 $lines = @()
 # 'printf %s <text>' prints the text without a final line break, as One UI's 'dumpsys accessibility' ends its answer.
 $partial = $null
-if ($deviceCommand -match '^printf %s (\S+)$') {
+if ($deviceCommand -match '^getprop (\S+)$') {
+    $lines = @([string]$properties[$Matches[1]])
+} elseif ($deviceCommand -match '^printf %s (\S+)$') {
     $partial = $Matches[1]
 } elseif ($deviceCommand -match '^settings get secure (\S+)$') {
     $lines = @(if ($settings.Contains($Matches[1])) { $settings[$Matches[1]] } else { 'null' })
