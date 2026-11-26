@@ -278,7 +278,8 @@ class AgentHookAnswersTest {
         assertNull(AgentHookAnswers.cardChoice("Half past seven", listOf(CardChoice.Reply, CardChoice.Cancel)))
     }
 
-    // The whole-plan review's nit of plan 7F: the hook's errors name an answer's kind, never the words of a free answer.
+    // The whole-plan review's nit of plan 7F: the hook's errors name an answer's kind, never the words of a free
+    // answer.
     @Test
     fun anAnswersErrorNamesAButtonsWordOrTheAnswersKindAndNeverItsWords() {
         assertEquals("yes", AgentHookAnswers.answerKind("yes"))

@@ -17,8 +17,8 @@ class OwnVoiceWatchTest {
     private val watch = OwnVoiceWatch { text -> text.endsWith("?") }
     private val watched = watch.wrap(voice)
 
-    // The whole-plan review's M4: the watch is the one count of what Kestrel's own voice spoke, so a held reply counts as it
-    // ended for Kestrel: a stop ends it as stopped, never as heard.
+    // The whole-plan review's M4: the watch is the one count of what Kestrel's own voice spoke, so a held reply counts
+    // as it ended for Kestrel: a stop ends it as stopped, never as heard.
     @Test
     fun aHeldReplyWaitsAfterItsAudioUntilAStopAndCountsAsStopped() {
         val reply = watched.speak("Which time?")

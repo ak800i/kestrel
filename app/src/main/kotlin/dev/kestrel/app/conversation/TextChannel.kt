@@ -39,10 +39,10 @@ internal interface TypedConversation {
 }
 
 /**
- * An input that the owner's typing or the screen's buttons gave the conversation, with the conversation's view just before
- * the conversation got it ([before]), which the input cannot have changed yet: the screen arms its act against that view,
- * whichever of the input and the newer view reaches the screen first (the whole-plan review's M3 of plan 7F). toString
- * prints the intent's kind, never its words.
+ * An input that the owner's typing or the screen's buttons gave the conversation, with the conversation's view just
+ * before the conversation got it ([before]), which the input cannot have changed yet: the screen arms its act against
+ * that view, whichever of the input and the newer view reaches the screen first (the whole-plan review's M3 of plan
+ * 7F). toString prints the intent's kind, never its words.
  */
 internal data class SentInput(val intent: InputIntent, val before: ConversationView) {
     override fun toString(): String = "SentInput(${intent.javaClass.simpleName}, command=${before.command})"
@@ -54,17 +54,17 @@ internal fun interface ReplyScreen {
 }
 
 /**
- * The conversation's text channel (design 10, 11 and 12.2 of sub-project 7). Kestrel's words and final replies go to the
- * bar ([bar]), and the transcript draws them from the records; nothing is spoken here. Every question and hand-over asks
- * through the card desk ([cards]), which shares the card with the voice's copy of the question. "Reply…" on the overlay
- * holds the question for 5 minutes and opens the conversation screen with the question in focus; the typed answer then
- * reaches the conversation as an input, which withdraws the question.
+ * The conversation's text channel (design 10, 11 and 12.2 of sub-project 7). Kestrel's words and final replies go to
+ * the bar ([bar]), and the transcript draws them from the records; nothing is spoken here. Every question and hand-over
+ * asks through the card desk ([cards]), which shares the card with the voice's copy of the question. "Reply…" on the
+ * overlay holds the question for 5 minutes and opens the conversation screen with the question in focus; the typed
+ * answer then reaches the conversation as an input, which withdraws the question.
  *
  * The owner's typed words and the screen's buttons become inputs only here: [read] reads typed words against the open
  * question, [input] makes the screen's own inputs (Stop, Continue, New conversation, a past conversation's Continue),
- * [choose] makes a button of the screen's copy of a card the owner's answer, and [submit] gives each to the conversation
- * and to [sent], from which the screen learns that the owner acted on it, with the view before the input. The debug hook `conversation-type` types through
- * [read] and [submit] too.
+ * [choose] makes a button of the screen's copy of a card the owner's answer, and [submit] gives each to the
+ * conversation and to [sent], from which the screen learns that the owner acted on it, with the view before the input.
+ * The debug hook `conversation-type` types through [read] and [submit] too.
  */
 internal class TextChannel(
     private val bar: OwnedBar,
@@ -81,7 +81,10 @@ internal class TextChannel(
     private val sentInputs = MutableSharedFlow<SentInput>(extraBufferCapacity = SENT_BUFFER)
     private val handOverKeys = AtomicInteger()
 
-    /** Every input that the owner's typing or the screen's buttons gave the conversation, in order, with the view before it. */
+    /**
+     * Every input that the owner's typing or the screen's buttons gave the conversation, in order, with the view before
+     * it.
+     */
     val sent: SharedFlow<SentInput> = sentInputs.asSharedFlow()
 
     /**
@@ -116,7 +119,10 @@ internal class TextChannel(
     /** An input of the conversation screen's own, such as its Stop or its Continue. */
     fun input(intent: InputIntent): OwnerInput = OwnerInput(InputIds.next(), InputChannel.TEXT, intent, clock())
 
-    /** Gives [input] to the conversation and tells [sent], with the conversation's view from before the conversation got it. */
+    /**
+     * Gives [input] to the conversation and tells [sent], with the conversation's view from before the conversation got
+     * it.
+     */
     fun submit(input: OwnerInput) {
         val before = conversation.view()
         conversation.submit(input)

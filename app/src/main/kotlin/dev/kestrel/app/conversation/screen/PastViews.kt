@@ -226,8 +226,8 @@ private fun Note(@StringRes text: Int) {
 }
 
 /**
- * What one read of the list was for: the search field's text and the deletions that the list had seen. toString prints no
- * words.
+ * What one read of the list was for: the search field's text and the deletions that the list had seen. toString prints
+ * no words.
  */
 private data class ListRead(val query: String, val deletions: Int) {
     override fun toString(): String = "ListRead(query=${query.length} chars, deletions=$deletions)"

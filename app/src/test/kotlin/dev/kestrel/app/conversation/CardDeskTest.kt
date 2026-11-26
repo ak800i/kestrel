@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation
 
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.conversation.channel.QuestionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -7,7 +8,6 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -109,53 +109,116 @@ class CardDeskTest {
         older.cancel()
     }
 
-    private val heldGoal = OwnerCard(9, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 9, kind = QuestionKind.CONTINUE_GOAL)
+    // A lock meets the cards that stay open across it: a hand-over's, and a limit's "Continue?" ("Continue the goal?"
+    // is withdrawn by the lock).
+    private val handOver = OwnerCard.handOver(-1, "Sign in yourself, then tap Continue.")
 
-    // Plan 7E and decision 27 of plan 7F (the whole-plan review's M2): a Continue tapped while the phone is locked waits for
-    // the owner's unlock, as the goal notification's Continue does, and then answers with the number of its own tap.
+    // Plan 7E and decision 27 of plan 7F (the whole-plan review's M2): a Continue tapped while the phone is locked
+    // waits for the owner's unlock, as the goal notification's Continue does, and then answers with the number of its
+    // own tap.
     @Test
-    fun aContinueTappedWhileThePhoneIsLockedAnswersAfterTheUnlockWithItsTapsNumber() = runTest {
+    fun aContinueTappedOnTheLockScreenAnswersAfterTheUnlockWithItsOwnTapsNumber() = runTest {
         val desk = desk()
-        val asking = async { desk.ask(heldGoal) }
+        val asking = async { desk.ask(handOver) }
         runCurrent()
 
-        overlay.screenUnlocked.value = false
+        overlay.screens.value = ScreenReading.LOCKED
         overlay.tap(CardChoice.Continue)
         runCurrent()
         assertFalse(asking.isCompleted)
         assertEquals(2, overlay.shown.size)
         assertEquals(listOf(CardDesk.UNLOCK_TO_CONTINUE), notices)
+        // Later acts of the owner's take later numbers meanwhile.
+        taps = 10
 
-        overlay.screenUnlocked.value = true
+        overlay.screens.value = ScreenReading.UNLOCKED
         runCurrent()
         assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
         assertNull(desk.open.value)
     }
 
-    // The card shows again while the Continue waits, so the owner's Stop answers in its place, and the unlock then answers
-    // nothing.
+    // The card shows again while the Continue waits, so the owner's Stop answers in its place, and the unlock then
+    // answers nothing.
     @Test
-    fun aStopTappedWhileAContinueWaitsForTheUnlockAnswersInItsPlace() = runTest {
+    fun aContinueHeldOnTheLockScreenIsDroppedWhenTheScreenGoesOffAndTheNextUnlockAnswersNothing() = runTest {
         val desk = desk()
-        val asking = async { desk.ask(heldGoal) }
+        val asking = async { desk.ask(handOver) }
         runCurrent()
-        overlay.screenUnlocked.value = false
+        overlay.screens.value = ScreenReading.LOCKED
         overlay.tap(CardChoice.Continue)
         runCurrent()
 
-        overlay.tap(CardChoice.Stop)
+        overlay.screens.value = ScreenReading.OFF
         runCurrent()
-        assertEquals(CardTap(CardChoice.Stop, 2), asking.await())
-        val later = async { desk.ask(heldGoal.copy(key = 10, question = 10)) }
+        assertEquals(0, overlay.screens.subscriptionCount.value)
+        overlay.screens.value = ScreenReading.LOCKED
         runCurrent()
-        overlay.screenUnlocked.value = true
+        overlay.screens.value = ScreenReading.UNLOCKED
         runCurrent()
+        assertFalse(asking.isCompleted)
+        assertEquals(handOver, desk.open.value)
 
-        assertFalse(later.isCompleted)
-        later.cancel()
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Continue, 2), asking.await())
     }
 
-    // Review N1 of plan 7F: the keypad's number answers its pick within the grid's range, and a number outside it does not.
+    // Another choice answers in the held Continue's place and ends its wait, and the unlock then answers nothing.
+    @Test
+    fun aCancelTappedWhileAContinueWaitsForTheUnlockAnswersInItsPlaceAndEndsTheWait() = runTest {
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+        overlay.screens.value = ScreenReading.LOCKED
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+
+        overlay.tap(CardChoice.Cancel)
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Cancel, 2), asking.await())
+        assertEquals(0, overlay.screens.subscriptionCount.value)
+        overlay.screens.value = ScreenReading.UNLOCKED
+        runCurrent()
+        assertNull(desk.open.value)
+    }
+
+    // The end of its question while the phone is locked drops the held Continue.
+    @Test
+    fun theEndOfItsQuestionDropsAHeldContinue() = runTest {
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+        overlay.screens.value = ScreenReading.LOCKED
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+        assertEquals(1, overlay.screens.subscriptionCount.value)
+
+        asking.cancel()
+        runCurrent()
+        assertEquals(0, overlay.screens.subscriptionCount.value)
+        assertNull(desk.open.value)
+    }
+
+    // A second Continue on the lock screen replaces the first, and answers with its own number.
+    @Test
+    fun aSecondContinueOnTheLockScreenReplacesTheFirstAndAnswersWithItsOwnNumber() = runTest {
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+        overlay.screens.value = ScreenReading.LOCKED
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+        assertEquals(1, overlay.screens.subscriptionCount.value)
+
+        overlay.screens.value = ScreenReading.UNLOCKED
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Continue, 2), asking.await())
+    }
+
+    // Review N1 of plan 7F: the keypad's number answers its pick within the grid's range, and a number outside it does
+    // not.
     @Test
     fun aKeypadsNumberWithinTheRangeAnswersThePickAndOneOutsideItDoesNot() = runTest {
         val desk = desk()
@@ -237,7 +300,7 @@ class CardDeskTest {
     private class FakeOverlay : OwnerScreen {
         val shown = mutableListOf<OwnerCard>()
         var withdrawn = 0
-        val screenUnlocked = MutableStateFlow(true)
+        override val screens = MutableStateFlow(ScreenReading.UNLOCKED)
         override val connections = MutableStateFlow(1)
         private var tapped = CompletableDeferred<CardChoice?>()
 
@@ -261,11 +324,6 @@ class CardDeskTest {
             }
         }
 
-        override fun locked(): Boolean = !screenUnlocked.value
-
-        override suspend fun unlocked() {
-            screenUnlocked.first { it }
-        }
 
         override suspend fun releaseBar() {}
 

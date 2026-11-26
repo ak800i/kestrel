@@ -28,30 +28,30 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * The owner as a goal and the conversation talk to him (design 5.3, 10.3 and 11 of sub-project 7): the parts that are not
- * Android, one question at a time, the waits and wakes, and the pause gate. The channels (`:app`'s `VoiceChannel`) and
- * `:app`'s `GoalOwner`, which decorates it for a goal's round, hold the Android parts.
+ * The owner as a goal and the conversation talk to him (design 5.3, 10.3 and 11 of sub-project 7): the parts that are
+ * not Android, one question at a time, the waits and wakes, and the pause gate. The channels (`:app`'s `VoiceChannel`)
+ * and `:app`'s `GoalOwner`, which decorates it for a goal's round, hold the Android parts.
  *
- * Kestrel's words go to the channel of the owner's latest input ([routing]); with "Speak replies to typed commands" on, a
- * typed conversation's words and questions are spoken too, and a typed final reply reaches the voice as words only, so
- * that it opens no follow-up window (design 11). A question goes to that channel, and in a spoken conversation
- * "Continue the goal?" shows its card as well. While Kestrel is off ([kestrelOn] is false: its listening mode is `OFF`, so
- * the voice hears nothing and speaks only a typed conversation's words with the setting on, design 11), a spoken
- * conversation's words are only shown, and every question, hand-over and permission request also gets the text channel's
- * card (a permission request's is a hand-over's card, because Android's dialog is shown once), from the moment Kestrel
- * turns off; a card stays until what it shows has ended, also when Kestrel is on again, so that the owner never loses a
- * way to answer. The first answer wins, from a channel's card or from an input that the engine hands over with [answer],
- * and the others are withdrawn. [events] tells the engine when a question or a hand-over opens and closes. A pause
- * ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes the gate until [resume]; the
- * conversation's own questions ([question]) are never withdrawn by it. [startWork] clears what earlier work left: a pause
- * that came after its round had ended, and a fresh look. After an answer that the owner gave on Kestrel's own screen,
- * whatever its kind, the gate returns `RESUMED` once, so that the run looks at the screen afresh (design 10.3). A
- * hand-over and a permission request that a pause meets wait for the resume before they take their turn, so that the
- * conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the engine's [endHandOver]; after
- * "Kestrel, continue" a permission request asks [permissions] whether Android granted them. A tap on the card of a
- * hand-over or a permission request is the owner's act of its moment: [acted] gets its number before the round goes on,
- * so that the round's next screen turn names it, as it names the input of a spoken "Kestrel, continue" (design 6.5; plan
- * 7F).
+ * Kestrel's words go to the channel of the owner's latest input ([routing]); with "Speak replies to typed commands" on,
+ * a typed conversation's words and questions are spoken too, and a typed final reply reaches the voice as words only,
+ * so that it opens no follow-up window (design 11). A question goes to that channel, and in a spoken conversation
+ * "Continue the goal?" shows its card as well. While Kestrel is off ([kestrelOn] is false: its listening mode is `OFF`,
+ * so the voice hears nothing and speaks only a typed conversation's words with the setting on, design 11), a spoken
+ * conversation's words are only shown, and every question, hand-over and permission request also gets the text
+ * channel's card (a permission request's is a hand-over's card, because Android's dialog is shown once), from the
+ * moment Kestrel turns off; a card stays until what it shows has ended, also when Kestrel is on again, so that the
+ * owner never loses a way to answer. The first answer wins, from a channel's card or from an input that the engine
+ * hands over with [answer], and the others are withdrawn. [events] tells the engine when a question or a hand-over
+ * opens and closes. A pause ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes
+ * the gate until [resume]; the conversation's own questions ([question]) are never withdrawn by it. [startWork] clears
+ * what earlier work left: a pause that came after its round had ended, and a fresh look. After an answer that the owner
+ * gave on Kestrel's own screen, whatever its kind, the gate returns `RESUMED` once, so that the run looks at the screen
+ * afresh (design 10.3). A hand-over and a permission request that a pause meets wait for the resume before they take
+ * their turn, so that the conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the
+ * engine's [endHandOver]; after "Kestrel, continue" a permission request asks [permissions] whether Android granted
+ * them. A tap on the card of a hand-over or a permission request is the owner's act of its moment: [acted] gets its
+ * number before the round goes on, so that the round's next screen turn names it, as it names the input of a spoken
+ * "Kestrel, continue" (design 6.5; plan 7F).
  */
 class ConversationOwner(
     private val channels: Map<InputChannel, OwnerChannel>,
@@ -109,10 +109,10 @@ class ConversationOwner(
     override suspend fun say(text: String) = take(ChannelOutput.Said(text)).show()
 
     /**
-     * Takes [output] as the conversation emits it ([OwnerChannel.take]): its places on the channels, with their marks, are
-     * this moment's, and the result shows it in its turn, routed as the mode is then, so that turning Kestrel on or off,
-     * which is never a stop, sends the waiting words to the voice that fits (plan 7F). It says or shows the words on the
-     * owner's latest channel, and speaks them too when a typed reply is spoken; while Kestrel is off, a spoken
+     * Takes [output] as the conversation emits it ([OwnerChannel.take]): its places on the channels, with their marks,
+     * are this moment's, and the result shows it in its turn, routed as the mode is then, so that turning Kestrel on or
+     * off, which is never a stop, sends the waiting words to the voice that fits (plan 7F). It says or shows the words
+     * on the owner's latest channel, and speaks them too when a typed reply is spoken; while Kestrel is off, a spoken
      * conversation's words are only shown, so that no follow-up window opens (design 10.6 and 11).
      */
     fun take(output: ChannelOutput): TakenOutput {

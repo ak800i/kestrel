@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation
 
+import dev.kestrel.app.phone.ScreenReading
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
@@ -49,14 +51,20 @@ internal interface SharedCards : OwnerCards {
  * The card shows on the overlay ([OwnerScreen.card]) while the conversation screen is not in front ([screenInFront]); while
  * it is, the screen shows [open] above its field instead, so that the overlay never covers the field and the keyboard,
  * and a confirmation is never answered over Kestrel's own screen (design 12.2). "Reply…" on the overlay hides the card until
- * the screen has come to the front, or for [replyOpenMillis] when it does not come. A Continue that the owner taps while
- * the phone is locked waits for his unlock, as the goal notification's Continue does (plan 7E): it keeps its tap's number,
- * [notice] tells the owner to unlock the phone ([UNLOCK_TO_CONTINUE]), and it answers once the screen is on and the phone
- * unlocked ([OwnerScreen.unlocked]). The card shows again meanwhile, so that another of its choices, such as Stop, can
- * answer in its place, which drops the waiting Continue; a newer Continue replaces it. A tap that answers takes its number
- * among the owner's inputs ([inputIds]) when it has come back from the card, before any caller runs, and every caller that
- * it answers gets that one number (plan 7F). A card that got no answer, because no screen session was connected or the
- * session closed, shows again when a screen session connects ([OwnerScreen.connections]).
+ * the screen has come to the front, or for [replyOpenMillis] when it does not come.
+ *
+ * A Continue counts only on an unlocked phone (plan 7E's rule for Continue), by the one reading of the lock, the
+ * screen source's ([OwnerScreen.screens]). One that the owner taps on the lock screen keeps its tap's number and waits
+ * for his unlock, but only within the lock that it was tapped in: [notice] tells him to unlock the phone
+ * ([UNLOCK_TO_CONTINUE]), the card shows again, the tap answers once the phone is unlocked, and the screen going off
+ * first drops it. Another of the card's choices, such as Cancel or Stop, answers in its place and drops it, as does the
+ * end of its question, and a newer Continue replaces it with its own number; it lives in this process only. Unlike the
+ * goal notification's Continue, it cannot ask Android for the unlock, because an overlay cannot.
+ *
+ * A tap that answers takes its number among the owner's inputs ([inputIds]) when it has come back from the card,
+ * before any caller runs, and every caller that it answers gets that one number (plan 7F). A card that got no answer,
+ * because no screen session was connected or the session closed, shows again when a screen session connects
+ * ([OwnerScreen.connections]).
  */
 internal class CardDesk(
     private val screen: OwnerScreen,
@@ -126,7 +134,7 @@ internal class CardDesk(
         }
     }
 
-    override fun locked(): Boolean = screen.locked()
+    override suspend fun reading(): ScreenReading = screen.screens.first()
 
     override suspend fun ask(card: OwnerCard, onReply: () -> Unit): CardTap {
         val caller = Caller(card, onReply)
@@ -155,7 +163,8 @@ internal class CardDesk(
         // the overlay withdraws it (Task 13a).
         if (presented?.card?.key != card?.key) presented = null
         // A Continue waits only while its question still has callers that take it.
-        heldContinue?.takeIf { held -> callers.none { it.card.key == held.key && it.card.takes(CardChoice.Continue) } }?.let { held ->
+        val held = heldContinue
+        if (held != null && callers.none { it.card.key == held.key && it.card.takes(CardChoice.Continue) }) {
             held.wait.cancel()
             heldContinue = null
         }
@@ -174,34 +183,51 @@ internal class CardDesk(
         } ?: return
         when {
             choice == CardChoice.Reply -> replyOpened(shown.card.key)
-            choice == CardChoice.Continue && screen.locked() -> holdForUnlock(shown.card.key, CardTap(choice, inputIds()))
+            choice == CardChoice.Continue -> continueTapped(shown.card.key, CardTap(choice, inputIds()))
             // The tap's number among the owner's inputs, taken as the tap reaches the desk (plan 7F).
             else -> deliver(shown.card.key, CardTap(choice, inputIds()))
         }
     }
 
-    // The owner's Continue on a locked phone: it keeps the number that it took at the tap, and answers once he has unlocked
-    // the phone, if its question still waits for it; the card shows again meanwhile.
-    private fun holdForUnlock(key: Int, tap: CardTap) {
-        notice(UNLOCK_TO_CONTINUE)
-        synchronized(lock) {
-            heldContinue?.wait?.cancel()
-            val wait = scope.launch(start = CoroutineStart.LAZY) {
-                screen.unlocked()
-                val self = coroutineContext.job
-                synchronized(lock) {
-                    // Only the Continue that still waits answers: a newer one, or another choice, may have replaced it.
-                    if (heldContinue?.wait === self) {
-                        heldContinue = null
-                        deliver(key, tap)
-                    }
+    // The owner's Continue, with the number that it took at the tap: it answers on an unlocked phone; on the lock
+    // screen it waits, on the same reading of the screen, for the unlock, and the screen going off first drops it. A
+    // newer Continue replaces it, and another choice or the end of its question drops it (publish).
+    private fun continueTapped(key: Int, tap: CardTap) = synchronized(lock) {
+        heldContinue?.wait?.cancel()
+        val wait = scope.launch(start = CoroutineStart.LAZY) {
+            val self = coroutineContext.job
+            var shownAgain = false
+            val end = screen.screens.first { reading ->
+                if (reading == ScreenReading.LOCKED && !shownAgain) {
+                    shownAgain = true
+                    notice(UNLOCK_TO_CONTINUE)
+                    showAgainWhileHeld(self)
+                }
+                reading != ScreenReading.LOCKED
+            }
+            synchronized(lock) {
+                if (heldContinue?.wait !== self) return@launch
+                heldContinue = null
+                when {
+                    end == ScreenReading.UNLOCKED -> deliver(key, tap)
+                    // The screen went off: the card stays for a new tap after the unlock.
+                    !shownAgain -> showAgain()
                 }
             }
-            heldContinue = HeldContinue(key, wait)
-            round++
-            publish()
-            wait.start()
         }
+        heldContinue = HeldContinue(key, wait)
+        wait.start()
+    }
+
+    // The card shows again for another choice while its Continue still waits.
+    private fun showAgainWhileHeld(wait: Job) = synchronized(lock) {
+        if (heldContinue?.wait === wait) showAgain()
+    }
+
+    // Under the lock.
+    private fun showAgain() {
+        round++
+        publish()
     }
 
     private fun deliver(key: Int, tap: CardTap) = synchronized(lock) {
@@ -227,7 +253,9 @@ internal class CardDesk(
         /** How long a "Reply…" on the overlay waits for the conversation screen before it shows the card again. */
         const val REPLY_OPEN_MILLIS = 5_000L
 
-        /** A Continue tapped on the card while the phone is locked, which waits for the unlock (plan 7E's rule for Continue). */
+        /**
+         * A Continue tapped on the card on the lock screen, which waits for the unlock (plan 7E's rule for Continue).
+         */
         const val UNLOCK_TO_CONTINUE = "Unlock the phone to continue."
     }
 }
@@ -247,6 +275,6 @@ internal interface OverlayCards {
      */
     fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> Unit) -> T): T
 
-    /** Whether the phone is locked, when a Continue waits for the owner's unlock (plan 7E). */
-    fun locked(): Boolean
+    /** The screen source's reading now: a Continue counts only while it is [ScreenReading.UNLOCKED] (plan 7E). */
+    suspend fun reading(): ScreenReading
 }

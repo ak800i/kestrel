@@ -7,13 +7,13 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 /**
- * Device tests only: the playback of Kestrel's own voice with listening off (`AppGraph.ownVoicePlayback`; plan 7F), and the
- * one count of what that voice spoke (the whole-plan review's M4). It counts how each reply ended for Kestrel ([ended]), so
- * that a test tells words that were heard ([Spoke.FINISHED]) from words that were refused, stopped or interrupted, and
- * knows whether Kestrel's own player still plays a reply ([playing]), without reading other apps' players. A reply whose
- * words [holds] picks is held after its audio has played to the end, until [release], which ends it as spoken, or a stop of
- * the voice, which ends it as stopped, so that a test finds it still playing ([holding]) however long its audio is. The
- * other replies end as their player ends them.
+ * Device tests only: the playback of Kestrel's own voice with listening off (`AppGraph.ownVoicePlayback`; plan 7F), and
+ * the one count of what that voice spoke (the whole-plan review's M4). It counts how each reply ended for Kestrel
+ * ([ended]), so that a test tells words that were heard ([Spoke.FINISHED]) from words that were refused, stopped or
+ * interrupted, and knows whether Kestrel's own player still plays a reply ([playing]), without reading other apps'
+ * players. A reply whose words [holds] picks is held after its audio has played to the end, until [release], which ends
+ * it as spoken, or a stop of the voice, which ends it as stopped, so that a test finds it still playing ([holding])
+ * however long its audio is. The other replies end as their player ends them.
  */
 internal class OwnVoiceWatch(private val holds: (String) -> Boolean) {
     private class Waiting(val voice: LoadedVoice, val result: CompletableDeferred<Spoke>)

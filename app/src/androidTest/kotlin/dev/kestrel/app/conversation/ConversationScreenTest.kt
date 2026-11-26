@@ -88,12 +88,13 @@ class ConversationScreenTest {
             val ended = AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
 
             assertEquals(EndReason.FAILED_BY_MODEL, ended.report.end)
-            // The round's first observation was the fixture's, so the screen had left before the goal looked (design 10.2).
+            // The round's first observation was the fixture's, so the screen had left before the goal looked (design
+            // 10.2).
             assertTrue(AgentTests.texts(model).contains("Views fixture"))
             assertFalse(TypedTests.screenInFront(screen))
             assertEquals(InputChannel.TEXT, graph.conversations.view.value.records.single().channel)
-            // A typed command's words are written, not spoken (design 11): with the setting off Kestrel's own voice played
-            // no reply.
+            // A typed command's words are written, not spoken (design 11): with the setting off Kestrel's own voice
+            // played no reply.
             assertFalse(watch.playing)
             assertEquals(0, Spoke.entries.sumOf { watch.ended(it) })
         } finally {

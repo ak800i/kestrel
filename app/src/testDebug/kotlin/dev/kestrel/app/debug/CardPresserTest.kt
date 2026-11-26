@@ -4,8 +4,10 @@ import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.conversation.OverlayCards
 import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.app.conversation.ShownCard
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -19,7 +21,7 @@ class CardPresserTest {
     private val confirmation = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
 
     @Test
-    fun aPressAnswersOnlyTheCardThatTheHookReadWithAButtonThatItTakesOnceItTakesTaps() {
+    fun aPressAnswersOnlyTheCardThatTheHookReadWithAButtonThatItTakesOnceItTakesTaps() = runTest {
         assertEquals(CardPress.NOT_ON_OVERLAY, presser.press(4, QuestionKind.CONFIRM, CardChoice.Confirm))
         overlay.shown = ShownCard(confirmation, 2 * CARD_ARMING_MILLIS - 1)
         assertEquals(CardPress.NOT_ARMED, presser.press(4, QuestionKind.CONFIRM, CardChoice.Confirm))
@@ -38,10 +40,10 @@ class CardPresserTest {
 
     // Plan 7E: the owner's Continue while the phone is locked waits for his unlock, so the hook's is refused.
     @Test
-    fun aContinueWhileThePhoneIsLockedIsRefused() {
+    fun aContinueWhileThePhoneIsLockedIsRefused() = runTest {
         val held = OwnerCard(9, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 9, kind = QuestionKind.CONTINUE_GOAL)
         overlay.shown = ShownCard(held, 2 * CARD_ARMING_MILLIS)
-        overlay.locked = true
+        overlay.reading = ScreenReading.LOCKED
 
         assertEquals(CardPress.LOCKED, presser.press(9, QuestionKind.CONTINUE_GOAL, CardChoice.Continue))
         assertEquals(CardPress.PRESSED, presser.press(9, QuestionKind.CONTINUE_GOAL, CardChoice.Stop))
@@ -50,11 +52,11 @@ class CardPresserTest {
 
     private class FakeOverlay : OverlayCards {
         var shown: ShownCard? = null
-        var locked = false
+        var reading = ScreenReading.UNLOCKED
         val answers = mutableListOf<CardChoice>()
 
         override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> Unit) -> T): T = block(shown) { answers += it }
 
-        override fun locked(): Boolean = locked
+        override suspend fun reading(): ScreenReading = reading
     }
 }

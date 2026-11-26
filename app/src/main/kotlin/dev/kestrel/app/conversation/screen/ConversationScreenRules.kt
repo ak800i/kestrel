@@ -152,8 +152,8 @@ internal object ConversationScreenRules {
     }
 
     /**
-     * The owner's input [sent] reached the conversation from the screen. Its act is read against the view from before the
-     * conversation got it, never against a newer one that may already count it (the whole-plan review's M3).
+     * The owner's input [sent] reached the conversation from the screen. Its act is read against the view from before
+     * the conversation got it, never against a newer one that may already count it (the whole-plan review's M3).
      */
     fun sent(state: ScreenState, sent: SentInput): ScreenState {
         val intent = sent.intent

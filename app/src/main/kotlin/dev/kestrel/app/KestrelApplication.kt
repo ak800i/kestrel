@@ -37,8 +37,8 @@ open class KestrelApplication : Application() {
     }
 
     /**
-     * Runs once in each process, after [graph] is built and before any of its work starts, so that what it installs sees
-     * every step of the process. The debug builds' application installs its hooks' process-wide rules here
+     * Runs once in each process, after [graph] is built, before the conversation's first step and before onCreate starts
+     * any work, so that what it installs sees every step of the conversation. The debug builds' application installs its hooks' process-wide rules here
      * (`DebugKestrelApplication`); a release build installs nothing.
      */
     protected open fun graphBuilt(graph: AppGraph) = Unit

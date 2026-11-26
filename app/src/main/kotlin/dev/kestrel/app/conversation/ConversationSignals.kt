@@ -4,6 +4,7 @@ import dev.kestrel.app.agent.CallBackstop
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.phone.PhoneSignals
 import dev.kestrel.app.phone.PhoneWatch
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.PhoneSignal
@@ -71,7 +72,8 @@ internal class ConversationSignals(
         return listOfNotNull(screen, calls)
     }
 
-    private fun screenChanged(on: Boolean) {
+    private fun screenChanged(reading: ScreenReading) {
+        val on = reading.unlocked
         val changed = synchronized(lock) { (unlocked != on).also { unlocked = on } }
         if (changed) signal(if (on) PhoneSignal.UNLOCKED else PhoneSignal.LOCKED)
     }

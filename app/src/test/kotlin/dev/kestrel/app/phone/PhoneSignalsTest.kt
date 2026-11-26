@@ -19,23 +19,23 @@ class PhoneSignalsTest {
 
     @Test
     fun oneReceiverServesEveryScreenWatchAndANewWatchGetsTheReadingAtOnce() {
-        val listening = mutableListOf<Boolean>()
-        val conversation = mutableListOf<Boolean>()
-        screens.now = true
+        val listening = mutableListOf<ScreenReading>()
+        val conversation = mutableListOf<ScreenReading>()
+        screens.now = ScreenReading.UNLOCKED
 
         val first = phone.watchScreen { listening += it }
         val second = phone.watchScreen { conversation += it }
         assertEquals(1, screens.starts)
-        assertEquals(listOf(true), listening)
-        assertEquals(listOf(true), conversation)
+        assertEquals(listOf(ScreenReading.UNLOCKED), listening)
+        assertEquals(listOf(ScreenReading.UNLOCKED), conversation)
 
-        screens.change(false)
+        screens.change(ScreenReading.OFF)
         first.stop()
         first.stop()
-        screens.change(true)
+        screens.change(ScreenReading.UNLOCKED)
 
-        assertEquals(listOf(true, false), listening)
-        assertEquals(listOf(true, false, true), conversation)
+        assertEquals(listOf(ScreenReading.UNLOCKED, ScreenReading.OFF), listening)
+        assertEquals(listOf(ScreenReading.UNLOCKED, ScreenReading.OFF, ScreenReading.UNLOCKED), conversation)
         assertEquals(0, screens.stops)
         second.stop()
         assertEquals(1, screens.stops)
@@ -100,36 +100,36 @@ class PhoneSignalsTest {
         assertThrows(IllegalStateException::class.java) { phone.watchScreen { } }
 
         screens.failure = null
-        val seen = mutableListOf<Boolean>()
+        val seen = mutableListOf<ScreenReading>()
         val watch = phone.watchScreen { seen += it }
-        screens.change(true)
+        screens.change(ScreenReading.UNLOCKED)
         watch.stop()
 
         assertEquals(1, screens.starts)
-        assertEquals(listOf(false, true), seen)
+        assertEquals(listOf(ScreenReading.OFF, ScreenReading.UNLOCKED), seen)
         assertEquals(1, screens.stops)
     }
 
     @Test
     fun aWatchFromAnotherThreadGetsItsFirstReadingOnTheSourcesThreadInOrderWithTheReports() {
-        val listening = mutableListOf<Boolean>()
-        val conversation = mutableListOf<Boolean>()
-        val stopped = mutableListOf<Boolean>()
-        screens.now = true
+        val listening = mutableListOf<ScreenReading>()
+        val conversation = mutableListOf<ScreenReading>()
+        val stopped = mutableListOf<ScreenReading>()
+        screens.now = ScreenReading.UNLOCKED
         phone.watchScreen { listening += it }
 
         screens.queued = true
         phone.watchScreen { conversation += it }
         phone.watchScreen { stopped += it }.stop()
         // The screen goes off while the source's thread has yet to come to the new watches' readings.
-        screens.change(false)
-        assertEquals(emptyList<Boolean>(), conversation)
+        screens.change(ScreenReading.OFF)
+        assertEquals(emptyList<ScreenReading>(), conversation)
         screens.runQueued()
 
         // The reading is the state when the source's thread reads it, so the old "on" never comes after the change.
-        assertEquals(listOf(false, false), conversation)
-        assertEquals(listOf(true, false), listening)
-        assertEquals(emptyList<Boolean>(), stopped)
+        assertEquals(listOf(ScreenReading.OFF, ScreenReading.OFF), conversation)
+        assertEquals(listOf(ScreenReading.UNLOCKED, ScreenReading.OFF), listening)
+        assertEquals(emptyList<ScreenReading>(), stopped)
     }
 
     @Test
@@ -161,8 +161,28 @@ class PhoneSignalsTest {
         assertEquals(1, calls.stops)
     }
 
+    // The question card's reading of the lock (plan 7F's whole-plan re-check): the screen source's reading first, then
+    // every change, and the watch ends with the collection.
+    @Test
+    fun theScreenStatesFlowGivesTheReadingFirstThenEveryChangeAndStopsWithItsCollection() = runTest {
+        val seen = mutableListOf<ScreenReading>()
+        screens.now = ScreenReading.LOCKED
+        val collecting = backgroundScope.launch { phone.screenStates().collect { seen += it } }
+        runCurrent()
+        assertEquals(1, screens.starts)
+
+        screens.change(ScreenReading.UNLOCKED)
+        screens.change(ScreenReading.OFF)
+        runCurrent()
+        assertEquals(listOf(ScreenReading.LOCKED, ScreenReading.UNLOCKED, ScreenReading.OFF), seen)
+
+        collecting.cancel()
+        runCurrent()
+        assertEquals(1, screens.stops)
+    }
+
     private class FakeScreens : ScreenSource {
-        var now = false
+        var now = ScreenReading.OFF
         var starts = 0
         var stops = 0
         var failure: Exception? = null
@@ -170,10 +190,10 @@ class PhoneSignalsTest {
         // The source's one thread runs every reading and report at once, or, while queued, in order at runQueued.
         var queued = false
         private val thread = ArrayDeque<() -> Unit>()
-        private var report: ((Boolean) -> Unit)? = null
+        private var report: ((ScreenReading) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
-        override fun start(report: (Boolean) -> Unit, cameOn: () -> Unit) {
+        override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
             failure?.let { throw it }
             starts++
             this.report = report
@@ -186,12 +206,12 @@ class PhoneSignalsTest {
             cameOn = null
         }
 
-        override fun read(reading: (Boolean) -> Unit) = onThread { reading(now) }
+        override fun read(reading: (ScreenReading) -> Unit) = onThread { reading(now) }
 
-        fun change(on: Boolean) {
-            now = on
+        fun change(reading: ScreenReading) {
+            now = reading
             val report = checkNotNull(report) { "Nothing watches the screen" }
-            onThread { report(on) }
+            onThread { report(reading) }
         }
 
         fun comeOn() {

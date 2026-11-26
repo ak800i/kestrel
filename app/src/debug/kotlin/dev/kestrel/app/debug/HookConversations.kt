@@ -6,14 +6,17 @@ import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.ConversationId
 import java.io.File
 
+/** What watches the conversation's steps: `AppGraph.conversationSteps`'s type. */
+internal typealias StepWatcher = (ConversationEvent, ConversationState, MachineStep) -> Unit
+
 /**
- * The conversations that the debug hooks opened (plan 7F's Tasks 13 and 13a): those that `conversation-type` or a tagged
- * input's work opened, never one that a switch moved into or that was open before, which may be the owner's (review N4 of
- * plan 7F, N1 of plan 7G). A mark means that only the hooks' inputs are in the conversation: the owner's input with his
- * words or his choice, or his switch into it, clears it (`CommandTags.onConversationStep`; review M1 of Task 13a).
- * `conversation-control --es do delete-typed` deletes them and clears their marks. The marks are kept by id only, in
- * [file], a file of Kestrel's own storage in debug builds, so that they survive a restart of Kestrel; the rule that clears
- * them watches every step of every process from its start ([watch]; review I2 of plan 7F).
+ * The conversations that the debug hooks opened (plan 7F's Tasks 13 and 13a): those that `conversation-type` or a
+ * tagged input's work opened, never one that a switch moved into or that was open before, which may be the owner's
+ * (review N4 of plan 7F, N1 of plan 7G). A mark means that only the hooks' inputs are in the conversation: the owner's
+ * input with his words or his choice, or his switch into it, clears it (`CommandTags.onConversationStep`; review M1 of
+ * Task 13a). `conversation-control --es do delete-typed` deletes them and clears their marks. The marks are kept by id
+ * only, in [file], a file of Kestrel's own storage in debug builds, so that they survive a restart of Kestrel; the rule
+ * that clears them watches every step of every process from its start ([watch]; review I2 of plan 7F).
  */
 internal class HookConversations(private val file: File) {
     private val ids = LinkedHashSet<ConversationId>()
@@ -47,14 +50,19 @@ internal class HookConversations(private val file: File) {
         @Volatile
         private var current: HookConversations? = null
 
+        /** Clears the process's marks, so that a JVM test leaves none behind for the next. */
+        internal fun reset() {
+            current = null
+        }
+
         /**
          * Starts the marks' rule for this process (`DebugKestrelApplication`, once, before any of the conversation's
-         * steps): reads the marks of [dir], has [tags] mark the conversation that a hook's input's work opens and clear the
-         * one that the owner's input with his words or his choice reaches, and gives [install] the watcher of the
+         * steps): reads the marks of [dir], has [tags] mark the conversation that a hook's input's work opens and clear
+         * the one that the owner's input with his words or his choice reaches, and gives [install] the watcher of the
          * conversation's steps, `AppGraph.conversationSteps`.
          */
         @Synchronized
-        fun watch(dir: File, tags: CommandTags, install: ((ConversationEvent, ConversationState, MachineStep) -> Unit) -> Unit) {
+        fun watch(dir: File, tags: CommandTags, install: (StepWatcher) -> Unit) {
             val marks = HookConversations(File(dir, FILE))
             current = marks
             tags.ownConversation = marks::own

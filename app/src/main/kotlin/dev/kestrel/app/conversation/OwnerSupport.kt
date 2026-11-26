@@ -1,6 +1,5 @@
 package dev.kestrel.app.conversation
 
-import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,6 +11,7 @@ import dev.kestrel.app.R
 import dev.kestrel.app.listen.BarOwner
 import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.app.orchestrator.CallState
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.datatools.media.MediaKeys
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
 import dev.kestrel.safety.AgentFreeApps
@@ -51,11 +51,11 @@ internal interface OwnerScreen {
      */
     suspend fun card(card: OwnerCard): CardChoice?
 
-    /** Whether the phone is locked: a card's Continue then waits for the owner's unlock (plan 7E's rule for Continue). */
-    fun locked(): Boolean
-
-    /** Returns once the screen is on and the phone unlocked, at once when it is (the wait of a card's locked Continue). */
-    suspend fun unlocked()
+    /**
+     * The screen source's reading while the flow is collected, the reading first and then every change: the one reading
+     * of the lock, by which a card's Continue counts only on an unlocked phone (plan 7E's rule for Continue).
+     */
+    val screens: Flow<ScreenReading>
 
     /**
      * How many screen sessions have connected so far; it changes when a new one connects, so that the card desk shows the
@@ -99,8 +99,8 @@ internal fun interface PermissionDialog {
 /**
  * The owner's parts on the phone, which both of the conversation's channels and a goal's rounds share (design 5.5 of
  * sub-project 7): the screen session that is connected ([sessions]; the one when it is asked), Android's audio, the pages
- * that [open] opens for the owner, the phone's [calls] (Kestrel sees them only with READ_PHONE_STATE), and its [screens]:
- * whether the screen is on and the phone unlocked, the reading first and then every change.
+ * that [open] opens for the owner, the phone's [calls] (Kestrel sees them only with READ_PHONE_STATE), and the screen
+ * source's readings ([screens]).
  */
 internal class AndroidOwnerSupport(
     private val context: Context,
@@ -108,7 +108,7 @@ internal class AndroidOwnerSupport(
     private val bar: OwnedBar,
     private val open: suspend (Intent) -> Boolean,
     private val calls: () -> Flow<CallState>,
-    private val screens: () -> Flow<Boolean>,
+    override val screens: Flow<ScreenReading>,
 ) : TouchWatch, OwnerScreen, OtherAudio, HandOverSignals {
     private val audio = context.getSystemService(AudioManager::class.java)
 
@@ -132,12 +132,6 @@ internal class AndroidOwnerSupport(
             is CardEnd.Number -> CardChoice.Pick(end.value)
             CardEnd.Withdrawn -> null
         }
-    }
-
-    override fun locked(): Boolean = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
-
-    override suspend fun unlocked() {
-        screens().first { onAndUnlocked -> onAndUnlocked }
     }
 
     // Through the bar's one writer, so that it lets go of only the question's or the hand-over's own text (plan 7F).

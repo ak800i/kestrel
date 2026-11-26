@@ -23,7 +23,7 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
     private var unlocked = false
     private var receiver: BroadcastReceiver? = null
 
-    override fun start(report: (Boolean) -> Unit, cameOn: () -> Unit) {
+    override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
         val screen = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.action) {
@@ -57,14 +57,18 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
     }
 
-    override fun read(reading: (Boolean) -> Unit) {
+    override fun read(reading: (ScreenReading) -> Unit) {
         if (main.looper.isCurrentThread) reading(current()) else main.post { reading(current()) }
     }
 
-    private fun current(): Boolean {
+    private fun current(): ScreenReading {
         val interactive = context.getSystemService(PowerManager::class.java).isInteractive
         val locked = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
-        return interactive && (unlocked || !locked)
+        return when {
+            !interactive -> ScreenReading.OFF
+            unlocked || !locked -> ScreenReading.UNLOCKED
+            else -> ScreenReading.LOCKED
+        }
     }
 
     override fun toString(): String = "AndroidScreenSource(watching=${receiver != null})"

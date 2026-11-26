@@ -5,6 +5,7 @@ import dev.kestrel.app.listen.CallApi
 import dev.kestrel.app.listen.CallMonitor
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.phone.PhoneSignals
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.app.phone.ScreenSource
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.ConversationId
@@ -176,10 +177,10 @@ class ConversationSignalsTest {
         var now = true
         var starts = 0
         var stops = 0
-        private var report: ((Boolean) -> Unit)? = null
+        private var report: ((ScreenReading) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
-        override fun start(report: (Boolean) -> Unit, cameOn: () -> Unit) {
+        override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
             starts++
             this.report = report
             this.cameOn = cameOn
@@ -191,16 +192,19 @@ class ConversationSignalsTest {
             cameOn = null
         }
 
-        override fun read(reading: (Boolean) -> Unit) = reading(now)
+        override fun read(reading: (ScreenReading) -> Unit) = reading(readingOf(now))
 
         fun change(on: Boolean) {
             now = on
-            report?.invoke(on)
+            report?.invoke(readingOf(on))
         }
 
         fun comeOn() {
             cameOn?.invoke()
         }
+
+        // The conversation tells only unlocked from not: locked stands for both.
+        private fun readingOf(unlocked: Boolean) = if (unlocked) ScreenReading.UNLOCKED else ScreenReading.LOCKED
     }
 
     private class FakeCalls : CallMonitor {

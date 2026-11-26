@@ -64,8 +64,8 @@ class ConversationScreenModelTest {
     }
 
     // The whole-plan review's M3: the conversation may show the typed command's own view before the screen hears of the
-    // input. The arm takes the view from before the input, so the command's reply without a goal ends it, and a goal that
-    // the owner then starts by voice does not move the screen.
+    // input. The arm takes the view from before the input, so the command's reply without a goal ends it, and a goal
+    // that the owner then starts by voice does not move the screen.
     @Test
     fun aTypedCommandsArmEndsWithItsReplyAlsoWhenItsViewCameFirst() = runTest {
         collecting()

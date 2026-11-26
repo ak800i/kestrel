@@ -4,6 +4,7 @@ import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
@@ -580,9 +581,7 @@ class VoiceChannelTest {
             return answer.await()
         }
 
-        override fun locked(): Boolean = false
-
-        override suspend fun unlocked() {}
+        override val screens = MutableStateFlow(ScreenReading.UNLOCKED)
 
         override suspend fun releaseBar() {
             releases++

@@ -5,6 +5,7 @@ import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.OwnedBar
+import dev.kestrel.app.phone.ScreenReading
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
@@ -186,7 +187,8 @@ class TextChannelTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { channel.sent.collect { sent += it } }
         val asking = ConversationView(asking = QuestionKind.YES_NO, question = 2)
         conversation.view = asking
-        // The conversation's view moves on as soon as it gets an input, as the engine's may before the screen hears of it.
+        // The conversation's view moves on as soon as it gets an input, as the engine's may before the screen hears of
+        // it.
         conversation.onSubmit = { conversation.view = ConversationView(command = conversation.submitted.size) }
 
         channel.submit(channel.read("yes")!!)
@@ -281,9 +283,7 @@ class TextChannelTest {
             }
         }
 
-        override fun locked(): Boolean = false
-
-        override suspend fun unlocked() {}
+        override val screens = MutableStateFlow(ScreenReading.UNLOCKED)
 
         override suspend fun releaseBar() {}
 

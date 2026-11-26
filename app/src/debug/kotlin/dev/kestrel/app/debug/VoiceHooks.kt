@@ -313,8 +313,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
         }
 
         /**
-         * A typed input's kind as `conversation-type` answers it (plan 7G's wire values), such as command, answer or stop:
-         * never its words. Each kind is named here, so that renaming a Kotlin class changes no answer.
+         * A typed input's kind as `conversation-type` answers it (plan 7G's wire values), such as command, answer or
+         * stop: never its words. Each kind is named here, so that renaming a Kotlin class changes no answer.
          */
         fun kindOf(input: OwnerInput): String = when (input.intent) {
             is InputIntent.Command -> "command"
@@ -331,10 +331,11 @@ internal class VoiceHooks(private val graph: AppGraph) {
         }
 
         /**
-         * Starts the record of the Orchestrator's steps and the tags of the conversation's inputs (plan 4D, H1; design 14.4
-         * of sub-project 7), once per process: a tagged transcript's input gets its options, and each round's witness keeps
-         * what it said and watches its data tools for the run's marker (plan 6B-basefix). The conversation's steps reach
-         * [tags] from the process's start ([HookConversations.watch]), so that the marks' rule never waits for a hook call.
+         * Starts the record of the Orchestrator's steps and the tags of the conversation's inputs (plan 4D, H1; design
+         * 14.4 of sub-project 7), once per process: a tagged transcript's input gets its options, and each round's
+         * witness keeps what it said and watches its data tools for the run's marker (plan 6B-basefix). The
+         * conversation's steps reach [tags] from the process's start ([HookConversations.watch]), so that the marks'
+         * rule never waits for a hook call.
          */
         @Synchronized
         fun install(graph: AppGraph) {

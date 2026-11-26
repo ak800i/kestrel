@@ -13,25 +13,42 @@ internal fun interface PhoneWatch {
 }
 
 /**
+ * What the screen source reads (design spec, section 8.5): the screen is off, on over the lock screen, or on with the
+ * phone unlocked. It is the one reading of the lock for every part of Kestrel (plan 7F's whole-plan re-check).
+ */
+internal enum class ScreenReading {
+    OFF,
+    LOCKED,
+    UNLOCKED,
+    ;
+
+    /**
+     * Whether the screen is on and the phone unlocked, which listening and the conversation count as the owner's
+     * presence.
+     */
+    val unlocked: Boolean get() = this == UNLOCKED
+}
+
+/**
  * Android's screen and lock (design spec, section 8.5). Any thread may call it. Every report, every [start]'s cameOn and
  * every [read] runs on the source's one thread, in the order in which they happen there, so that no reading can come
  * after a newer change.
  */
 internal interface ScreenSource {
     /**
-     * Starts to report every change to [report]: whether the screen is on and the phone unlocked; and each time the screen
-     * comes on, locked or not, to [cameOn], after [report].
+     * Starts to report every change of the [ScreenReading] to [report]; and each time the screen comes on, locked or
+     * not, to [cameOn], after [report].
      */
-    fun start(report: (Boolean) -> Unit, cameOn: () -> Unit)
+    fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit)
 
     /** Stops the reports. */
     fun stop()
 
     /**
-     * Gives [reading] whether the screen is on and the phone unlocked, read on the source's thread: at once when the caller
-     * is on it, otherwise after the reports that are already on their way there.
+     * Gives [reading] the [ScreenReading], read on the source's thread: at once when the caller is on it, otherwise
+     * after the reports that are already on their way there.
      */
-    fun read(reading: (Boolean) -> Unit)
+    fun read(reading: (ScreenReading) -> Unit)
 }
 
 /**
@@ -48,7 +65,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     // One object per watch, so that the same listener given twice is watched twice and stopped once each.
     private class Watcher<T>(val listener: (T) -> Unit)
 
-    private class ScreenWatcher(val listener: (Boolean) -> Unit, val cameOn: () -> Unit)
+    private class ScreenWatcher(val listener: (ScreenReading) -> Unit, val cameOn: () -> Unit)
 
     private val lock = Any()
     private val screenWatchers = mutableListOf<ScreenWatcher>()
@@ -60,7 +77,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
      * otherwise a moment later; a watch that stops before it gets none. Throws what [ScreenSource.start] throws, and then
      * holds no watch. [listener] comes last, so that a trailing lambda is the reading's.
      */
-    fun watchScreen(cameOn: () -> Unit = {}, listener: (Boolean) -> Unit): PhoneWatch {
+    fun watchScreen(cameOn: () -> Unit = {}, listener: (ScreenReading) -> Unit): PhoneWatch {
         val watcher = ScreenWatcher(listener, cameOn)
         synchronized(lock) {
             screenWatchers += watcher
@@ -73,7 +90,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
                 }
             }
         }
-        screens.read { on -> if (synchronized(lock) { watcher in screenWatchers }) listener(on) }
+        screens.read { reading -> if (synchronized(lock) { watcher in screenWatchers }) listener(reading) }
         return once {
             synchronized(lock) { if (screenWatchers.remove(watcher) && screenWatchers.isEmpty()) screens.stop() }
         }
@@ -109,12 +126,12 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     }
 
     /**
-     * Whether the screen is on and the phone unlocked while the flow is collected: the reading first, then every change
-     * ([watchScreen]). A card's Continue that the owner tapped while the phone was locked waits for it (plan 7F). The flow
-     * fails with what [watchScreen] throws.
+     * The [ScreenReading] while the flow is collected: the reading first, then every change ([watchScreen]). A question
+     * card's Continue counts only on [ScreenReading.UNLOCKED], and one that the owner tapped on the lock screen waits
+     * on it for his unlock or the screen's end (plan 7F). The flow fails with what [watchScreen] throws.
      */
-    fun screenStates(): Flow<Boolean> = callbackFlow {
-        val watch = watchScreen { onAndUnlocked -> trySend(onAndUnlocked) }
+    fun screenStates(): Flow<ScreenReading> = callbackFlow {
+        val watch = watchScreen { reading -> trySend(reading) }
         awaitClose { watch.stop() }
     }
 
@@ -136,8 +153,8 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
         }
     }
 
-    private fun screenChanged(on: Boolean) {
-        synchronized(lock) { screenWatchers.toList() }.forEach { it.listener(on) }
+    private fun screenChanged(reading: ScreenReading) {
+        synchronized(lock) { screenWatchers.toList() }.forEach { it.listener(reading) }
     }
 
     private fun screenCameOn() {

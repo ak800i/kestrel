@@ -8,6 +8,7 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -20,6 +21,10 @@ import org.junit.rules.TemporaryFolder
 class HookConversationsTest {
     @get:Rule
     val folder = TemporaryFolder()
+
+    // The process-wide marks point into this test's folder, which goes after the test.
+    @After
+    fun clearTheMarks() = HookConversations.reset()
 
     @Test
     fun theMarksSurviveARestartAndADeletionClearsItsMark() {
@@ -38,15 +43,16 @@ class HookConversationsTest {
         assertEquals(listOf(two), HookConversations(file).all())
     }
 
-    // Review I2 of plan 7F: the marks' rule watches the conversation's steps from the process's start, so the owner's command
-    // in a conversation whose mark a restart kept clears the mark before any hook has been called in the new process.
+    // Review I2 of plan 7F: the marks' rule watches the conversation's steps from the process's start, so the owner's
+    // command in a conversation whose mark a restart kept clears the mark before any hook has been called in the new
+    // process.
     @Test
     fun theOwnersCommandBeforeAnyHookCallClearsAMarkThatARestartKept() {
         val file = folder.root.resolve(HookConversations.FILE)
         val marked = ConversationId("1".repeat(32))
         HookConversations(file).own(marked)
 
-        var steps: ((ConversationEvent, ConversationState, MachineStep) -> Unit)? = null
+        var steps: StepWatcher? = null
         HookConversations.watch(folder.root, CommandTags()) { steps = it }
         assertEquals(listOf(marked), HookConversations.all())
         val open = ConversationState(id = marked)
