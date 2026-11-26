@@ -19,16 +19,23 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Kestrel's own voice while no voice session is open (design 10.6 and 11 of sub-project 7). */
+/**
+ * Kestrel's own voice while no voice session is open (design 10.6 and 11 of sub-project 7). It owns the one count of the
+ * owner's Stops for it ([stops]): words carry the count that held when they came, and a later Stop keeps them unspoken.
+ */
 internal interface OffVoice {
-    /**
-     * Speaks [text] and returns once it has been spoken, stopped or refused, or could not be spoken: a voice that fails is
-     * reported, and the words stay on the bar. A [stop] after this call ends the words, also before they start, and so does
-     * the caller's cancellation, as when the owner answers the question that they ask.
-     */
-    suspend fun speak(text: String)
+    /** How many times the owner stopped this voice ([stop]) in this process. */
+    val stops: Long
 
-    /** The owner's Stop (plan 7F): ends the words that it speaks, or would speak, now. */
+    /**
+     * Speaks [text], which came while [stops] was [asked], and returns once it has been spoken, stopped or refused, or
+     * could not be spoken: a voice that fails is reported, and the words stay on the bar. Words that a [stop] after [asked]
+     * came before are never spoken, and a [stop] while they play ends them; so does the caller's cancellation, as when the
+     * owner answers the question that they ask.
+     */
+    suspend fun speak(text: String, asked: Long)
+
+    /** The owner's Stop (plan 7F): counts in [stops] and ends the words that it speaks, or would speak, now. */
     fun stop()
 }
 
@@ -73,7 +80,7 @@ private class PlayerVoice(private val player: VoicePlayer, private val synthesiz
  * load it once. A voice that does not load or does not speak is reported by its class, and the words stay on the bar. One
  * reply at a time, in order.
  *
- * The one stop rule: the owner's [stop] ends the reply that it speaks, and a reply that was asked for before the stop never
+ * The one stop rule: the owner's [stop] ends the reply that it speaks, and a reply whose words came before the stop never
  * starts, whether it waits for its turn, for the voice to load or for the service's mediaPlayback. A reply whose caller is
  * cancelled ends as well.
  */
@@ -95,17 +102,17 @@ internal class AppOffVoice(
     private var closing: Job? = null
     private val spoken = AtomicInteger()
 
-    // How many times the owner stopped the voice. A reply starts only under [stopLock] and only while the count is the one
-    // that it saw when it was asked for, and a stop counts and stops the voice under the same lock, so that no reply starts
-    // after a stop that came after it was asked for.
+    // A reply starts only under [stopLock] and only while [stopCount] is the count that held when its words came, and a
+    // stop counts and stops the voice under the same lock, so that no reply starts after a stop that came after its words.
     private val stopLock = Any()
-    private var stops = 0L
+    private var stopCount = 0L
+
+    override val stops: Long get() = synchronized(stopLock) { stopCount }
 
     /** How many replies it has spoken in this process, for the device tests. */
     val replies: Int get() = spoken.get()
 
-    override suspend fun speak(text: String) {
-        val asked = synchronized(stopLock) { stops }
+    override suspend fun speak(text: String, asked: Long) {
         mutex.withLock {
             closing?.cancel()
             try {
@@ -139,7 +146,7 @@ internal class AppOffVoice(
     }
 
     private suspend fun play(voice: LoadedVoice, text: String, asked: Long) {
-        val reply = synchronized(stopLock) { if (stops == asked) voice.speak(text) else null } ?: return
+        val reply = synchronized(stopLock) { if (stopCount == asked) voice.speak(text) else null } ?: return
         try {
             reply.await()
         } finally {
@@ -148,7 +155,7 @@ internal class AppOffVoice(
         spoken.incrementAndGet()
     }
 
-    private fun stoppedSince(asked: Long): Boolean = synchronized(stopLock) { stops != asked }
+    private fun stoppedSince(asked: Long): Boolean = synchronized(stopLock) { stopCount != asked }
 
     private suspend fun voiceFor(wanted: VoiceOptions): LoadedVoice {
         loaded?.takeIf { it.options == wanted }?.let { return it.voice }
@@ -168,7 +175,7 @@ internal class AppOffVoice(
 
     override fun stop() {
         synchronized(stopLock) {
-            stops++
+            stopCount++
             loaded?.voice?.stop()
         }
     }

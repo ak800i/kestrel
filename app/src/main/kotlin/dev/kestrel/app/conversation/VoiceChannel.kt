@@ -21,7 +21,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The conversation's voice (design 11 of sub-project 7): it speaks and shows through the Orchestrator ([voice]), which
@@ -52,9 +51,6 @@ internal class VoiceChannel(
     // it drops the voice session's queued speech: only the outputs that come after it play.
     private val speaking = Mutex()
 
-    // How many times the owner's Stop that did not come by voice stopped Kestrel's speech (plan 7F).
-    private val ownStops = AtomicLong()
-
     override suspend fun show(output: ChannelOutput) {
         when (output) {
             // The engine decided how the words are spoken when it routed them (`ConversationOwner`): Kestrel's own voice
@@ -72,17 +68,22 @@ internal class VoiceChannel(
     // own voice stops a cancelled reply itself.
     private suspend fun said(output: ChannelOutput.Said) {
         try {
-            inTurn { if (output.ownVoice) offVoice.speak(output.text) else voice.say(output.text, question = output.question) }
+            inTurn { ownCame ->
+                if (output.ownVoice) offVoice.speak(output.text, ownCame) else voice.say(output.text, question = output.question)
+            }
         } catch (e: CancellationException) {
             output.question?.let(voice::withdraw)
             throw e
         }
     }
 
-    private suspend fun inTurn(speak: suspend () -> Unit) {
+    // The owner's Stop that did not come by voice counts once, in Kestrel's own voice (OffVoice.stops, plan 7F): the
+    // words carry the count that held when they came, so that its own voice drops them after any later Stop, also one
+    // that comes between this check and its start.
+    private suspend fun inTurn(speak: suspend (ownCame: Long) -> Unit) {
         val came = voice.speechStops
-        val ownCame = ownStops.get()
-        speaking.withLock { if (voice.speechStops == came && ownStops.get() == ownCame) speak() }
+        val ownCame = offVoice.stops
+        speaking.withLock { if (voice.speechStops == came && offVoice.stops == ownCame) speak(ownCame) }
     }
 
     /**
@@ -92,7 +93,6 @@ internal class VoiceChannel(
      * turn are dropped.
      */
     fun stopSpeech() {
-        ownStops.incrementAndGet()
         voice.stopSpeaking()
         offVoice.stop()
     }

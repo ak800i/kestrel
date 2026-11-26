@@ -49,7 +49,7 @@ class AppOffVoiceTest {
     fun aStopWhileTheVoiceLoadsKeepsTheReplyFromStarting() = runTest {
         val offVoice = offVoice()
         loading = CompletableDeferred()
-        val speaking = launch { offVoice.speak("Done.") }
+        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
         runCurrent()
 
         offVoice.stop()
@@ -60,16 +60,30 @@ class AppOffVoiceTest {
         assertEquals(emptyList<String>(), voice.spoken)
         // The stop held only the reply that was asked for before it.
         voice.finishes = true
-        offVoice.speak("Sent.")
+        offVoice.speak("Sent.", offVoice.stops)
         assertEquals(listOf("Sent."), voice.spoken)
         assertEquals(1, loads)
+    }
+
+    // The voice channel reads the count when the words come and checks it before their turn; a Stop that comes after that
+    // check, before the voice starts, still keeps them unspoken, because the voice judges them by the count that they carry.
+    @Test
+    fun aStopAfterTheWordsCameKeepsThemUnspokenAlsoBeforeTheVoiceStarts() = runTest {
+        val offVoice = offVoice()
+        voice.finishes = true
+        val came = offVoice.stops
+
+        offVoice.stop()
+        offVoice.speak("Done.", came)
+
+        assertEquals(emptyList<String>(), voice.spoken)
     }
 
     @Test
     fun aStopWhileTheServiceTakesMediaPlaybackKeepsTheReplyFromStarting() = runTest {
         val offVoice = offVoice()
         applying = CompletableDeferred()
-        val speaking = launch { offVoice.speak("Done.") }
+        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
         runCurrent()
 
         offVoice.stop()
@@ -85,7 +99,7 @@ class AppOffVoiceTest {
     @Test
     fun aStopEndsTheReplyThatPlaysAndTheVoiceUnloadsOnceIdle() = runTest {
         val offVoice = offVoice()
-        val speaking = launch { offVoice.speak("Done.") }
+        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
         runCurrent()
         assertEquals(listOf("Done."), voice.spoken)
 
@@ -104,7 +118,7 @@ class AppOffVoiceTest {
     @Test
     fun aCancelledReplyEndsAndTheVoiceUnloadsOnceIdle() = runTest {
         val offVoice = offVoice()
-        val speaking = launch { offVoice.speak("Shall I send it to Mila?") }
+        val speaking = launch { offVoice.speak("Shall I send it to Mila?", offVoice.stops) }
         runCurrent()
 
         speaking.cancel()
@@ -121,7 +135,7 @@ class AppOffVoiceTest {
         val offVoice = offVoice()
         voice.failure = IllegalStateException("The audio output failed")
 
-        offVoice.speak("Done.")
+        offVoice.speak("Done.", offVoice.stops)
 
         assertEquals(1, reports.size)
         assertTrue(reports.single().second is IllegalStateException)

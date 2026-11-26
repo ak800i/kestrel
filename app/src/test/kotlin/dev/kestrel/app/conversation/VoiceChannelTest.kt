@@ -41,11 +41,15 @@ class VoiceChannelTest {
     private var taps = 0L
 
     private val offSpoken = mutableListOf<String>()
+    private val offAsked = mutableListOf<Long>()
     private var offStops = 0
     private var offHeld: CompletableDeferred<Unit>? = null
     private val offVoice = object : OffVoice {
-        override suspend fun speak(text: String) {
+        override val stops: Long get() = offStops.toLong()
+
+        override suspend fun speak(text: String, asked: Long) {
             offSpoken += text
+            offAsked += asked
             offHeld?.await()
         }
 
@@ -269,6 +273,19 @@ class VoiceChannelTest {
         assertEquals(1, offStops)
         assertEquals(1, voice.stopRequests)
         assertEquals(0L, voice.speechStops)
+    }
+
+    // Plan 7F: the count of the owner's Stops for Kestrel's own voice is that voice's own; the channel hands it the count
+    // that held when the words came, so that a Stop after the channel's check still keeps them unspoken.
+    @Test
+    fun kestrelsOwnVoiceGetsTheStopCountThatHeldWhenTheWordsCame() = runTest {
+        val channel = channel()
+        channel.show(ChannelOutput.Said("One.", ownVoice = true))
+        channel.stopSpeech()
+        channel.show(ChannelOutput.Said("Two.", ownVoice = true))
+
+        assertEquals(listOf("One.", "Two."), offSpoken)
+        assertEquals(listOf(0L, 1L), offAsked)
     }
 
     // Plan 7F: the owner's typed answer, with Kestrel on, cancels the typed question's spoken copy, and the channel
