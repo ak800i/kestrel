@@ -59,6 +59,30 @@ class HistorySearchTest {
 
     private suspend fun found(topic: String?): ConversationMatch? = (search.conversation(topic) as? ConversationLookup.Found)?.match
 
+    private suspend fun listed(text: String): Set<ConversationId>? = (search.matching(text) as? PastMatches.Only)?.ids
+
+    // Design 9.5 of sub-project 7: the list's search field keeps the past conversations that hold a match, from the index alone,
+    // and says when the index cannot be read.
+    @Test
+    fun theListsSearchNamesThePastConversationsThatHoldAMatchFromTheIndex() = test {
+        save(1, record(1, "Plan the trip to Novi Sad", 3 * day), record(2, "Book the hotel", 3 * day - 1))
+        save(2, record(1, "Read my latest SMS", day))
+        save(3, record(1, "Book a table", 0), open = true)
+        store.list()
+        archive.calls.clear()
+
+        assertEquals(setOf(id(1)), listed("BOOK the hotel"))
+        assertEquals(setOf(id(1), id(2)), listed("trip SMS"))
+        assertEquals(emptySet<ConversationId>(), listed("Belgrade"))
+        assertEquals(PastMatches.All, search.matching("the about"))
+        assertTrue(archive.calls.isEmpty())
+
+        archive.failures["readShards"] = IOException("the disk failed")
+        store = ArchivedConversationStore(archive, backgroundScope) {}
+        search = HistorySearch(store, { retention }, clock)
+        assertEquals(PastMatches.Failed, search.matching("hotel"))
+    }
+
     @Test
     fun foldingMatchesCaseDiacriticsAndBothScripts() = test {
         save(1, record(1, "Pronađi restoran koji je Mila poslala", day))

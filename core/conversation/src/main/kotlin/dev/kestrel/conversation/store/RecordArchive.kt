@@ -42,6 +42,14 @@ interface RecordArchive {
     suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int
 
     /**
+     * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed row
+     * whose id is not in [keep], whatever the index lists, those that this version cannot read too, and changes the index's
+     * shards as [index] says; returns how many rows went. Unlike [deleteAll], it keeps the open row, the logs and the
+     * archive's key.
+     */
+    suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int
+
+    /**
      * "Delete history" (design 9.7), the whole of it: deletes every row, the open one too, and the index, in one
      * transaction with whatever else the history holds (plan 7C's archive deletes both logs in it, because they share
      * its database), and then erases the archive's key, so that not even a copy of what was stored can be decrypted any

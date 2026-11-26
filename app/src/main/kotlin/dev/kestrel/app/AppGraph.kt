@@ -34,6 +34,7 @@ import dev.kestrel.conversation.local.LocalRequests
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.store.HistorySearch
 import dev.kestrel.screen.act.ActionResult
@@ -488,6 +489,13 @@ class AppGraph(context: Context) {
     internal var conversationSteps: ((ConversationEvent, ConversationState, MachineStep) -> Unit)? = null
 
     /**
+     * Device tests only: the conversation's timers' lengths, such as D21's waits shortened by an instrumentation argument
+     * (design 15.2 of sub-project 7; plan 7F). Null, and so the machine's own lengths, outside those tests.
+     */
+    @Volatile
+    internal var conversationTimers: ((Timer, Long) -> Long)? = null
+
+    /**
      * The conversation (design 5 and 5.6 of sub-project 7): it takes the owner's spoken inputs from Listening, runs goals
      * and Kestrel's own requests, speaks through the voice channel and keeps the archive. KestrelApplication restores it
      * once at the process start; inputs wait for the restore. It reaches Listening only through lambdas and flows, because
@@ -514,6 +522,7 @@ class AppGraph(context: Context) {
             clock = AndroidConversationClock,
             report = reportFailure,
             onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
+            timerMillis = { timer, millis -> conversationTimers?.invoke(timer, millis) ?: millis },
         ).also(::followConversation)
     }
 

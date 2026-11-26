@@ -192,6 +192,21 @@ class ArchivedConversationStore(
         }
     }
 
+    // Under the lock, so that no write comes between: the archive deletes every closed row that [keep] does not name, those
+    // that the index does not name too, in one transaction with the index without the conversations and kept rows that
+    // went, which writes only the shards that changed. The generation rises first, as for "delete history", so that a
+    // search that this overtook gives out nothing; the conversations that went are marked deleted once the archive's call
+    // completed, so that no holder writes one back.
+    override suspend fun deleteClosed(keep: () -> Set<ConversationId>): Int = withIndex { index ->
+        generation++
+        val kept = keep().mapTo(HashSet()) { it.value }
+        val gone = index.conversations.map { it.id }.filter { it.value !in kept }
+        val goneRows = gone.mapTo(HashSet()) { it.value } + index.kept.map { it.id }.filter { it !in kept }
+        changed(update = { it.without(goneRows) }, touched = emptySet(), inMemory = { deleted += gone }) { write ->
+            archive.deleteClosed(kept, write)
+        }
+    }
+
     override suspend fun purge(retentionDays: Int, nowWall: Long): Int = mutex.withLock {
         loaded()
         val oldest = nowWall - retentionDays * DAY_MILLIS

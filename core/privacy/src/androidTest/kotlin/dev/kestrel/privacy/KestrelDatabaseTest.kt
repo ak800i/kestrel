@@ -138,6 +138,32 @@ class KestrelDatabaseTest {
         assertEquals(listOf("a", "b"), dao.closedIds())
     }
 
+    // Plan 7F: "Delete all past conversations" deletes every closed row but the one that it keeps, and changes the shards,
+    // in one transaction; the open row and the logs stay. With nothing to keep (`NOT IN ()`), it deletes every closed row.
+    @Test
+    fun deleteClosedDeletesEveryClosedRowButTheKeptOneAndLeavesTheOpenRowAndTheLogs() = runBlocking {
+        db.logDao().insert(LogEntryRow(log = "activity", timestampMillis = 1, payload = byteArrayOf(1)))
+        val dao = db.conversationDao()
+        dao.write(
+            listOf(
+                conversation("old", last = 1, open = false),
+                conversation("kept", last = 2, open = false),
+                conversation("new", last = 3, open = false),
+                conversation("open", last = 4, open = true),
+            ),
+            emptyList(),
+            IndexRowUpdate.Update(listOf(shard("0", 1)), emptyList()),
+        )
+
+        assertEquals(2, dao.deleteClosed(keep = listOf("kept", "gone"), index = IndexRowUpdate.Update(listOf(shard("0", 2)), emptyList())))
+        assertEquals(setOf("kept", "open"), dao.rows(listOf("old", "kept", "new", "open")).map { it.id }.toSet())
+        assertArrayEquals(byteArrayOf(2), dao.shards().single().payload!!)
+
+        assertEquals(1, dao.deleteClosed(keep = emptyList(), index = IndexRowUpdate.Keep))
+        assertEquals(listOf("open"), dao.rows(listOf("kept", "open")).map { it.id })
+        assertEquals(1, db.logDao().newest("activity", 10).size)
+    }
+
     // Design 9.3 of sub-project 7: retention deletes by the table's own times, keeps the rows at both limits and the open
     // row, and changes the shards in one transaction.
     @Test

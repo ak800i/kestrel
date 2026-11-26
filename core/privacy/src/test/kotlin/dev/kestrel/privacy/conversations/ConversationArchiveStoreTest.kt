@@ -113,6 +113,27 @@ class ConversationArchiveStoreTest {
         assertEquals(before + 1, dao.transactions)
     }
 
+    // Plan 7F: "Delete all past conversations" deletes every closed row but the one that it keeps, in one transaction with
+    // the index, and keeps the open row and the key, which still decrypts what stays.
+    @Test
+    fun deleteClosedDeletesEveryClosedRowButTheKeptOneWithTheIndexInOneTransactionAndKeepsTheKey() = runTest {
+        write(
+            PlainConversation(closed("old", last = 5), byteArrayOf(1)),
+            PlainConversation(closed("kept", last = 50), byteArrayOf(2)),
+            PlainConversation(closed("new", last = 500), byteArrayOf(3)),
+            PlainConversation(opened("open", last = 1), byteArrayOf(4)),
+            index = IndexUpdate.Update(mapOf("0" to byteArrayOf(1)), emptySet()),
+        )
+        val before = dao.transactions
+
+        assertEquals(2, store.deleteClosed(keep = listOf("kept"), index = IndexUpdate.Update(mapOf("0" to byteArrayOf(2)), emptySet())))
+
+        assertEquals(setOf("kept", "open"), dao.rows.keys)
+        assertArrayEquals(byteArrayOf(2), (store.shards().single() as StoredShard.Readable).payload)
+        assertArrayEquals(byteArrayOf(2), (store.read(listOf("kept")).single() as StoredConversation.Readable).payload)
+        assertEquals(before + 1, dao.transactions)
+    }
+
     // Design 9.3 of sub-project 7: retention deletes by the table's own times, in one transaction with the index.
     @Test
     fun purgeDeletesTheClosedRowsOutsideTheWindowWithTheIndexInOneTransaction() = runTest {
@@ -551,6 +572,11 @@ private class FakeConversationDao : ConversationDao() {
         return super.purge(oldest, newest, index)
     }
 
+    override fun deleteClosed(keep: List<String>, index: IndexRowUpdate): Int {
+        transactions++
+        return super.deleteClosed(keep, index)
+    }
+
     override fun deleteAll(alsoDeleting: () -> Unit) {
         beforeDeleteAll()
         super.deleteAll(alsoDeleting)
@@ -586,6 +612,12 @@ private class FakeConversationDao : ConversationDao() {
         ConversationRowRead(row.id, row.openedMillis, row.lastMillis, row.open, row.commands, row.payload.size, row.payload.takeIf { it.size <= PIECE_BYTES })
 
     override fun delete(id: String): Int = if (rows.remove(id) != null) 1 else 0
+
+    override fun deleteClosedExcept(keep: List<String>): Int {
+        val gone = rows.values.filter { !it.open && it.id !in keep }.map { it.id }
+        gone.forEach { rows.remove(it) }
+        return gone.size
+    }
 
     override fun deleteClosedOutside(oldest: Long, newest: Long): Int {
         val gone = rows.values.filter { !it.open && (it.lastMillis < oldest || it.lastMillis > newest) }.map { it.id }

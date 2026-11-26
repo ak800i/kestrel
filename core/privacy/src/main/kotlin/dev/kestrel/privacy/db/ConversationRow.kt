@@ -162,6 +162,14 @@ abstract class ConversationDao {
     open fun purge(oldest: Long, newest: Long, index: IndexRowUpdate): Int = deleteClosedOutside(oldest, newest).also { change(index) }
 
     /**
+     * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed row
+     * whose id is not in [keep] and changes the shards' rows as [index] says; returns how many rows went. The open row and
+     * the logs stay.
+     */
+    @Transaction
+    open fun deleteClosed(keep: List<String>, index: IndexRowUpdate): Int = deleteClosedExcept(keep).also { change(index) }
+
+    /**
      * Deletes every conversation, the open one too, and the index, in one transaction, which first runs [alsoDeleting]:
      * what else "delete history" deletes in the same database (both logs, in PrivacyStore's), so that all of it goes,
      * or nothing (design 9.7 of sub-project 7).
@@ -231,6 +239,10 @@ abstract class ConversationDao {
 
     @Query("DELETE FROM conversations WHERE open = 0 AND (last_millis < :oldest OR last_millis > :newest)")
     protected abstract fun deleteClosedOutside(oldest: Long, newest: Long): Int
+
+    // Room writes one parameter per id of [keep]; SQLite takes an empty list too, which keeps nothing.
+    @Query("DELETE FROM conversations WHERE open = 0 AND id NOT IN (:keep)")
+    protected abstract fun deleteClosedExcept(keep: List<String>): Int
 
     @Upsert
     protected abstract fun upsert(row: ConversationRow)

@@ -93,6 +93,12 @@ class MemoryArchive : RecordArchive {
         gone.size
     }
 
+    override suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int = changing("deleteClosed", index) {
+        val gone = rows.values.filter { !it.header.open && it.header.id !in keep }.map { it.header.id }
+        gone.forEach(::remove)
+        gone.size
+    }
+
     override suspend fun deleteAll(): ArchiveErasure = changing("deleteAll", IndexWrite.Replace(emptyMap())) {
         rows.clear()
         unreadable.clear()

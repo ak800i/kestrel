@@ -182,6 +182,34 @@ class ArchivedConversationStoreTest {
         assertTrue(archive.keyErased)
     }
 
+    // Design 9.5 of sub-project 7: "Delete all past conversations" keeps the open one, the one that it is told to keep and
+    // the key, reads no body, deletes in one call of the archive with the index, and raises the generation; while the index
+    // cannot be read, it deletes nothing and says so.
+    @Test
+    fun deleteClosedKeepsTheOpenConversationAndTheKeptOneReadsNoBodyAndRaisesTheGeneration() = test {
+        store.save(conversation(1, now - 3_000))
+        store.save(conversation(2, now - 2_000))
+        store.save(conversation(3, now - 1_000))
+        store.save(conversation(4, now, open = true))
+        val fresh = fresh()
+        fresh.list()
+        val generation = fresh.generation
+        archive.calls.clear()
+
+        assertEquals(2, fresh.deleteClosed { setOf(id(2)) })
+
+        assertEquals(listOf("deleteClosed"), archive.calls)
+        assertEquals(setOf(id(2).value, id(4).value), archive.rows.keys)
+        assertEquals(listOf(id(2)), fresh.list().map { it.id })
+        assertEquals(id(4), fresh.open()!!.id)
+        assertTrue(fresh.generation > generation)
+        assertFalse(archive.keyErased)
+
+        archive.failures["readShards"] = IOException("the disk failed")
+        val failing = fresh()
+        assertTrue(runCatching { failing.deleteClosed { emptySet() } }.exceptionOrNull() is PastUnavailableException)
+    }
+
     // On the A71, decrypting every row took 5.2 s even in one query; the open row and the index take one decryption each,
     // and one more per shard.
     @Test

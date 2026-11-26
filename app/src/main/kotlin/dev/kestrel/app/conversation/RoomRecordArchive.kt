@@ -52,6 +52,9 @@ internal class RoomRecordArchive(
 
     override suspend fun purge(oldest: Long, newest: Long, index: IndexWrite): Int = table.purge(oldest, newest, index.plain())
 
+    // "Delete all past conversations" (plan 7F): the conversations alone, not the logs, and the key stays.
+    override suspend fun deleteClosed(keep: Collection<String>, index: IndexWrite): Int = table.deleteClosed(keep, index.plain())
+
     // The deletion throws only when its transaction did not commit; once it has, it says whether the key went.
     override suspend fun deleteAll(): ArchiveErasure =
         when (deleteHistory()) {

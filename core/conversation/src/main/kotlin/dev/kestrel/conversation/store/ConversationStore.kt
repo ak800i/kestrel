@@ -10,8 +10,9 @@ import dev.kestrel.conversation.model.ConversationSnapshot
  */
 interface ConversationStore {
     /**
-     * How many times "delete history" ran in this process: [deleteAll] raises it before it deletes anything, also when the
-     * deletion does not complete. A reader that takes it before it reads, and compares it before it gives out what it read
+     * How many times "delete history" or "Delete all past conversations" ran in this process: [deleteAll] and
+     * [deleteClosed] raise it before they delete anything, also when the deletion does not complete. A reader that takes it
+     * before it reads, and compares it before it gives out what it read
      * (the search), never gives out a deleted conversation's words (design 9.7).
      */
     val generation: Long
@@ -53,6 +54,16 @@ interface ConversationStore {
      * complete; the store notes it as its own failure.
      */
     suspend fun deleteAll()
+
+    /**
+     * "Delete all past conversations" (design 9.5; plan 7F): deletes every closed conversation that [keep] does not name,
+     * also one in a format that this version cannot read, and returns how many went. The open conversation, those that
+     * [keep] names, the logs and the archive's key stay, and no body is read. [keep] gives the conversations that were open
+     * at some moment since the owner asked; the store reads it under its lock, right before the archive's transaction, so
+     * that no write comes between. It waits while the index is read or rebuilt; while the index cannot be read, it throws
+     * [PastUnavailableException] and deletes nothing.
+     */
+    suspend fun deleteClosed(keep: () -> Set<ConversationId>): Int
 
     /**
      * Deletes the closed conversations older than [retentionDays], or dated more than a day ahead, by the table's own last

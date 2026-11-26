@@ -29,6 +29,7 @@ import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.HoldReason
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.machine.QuietClock
+import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.CommandRecord
 import dev.kestrel.conversation.model.ConversationId
@@ -58,6 +59,7 @@ import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.HandOverKind
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -106,13 +108,14 @@ class ConversationEngineTest {
         onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
         report: (String, Throwable) -> Unit = { _, error -> throw error },
         screen: ScreenTurn = FakeScreenTurn { false },
+        timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
         val goals = GoalRunner(environment, screen, search, clock) { _, error -> throw error }
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, voiceOn, clock, report, onStep = onStep,
+            settings, testMode, voiceOn, clock, report, onStep = onStep, timerMillis = timerMillis,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -1414,5 +1417,162 @@ class ConversationEngineTest {
         // round waits for it.
         assertFalse(after > tap)
         assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+
+    // Design 9.5 of sub-project 7: a past conversation is deleted, or all of them, and never the open one.
+    @Test
+    fun aPastConversationIsDeletedFromTheListButTheOpenOneIsNot() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val first = engine.view.value.id!!
+        advanceTimeBy(61_000)
+        runCurrent()
+        engine.submit(typed("Read my latest SMS again"))
+        runCurrent()
+        val second = engine.view.value.id!!
+        advanceTimeBy(61_000)
+        runCurrent()
+        engine.submit(typed("And once more"))
+        runCurrent()
+        val open = engine.view.value.id!!
+
+        assertEquals(PastDeletion.OPEN, engine.deletePast(open))
+        assertEquals(PastDeletion.DELETED, engine.deletePast(first))
+        assertEquals(listOf(second), store.list().map { it.id })
+        assertEquals(PastDeletion.DELETED, engine.deleteAllPast())
+        assertTrue(store.list().isEmpty())
+        assertEquals(open, store.open()!!.id)
+        assertEquals(open, engine.view.value.id)
+    }
+
+    // Plan 7F's device tests shorten the engine's timers through its seam, which shortens the deadline itself, not only the
+    // wake-up; the machine's lengths stay.
+    @Test
+    fun theTimersTakeTheirLengthsThroughTheSeam() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1)), timerMillis = { _, millis -> millis / 60 })
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertNotNull(engine.view.value.id)
+
+        advanceTimeBy(1_001)
+        runCurrent()
+
+        assertNull(engine.view.value.id)
+    }
+
+    // Review N2 and R4 of plan 7F: "Delete all" waits for the index of past conversations beside the engine's inbox, so the
+    // conversation goes on meanwhile, and the open conversation stays.
+    @Test
+    fun theConversationGoesOnWhileDeleteAllWaitsForTheIndex() = scope.runTest {
+        val gate = CompletableDeferred<Unit>()
+        archive.readShardsGate = gate
+        val engine = engine(environment(listSms, finish(1)))
+        engine.restore()
+        val deleting = async { engine.deleteAllPast() }
+        runCurrent()
+
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertFalse(deleting.isCompleted)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+        val open = engine.view.value.id!!
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(PastDeletion.DELETED, deleting.await())
+        assertEquals(open, store.open()!!.id)
+        assertEquals(open, engine.view.value.id)
+    }
+
+    // Review B-M4 of plan 7F: the engine says that "Delete all" runs, so that the settings page shows it also after the owner
+    // left it and came back, and a second ask while it runs waits for it and deletes nothing again.
+    @Test
+    fun aSecondDeleteAllWhileOneRunsWaitsForItAndTheEngineSaysThatItRuns() = scope.runTest {
+        val gate = CompletableDeferred<Unit>()
+        archive.readShardsGate = gate
+        val engine = engine(environment())
+        engine.restore()
+        assertEquals(AllPastDeletion.Idle, engine.allPastDeletion.value)
+        val first = async { engine.deleteAllPast() }
+        runCurrent()
+        assertEquals(AllPastDeletion.Running, engine.allPastDeletion.value)
+        val second = async { engine.deleteAllPast() }
+        runCurrent()
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(PastDeletion.DELETED, first.await())
+        assertEquals(PastDeletion.DELETED, second.await())
+        assertEquals(1, archive.calls.count { it == "deleteClosed" })
+        assertEquals(AllPastDeletion.Ended(PastDeletion.DELETED), engine.allPastDeletion.value)
+    }
+
+    // Design 9.5 of sub-project 7 and plan 7F's review M1: "Delete all" keeps every conversation that is open at some
+    // moment between the owner's ask and its transaction: the one that was open when he asked, and one that he started
+    // after it, also when both close while the deletion waits for the index; it deletes the others.
+    @Test
+    fun deleteAllKeepsEveryConversationThatWasOpenBeforeItsTransactionAlsoWhenItClosedMeanwhile() = scope.runTest {
+        val gate = CompletableDeferred<Unit>()
+        archive.readShardsGate = gate
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("Read my latest SMS again"))
+        runCurrent()
+        val open = engine.view.value.id!!
+        val deleting = async { engine.deleteAllPast() }
+        runCurrent()
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("And once more"))
+        runCurrent()
+        val started = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+        assertNull(engine.view.value.id)
+
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(PastDeletion.DELETED, deleting.await())
+        assertEquals(setOf(open, started), store.list().map { it.id }.toSet())
+        assertNull(store.get(past))
+    }
+
+    // Plan 7F's review L1: the deletion of the conversation that a running switch opens finds it open and leaves it; without
+    // the check, the writer would open it and then delete its open row.
+    @Test
+    fun deletingTheConversationThatARunningSwitchOpensLeavesIt() = scope.runTest {
+        val reopening = CompletableDeferred<Unit>()
+        val gated = object : ConversationStore by store {
+            override suspend fun reopen(id: ConversationId, closing: ConversationSnapshot?, nowWall: Long, testMode: Boolean): ConversationSnapshot? {
+                reopening.await()
+                return store.reopen(id, closing, nowWall, testMode)
+            }
+        }
+        val engine = engine(environment(listSms, finish(1)), gated)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+
+        engine.submit(input(InputChannel.TEXT, InputIntent.ContinueConversation(past)))
+        runCurrent()
+        val deleting = async { engine.deletePast(past) }
+        runCurrent()
+        reopening.complete(Unit)
+        runCurrent()
+
+        assertEquals(PastDeletion.OPEN, deleting.await())
+        assertEquals(past, engine.view.value.id)
+        assertEquals(past, store.open()!!.id)
     }
 }

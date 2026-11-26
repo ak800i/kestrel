@@ -134,6 +134,23 @@ class RoomRecordArchiveTest {
         assertFalse(keyStore.containsAlias(alias))
     }
 
+    // Plan 7F: "Delete all past conversations" through the port deletes every closed row but the kept one, with the index,
+    // and keeps the open row and the archive's key.
+    @Test
+    fun deleteClosedKeepsTheOpenRowTheKeptRowAndTheKey() = runBlocking {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val kept = ArchiveHeader("00112233445566778899aabbccddeeff", openedMillis = 11, lastMillis = 21, open = false, commands = 1)
+        archive.write(ArchiveChange(rows = listOf(row(past, "{}"), row(kept, "{}"), row(current, "{}")), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(1)))))
+
+        assertEquals(1, archive.deleteClosed(keep = listOf(kept.id), index = IndexWrite.Replace(mapOf("0" to byteArrayOf(2)))))
+
+        assertEquals(setOf(kept.id, current.id), archive.read(listOf(past.id, kept.id, current.id)).map { it.header.id }.toSet())
+        assertEquals(listOf(kept.id), archive.closedIds())
+        assertTrue(archive.readShards().single() is ShardRead.Readable)
+        assertEquals(current, archive.readOpen()!!.header)
+        assertTrue(keyStore.containsAlias(alias))
+    }
+
     // Design 6.1 of sub-project 7: the table's open column is the one truth about which conversation is open, and the
     // snapshot's JSON does not hold it. When a second open conversation is written, the table closes the first, and the
     // index takes it in the same transaction; after a restart, the store reads the first as closed, and the index that it

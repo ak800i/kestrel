@@ -31,6 +31,22 @@ sealed interface ConversationLookup {
 }
 
 /**
+ * What the list's search field keeps (design 9.5 of sub-project 7; plan 7F): every past conversation, because the text holds
+ * no word that counts; those that hold a match; or the mark that the index is being rebuilt, or cannot be read now.
+ */
+sealed interface PastMatches {
+    data object All : PastMatches
+
+    class Only(val ids: Set<ConversationId>) : PastMatches {
+        override fun toString(): String = "Only(${ids.size})"
+    }
+
+    data object Rebuilding : PastMatches
+
+    data object Failed : PastMatches
+}
+
+/**
  * The on-device search over past conversations (design 9.4 of sub-project 7), behind plan 7A's `search_conversations`, and
  * the search for a conversation to continue (design 9.6). It reads what the store's [ConversationStore.searchable] gives:
  * the index of past conversations, whose records within retention it searches, and the open conversation, whose records
@@ -95,6 +111,24 @@ class HistorySearch(
         }
         val request = best?.firstRequest?.takeIf { store.generation == generation } ?: return ConversationLookup.NotFound
         return ConversationLookup.Found(ConversationMatch(best.id, best.openedAtWall, request))
+    }
+
+    /**
+     * The past conversations that hold a match for [text] by the search's own rule (design 9.5 of sub-project 7; plan 7F),
+     * from the index's shards alone, so that no body is read. It names every past conversation that matches; the list itself
+     * keeps those within retention (plan 7F's `PastList`). Each call ranks the whole index, so the list calls it once the
+     * owner's typing pauses, off the main thread.
+     */
+    suspend fun matching(text: String): PastMatches {
+        if (HistoryRanking.wanted(text).isEmpty()) return PastMatches.All
+        val generation = store.generation
+        val searchable = when (val read = store.searchable()) {
+            is Searchable.Ready -> read
+            Searchable.Rebuilding -> return PastMatches.Rebuilding
+            Searchable.Failed -> return PastMatches.Failed
+        }
+        val ids = HistoryRanking.rank(searchable.past.searches, HistoryQuery(text), clock.zone()).mapTo(HashSet()) { it.entry.ref.conversation }
+        return PastMatches.Only(if (store.generation == generation) ids else emptySet())
     }
 
     // The closed conversations within retention, the newest change first.

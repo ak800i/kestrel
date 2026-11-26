@@ -179,6 +179,14 @@ class ConversationArchiveStore(
         key.storing(dispatcher, dao::isEmpty) { dao.purge(oldest, newest, encrypted(index)) }
 
     /**
+     * "Delete all past conversations" (design 9.5 of sub-project 7; plan 7F), in one transaction: deletes every closed
+     * conversation whose id is not in [keep], and changes the index as [index] says; returns how many conversations went.
+     * Unlike [deleteAll], it keeps the open conversation, the logs and the key, under which what stays is still read.
+     */
+    suspend fun deleteClosed(keep: Collection<String>, index: IndexUpdate): Int =
+        key.storing(dispatcher, dao::isEmpty) { dao.deleteClosed(keep.toList(), encrypted(index)) }
+
+    /**
      * "Delete history" (design 9.7 of sub-project 7), in one step on one thread: deletes every conversation, the open
      * one too, and the index, in one transaction that first runs [alsoDeleting] (PrivacyStore deletes both logs there),
      * and then erases the key, so that not even a copy of the database file, or what SQLite's journal still holds, can

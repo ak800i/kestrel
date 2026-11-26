@@ -47,14 +47,17 @@ import dev.kestrel.conversation.model.ProcessEnd
 import dev.kestrel.conversation.model.RoundEnd
 import dev.kestrel.conversation.model.RecordRef
 import dev.kestrel.conversation.store.ConversationStore
+import dev.kestrel.conversation.store.PastUnavailableException
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.TaskAllowance
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -102,6 +105,7 @@ class ConversationEngine(
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
+    private val timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
 ) {
     private sealed interface Message {
         class Event(val event: ConversationEvent) : Message
@@ -137,6 +141,9 @@ class ConversationEngine(
          */
         class Reopened(val snapshot: ConversationSnapshot?, val chosen: ConversationSnapshot?, val closing: ConversationSnapshot?, val failed: Boolean) : Message
 
+        /** The deletion of the past conversation [id] (plan 7F); [done] gets how it ended. */
+        class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Message
+
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
 
@@ -159,6 +166,9 @@ class ConversationEngine(
 
         /** Stores [closing] closed and opens [id] in one transaction (D23). */
         class Reopen(val id: ConversationId, val closing: ConversationSnapshot?, val nowWall: Long, val testMode: Boolean) : Write
+
+        /** Deletes the past conversation [id] (plan 7F); [done] gets how it ended. */
+        class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Write
 
         /** Completes [done] once every write before it is stored. */
         class Barrier(val done: CompletableDeferred<Unit>) : Write
@@ -195,6 +205,17 @@ class ConversationEngine(
     // save of it would open it again. [switchEnd] is the switch's end only while the machine takes it, so that a "stop"
     // that came meanwhile can undo it; no copy of a conversation stays once the switch has ended.
     private var switching = false
+
+    // The past conversation that the running switch opens, which no deletion may take (plan 7F).
+    private var switchingTo: ConversationId? = null
+
+    // The keep-sets of the pending "Delete all" requests (plan 7F, review M1): the loop adds each step's open conversation to
+    // every one of them, and the request's coroutine and the store read them, under this list's lock.
+    private val keeping = mutableListOf<MutableSet<ConversationId>>()
+
+    // "Delete all" as it stands, and the one that runs, under [allPast]'s lock (review B-M4 of plan 7F).
+    private val allPast = MutableStateFlow<AllPastDeletion>(AllPastDeletion.Idle)
+    private var allPastRun: Deferred<PastDeletion>? = null
     private var switchEnd: Message.Reopened? = null
 
     // While the settings page's "Delete history" runs, no write reaches the writer, so that none comes between the writer's
@@ -339,6 +360,54 @@ class ConversationEngine(
         return done.await()
     }
 
+    /**
+     * Deletes the past conversation [id] (design 9.5 of sub-project 7; plan 7F): the loop checks it between the machine's
+     * steps, and the writer deletes it after the writes that the loop gave it before, so that no save or switch of the
+     * loop's comes between: [PastDeletion.OPEN] when [id] is the open conversation now, or the one that a running switch
+     * opens, which stays. Waits for [restore].
+     */
+    suspend fun deletePast(id: ConversationId): PastDeletion {
+        val done = CompletableDeferred<PastDeletion>()
+        inbox.send(Message.DeletePast(id, done))
+        return done.await()
+    }
+
+    /**
+     * Deletes every past conversation (design 9.5; plan 7F), but none that is open at some moment between this call and
+     * the deletion's transaction: the one that is open now, and each that the owner starts or continues meanwhile, also
+     * when it closes before the deletion runs (review M1). The loop adds each to this call's keep-set ([keeping]) before it
+     * queues any write of it, and the store reads the set under its lock. The deletion waits at the writer's barrier until
+     * every write that the loop queued before it is stored, so that a conversation that closed before the owner asked is
+     * deleted too, and then runs beside the inbox and the writer, never in them: the store may wait minutes for its index
+     * to be read or rebuilt, and the conversation goes on meanwhile (review N2). It runs in the engine's scope, so that a
+     * caller that goes away stops nothing, and the outcome comes back to the caller once it is done. While one runs, a
+     * second call deletes nothing again: it waits for the running one and gets its outcome; [allPastDeletion] says which
+     * stands (review B-M4).
+     */
+    suspend fun deleteAllPast(): PastDeletion = synchronized(allPast) {
+        allPastRun?.takeIf { it.isActive } ?: run {
+            allPast.value = AllPastDeletion.Running
+            scope.async {
+                val keep = HashSet<ConversationId>()
+                synchronized(keeping) {
+                    state.id?.let(keep::add)
+                    keeping.add(keep)
+                }
+                val outcome = try {
+                    stored()
+                    deleteAllPastNow { synchronized(keeping) { keep.toSet() } }
+                } finally {
+                    synchronized(keeping) { keeping.removeAll { it === keep } }
+                }
+                allPast.value = AllPastDeletion.Ended(outcome)
+                outcome
+            }.also { allPastRun = it }
+        }
+    }.await()
+
+    /** "Delete all past conversations" as it stands in this process: none yet, running, or how the last one ended. */
+    val allPastDeletion: StateFlow<AllPastDeletion> = allPast.asStateFlow()
+
     /** How command [command] ended, among the newest [MAX_OUTCOMES]. */
     fun outcome(command: Int): CommandOutcome? = synchronized(outcomes) { outcomes[command] }
 
@@ -369,6 +438,7 @@ class ConversationEngine(
                 is Message.Wake -> woken(message)
                 Message.SaveFailed -> dirty = true
                 is Message.Reopened -> reopened(message)
+                is Message.DeletePast -> deletion(message)
                 is Message.DeleteHistory -> deleteHistory(message.done)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
             }
@@ -391,6 +461,8 @@ class ConversationEngine(
         val step = machine.next(before, event, clock.wallMillis())
         onStep(event, before, step)
         state = step.state
+        // Before any write of this step is queued: a pending "Delete all" keeps every conversation that is open meanwhile.
+        step.state.id?.let { id -> synchronized(keeping) { keeping.forEach { it += id } } }
         try {
             for (effect in step.effects) {
                 try {
@@ -590,10 +662,36 @@ class ConversationEngine(
         }
     }
 
+    // Design 9.5 of sub-project 7: the open conversation is never a past one, nor is the one that a running switch opens.
+    // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after;
+    // while the settings page's "Delete history" runs, the deletion waits with the other writes ([send]).
+    private fun deletion(message: Message.DeletePast) {
+        if (message.id == state.id || message.id == switchingTo) {
+            message.done.complete(PastDeletion.OPEN)
+        } else {
+            send(Write.DeletePast(message.id, message.done))
+        }
+    }
+
+    // While the index of past conversations cannot be read, the store deletes nothing and says so; it is no failure. A failure
+    // of the archive is reported by its class.
+    private suspend fun deleteAllPastNow(keep: () -> Set<ConversationId>): PastDeletion = try {
+        store.deleteClosed(keep)
+        PastDeletion.DELETED
+    } catch (e: PastUnavailableException) {
+        PastDeletion.UNAVAILABLE
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        report("Deleting past conversations", e)
+        PastDeletion.FAILED
+    }
+
     // D23: the writer closes the open conversation into the list and opens the chosen one, in one transaction of the store.
     private fun switchTo(id: ConversationId, before: ConversationState) {
         val closing = before.id?.takeIf { it == recordsOf }?.let { snapshot(before, open = false) }
         switching = true
+        switchingTo = id
         send(Write.Reopen(id, closing, clock.wallMillis(), state.safetyTestMode))
     }
 
@@ -601,6 +699,7 @@ class ConversationEngine(
     // that it opened become the open ones only by its effect (OpenSwitched).
     private fun reopened(message: Message.Reopened) {
         switching = false
+        switchingTo = null
         val opened = message.snapshot
         val sentence = when {
             message.failed -> ConversationTexts.COULD_NOT
@@ -676,6 +775,7 @@ class ConversationEngine(
             when (message) {
                 is Message.DeleteHistory -> message.done.complete(HistoryDeletion.FAILED)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
+                is Message.DeletePast -> message.done.complete(PastDeletion.FAILED)
                 else -> Unit
             }
         } catch (e: CancellationException) {
@@ -693,7 +793,8 @@ class ConversationEngine(
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
         deadlines.remove(effect.timer)?.wake?.cancel()
-        val at = clock.sinceBootMillis() + effect.millis
+        // The device tests' seam shortens the deadline itself: a shorter wake-up alone would end nothing sooner.
+        val at = clock.sinceBootMillis() + timerMillis(effect.timer, effect.millis)
         deadlines[effect.timer] = Deadline(effect.number, at, wake(effect.timer, effect.number, at))
     }
 
@@ -894,6 +995,17 @@ class ConversationEngine(
                 }
                 inbox.trySend(Message.Reopened(opened, chosen, write.closing, failed = false))
             }
+            is Write.DeletePast -> write.done.complete(
+                try {
+                    store.delete(write.id)
+                    PastDeletion.DELETED
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    report("Deleting a past conversation", e)
+                    PastDeletion.FAILED
+                },
+            )
         }
     }
 
