@@ -41,29 +41,34 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
     }
 
     /**
-     * Looks in the shade up to [tries] times for the button [label] of the row whose title is [title], and asks to expand
-     * the next collapsed row around it ([collapsedRow]) after each look that does not show the button. [look] gives the
-     * shade's snapshot after the shade's own wait, and [expand] asks SystemUI to expand the row with the key. The answer
-     * names the button's key, null when no look showed it, and the expansions that the search asked for, in their order,
-     * each once: whether the row showed its buttons without any (design 10.6 of sub-project 7).
+     * Looks in the shade up to [tries] times for the button [label] of the row whose title is [title], asks to expand the
+     * next collapsed row around it ([collapsedRow]) after each look that does not show the button, and presses the button
+     * once a look shows it. [look] gives the shade's snapshot after the shade's own wait, [expand] asks SystemUI to expand
+     * the row with the key, and [press] presses the button with the key and answers null when it worked, else why not. The
+     * answer says which of the three happened, with the expansions that the search asked for, in their order, each once:
+     * whether the row showed its buttons without any (design 10.6 of sub-project 7).
      */
-    suspend fun find(
+    suspend fun findAndPress(
         title: String,
         label: String,
         tries: Int,
         look: suspend () -> ScreenSnapshot,
         expand: suspend (String) -> Unit,
-    ): Found {
+        press: suspend (String) -> String?,
+    ): Tapped {
         val expanded = mutableListOf<ShadeExpansion>()
         repeat(tries) {
             val snapshot = look()
-            button(snapshot, title, label)?.let { return Found(it, expanded) }
+            button(snapshot, title, label)?.let { key ->
+                val refusal = press(key) ?: return Tapped.Pressed(expanded)
+                return Tapped.Refused(refusal, expanded)
+            }
             collapsedRow(snapshot, title)?.let { row ->
                 expand(row.key)
                 if (row.expansion !in expanded) expanded += row.expansion
             }
         }
-        return Found(null, expanded)
+        return Tapped.NotShown(expanded)
     }
 
     /**
@@ -107,9 +112,19 @@ internal class NoticeButtons(private val parts: SystemUiParts = SystemUiParts.DE
     /** A collapsed notification row with its [key], and which [expansion] expanding it is. */
     data class Collapsed(val key: String, val expansion: ShadeExpansion)
 
-    /** What [find] found: the button's [key], or null, and the [expanded] rows before it, in their order. */
-    data class Found(val key: String?, val expanded: List<ShadeExpansion>)
-}
+    /** What [findAndPress] did, after it asked to expand the [expanded] rows, in their order. */
+    sealed interface Tapped {
+        val expanded: List<ShadeExpansion>
+
+        /** The button was pressed. */
+        data class Pressed(override val expanded: List<ShadeExpansion>) : Tapped
+
+        /** The press of the button failed, for [reason]. */
+        data class Refused(val reason: String, override val expanded: List<ShadeExpansion>) : Tapped
+
+        /** No look showed the button, so nothing was pressed. */
+        data class NotShown(override val expanded: List<ShadeExpansion>) : Tapped
+    }}
 
 /** A collapsed row that the hook goal-control expanded in the shade: the notification's own [ROW], or the [GROUP] that Android put it in. */
 internal enum class ShadeExpansion { ROW, GROUP }

@@ -57,12 +57,26 @@ class NoticeButtonsTest {
         ),
     )
 
-    // The search of the hook goal-control over [shown], one snapshot after another, with the rows that it asked to expand.
-    private suspend fun find(vararg shown: ScreenSnapshot): Pair<NoticeButtons.Found, List<String>> {
+    // The search and press of the hook goal-control over [shown], one snapshot after another, with the rows that it asked to
+    // expand; [refusal] is the press's answer, null when the press worked.
+    private suspend fun find(vararg shown: ScreenSnapshot, refusal: String? = null): Pair<NoticeButtons.Tapped, List<String>> {
         val looks = shown.iterator()
         val asked = mutableListOf<String>()
-        return buttons.find("Continue the goal?", "Continue", tries = 5, look = { looks.next() }, expand = { asked += it }) to asked
+        val tapped = buttons.findAndPress(
+            "Continue the goal?",
+            "Continue",
+            tries = 5,
+            look = { looks.next() },
+            expand = { asked += it },
+            press = { key ->
+                pressed += key
+                refusal
+            },
+        )
+        return tapped to asked
     }
+
+    private val pressed = mutableListOf<String>()
 
     @Test
     fun theButtonIsTheOneInKestrelsRowNotAnotherAppsWithTheSameLabel() {
@@ -129,8 +143,22 @@ class NoticeButtonsTest {
     fun aRowThatShowsItsButtonsAtOnceIsPressedWithoutAnyExpansion() = runTest {
         val (found, asked) = find(grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
 
-        assertEquals(NoticeButtons.Found("kestrel-continue", emptyList()), found)
+        assertEquals(NoticeButtons.Tapped.Pressed(emptyList()), found)
         assertEquals(emptyList<String>(), asked)
+    }
+
+    @Test
+    fun aPressThatWorksIsPressedAndAPressThatIsRefusedSaysWhyAndAButtonNeverShownIsNeverPressed() = runTest {
+        val open = grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE)
+
+        // The press's null is its success, never "not in the shade" (plan 7E, Task 8's Step 3 on d3f679e6).
+        assertEquals(NoticeButtons.Tapped.Pressed(emptyList()), find(open).first)
+        assertEquals(listOf("kestrel-continue"), pressed)
+        assertEquals(NoticeButtons.Tapped.Refused("It's gone.", emptyList()), find(open, refusal = "It's gone.").first)
+        pressed.clear()
+        val collapsed = grouped(ElementAction.COLLAPSE, ElementAction.EXPAND)
+        assertEquals(NoticeButtons.Tapped.NotShown(listOf(ShadeExpansion.ROW)), find(collapsed, collapsed, collapsed, collapsed, collapsed).first)
+        assertEquals(emptyList<String>(), pressed)
     }
 
     @Test
@@ -139,11 +167,11 @@ class NoticeButtonsTest {
 
         val (found, asked) = find(collapsed, grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
 
-        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.ROW)), found)
+        assertEquals(NoticeButtons.Tapped.Pressed(listOf(ShadeExpansion.ROW)), found)
         assertEquals(listOf("row-kestrel"), asked)
         // Each look asks again, and the answer names the row once.
         val (never, askedEach) = find(collapsed, collapsed, collapsed, collapsed, collapsed)
-        assertEquals(NoticeButtons.Found(null, listOf(ShadeExpansion.ROW)), never)
+        assertEquals(NoticeButtons.Tapped.NotShown(listOf(ShadeExpansion.ROW)), never)
         assertEquals(List(5) { "row-kestrel" }, askedEach)
     }
 
@@ -151,7 +179,7 @@ class NoticeButtonsTest {
     fun aCollapsedGroupAroundAnExpandedRowIsTheOnlyExpansion() = runTest {
         val (found, asked) = find(grouped(ElementAction.EXPAND, ElementAction.COLLAPSE), grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE))
 
-        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.GROUP)), found)
+        assertEquals(NoticeButtons.Tapped.Pressed(listOf(ShadeExpansion.GROUP)), found)
         assertEquals(listOf("group"), asked)
     }
 
@@ -163,7 +191,7 @@ class NoticeButtonsTest {
             grouped(ElementAction.COLLAPSE, ElementAction.COLLAPSE),
         )
 
-        assertEquals(NoticeButtons.Found("kestrel-continue", listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW)), found)
+        assertEquals(NoticeButtons.Tapped.Pressed(listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW)), found)
         assertEquals(listOf("group", "row-kestrel"), asked)
     }
 

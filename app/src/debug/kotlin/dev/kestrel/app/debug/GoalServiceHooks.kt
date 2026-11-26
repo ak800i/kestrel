@@ -85,11 +85,13 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            val found = buttonInShade(session, notice, action, seen)
-            expanded = found.expanded
-            found.key?.let { pressInShade(session, notice, action, it) }
-                ?: "the goal notification's ${action.name.lowercase()} is not in the shade"
-        } catch (error: CancellationException) {
+            val tapped = tapInShade(session, notice, action, seen)
+            expanded = tapped.expanded
+            when (tapped) {
+                is NoticeButtons.Tapped.Pressed -> null
+                is NoticeButtons.Tapped.Refused -> tapped.reason
+                is NoticeButtons.Tapped.NotShown -> "the goal notification's ${action.name.lowercase()} is not in the shade"
+            }        } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
@@ -155,11 +157,11 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         ?: throw HookError("add --es action with one of stop, open, continue or cancel")
 
     // The shade opens with an animation, and a notification shows its buttons only once its row, and the row of the group
-    // that Android put it in, are expanded: the key of the button in Kestrel's own row, or null, and the expansions that the
-    // search asked for, one in each snapshot, the group's first ([NoticeButtons.find]). Each snapshot tells [seen] whether
+    // that Android put it in, are expanded: the search asks for those expansions, one in each snapshot, the group's first,
+    // and presses the button once a snapshot shows it ([NoticeButtons.findAndPress]). Each snapshot tells [seen] whether
     // the open shade shows tiles that Kestrel knows.
-    private suspend fun buttonInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): NoticeButtons.Found =
-        buttons.find(
+    private suspend fun tapInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): NoticeButtons.Tapped =
+        buttons.findAndPress(
             notice.title,
             action.label,
             SHADE_TRIES,
@@ -168,6 +170,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
                 session.snapshots.current().snapshot.also { if (buttons.showsTiles(it)) seen.tilesKnown = true }
             },
             expand = { session.actions.expand(it) },
+            press = { key -> pressInShade(session, notice, action, key) },
         )
 
     /**
