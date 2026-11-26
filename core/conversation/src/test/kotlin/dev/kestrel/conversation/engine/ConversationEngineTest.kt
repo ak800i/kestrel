@@ -12,6 +12,7 @@ import dev.kestrel.agent.port.AccessKind
 import dev.kestrel.agent.port.DataField
 import dev.kestrel.agent.port.DataLine
 import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.agent.testing.ScreenBuilder
 import dev.kestrel.agent.testing.ScriptedModel
@@ -111,7 +112,7 @@ class ConversationEngineTest {
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, voiceOn, clock, report, { ++inputs }, onStep = onStep,
+            settings, testMode, voiceOn, clock, report, onStep = onStep,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -297,9 +298,11 @@ class ConversationEngineTest {
         assertEquals(2, engine.view.value.records.size)
     }
 
-    // A yes on the card of "Continue the goal?" comes without an input; it gets the next input number, as the owner's act.
+    // Plan 7F: a yes on the card of "Continue the goal?" is the owner's act of the moment of his tap, whose number `:app`
+    // takes as the tap reaches Kestrel. An input that he gives after the tap, such as the start of an instant command,
+    // before the engine's loop takes the answer, is newer than the round's act, so the round never cancels that command.
     @Test
-    fun aYesOnTheCardOfContinueTheGoalNamesTheOwnersActAsANewInput() = scope.runTest {
+    fun aYesOnTheCardOfContinueTheGoalNamesTheTapsOwnNumber() = scope.runTest {
         val now = ManualConversationClock.BASE
         val record = CommandRecord(1, now - 60_000, InputChannel.TEXT, "Archive my newsletters", ledger = listOf("opened Gmail"))
         store.save(ConversationSnapshot(
@@ -307,14 +310,19 @@ class ConversationEngineTest {
             records = listOf(record), goal = GoalState(1, GoalPhase.ACTING, now - 30_000),
         ))
         text.answers += ChannelAnswer.Yes
+        // The owner's tap takes number 1, and an input that he gives right after it, before the engine's loop takes the
+        // answer, such as an instant command's start, takes number 2.
+        text.taps = { (++inputs).also { ++inputs } }
         val afters = mutableListOf<Long?>()
         val engine = engine(environment(fail), ArchivedConversationStore(archive, backgroundScope) {}, screen = FakeScreenTurn { after -> afters += after; false })
 
         assertEquals(RestoreResult.GOAL_HELD, engine.restore())
         runCurrent()
 
+        // The round names the tap's own number, older than the input after it, which it so never lets go; the engine took no
+        // number of its own (it would have been 3, newer than that input).
         assertEquals(1L, afters.first())
-        assertEquals(1L, inputs)
+        assertEquals(2L, inputs)
     }
 
     @Test
@@ -1371,5 +1379,40 @@ class ConversationEngineTest {
         runCurrent()
         assertEquals(listOf("save", "deleteAll"), gated.calls.takeLast(2))
         assertTrue(archive.rows.isEmpty())
+    }
+
+    // Plan 7F: a Continue tapped on a hand-over's card is the owner's act of the moment of his tap, as a spoken "Kestrel,
+    // continue" is: the round that goes on names the tap's number at its next screen turn. So it may cancel an instant
+    // command that the owner started before his tap, and waits for one that he started after it (plan 7D's ScreenTurns:
+    // `after > since`).
+    @Test
+    fun aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber() = scope.runTest {
+        val environment = FakeGoalEnvironment(listOf(listSms, listSms, finish(1))).apply {
+            data.answer("list_sms", DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), sms)
+        }
+        text.handOverEnds += HandOverEnd.CONTINUED
+        // A command that the owner started before his tap holds the screen since the newest number then.
+        var before = 0L
+        var tap = 0L
+        text.taps = {
+            before = inputs
+            (++inputs).also { tap = it }
+        }
+        val afters = mutableListOf<Long?>()
+        val engine = engine(environment, screen = FakeScreenTurn { after -> afters += after; false })
+        engine.restore()
+        val command = typed("Read my latest SMS")
+        engine.submit(command)
+        runCurrent()
+
+        assertEquals(1, text.handOvers.size)
+        assertEquals(listOf(command.id, tap), afters.filterNotNull())
+        val after = afters.filterNotNull().last()
+        // Newer than the command that started before the tap: the round may cancel it.
+        assertTrue(after > before)
+        // Not newer than one that starts after the tap, which holds the screen since the tap's number or a later one: the
+        // round waits for it.
+        assertFalse(after > tap)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
     }
 }

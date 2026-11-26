@@ -2,8 +2,10 @@ package dev.kestrel.conversation.testing
 
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
@@ -25,19 +27,25 @@ class FakeChannel(override val kind: InputChannel) : OwnerChannel {
     var leaves = true
     var onShow: suspend (ChannelOutput) -> Unit = {}
 
+    /** The number of each tap on the channel's card among the owner's inputs, which `:app` takes as the tap reaches Kestrel. */
+    var taps: () -> Long = { 0L }
+
     override suspend fun show(output: ChannelOutput) {
         shown += output
         onShow(output)
     }
 
-    override suspend fun ask(question: ChannelQuestion): ChannelAnswer {
+    override suspend fun ask(question: ChannelQuestion): CardAnswer {
         asked += question
-        return answers.removeFirstOrNull() ?: awaitCancellation()
+        val answer = answers.removeFirstOrNull() ?: awaitCancellation()
+        return CardAnswer(answer, taps())
     }
 
-    override suspend fun handOver(handOver: HandOver): HandOverEnd {
+    // A queued end other than DONE_BY_ITSELF is the owner's tap on the card, which takes its number.
+    override suspend fun handOver(handOver: HandOver): HandOverAnswer {
         handOvers += handOver
-        return handOverEnds.removeFirstOrNull() ?: awaitCancellation()
+        val end = handOverEnds.removeFirstOrNull() ?: awaitCancellation()
+        return HandOverAnswer(end, if (end == HandOverEnd.DONE_BY_ITSELF) null else taps())
     }
 
     override suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd =

@@ -48,7 +48,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             is ConversationEvent.Signal -> GoalRules.signal(state, event.signal, now)
             is ConversationEvent.SettingsChanged -> settingsChanged(state, event, now)
             is ConversationEvent.Restored -> restored(state, event.snapshot, event.previous, now)
-            is ConversationEvent.ContinueAnswered -> GoalRules.continueAnswered(state, event.answer, now)
+            is ConversationEvent.ContinueAnswered -> GoalRules.continueAnswered(state, event.answer, event.tap, now)
             is ConversationEvent.LocalEnded -> localEnded(state, event, now)
             is ConversationEvent.Switched -> switched(state, event, now)
             ConversationEvent.EndQuietTime -> if (state.quiet is QuietClock.Running) close(state) else MachineStep(state)

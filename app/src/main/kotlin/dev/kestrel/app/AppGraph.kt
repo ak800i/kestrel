@@ -22,8 +22,8 @@ import dev.kestrel.app.agent.Permissions
 import dev.kestrel.app.agent.RoundModels
 import dev.kestrel.app.agent.SettingsMemoryStore
 import dev.kestrel.app.conversation.AndroidOwnerSupport
+import dev.kestrel.app.conversation.CardDesk
 import dev.kestrel.app.conversation.ConversationSignals
-import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.conversation.PermissionDialog
 import dev.kestrel.app.conversation.storedConversationSettings
 import dev.kestrel.app.conversation.VoiceChannel
@@ -400,7 +400,7 @@ class AppGraph(context: Context) {
     }
 
     /**
-     * What the conversation and a goal's rounds need from Android (design 5.5 of sub-project 7): the confirmation card,
+     * What the conversation and a goal's rounds need from Android (design 5.5 of sub-project 7): the question card,
      * the bar, the touch watcher, the other apps' audio, the hand-overs that end by themselves and Android's permission
      * dialog. Kestrel's own pages for the owner open through the screen session, as notification access during its
      * hand-over; the agent's launches go only through the launch check and AppScreenPort.
@@ -408,7 +408,7 @@ class AppGraph(context: Context) {
     private val ownerSupport: AndroidOwnerSupport by lazy {
         AndroidOwnerSupport(
             context = appContext,
-            session = { screen.value },
+            sessions = screen,
             open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
             calls = { phoneSignals.callStates() },
         )
@@ -469,9 +469,15 @@ class AppGraph(context: Context) {
         GoalRunner(goalEnvironment, screenTurns, conversationSearch, AndroidConversationClock, reportFailure)
     }
 
+    /**
+     * The one card of each question, whichever channel asks it (design 10.3 of sub-project 7; plan 7F): the overlay while
+     * the conversation screen is not in front, and the screen's copy while it is.
+     */
+    internal val cardDesk: CardDesk by lazy { CardDesk(ownerSupport, scope) }
+
     /** The conversation's voice (design 11 of sub-project 7), over the Orchestrator. */
     private val voiceChannel: VoiceChannel by lazy {
-        VoiceChannel(listening.voicePath, ownerSupport, ownerSupport, ownerSupport, PermissionDialog { permissions -> PermissionActivity.ask(appContext, permissions) })
+        VoiceChannel(listening.voicePath, ownerSupport, cardDesk, ownerSupport, ownerSupport, PermissionDialog { permissions -> PermissionActivity.ask(appContext, permissions) })
     }
 
     /**
@@ -507,7 +513,6 @@ class AppGraph(context: Context) {
             voiceOn = listening.state.map { it.mode != Mode.OFF }.distinctUntilChanged(),
             clock = AndroidConversationClock,
             report = reportFailure,
-            inputIds = InputIds::next,
             onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
         ).also(::followConversation)
     }

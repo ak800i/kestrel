@@ -11,6 +11,7 @@ import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ConversationOwner
 import dev.kestrel.conversation.channel.OwnerChannel
+import dev.kestrel.conversation.channel.OwnerReply
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.RecordBuilder
 import dev.kestrel.conversation.context.RecordCondenser
@@ -79,9 +80,10 @@ import kotlinx.coroutines.launch
  * timer whose deadline has passed, and a coroutine's `delay`, which stops while the phone sleeps, only wakes it. Work that
  * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order, and the end
  * of a final reply's `show` is the machine's `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
- * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class;
- * [inputIds] numbers an owner's act that comes without an input, as a tap on a card, among the owner's inputs (`:app`'s
- * `InputIds`), so that the screen's turn can tell whether it came after an instant command started (design 6.5);
+ * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class.
+ * Every act of the owner's that lets a goal's round act comes with its number among his inputs, an input with its own and a
+ * tap on a card with the one that `:app` took as the tap reached Kestrel (plan 7F), so that the screen's turn can tell
+ * whether it came after an instant command started (design 6.5); the engine numbers nothing itself.
  * [onStep] sees every step, for the hooks' tags (plan 7D): every effect that starts work under a new command number
  * (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`, and `EndLocal` for "new conversation", which has no work) carries
  * the owner's input that asked for it.
@@ -98,7 +100,6 @@ class ConversationEngine(
     private val voiceOn: Flow<Boolean>,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
-    private val inputIds: () -> Long,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
 ) {
@@ -180,6 +181,9 @@ class ConversationEngine(
     // wait for that save: only the loop changes them.
     private val records = mutableListOf<CommandRecord>()
     private var recordsOf: ConversationId? = null
+
+    // The owner's tap on a hand-over's card also reaches it, from the round's own coroutine, while the round runs (plan 7F).
+    @Volatile
     private var running: RunningGoal? = null
     private var localJob: Job? = null
     private var continueJob: Job? = null
@@ -212,7 +216,14 @@ class ConversationEngine(
     private val voiceNow = MutableStateFlow(false)
 
     /** The owner as goals and the conversation talk to him; the hooks read its open question, confirmation and hand-over. */
-    val owner = ConversationOwner(channels, permissions, voiceNow.asStateFlow(), { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) }) {
+    val owner = ConversationOwner(
+        channels,
+        permissions,
+        voiceNow.asStateFlow(),
+        { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) },
+        // Design 6.5: a tap on a hand-over's card lets the running round act now, as "Kestrel, continue" does (plan 7F).
+        acted = { act -> running?.actedFor(act) },
+    ) {
         post(ConversationEvent.Dialogue(it))
     }
 
@@ -455,13 +466,10 @@ class ConversationEngine(
     }
 
     // Design 6.5: the owner's act lets the running round act now, so its next screen turn may have an instant command that
-    // he started before it cancelled.
+    // he started before it cancelled. The act's number is its input's, or his tap's (plan 7F).
     private fun actedFor(act: OwnerAct) {
-        running?.actedFor(inputOf(act))
+        act.number?.let { running?.actedFor(it) }
     }
-
-    // A tap on a card comes without an input: it gets the next input number, as the owner's act at this moment.
-    private fun inputOf(act: OwnerAct): Long = act.input?.id ?: inputIds()
 
     private fun couldNot(command: Int, end: EndReason) = ended(RoundEnd(command, TaskReport(end), ConversationTexts.COULD_NOT, ConversationTexts.COULD_NOT))
 
@@ -488,7 +496,7 @@ class ConversationEngine(
         val goal = running ?: RunningGoal(held.record, effect.command, emptyMap(), emptyList(), listener(id, held.record)).also { running = it }
         goal.command = effect.command
         effect.input?.let { goal.options = it.options }
-        goal.actedFor(inputOf(OwnerAct(effect.input)))
+        (effect.input?.id ?: effect.tap)?.let(goal::actedFor)
         val plan = plan(id, goal, record.request, effect.cause)
         effect.steer?.let { steer(id, goal, SteeringMessage.of(it.text, it.channel)) }
         roundStep = null
@@ -542,15 +550,15 @@ class ConversationEngine(
     private fun askContinue() {
         continueJob?.cancel()
         continueJob = scope.launch {
-            val answer = try {
-                owner.question(ConversationTexts.CONTINUE_GOAL, QuestionKind.CONTINUE_GOAL)
+            val reply = try {
+                owner.reply(ConversationTexts.CONTINUE_GOAL, QuestionKind.CONTINUE_GOAL)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 report("Asking to continue the goal", e)
-                ChannelAnswer.Silence
+                OwnerReply(ChannelAnswer.Silence, tap = null)
             }
-            post(ConversationEvent.ContinueAnswered(answer))
+            post(ConversationEvent.ContinueAnswered(reply.answer, reply.tap))
         }
     }
 

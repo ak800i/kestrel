@@ -22,9 +22,10 @@ sealed interface ConversationEffect {
 
     /**
      * Runs a held goal's next round as [command], after [cause], with [steer] as its first steering. [input] is the owner's
-     * input that resumed it, whose options the round takes; null when he answered "Continue the goal?" on its card.
+     * input that resumed it, whose options the round takes; null when he answered "Continue the goal?" on its card, and
+     * [tap] is then the number of his tap (plan 7F).
      */
-    data class ResumeGoal(val command: Int, val cause: ResumeCause, val steer: Steering?, val input: OwnerInput?) : ConversationEffect
+    data class ResumeGoal(val command: Int, val cause: ResumeCause, val steer: Steering?, val input: OwnerInput?, val tap: Long? = null) : ConversationEffect
 
     /**
      * The owner's steering of the acting goal (design 7.3). The engine says "Got it." once the goal's inbox took it, and at
@@ -135,8 +136,11 @@ data class MachineStep(val state: ConversationState, val effects: List<Conversat
 }
 
 /**
- * The owner's act that lets a goal's round act now (design 6.5 of sub-project 7): his [input], or a tap on a card, which
- * comes without one (null). The round may then have an instant command that he started before it cancelled; a round that
- * goes on without such an act waits for the command instead.
+ * The owner's act that lets a goal's round act now (design 6.5 of sub-project 7): his [input], or his [tap] on a card, the
+ * number among his inputs that `:app` took when the tap reached Kestrel (plan 7F). The round may then have an instant
+ * command that he started before it cancelled; a round that goes on without such an act waits for the command instead.
  */
-data class OwnerAct(val input: OwnerInput?)
+data class OwnerAct(val input: OwnerInput?, val tap: Long? = null) {
+    /** The act's number among the owner's inputs; null when no act of his came with it. */
+    val number: Long? get() = input?.id ?: tap
+}

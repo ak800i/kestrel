@@ -19,7 +19,8 @@ import dev.kestrel.screen.act.TouchSource
 import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.overlay.Badge
-import dev.kestrel.screen.overlay.ConfirmationCard
+import dev.kestrel.screen.overlay.CardEnd
+import dev.kestrel.screen.overlay.CardQuestion
 import dev.kestrel.screen.overlay.FeedbackBar
 import dev.kestrel.screen.overlay.Grid
 import dev.kestrel.screen.overlay.GridOverlay
@@ -28,6 +29,7 @@ import dev.kestrel.screen.overlay.Numbering
 import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.screen.overlay.NumbersOverlay
 import dev.kestrel.screen.overlay.OverlayHost
+import dev.kestrel.screen.overlay.QuestionCard
 import dev.kestrel.screen.overlay.TouchWatcher
 import dev.kestrel.screen.read.LiveSnapshot
 import dev.kestrel.screen.read.PlaceCheck
@@ -67,7 +69,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     private val labels = LabelsOverlay(overlays)
     private val gridOverlay = GridOverlay(overlays)
     private val feedback = FeedbackBar(overlays)
-    private val card = ConfirmationCard(overlays)
+    private val card = QuestionCard(overlays, scope)
     internal val tracker = ScreenChangeTracker(SystemClock::uptimeMillis)
     internal val gestures = GestureRunner(service)
     /** Kestrel's own actions, which the touch watcher tells from the owner's finger (design D19 of sub-project 5). */
@@ -291,12 +293,12 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     suspend fun hideFeedback() = withContext(Dispatchers.Main) { feedback.hide() }
 
     /**
-     * Asks [question] on a confirmation card and returns true when the owner taps Confirm. It returns false when the
-     * owner taps Cancel, when a newer question replaces this one or when the session closes, and the card then goes at
-     * once. A caller that also listens for "confirm" or "cancel", or that gives up after 15 s, cancels this call, which
-     * removes the card too (design spec, section 12.4).
+     * Shows [question] on Kestrel's card and returns the owner's tap or number (design 10.3 of sub-project 7; spec 12.4),
+     * or [CardEnd.Withdrawn] when another question replaces the card, the session closes or no card can show; the card
+     * then goes at once. A caller that also listens for the owner's voice, or that gives up after its wait, cancels this
+     * call, which removes the card.
      */
-    suspend fun confirm(question: String): Boolean = withContext(Dispatchers.Main) {
+    suspend fun ask(question: CardQuestion): CardEnd = withContext(Dispatchers.Main) {
         // An action that Kestrel made before the question can never hide the owner's touch (design D19 of sub-project 5).
         ownActions.clear()
         card.ask(question)
@@ -388,7 +390,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     fun forgetOwnActions() = ownActions.clear()
 
     /**
-     * Whether the confirmation card is on the screen (design D8 and D32 item 20 of sub-project 5): `AppScreenPort` waits
+     * Whether the question card is on the screen (design D8 and D32 item 20 of sub-project 5): `AppScreenPort` waits
      * until it is false before it reads the snapshot of a confirmed action. It stays true for one settle after the card
      * ended, while Android may still deliver a touch to the card's window ([dev.kestrel.screen.overlay.CardPresence]).
      */

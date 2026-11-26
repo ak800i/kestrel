@@ -4,16 +4,16 @@ import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
+import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.channel.QuestionKind
-import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOver
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -36,6 +36,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal class VoiceChannel(
     private val voice: VoicePath,
     private val screen: OwnerScreen,
+    private val cards: OwnerCards,
     private val audio: OtherAudio,
     private val handOvers: HandOverSignals,
     private val permissions: PermissionDialog,
@@ -63,7 +64,7 @@ internal class VoiceChannel(
         speaking.withLock { if (voice.speechStops == came) speak() }
     }
 
-    override suspend fun ask(question: ChannelQuestion): ChannelAnswer = try {
+    override suspend fun ask(question: ChannelQuestion): CardAnswer = try {
         when (question.kind) {
             QuestionKind.CONFIRM -> confirm(question)
             QuestionKind.SCREENSHOT -> screenshot(question)
@@ -75,11 +76,12 @@ internal class VoiceChannel(
         withContext(NonCancellable) { screen.releaseBar() }
     }
 
-    override suspend fun handOver(handOver: HandOver): HandOverEnd = try {
+    // The voice's hand-over has no button: the owner's "Kestrel, continue" reaches the conversation as an input.
+    override suspend fun handOver(handOver: HandOver): HandOverAnswer = try {
         voice.handOver(handOver.text)
         handOvers.opened(handOver.kind)
         handOvers.endedByItself(handOver.kind)
-        HandOverEnd.DONE_BY_ITSELF
+        HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null)
     } finally {
         withContext(NonCancellable) { screen.releaseBar() }
     }
@@ -102,7 +104,7 @@ internal class VoiceChannel(
         } ?: false
 
     // The card and the spoken question together: the card's button answers here, the voice as an input (D32 item 18).
-    private suspend fun confirm(question: ChannelQuestion): ChannelAnswer {
+    private suspend fun confirm(question: ChannelQuestion): CardAnswer {
         val guarded = question.confirmation?.category.let { it == Category.SENDING || it == Category.DELETING }
         val playing = guarded && audio.playing()
         val voiced = !guarded || voiceAllowed()
@@ -110,18 +112,20 @@ internal class VoiceChannel(
         return withCard(question, spoken, voiced)
     }
 
-    private suspend fun screenshot(question: ChannelQuestion): ChannelAnswer {
+    private suspend fun screenshot(question: ChannelQuestion): CardAnswer {
         if (!audio.playing()) return spoken(question, question.spoken, voiceAnswers = true)
         if (voiceAllowed()) return spoken(question, "$AUDIO_PAUSED ${question.spoken}", voiceAnswers = true)
         return withCard(question, question.spoken, voiceAnswers = false)
     }
 
-    // Without a screen session there is no card, and only the voice answers.
-    private suspend fun withCard(question: ChannelQuestion, spoken: String, voiceAnswers: Boolean): ChannelAnswer = coroutineScope {
+    // The card through the desk, which shares it with the text channel's copy of the question (design 10.3 of sub-project
+    // 7); without a screen session there is no card, and only the voice answers. The voice's card has no Reply…, so the
+    // desk gives it only answers.
+    private suspend fun withCard(question: ChannelQuestion, spoken: String, voiceAnswers: Boolean): CardAnswer = coroutineScope {
         val asking = launch { spoken(question, spoken, voiceAnswers) }
-        val yes = screen.card(question.text) ?: awaitCancellation()
+        val tapped = cards.ask(OwnerCard.of(question, reply = false))
         asking.cancel()
-        if (yes) ChannelAnswer.Yes else ChannelAnswer.No
+        CardAnswer(checkNotNull(tapped.choice.answer) { "The voice's card has no Reply…" }, tapped.act)
     }
 
     // Asks the question each time a voice session opens, from now on, until the conversation withdraws it.

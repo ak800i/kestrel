@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The buttons of Kestrel's question card (design 10.3 of sub-project 7; plan 7F). -->
+<resources>
+    <string name="card_yes">Yes</string>
+    <string name="card_no">No</string>
+    <string name="card_confirm">Confirm</string>
+    <string name="card_cancel">Cancel</string>
+    <string name="card_continue">Continue</string>
+    <string name="card_stop">Stop</string>
+    <string name="card_reply">Reply…</string>
+    <string name="card_delete_digit">Delete digit</string>
+    <string name="card_enter">OK</string>
+    <string name="card_move">Move</string>
+</resources>

@@ -48,13 +48,17 @@ import java.util.concurrent.atomic.AtomicInteger
  * whatever its kind, the gate returns `RESUMED` once, so that the run looks at the screen afresh (design 10.3). A
  * hand-over and a permission request that a pause meets wait for the resume before they take their turn, so that the
  * conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the engine's [endHandOver]; after
- * "Kestrel, continue" a permission request asks [permissions] whether Android granted them.
+ * "Kestrel, continue" a permission request asks [permissions] whether Android granted them. A tap on the card of a
+ * hand-over or a permission request is the owner's act of its moment: [acted] gets its number before the round goes on,
+ * so that the round's next screen turn names it, as it names the input of a spoken "Kestrel, continue" (design 6.5; plan
+ * 7F).
  */
 class ConversationOwner(
     private val channels: Map<InputChannel, OwnerChannel>,
     private val permissions: (List<String>) -> PermissionEnd,
     private val voiceOn: StateFlow<Boolean>,
     private val routing: () -> Routing,
+    private val acted: (Long) -> Unit = {},
     private val events: (DialogueEvent) -> Unit,
 ) : OwnerPort, Dialogue {
     /** The owner's latest input's channel, and whether typed replies are spoken too (design 11). */
@@ -64,8 +68,11 @@ class ConversationOwner(
         val done = CompletableDeferred<T>()
     }
 
-    /** An answer as it arrived: [leftScreen] when the owner gave it on Kestrel's own screen. */
-    private class Given(val answer: ChannelAnswer, val leftScreen: Boolean)
+    /**
+     * An answer as it arrived: [leftScreen] when the owner gave it on Kestrel's own screen, and [tap], the number of his tap
+     * when a card gave it (plan 7F).
+     */
+    private class Given(val answer: ChannelAnswer, val leftScreen: Boolean, val tap: Long? = null)
 
     private class Draft(
         val text: String,
@@ -118,27 +125,41 @@ class ConversationOwner(
     }
 
     override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =
-        dialogue(Draft(text, kind, spoken, choices = choices, highest = highest), goal = false)
+        dialogue(Draft(text, kind, spoken, choices = choices, highest = highest), goal = false).answer
+
+    /**
+     * Asks [text] of [kind] as [question] does, and returns the answer with the number of the owner's tap on its card when
+     * a card gave it (plan 7F). "Continue the goal?" asks through it, so that the round that a yes on its card resumes acts
+     * for the moment of the tap (design 6.5 of sub-project 7).
+     */
+    suspend fun reply(text: String, kind: QuestionKind): OwnerReply = dialogue(Draft(text, kind), goal = false).let { OwnerReply(it.answer, it.tap) }
 
     override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer =
-        answerOf(dialogue(Draft(question, kindOf(kind), choices = choices, highest = highest), goal = true))
+        answerOf(dialogue(Draft(question, kindOf(kind), choices = choices, highest = highest), goal = true).answer)
 
     override suspend fun confirm(confirmation: Confirmation): ConfirmEnd =
-        when (dialogue(Draft(confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation), goal = true)) {
+        when (dialogue(Draft(confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation), goal = true).answer) {
             ChannelAnswer.Yes -> ConfirmEnd.YES
             ChannelAnswer.Silence -> ConfirmEnd.TIMEOUT
             ChannelAnswer.Interrupted -> ConfirmEnd.INTERRUPTED
             else -> ConfirmEnd.NO
         }
 
-    override suspend fun handOver(handOver: HandOver): HandOverEnd =
-        handedOver(handOver.kind, { it.handOver(handOver) }, { it.handOver(handOver) }) { it }
+    override suspend fun handOver(handOver: HandOver): HandOverEnd {
+        val answered = { answer: HandOverAnswer -> Ended(answer.end, answer.act) }
+        return handedOver(handOver.kind, { answered(it.handOver(handOver)) }, { answered(it.handOver(handOver)) }) { it }
+    }
 
     // Android's dialog is shown once, by the owner's channel. The card that a spoken conversation gets once Kestrel is off
     // is a hand-over's card, whose Continue checks what Android granted, so the dialog never shows a second time.
     override suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd {
         val ended = { end: HandOverEnd -> if (end == HandOverEnd.CONTINUED) this.permissions(permissions) else PermissionEnd.REFUSED }
-        return handedOver(HandOverKind.PERMISSION, { it.askPermission(permissions, why) }, { ended(it.handOver(HandOver.of(HandOverKind.PERMISSION))) }, ended)
+        return handedOver(
+            HandOverKind.PERMISSION,
+            { Ended(it.askPermission(permissions, why), act = null) },
+            { channel -> channel.handOver(HandOver.of(HandOverKind.PERMISSION)).let { Ended(ended(it.end), it.act) } },
+            ended,
+        )
     }
 
     override suspend fun gate(): Gate {
@@ -188,10 +209,10 @@ class ConversationOwner(
         synchronized(lock) { fresh = false }
     }
 
-    private suspend fun dialogue(draft: Draft, goal: Boolean): ChannelAnswer = turns.withLock {
+    private suspend fun dialogue(draft: Draft, goal: Boolean): Given = turns.withLock {
         val waiting = Waiting<Given>(numbers.incrementAndGet(), goal)
         synchronized(lock) {
-            if (goal && pause != null) return@withLock ChannelAnswer.Interrupted
+            if (goal && pause != null) return@withLock Given(ChannelAnswer.Interrupted, leftScreen = false)
             openQuestion = waiting
         }
         val asked = ChannelQuestion(
@@ -209,7 +230,7 @@ class ConversationOwner(
         try {
             val given = race(asked, waiting.done)
             if (given.leftScreen) synchronized(lock) { fresh = true }
-            given.answer
+            given
         } finally {
             synchronized(lock) { if (openQuestion === waiting) openQuestion = null }
             asking = null
@@ -225,7 +246,7 @@ class ConversationOwner(
         val route = routing()
         val text = channels[InputChannel.TEXT]
         val voice = channels[InputChannel.VOICE]
-        val askers = mutableListOf<Deferred<ChannelAnswer>>()
+        val askers = mutableListOf<Deferred<CardAnswer>>()
         channels[route.channel]?.let { primary -> askers += async { primary.ask(asked) } }
         if (route.channel == InputChannel.VOICE && text != null) {
             askers += async {
@@ -241,16 +262,32 @@ class ConversationOwner(
         }
         select<Given> {
             answered.onAwait { it }
-            for (asker in askers) asker.onAwait { Given(it, leftScreen = false) }
+            for (asker in askers) asker.onAwait { Given(it.answer, leftScreen = false, tap = it.act) }
         }.also { currentCoroutineContext().cancelChildren() }
     }
 
+    /** How a hand-over or a permission request ended: its [value], and the number of the owner's tap that ended it ([act]). */
+    private class Ended<T>(val value: T, val act: Long?)
+
+    // The tap's number reaches the round before the hand-over returns to it, so that the round's next screen turn names it
+    // (plan 7F).
     private suspend fun <T> handedOver(
         kind: HandOverKind,
-        itself: suspend (OwnerChannel) -> T,
-        card: suspend (OwnerChannel) -> T,
+        itself: suspend (OwnerChannel) -> Ended<T>,
+        card: suspend (OwnerChannel) -> Ended<T>,
         ended: (HandOverEnd) -> T,
-    ): T = inTurnAfterPause {
+    ): T {
+        val result = handedOverInTurn(kind, itself, card, ended)
+        result.act?.let(acted)
+        return result.value
+    }
+
+    private suspend fun <T> handedOverInTurn(
+        kind: HandOverKind,
+        itself: suspend (OwnerChannel) -> Ended<T>,
+        card: suspend (OwnerChannel) -> Ended<T>,
+        ended: (HandOverEnd) -> T,
+    ): Ended<T> = inTurnAfterPause {
         val waiting = Waiting<HandOverEnd>(numbers.incrementAndGet(), goal = true)
         synchronized(lock) { openHandOver = waiting }
         handOverKind = kind
@@ -266,8 +303,9 @@ class ConversationOwner(
                         card(text)
                     }
                 }
-                select<T> {
-                    waiting.done.onAwait { ended(it) }
+                // The engine's end comes for an input, which named the round's act itself (`EndHandOver`), or by itself.
+                select<Ended<T>> {
+                    waiting.done.onAwait { Ended(ended(it), act = null) }
                     if (own != null) own.onAwait { it }
                     if (card != null) card.onAwait { it }
                 }.also { currentCoroutineContext().cancelChildren() }

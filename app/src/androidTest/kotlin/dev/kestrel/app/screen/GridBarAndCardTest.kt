@@ -3,6 +3,10 @@ package dev.kestrel.app.screen
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.WindowSummary
+import dev.kestrel.screen.overlay.CardEnd
+import dev.kestrel.screen.overlay.CardQuestion
+import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
+import dev.kestrel.screen.overlay.CARD_TITLE
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -11,8 +15,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +29,8 @@ class GridBarAndCardTest {
     private suspend fun eventually(timeoutMillis: Long = 5_000, check: suspend () -> Boolean) = withTimeout(timeoutMillis) {
         while (!check()) delay(100)
     }
+
+    private fun confirmation(key: Int, text: String) = CardQuestion(key, text, listOf("Confirm", "Cancel"))
 
     @Test
     fun theGridCoversTheScreenAndLetsTouchesThrough() = runBlocking {
@@ -57,58 +61,58 @@ class GridBarAndCardTest {
     }
 
     @Test
-    fun theCardSaysTrueWhenTheOwnerTapsConfirm() = runBlocking { answerWith("Confirm", expected = true) }
+    fun theCardGivesConfirmWhenTheOwnerTapsIt() = runBlocking { answerWith("Confirm", expected = CardEnd.Tapped(CONFIRM)) }
 
     @Test
-    fun theCardSaysFalseWhenTheOwnerTapsCancel() = runBlocking { answerWith("Cancel", expected = false) }
+    fun theCardGivesCancelWhenTheOwnerTapsIt() = runBlocking { answerWith("Cancel", expected = CardEnd.Tapped(CANCEL)) }
 
     @Test
     fun cancellingTheQuestionRemovesTheCard() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.confirm("Delete the draft?") }
-        eventually { screen.showsWindow("Kestrel confirmation") }
+        val answer = async { session.ask(confirmation(1, "Delete the draft?")) }
+        eventually { screen.showsWindow(CARD_TITLE) }
 
         answer.cancel()
 
-        eventually { !screen.showsWindow("Kestrel confirmation") }
+        eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     @Test
-    fun aNewQuestionAnswersTheOldOneWithFalse() = runBlocking {
+    fun aNewQuestionWithdrawsTheOldOne() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val first = async { session.confirm("Send a test message?") }
+        val first = async { session.ask(confirmation(1, "Send a test message?")) }
         eventually { screen.overlayButton("Confirm") != null }
 
-        val second = async { session.confirm("Delete the draft?") }
+        val second = async { session.ask(confirmation(2, "Delete the draft?")) }
 
-        assertFalse(withTimeout(5_000) { first.await() })
+        assertEquals(CardEnd.Withdrawn, withTimeout(5_000) { first.await() })
         // Only the second card is left, so the tap reaches its Confirm button.
         eventually { screen.overlayShows("Delete the draft?") && !screen.overlayShows("Send a test message?") }
         // A card ignores taps for its first 600 ms (design D32 item 21 of sub-project 5).
         delay(ARMED_MILLIS)
         val confirm = screen.overlayButton("Confirm")!!
         screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
-        assertTrue(withTimeout(5_000) { second.await() })
-        eventually { !screen.showsWindow("Kestrel confirmation") }
+        assertEquals(CardEnd.Tapped(CONFIRM), withTimeout(5_000) { second.await() })
+        eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     @Test
-    fun closingTheSessionAnswersFalse() = runBlocking {
+    fun closingTheSessionWithdrawsTheQuestion() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.confirm("Send a test message?") }
+        val answer = async { session.ask(confirmation(1, "Send a test message?")) }
         eventually { screen.overlayButton("Confirm") != null }
 
         // As the service does when it disconnects. The rule's next start closes this session again.
         withContext(Dispatchers.Main) { session.close() }
 
-        assertFalse(withTimeout(5_000) { answer.await() })
-        eventually { !screen.showsWindow("Kestrel confirmation") }
+        assertEquals(CardEnd.Withdrawn, withTimeout(5_000) { answer.await() })
+        eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     @Test
     fun snapshotsLeaveTheCardOut() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.confirm("Send a test message?") }
+        val answer = async { session.ask(confirmation(1, "Send a test message?")) }
         try {
             eventually { screen.overlayButton("Confirm") != null }
 
@@ -123,10 +127,10 @@ class GridBarAndCardTest {
         }
     }
 
-    private suspend fun CoroutineScope.answerWith(button: String, expected: Boolean) {
+    private suspend fun CoroutineScope.answerWith(button: String, expected: CardEnd) {
         screen.open("ViewsActivity", "Views fixture")
         // The question contains both buttons' labels, so the tests also check that the rule finds the buttons.
-        val answer = async { session.confirm("Confirm or cancel a test message?") }
+        val answer = async { session.ask(confirmation(1, "Confirm or cancel a test message?")) }
         val bounds = withTimeout(5_000) {
             var found = screen.overlayButton(button)
             while (found == null) {
@@ -140,11 +144,14 @@ class GridBarAndCardTest {
         screen.shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
 
         assertEquals(expected, withTimeout(5_000) { answer.await() })
-        eventually { !screen.showsWindow("Kestrel confirmation") }
+        eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     private companion object {
         /** A little more than the 600 ms in which a card ignores taps. */
-        const val ARMED_MILLIS = 700L
+        const val ARMED_MILLIS = CARD_ARMING_MILLIS + 100
+
+        const val CONFIRM = 0
+        const val CANCEL = 1
     }
 }

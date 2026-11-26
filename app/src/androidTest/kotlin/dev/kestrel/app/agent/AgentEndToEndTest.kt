@@ -13,6 +13,7 @@ import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.Interruption
 import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.agent.testing.ScriptedModel.Companion.call
+import dev.kestrel.screen.overlay.CARD_TITLE
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
@@ -77,7 +78,7 @@ class AgentEndToEndTest {
 
         val task = AgentTests.run("delete my chat with Ana", model)
         AgentTests.awaitAsking(task, QuestionKind.CONFIRM)
-        check(VoiceTests.waitUntil(5_000) { screen.showsWindow("Kestrel confirmation") }) { "The card did not show" }
+        check(VoiceTests.waitUntil(5_000) { screen.showsWindow(CARD_TITLE) }) { "The card did not show" }
         assertEquals(emptyList<String>(), AgentTests.presses(screen))
         AgentTests.say("confirm")
         val ended = AgentTests.ended(task)

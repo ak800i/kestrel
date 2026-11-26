@@ -19,13 +19,16 @@ interface OwnerChannel {
 
     /**
      * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
-     * so leaves no screen of Kestrel's; an answer that the owner says or types, also after "Reply…", reaches the
-     * conversation as an input instead. Cancelling the call withdraws the question.
+     * so leaves no screen of Kestrel's, with the number of the owner's tap; an answer that the owner says or types, also
+     * after "Reply…", reaches the conversation as an input instead. Cancelling the call withdraws the question.
      */
-    suspend fun ask(question: ChannelQuestion): ChannelAnswer
+    suspend fun ask(question: ChannelQuestion): CardAnswer
 
-    /** A hand-over: returns when the owner continued or cancelled on the channel, or when it ended by itself. */
-    suspend fun handOver(handOver: HandOver): HandOverEnd
+    /**
+     * A hand-over: returns when the owner continued or cancelled on the channel, with the number of his tap on its card's
+     * button, or when it ended by itself.
+     */
+    suspend fun handOver(handOver: HandOver): HandOverAnswer
 
     /** Shows Android's permission dialog for [permissions] after saying [why]. */
     suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd
@@ -33,6 +36,28 @@ interface OwnerChannel {
     /** Returns true once no window of Kestrel's own app but its overlays is on the screen, or false after 3 s (design 10.2). */
     suspend fun leaveKestrel(): Boolean
 }
+
+/**
+ * A card's answer as the owner tapped it over the app (design 10.3 of sub-project 7): [answer], and [act], the number among
+ * his inputs that `:app` took when his tap came back from the card (its `InputIds`), so that a round that the answer lets
+ * act names the moment of his tap, not the moment when the engine handled the answer (design 6.5; plan 7F). Only an answer
+ * that lets a round act, as a yes to "Continue the goal?", uses the number; for an answer to a goal's own question it is
+ * dropped, as a spoken or typed answer's is (plan 7D's `RunningGoal.actedFor`).
+ */
+data class CardAnswer(val answer: ChannelAnswer, val act: Long)
+
+/**
+ * The owner's answer to a question of the conversation's own, and [tap], the number of his tap on its card when a card gave
+ * it; null when the answer came as an input, which has its own number (plan 7F).
+ */
+data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)
+
+/**
+ * How a hand-over ended on a channel (design 10.3 of sub-project 7): [end], and [act], the number among the owner's inputs
+ * of his tap on the card's Continue or Cancel, which `:app` took as the tap reached Kestrel; null when the hand-over ended
+ * by itself. A Continue on the card is the owner's act of its moment, as a spoken "Kestrel, continue" is (plan 7F).
+ */
+data class HandOverAnswer(val end: HandOverEnd, val act: Long?)
 
 /** What a channel says or shows (design 11 of sub-project 7). toString prints no words. */
 sealed interface ChannelOutput {

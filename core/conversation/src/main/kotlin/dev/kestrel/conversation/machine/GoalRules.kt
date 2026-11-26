@@ -70,16 +70,16 @@ internal object GoalRules {
 
     /**
      * A goal held after its round ended resumes in a new round, with [steer] as its first steering (design 7.6), for the
-     * owner's [input], or for his yes on the card of "Continue the goal?" (null).
+     * owner's [input], or for his yes on the card of "Continue the goal?" (null), whose [tap] has its own number (plan 7F).
      */
-    fun resume(state: ConversationState, goal: GoalState, input: OwnerInput?, steer: String?, now: Long): MachineStep {
+    fun resume(state: ConversationState, goal: GoalState, input: OwnerInput?, steer: String?, now: Long, tap: Long? = null): MachineStep {
         val cause = goal.hold?.resume ?: return MachineStep(state)
         val channel = input?.channel ?: state.replyChannel
         val command = state.command + 1
         val resumed = goal.copy(phase = GoalPhase.ACTING, hold = null, changedAtWall = now, rounds = goal.rounds + 1, command = command)
         val effects = listOfNotNull(
             ConversationEffect.AddLine(state.openId, goal.record, LineKind.OWNER_CONTINUED, ConversationTexts.CONTINUE_WORD, channel).takeIf { steer == null },
-            ConversationEffect.ResumeGoal(command, cause, steer?.let { ConversationEffect.Steering(it, channel) }, input),
+            ConversationEffect.ResumeGoal(command, cause, steer?.let { ConversationEffect.Steering(it, channel) }, input, tap),
         )
         return MachineStep(state.copy(command = command, goal = resumed, heldWords = null, timers = state.timers.copy(hold = state.timers.hold + 1)), effects)
             .then(::withdrawContinue)
@@ -208,10 +208,10 @@ internal object GoalRules {
         }
     }
 
-    // The yes came from the owner's input (a spoken or typed yes, "Kestrel, continue") or from the card, which gives none.
-    // An answer that comes after a lock, a call or "stop" withdrew the question changes nothing: the goal stays as that
-    // left it, and the owner's return asks again.
-    fun continueAnswered(state: ConversationState, answer: ChannelAnswer, now: Long): MachineStep {
+    // The yes came from the owner's input (a spoken or typed yes, "Kestrel, continue") or from his tap on the card, whose
+    // number [tap] `:app` took as the tap reached Kestrel (plan 7F). An answer that comes after a lock, a call or "stop"
+    // withdrew the question changes nothing: the goal stays as that left it, and the owner's return asks again.
+    fun continueAnswered(state: ConversationState, answer: ChannelAnswer, tap: Long?, now: Long): MachineStep {
         if (!state.asksContinue) return MachineStep(state)
         val input = state.continueAnswer
         val asked = state.copy(asksContinue = false, continueAnswer = null)
@@ -220,9 +220,9 @@ internal object GoalRules {
         return when (answer) {
             ChannelAnswer.Yes ->
                 if (goal.phase == GoalPhase.PAUSED) {
-                    resumePaused(asked, goal, OwnerAct(input), input?.channel ?: state.replyChannel, now)
+                    resumePaused(asked, goal, OwnerAct(input, tap), input?.channel ?: state.replyChannel, now)
                 } else {
-                    resume(asked, goal, input, null, now)
+                    resume(asked, goal, input, null, now, tap)
                 }
             ChannelAnswer.No -> stop(asked)
             else -> MachineStep(asked)

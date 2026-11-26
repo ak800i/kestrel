@@ -1,5 +1,6 @@
 package dev.kestrel.app.conversation
 
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -7,6 +8,7 @@ import android.media.AudioAttributes
 import android.media.AudioManager
 import dev.kestrel.agent.port.MediaAction
 import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.app.R
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.datatools.media.MediaKeys
 import dev.kestrel.datatools.notifications.KestrelNotificationListener
@@ -14,11 +16,19 @@ import dev.kestrel.safety.AgentFreeApps
 import dev.kestrel.safety.HandOverKind
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.model.ScreenTree
+import dev.kestrel.screen.overlay.CardEnd
+import dev.kestrel.screen.overlay.CardQuestion
+import dev.kestrel.screen.overlay.NumberPad
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.withIndex
 import kotlinx.coroutines.withContext
 
 /** The goal's touch watcher around the owner's questions and hand-overs (design D19 of sub-project 5). */
@@ -30,10 +40,23 @@ internal interface TouchWatch {
     suspend fun watch()
 }
 
-/** Kestrel's own parts of the screen: the confirmation card, the feedback bar, and its own app in front. */
+/** Kestrel's own parts of the screen: the question card, the feedback bar, the lock, and its own app in front. */
 internal interface OwnerScreen {
-    /** Shows the confirmation card with [question] until a button answers it; null when no screen session is connected. */
-    suspend fun card(question: String): Boolean?
+    /**
+     * Shows [card] on Kestrel's question card until a button or the keypad answers it, and returns that choice (design 10.3
+     * of sub-project 7); null when no screen session is connected, or when the card gave no answer because a different
+     * question replaced it. Only [CardDesk] calls it: every question has one card.
+     */
+    suspend fun card(card: OwnerCard): CardChoice?
+
+    /** Whether the phone is locked: a card's Continue then waits for the owner's unlock (plan 7E's rule for Continue). */
+    fun locked(): Boolean
+
+    /**
+     * How many screen sessions have connected so far; it changes when a new one connects, so that the card desk shows the
+     * open card again in it after a card got no answer (plan 7F).
+     */
+    val connections: Flow<Int>
 
     /** Lets the feedback bar hide the text that a question or a hand-over kept on it. */
     suspend fun releaseBar()
@@ -70,18 +93,40 @@ internal fun interface PermissionDialog {
 
 /**
  * The owner's parts on the phone, which both of the conversation's channels and a goal's rounds share (design 5.5 of
- * sub-project 7): the screen session that is connected when it is asked ([session]), Android's audio, the pages that
- * [open] opens for the owner and the phone's [calls] (Kestrel sees them only with READ_PHONE_STATE).
+ * sub-project 7): the screen session that is connected ([sessions]; the one when it is asked), Android's audio, the pages
+ * that [open] opens for the owner and the phone's [calls] (Kestrel sees them only with READ_PHONE_STATE).
  */
 internal class AndroidOwnerSupport(
     private val context: Context,
-    private val session: () -> ScreenSession?,
+    private val sessions: StateFlow<ScreenSession?>,
     private val open: suspend (Intent) -> Boolean,
     private val calls: () -> Flow<CallState>,
 ) : TouchWatch, OwnerScreen, OtherAudio, HandOverSignals {
     private val audio = context.getSystemService(AudioManager::class.java)
 
-    override suspend fun card(question: String): Boolean? = session()?.confirm(question)
+    override val connections: Flow<Int> = sessions.filterNotNull().withIndex().map { it.index + 1 }.onStart { emit(0) }
+
+    private fun session(): ScreenSession? = sessions.value
+
+    override suspend fun card(card: OwnerCard): CardChoice? {
+        val session = session() ?: return null
+        // A pick's button says its choice; every other button says its kind's word (design 10.3 of sub-project 7).
+        val labels = card.choices.map { choice ->
+            when (choice) {
+                is CardChoice.Pick -> card.picks[choice.number - 1]
+                else -> context.getString(checkNotNull(choice.label))
+            }
+        }
+        val pad = NumberPad(context.getString(R.string.card_delete_digit), context.getString(R.string.card_enter), context.getString(R.string.card_move), card.highest)
+            .takeIf { card.numberPad }
+        return when (val end = session.ask(CardQuestion(card.key, card.text, labels, pad))) {
+            is CardEnd.Tapped -> card.choices[end.button]
+            is CardEnd.Number -> CardChoice.Pick(end.value)
+            CardEnd.Withdrawn -> null
+        }
+    }
+
+    override fun locked(): Boolean = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
 
     override suspend fun releaseBar() {
         session()?.releaseFeedback()

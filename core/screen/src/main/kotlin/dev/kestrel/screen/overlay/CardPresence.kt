@@ -4,7 +4,7 @@ import dev.kestrel.screen.model.IntRect
 import dev.kestrel.screen.read.ScreenChangeTracker
 
 /**
- * Whether the confirmation card counts as shown, for any thread (design D8 and D32 item 20 of sub-project 5). After the
+ * Whether the question card counts as shown, for any thread (design D8 and D32 item 20 of sub-project 5). After the
  * card has ended, Android removes its window only on a later main-thread message, and the input system forgets it a frame
  * after that, so a touch there could still reach the card. The card therefore counts as shown, with its last bounds,
  * until [CLOSING_MILLIS] after it ended: `ScreenActions` refuses to act and avoids its bounds until then, and

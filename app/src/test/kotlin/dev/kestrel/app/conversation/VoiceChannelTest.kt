@@ -5,8 +5,10 @@ import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
 import dev.kestrel.conversation.ConversationTexts
+import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.SteeringMessage
 import dev.kestrel.conversation.model.ChannelAnswer
@@ -34,7 +36,7 @@ import org.junit.Test
 class VoiceChannelTest {
     private val voice = FakeVoice()
     private val support = FakeSupport()
-    private val channel = VoiceChannel(voice, support, support, support, support, audioSettleMillis = 500)
+    private val channel = VoiceChannel(voice, support, support, support, support, support, audioSettleMillis = 500)
 
     @Test
     fun kestrelsWordsAndItsFinalReplyAreSpokenAndShownWordsOnlyShown() = runTest {
@@ -125,11 +127,12 @@ class VoiceChannelTest {
         val asking = async { channel.ask(ChannelQuestion(5, confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation = confirmation)) }
         runCurrent()
         assertEquals(listOf(Asked(5, "Shall I send it to Mila?", QuestionKind.CONFIRM, voice = true)), voice.asked)
-        assertEquals(listOf("Send it to Mila?"), support.cards)
+        assertEquals(listOf(OwnerCard(5, "Send it to Mila?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 5, kind = QuestionKind.CONFIRM)), support.cards)
 
-        support.card.complete(true)
+        support.card.complete(CardChoice.Confirm)
         runCurrent()
-        assertEquals(ChannelAnswer.Yes, asking.await())
+        // The card's answer carries the number of the owner's tap, which the desk took (plan 7F).
+        assertEquals(CardAnswer(ChannelAnswer.Yes, act = 1), asking.await())
         assertEquals(1, support.releases)
     }
 
@@ -144,8 +147,8 @@ class VoiceChannelTest {
         val cardOnly = async { channel.ask(question) }
         advanceUntilIdle()
         assertEquals(Asked(5, "Shall I send it to Mila?", QuestionKind.CONFIRM, voice = false), voice.asked.last())
-        support.card.complete(false)
-        assertEquals(ChannelAnswer.No, cardOnly.await())
+        support.card.complete(CardChoice.Cancel)
+        assertEquals(CardAnswer(ChannelAnswer.No, act = 1), cardOnly.await())
 
         // Kestrel paused it: the voice counts again, and Kestrel says so first.
         support.card = CompletableDeferred()
@@ -173,7 +176,7 @@ class VoiceChannelTest {
         assertFalse(handing.isCompleted)
 
         support.endedByItself.complete(Unit)
-        assertEquals(HandOverEnd.DONE_BY_ITSELF, handing.await())
+        assertEquals(HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null), handing.await())
         assertEquals(1, support.releases)
     }
 
@@ -198,6 +201,20 @@ class VoiceChannelTest {
         val start = currentTime
         assertFalse(channel.leaveKestrel())
         assertEquals(OwnerPort.KESTREL_LEAVE_MILLIS, currentTime - start)
+    }
+
+    // Without a card, as without a screen session, the voice still answers (plan 7F).
+    @Test
+    fun aCardThatGivesNoAnswerLeavesTheQuestionToTheVoice() = runTest {
+        val confirmation = sending()
+        val asking = async { channel.ask(ChannelQuestion(5, confirmation.question, QuestionKind.CONFIRM, confirmation.spoken, confirmation = confirmation)) }
+        runCurrent()
+        support.card.complete(null)
+        runCurrent()
+
+        assertFalse(asking.isCompleted)
+        assertEquals(Asked(5, "Shall I send it to Mila?", QuestionKind.CONFIRM, voice = true), voice.asked.last())
+        asking.cancel()
     }
 
     private fun sending() = Confirmation("Send it to Mila?", "Shall I send it to Mila?", Category.SENDING, listOf("Mila"), "Viber", null, null, null)
@@ -247,9 +264,11 @@ class VoiceChannelTest {
         }
     }
 
-    private class FakeSupport : OwnerScreen, OtherAudio, HandOverSignals, PermissionDialog {
-        var card = CompletableDeferred<Boolean?>()
-        val cards = mutableListOf<String>()
+    private class FakeSupport : OwnerScreen, OwnerCards, OtherAudio, HandOverSignals, PermissionDialog {
+        var card = CompletableDeferred<CardChoice?>()
+        val cards = mutableListOf<OwnerCard>()
+        private var taps = 0L
+        override val connections = MutableStateFlow(1)
         var releases = 0
         var playing = false
         var pauseStops = true
@@ -259,10 +278,16 @@ class VoiceChannelTest {
         var android = PermissionEnd.GRANTED
         val asked = mutableListOf<List<String>>()
 
-        override suspend fun card(question: String): Boolean? {
-            cards += question
-            return card.await()
+        // The desk's answer, with the next number of the owner's inputs for each tap; a card that gives none leaves its
+        // caller waiting, as the desk does.
+        override suspend fun ask(card: OwnerCard, onReply: () -> Unit): CardTap {
+            cards += card
+            return CardTap(this.card.await() ?: awaitCancellation(), ++taps)
         }
+
+        override suspend fun card(card: OwnerCard): CardChoice? = error("The voice channel asks through the desk")
+
+        override fun locked(): Boolean = false
 
         override suspend fun releaseBar() {
             releases++
