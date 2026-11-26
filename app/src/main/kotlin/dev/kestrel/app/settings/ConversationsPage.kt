@@ -178,7 +178,9 @@ internal fun ConversationsPage(data: SettingsData, onBack: () -> Unit) {
                     asking = false
                     watched = true
                     // The engine runs the deletion in its own scope, so leaving the page stops nothing; the page shows its state.
-                    scope.launch { data.deleteAllPast() }
+                    // Undispatched, the engine reports Running before this click returns, so an earlier outcome never shows
+                    // as this one's (Task 12's review M1).
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) { data.deleteAllPast() }
                 }) { Text(stringResource(R.string.conversations_delete_all_confirm)) }
             },
             dismissButton = { TextButton(onClick = { asking = false }) { Text(stringResource(R.string.conversations_cancel)) } },
