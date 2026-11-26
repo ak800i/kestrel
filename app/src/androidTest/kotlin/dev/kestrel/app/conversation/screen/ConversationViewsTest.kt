@@ -14,6 +14,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,9 +28,12 @@ import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.app.goal.GoalTexts
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.time.ZoneId
@@ -130,10 +134,16 @@ class ConversationViewsTest {
     @Test
     fun aHeldGoalsCardHasStopThenContinue() {
         val card = OwnerCard(5, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 5, kind = QuestionKind.CONTINUE_GOAL)
-        show(mutableStateOf(ScreenUi(emptyList(), GoalControls.Working(), stopAndNew = true, card = card)))
+        val view = ConversationView(goal = GoalPhase.ACTING, asking = QuestionKind.CONTINUE_GOAL)
+        show(mutableStateOf(ConversationScreenRules.ui(ScreenState(), view, card)))
         compose.mainClock.advanceTimeBy(CARD_ARMING_MILLIS)
 
-        compose.onNodeWithText(text(R.string.card_stop)).assertIsDisplayed()
+        // The card carries the goal's buttons (review I1 of Task 7): one Stop, then one Continue.
+        compose.onAllNodesWithText(text(R.string.card_stop)).assertCountEquals(1)
+        compose.onAllNodesWithText(text(R.string.card_continue)).assertCountEquals(1)
+        val stop = compose.onNodeWithText(text(R.string.card_stop)).assertIsDisplayed().getBoundsInRoot()
+        val goOn = compose.onNodeWithText(text(R.string.card_continue)).assertIsDisplayed().getBoundsInRoot()
+        assertTrue(stop.right <= goOn.left)
         compose.onNodeWithText(text(R.string.card_continue)).performClick()
 
         assertEquals(listOf("choose 5 Continue"), done)

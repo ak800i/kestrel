@@ -12,7 +12,10 @@ import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputIntent
 
-/** What the screen shows for the goal: nothing, Stop while it works, or how to go on with Continue and Cancel while it is held. */
+/**
+ * What the screen shows for the goal: nothing (also while a continue or limit card carries the goal's buttons), Stop while
+ * it works, or how to go on with Continue and Cancel while it is held.
+ */
 internal sealed interface GoalControls {
     data object None : GoalControls
 
@@ -103,7 +106,7 @@ internal data class ScreenStep(val state: ScreenState, val effects: List<ScreenE
 internal object ConversationScreenRules {
     fun ui(state: ScreenState, view: ConversationView, card: OwnerCard?): ScreenUi = ScreenUi(
         lines = Transcript.of(state.records, state.continuedAtWall, state.endedAtWall),
-        goal = when (view.goal) {
+        goal = if (carriesGoalButtons(card)) GoalControls.None else when (view.goal) {
             null -> GoalControls.None
             GoalPhase.ACTING, GoalPhase.ASKING, GoalPhase.HANDED_OVER -> GoalControls.Working(view.waitsBehindCommand)
             GoalPhase.PAUSED, GoalPhase.PAUSED_AT_LIMIT, GoalPhase.INTERRUPTED -> GoalControls.Held(view.hold?.let(ConversationTexts::held) ?: ConversationTexts.GO_ON)
@@ -186,6 +189,15 @@ internal object ConversationScreenRules {
             QuestionKind.CONTINUE_GOAL, QuestionKind.LIMIT -> intent.answer == ChannelAnswer.Yes
             else -> true
         }
+        else -> false
+    }
+
+    /**
+     * Whether [card] asks whether the goal goes on (continue or limit): its buttons are then the goal's, and the goal row
+     * shows none of its own, so that the screen has one Stop and one Continue (review I1 of Task 7).
+     */
+    private fun carriesGoalButtons(card: OwnerCard?): Boolean = when (card?.kind) {
+        QuestionKind.CONTINUE_GOAL, QuestionKind.LIMIT -> true
         else -> false
     }
 }

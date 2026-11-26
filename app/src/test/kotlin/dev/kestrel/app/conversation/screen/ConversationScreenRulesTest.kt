@@ -1,5 +1,7 @@
 package dev.kestrel.app.conversation.screen
 
+import dev.kestrel.app.conversation.CardChoice
+import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.app.goal.ForegroundState
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.QuestionKind
@@ -106,6 +108,21 @@ class ConversationScreenRulesTest {
         assertEquals(GoalControls.Held(ConversationTexts.GO_ON), goal(ConversationView(id = id, goal = GoalPhase.PAUSED_AT_LIMIT, hold = GoalHold.LIMIT)))
         assertFalse(ConversationScreenRules.ui(ScreenState(), ConversationView(id = id), null).stopAndNew)
         assertTrue(ConversationScreenRules.ui(ScreenState(), ConversationView(id = id, goal = GoalPhase.ACTING), null).stopAndNew)
+    }
+
+    // Review I1 of Task 7: the open continue or limit card carries the goal's buttons, so the goal row shows none of its own.
+    @Test
+    fun aContinueOrLimitCardReplacesTheGoalsButtons() {
+        val going = ConversationView(id = id, goal = GoalPhase.ACTING, asking = QuestionKind.CONTINUE_GOAL)
+        val goOn = OwnerCard(5, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 5, kind = QuestionKind.CONTINUE_GOAL)
+        assertEquals(GoalControls.None, ConversationScreenRules.ui(ScreenState(), going, goOn).goal)
+        val atLimit = ConversationView(id = id, goal = GoalPhase.PAUSED_AT_LIMIT, hold = GoalHold.LIMIT, asking = QuestionKind.LIMIT)
+        val limit = goOn.copy(key = 6, question = 6, kind = QuestionKind.LIMIT)
+        assertEquals(GoalControls.None, ConversationScreenRules.ui(ScreenState(), atLimit, limit).goal)
+
+        // Another question's card leaves the goal's buttons where they are.
+        val free = OwnerCard(7, "Which Mila?", listOf(CardChoice.Reply), question = 7, kind = QuestionKind.FREE)
+        assertEquals(GoalControls.Working(), ConversationScreenRules.ui(ScreenState(), going.copy(goal = GoalPhase.ASKING, asking = QuestionKind.FREE), free).goal)
     }
 
     @Test
