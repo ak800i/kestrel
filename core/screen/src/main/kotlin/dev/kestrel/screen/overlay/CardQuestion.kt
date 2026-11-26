@@ -33,21 +33,21 @@ data class NumberPad(val delete: String, val enter: String, val move: String, va
 
 /**
  * How a card's question ended for its caller. An answer carries [Answered.stamp], what the caller's stamp gave on the
- * main thread at the owner's tap, so that the caller can order the tap against what else the main thread reported
- * around it (plan 7F: the screen's lock).
+ * main thread at the owner's tap, of the caller's own type [S], so that the caller can judge the tap by what the main
+ * thread knew at that moment (plan 7F: the screen's lock at the tap).
  */
-sealed interface CardEnd {
+sealed interface CardEnd<out S> {
     /** An answer of the owner's, with its [stamp]. */
-    sealed interface Answered : CardEnd {
-        val stamp: Long
+    sealed interface Answered<out S> : CardEnd<S> {
+        val stamp: S
     }
 
     /** The owner tapped the question's button number [button], from 0. */
-    data class Tapped(val button: Int, override val stamp: Long = 0) : Answered
+    data class Tapped<out S>(val button: Int, override val stamp: S) : Answered<S>
 
     /** The owner entered [value] on the card's keypad. */
-    data class Number(val value: Int, override val stamp: Long = 0) : Answered
+    data class Number<out S>(val value: Int, override val stamp: S) : Answered<S>
 
     /** The card gave no answer: a different question replaced it, the session closed or dismissed it, or no card could show. */
-    data object Withdrawn : CardEnd
+    data object Withdrawn : CardEnd<Nothing>
 }

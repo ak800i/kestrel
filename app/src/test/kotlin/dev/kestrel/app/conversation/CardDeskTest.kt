@@ -8,7 +8,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -21,11 +26,13 @@ import org.junit.Test
 /** One card per question number, whichever channel asks it (design 10.3 of sub-project 7; plan 7D's interfaces). */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CardDeskTest {
-    private val overlay = FakeOverlay()
+    private var overlay = FakeOverlay()
     private var taps = 0L
     private val notices = mutableListOf<String>()
+    private val reports = mutableListOf<String>()
 
-    private fun TestScope.desk() = CardDesk(overlay, backgroundScope, notice = { notices += it }, replyOpenMillis = 5_000, inputIds = { ++taps })
+    private fun TestScope.desk() =
+        CardDesk(overlay, backgroundScope, { what, _ -> reports += what }, notice = { notices += it }, replyOpenMillis = 5_000, inputIds = { ++taps })
 
     private val voiceCard = OwnerCard(6, "May I take a screenshot?", listOf(CardChoice.Yes, CardChoice.No), question = 6, kind = QuestionKind.SCREENSHOT)
     private val textCard = voiceCard.copy(choices = listOf(CardChoice.Yes, CardChoice.No, CardChoice.Reply))
@@ -298,13 +305,70 @@ class CardDeskTest {
 
         val end = desk.withShown { shown, answer -> checkNotNull(shown).let { answer(CardChoice.Continue) } }
         runCurrent()
-        assertEquals(TapEnd.HELD, end.await())
+        assertEquals(TapEnd.HELD, end)
         assertEquals(listOf(CardDesk.UNLOCK_TO_CONTINUE), notices)
         taps = 10
 
         overlay.unlock()
         runCurrent()
         assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+    }
+
+    // The third re-check's N3-N1: a tap is judged by the screen at the tap. A Continue tapped on an unlocked phone answers at
+    // once, also when the screen goes off before the desk has handled the tap, and shows no notice.
+    @Test
+    fun aContinueTappedOnAnUnlockedPhoneAnswersAlsoWhenTheScreenGoesOffRightAfterIt() = runTest {
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+
+        overlay.tap(CardChoice.Continue)
+        overlay.screenOff()
+        runCurrent()
+
+        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+        assertEquals(emptyList<String>(), notices)
+    }
+
+    // The third re-check's N3-N4: the desk shows a card only once it has the source's first reading, so that the source
+    // counts every screen-off after a tap.
+    @Test
+    fun noCardShowsBeforeTheSourcesFirstReading() = runTest {
+        overlay = FakeOverlay(read = false)
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+        assertEquals(emptyList<OwnerCard>(), overlay.shown)
+
+        overlay.read()
+        runCurrent()
+        assertEquals(listOf(handOver), overlay.shown)
+        asking.cancel()
+    }
+
+    // The third re-check's N3-N3 and decision 27: a source that cannot be followed is reported, the card shows all the
+    // same, and the desk follows the source again after its wait, so that a Continue on the lock screen then waits for the
+    // unlock as always.
+    @Test
+    fun aSourceThatCannotBeFollowedIsReportedTheCardShowsAndTheDeskTriesAgain() = runTest {
+        overlay = FakeOverlay(failures = 1)
+        val desk = desk()
+        val asking = async { desk.ask(handOver) }
+        runCurrent()
+        assertEquals(listOf("Following the screen for the question card"), reports)
+        assertEquals(listOf(handOver), overlay.shown)
+
+        advanceTimeBy(CardDesk.FOLLOW_RETRY_MILLIS)
+        runCurrent()
+        overlay.lock()
+        runCurrent()
+        overlay.tap(CardChoice.Continue)
+        runCurrent()
+        assertFalse(asking.isCompleted)
+        overlay.unlock()
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+        assertEquals(1, reports.size)
     }
 
     // Review N1 of plan 7F: the keypad's number answers its pick within the grid's range, and a number outside it does
@@ -348,7 +412,7 @@ class CardDeskTest {
     // has given it to the screen, under the desk's lock, only while it shows, and its answer answers that card's question.
     @Test
     fun theHookSeesTheOverlaysCardWhileItShowsAndItsAnswerAnswersTheQuestion() = runTest {
-        val desk = CardDesk(overlay, backgroundScope, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
+        val desk = CardDesk(overlay, backgroundScope, { _, error -> throw error }, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
         val confirmation = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
         val asking = async { desk.ask(confirmation) }
         runCurrent()
@@ -372,7 +436,7 @@ class CardDeskTest {
     // the moment before the overlay has withdrawn it.
     @Test
     fun aCardThatANewerQuestionReplacedIsNotTheOneThatTheHookSees() = runTest {
-        val desk = CardDesk(overlay, backgroundScope, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
+        val desk = CardDesk(overlay, backgroundScope, { _, error -> throw error }, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
         val read = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
         val older = async { desk.ask(read) }
         runCurrent()
@@ -387,34 +451,48 @@ class CardDeskTest {
         newer.cancel()
     }
 
-    private class FakeOverlay : OwnerScreen {
+    // The screen source as the card desk sees it: [read] false starts it without a first reading; [failures] makes that
+    // many of the desk's attempts to follow it fail.
+    private class FakeOverlay(read: Boolean = true, private var failures: Int = 0) : OwnerScreen {
         val shown = mutableListOf<OwnerCard>()
         var withdrawn = 0
-        override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
 
-        // The screen source's count of screen-offs, which rises at the screen-off, before its reading reaches the desk.
-        private var offs = 0L
+        // The source's status now; its count of screen-offs rises at the screen-off, before its reading reaches the desk.
+        private var now = ScreenStatus(ScreenReading.UNLOCKED, offs = 0)
+        private val readings = MutableSharedFlow<ScreenStatus>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST).apply { if (read) tryEmit(now) }
 
-        override fun screenOffs(): Long = offs
-
-        fun lock() {
-            screens.value = ScreenStatus(ScreenReading.LOCKED, offs)
+        override val screens: Flow<ScreenStatus> = flow {
+            if (failures > 0) {
+                failures--
+                throw IllegalStateException("The screen receiver could not start")
+            }
+            emitAll(readings)
         }
 
-        fun unlock() {
-            screens.value = ScreenStatus(ScreenReading.UNLOCKED, offs)
+        override fun screenStatus(): ScreenStatus = now
+
+        // The source's first reading, for a source that started without one.
+        fun read() {
+            readings.tryEmit(now)
         }
 
-        fun screenOff() {
-            offs++
-            screens.value = ScreenStatus(ScreenReading.OFF, offs)
+        fun lock() = report(ScreenStatus(ScreenReading.LOCKED, now.offs))
+
+        fun unlock() = report(ScreenStatus(ScreenReading.UNLOCKED, now.offs))
+
+        fun screenOff() = report(ScreenStatus(ScreenReading.OFF, now.offs + 1))
+
+        private fun report(status: ScreenStatus) {
+            now = status
+            readings.tryEmit(status)
         }
+
         override val connections = MutableStateFlow(1)
         private var tapped = CompletableDeferred<ScreenTap?>()
 
-        // The tap carries the source's count of its moment, as the screen session stamps it on the main thread.
+        // The tap carries the source's status of its moment, as the screen session stamps it on the main thread.
         fun tap(choice: CardChoice) {
-            tapped.complete(ScreenTap(choice, offs))
+            tapped.complete(ScreenTap(choice, now))
         }
 
         // The card's session went before an answer: the card gives none.

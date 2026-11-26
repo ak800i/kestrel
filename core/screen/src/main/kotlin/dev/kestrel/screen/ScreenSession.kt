@@ -298,7 +298,7 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
      * question replaces the card, the session closes or no card can show; the card then goes at once. A caller that
      * also listens for the owner's voice, or that gives up after its wait, cancels this call, which removes the card.
      */
-    suspend fun ask(question: CardQuestion, stamp: () -> Long = { 0L }): CardEnd = withContext(Dispatchers.Main) {
+    suspend fun <S> ask(question: CardQuestion, stamp: () -> S): CardEnd<S> = withContext(Dispatchers.Main) {
         // An action that Kestrel made before the question can never hide the owner's touch (design D19 of sub-project 5).
         ownActions.clear()
         card.ask(question, stamp)

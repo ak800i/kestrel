@@ -122,7 +122,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     // the card of the tagged task's open question [question] (openCardRefusal), by its number and kind, the card takes
     // that button, and it takes taps. A confirmation, a hand-over and a pick are answered here; a refusal leaves the
     // question open for the caller's next try.
-    private suspend fun cardAnswer(tag: String, words: String, question: Int?, asking: QuestionKind?): String {
+    private fun cardAnswer(tag: String, words: String, question: Int?, asking: QuestionKind?): String {
         val desk = graph.cardDesk
         val card = desk.open.value ?: throw HookError("no card is open: Kestrel listens, and the conversation is spoken")
         AgentHookAnswers.openCardRefusal(card, tag, question, asking)?.let { throw HookError(it) }
@@ -130,17 +130,20 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val choice = AgentHookAnswers.overlayChoice(words, card.choices)
             ?: words.toIntOrNull()?.let(CardChoice::Pick)?.takeIf(card::takes)
             ?: throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
+        val kind = asking?.let(AgentHookAnswers::asking) ?: "hand-over"
         when (CardPresser(desk).press(card.key, card.kind, choice)) {
             CardPress.PRESSED -> Unit
+            // The desk holds the press as the owner's tap: it answers by itself at the unlock within the same lock.
+            CardPress.HELD -> return "held tag=$tag asking=$kind channel=card until=unlock"
             CardPress.NOT_ON_OVERLAY -> throw HookError("the card is not on the overlay: Kestrel's screen is in front, or no screen session shows it")
             CardPress.OTHER_CARD -> throw HookError("another card took the overlay; read agent-state again")
             CardPress.NO_BUTTON ->
                 throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
             CardPress.NOT_ARMED -> throw HookError("the card does not take taps yet; answer again in a second")
-            CardPress.LOCKED -> throw HookError("the phone is locked, and Continue waits for the owner's unlock")
-            CardPress.SCREEN_OFF -> throw HookError("the screen went off since the press, so Continue did not count")
+            CardPress.SCREEN_OFF -> throw HookError("the screen was off at the press, so Continue did not count")
+            CardPress.WITHDRAWN -> throw HookError("the question ended or another answer came first; read agent-state again")
         }
-        return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=card"
+        return "answered tag=$tag asking=$kind channel=card"
     }
     // agent-script --es file <name> | --ez clear true
     suspend fun script(intent: Intent): String {

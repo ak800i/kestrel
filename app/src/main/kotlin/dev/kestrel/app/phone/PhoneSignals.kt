@@ -58,6 +58,12 @@ internal interface ScreenSource {
     val offs: Long
 
     /**
+     * The reading and the count of screen-offs now, as the next report would give them. On the source's thread it is in
+     * order with the reports, so a question card's tap is judged by the screen of its own moment (plan 7F).
+     */
+    fun status(): ScreenStatus
+
+    /**
      * Gives [reading] the [ScreenReading], read on the source's thread: at once when the caller is on it, otherwise
      * after the reports that are already on their way there.
      */
@@ -149,8 +155,8 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
         awaitClose { watch.stop() }
     }
 
-    /** The screen source's count of screen-offs now ([ScreenSource.offs]), which stamps a card's tap. */
-    fun screenOffs(): Long = screens.offs
+    /** The screen source's reading and count of screen-offs now ([ScreenSource.status]), which stamps a card's tap. */
+    fun screenStatus(): ScreenStatus = screens.status()
 
     /**
      * The calls as one [CallMonitor] for listening (section 8.7): a start watches the calls with its report and ends the

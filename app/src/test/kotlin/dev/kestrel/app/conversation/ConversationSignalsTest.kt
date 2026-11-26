@@ -6,6 +6,7 @@ import dev.kestrel.app.listen.CallMonitor
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.phone.PhoneSignals
 import dev.kestrel.app.phone.ScreenReading
+import dev.kestrel.app.phone.ScreenStatus
 import dev.kestrel.app.phone.ScreenSource
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.ConversationId
@@ -176,6 +177,8 @@ class ConversationSignalsTest {
     private class FakeScreens : ScreenSource {
         var now = true
         override val offs = 0L
+
+        override fun status(): ScreenStatus = ScreenStatus(readingOf(now), offs)
         var starts = 0
         var stops = 0
         private var report: ((ScreenReading) -> Unit)? = null

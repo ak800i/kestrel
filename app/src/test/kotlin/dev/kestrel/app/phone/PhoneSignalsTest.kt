@@ -181,7 +181,7 @@ class PhoneSignalsTest {
             ScreenStatus(ScreenReading.OFF, 1),
         )
         assertEquals(expected, seen)
-        assertEquals(1L, phone.screenOffs())
+        assertEquals(ScreenStatus(ScreenReading.OFF, 1), phone.screenStatus())
 
         collecting.cancel()
         runCurrent()
@@ -191,6 +191,8 @@ class PhoneSignalsTest {
     private class FakeScreens : ScreenSource {
         var now = ScreenReading.OFF
         override var offs = 0L
+
+        override fun status(): ScreenStatus = ScreenStatus(now, offs)
         var starts = 0
         var stops = 0
         var failure: Exception? = null

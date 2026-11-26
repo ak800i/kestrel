@@ -46,7 +46,7 @@ class TextChannelTest {
     private lateinit var desk: CardDesk
 
     private fun TestScope.channel(): TextChannel {
-        desk = CardDesk(support, backgroundScope)
+        desk = CardDesk(support, backgroundScope, { _, error -> throw error })
         return TextChannel(OwnedBar(support, backgroundScope) { testScheduler.currentTime }, support, desk, support, support, ReplyScreen { opened += it }, conversation) { 1_000L }
     }
 
@@ -277,7 +277,7 @@ class TextChannelTest {
             cards += card
             answer = CompletableDeferred()
             try {
-                return answer.await()?.let { ScreenTap(it, offs = 0) }
+                return answer.await()?.let { ScreenTap(it, screens.value) }
             } catch (e: CancellationException) {
                 withdrawn++
                 throw e
@@ -286,7 +286,7 @@ class TextChannelTest {
 
         override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
 
-        override fun screenOffs(): Long = 0
+        override fun screenStatus(): ScreenStatus = screens.value
 
         override suspend fun releaseBar() {}
 

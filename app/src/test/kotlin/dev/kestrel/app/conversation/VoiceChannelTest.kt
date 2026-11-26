@@ -77,7 +77,7 @@ class VoiceChannelTest {
 
     // The voice's cards go through the real desk, which numbers each tap with the next of the owner's inputs.
     private fun TestScope.channel(): VoiceChannel {
-        val desk = CardDesk(support, backgroundScope, inputIds = { ++taps })
+        val desk = CardDesk(support, backgroundScope, { _, error -> throw error }, inputIds = { ++taps })
         return VoiceChannel(voice, support, desk, support, support, support, offVoice, audioSettleMillis = AUDIO_SETTLE_MILLIS)
     }
 
@@ -579,12 +579,12 @@ class VoiceChannelTest {
         override suspend fun card(card: OwnerCard): ScreenTap? {
             cards += card
             answer = CompletableDeferred()
-            return answer.await()?.let { ScreenTap(it, offs = 0) }
+            return answer.await()?.let { ScreenTap(it, screens.value) }
         }
 
         override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
 
-        override fun screenOffs(): Long = 0
+        override fun screenStatus(): ScreenStatus = screens.value
 
         override suspend fun releaseBar() {
             releases++

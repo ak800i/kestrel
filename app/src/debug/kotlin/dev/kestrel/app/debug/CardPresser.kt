@@ -5,14 +5,15 @@ import dev.kestrel.app.conversation.OverlayCards
 import dev.kestrel.app.conversation.TapEnd
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
-import kotlinx.coroutines.Deferred
 
 /**
- * What the debug hook's press of the overlay's card found (Task 13a): only [PRESSED] answered it. [LOCKED]: the press
- * was a Continue on the lock screen, which the card desk holds as the owner's tap until his unlock; [SCREEN_OFF]: the
- * screen went off since the press, so the desk dropped it. Both leave the question open.
+ * What the debug hook's press of the overlay's card found (Task 13a). [PRESSED] answered the question; [HELD] is a
+ * Continue on the lock screen, which the card desk holds as the owner's tap and which answers by itself once the phone
+ * is unlocked within that lock. The rest answered nothing and leave the question open: the guard's refusals,
+ * [SCREEN_OFF] (the screen was off at the press, so a Continue counts for nothing) and [WITHDRAWN] (the card was no
+ * longer the overlay's when the press came).
  */
-internal enum class CardPress { PRESSED, NOT_ON_OVERLAY, OTHER_CARD, NO_BUTTON, NOT_ARMED, LOCKED, SCREEN_OFF }
+internal enum class CardPress { PRESSED, HELD, NOT_ON_OVERLAY, OTHER_CARD, NO_BUTTON, NOT_ARMED, SCREEN_OFF, WITHDRAWN }
 
 /**
  * Presses a button of the card over the app as the owner's tap, for agent-answer `--es channel card`, which may not tap
@@ -22,31 +23,20 @@ internal enum class CardPress { PRESSED, NOT_ON_OVERLAY, OTHER_CARD, NO_BUTTON, 
  * also one with the same buttons; it must take the choice, never "Reply…", which opens Kestrel's screen; and the desk
  * must have given it to the screen twice the card's arming delay ago, because the overlay may wait one delay before it
  * shows a card, which then ignores taps for another. The press then goes through the desk's one entry for taps, so a
- * Continue on the lock screen is held exactly as the owner's is; the answer reports what became of it ([TapEnd]).
+ * Continue on the lock screen is held exactly as the owner's is; the answer says what the desk did with it ([TapEnd]).
  */
 internal class CardPresser(private val overlay: OverlayCards) {
-    private sealed interface Checked {
-        data class Refused(val press: CardPress) : Checked
-
-        class Tapped(val end: Deferred<TapEnd>) : Checked
-    }
-
-    suspend fun press(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress {
-        val checked = overlay.withShown { shown, answer ->
-            when {
-                shown == null -> Checked.Refused(CardPress.NOT_ON_OVERLAY)
-                shown.card.key != key || shown.card.kind != kind -> Checked.Refused(CardPress.OTHER_CARD)
-                choice == CardChoice.Reply || !shown.card.takes(choice) -> Checked.Refused(CardPress.NO_BUTTON)
-                shown.shownMillis < 2 * CARD_ARMING_MILLIS -> Checked.Refused(CardPress.NOT_ARMED)
-                else -> Checked.Tapped(answer(choice))
-            }
-        }
-        return when (checked) {
-            is Checked.Refused -> checked.press
-            is Checked.Tapped -> when (checked.end.await()) {
+    fun press(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress = overlay.withShown { shown, answer ->
+        when {
+            shown == null -> CardPress.NOT_ON_OVERLAY
+            shown.card.key != key || shown.card.kind != kind -> CardPress.OTHER_CARD
+            choice == CardChoice.Reply || !shown.card.takes(choice) -> CardPress.NO_BUTTON
+            shown.shownMillis < 2 * CARD_ARMING_MILLIS -> CardPress.NOT_ARMED
+            else -> when (answer(choice)) {
                 TapEnd.ANSWERED -> CardPress.PRESSED
-                TapEnd.HELD -> CardPress.LOCKED
-                TapEnd.DROPPED -> CardPress.SCREEN_OFF
+                TapEnd.HELD -> CardPress.HELD
+                TapEnd.DROPPED_BY_SCREEN_OFF -> CardPress.SCREEN_OFF
+                TapEnd.WITHDRAWN -> CardPress.WITHDRAWN
             }
         }
     }

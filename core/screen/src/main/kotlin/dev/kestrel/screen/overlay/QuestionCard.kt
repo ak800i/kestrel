@@ -38,7 +38,7 @@ internal class QuestionCard(
     private val presence = CardPresence(clock)
 
     // The card of the newest question, from its ask until its end, also while it waits out the arming delay.
-    private var current: Card? = null
+    private var current: Card<*>? = null
 
     /**
      * Whether a card is on the screen, or ended less than one settle ago ([CardPresence]); `ScreenActions` acts on
@@ -57,7 +57,7 @@ internal class QuestionCard(
      * thread, or [CardEnd.Withdrawn] when another question replaces the card, [dismiss] ends it, or no card can show
      * because the session has closed. Cancelling the call removes the card.
      */
-    suspend fun ask(question: CardQuestion, stamp: () -> Long = { 0L }): CardEnd {
+    suspend fun <S> ask(question: CardQuestion, stamp: () -> S): CardEnd<S> {
         current?.end(CardEnd.Withdrawn)
         val card = Card(question, stamp)
         current = card
@@ -76,7 +76,7 @@ internal class QuestionCard(
 
     // The card shows once the arming delay after the previous card has passed, unless it ended meanwhile. A wait that
     // the session's end cancels gives the card's caller no answer.
-    private fun appear(card: Card) {
+    private fun appear(card: Card<*>) {
         scope.launch {
             presence.closedAt?.let { closed ->
                 val wait = closed + CARD_ARMING_MILLIS - clock()
@@ -97,8 +97,8 @@ internal class QuestionCard(
         data object Move : PadKey
     }
 
-    private inner class Card(val question: CardQuestion, private val stamp: () -> Long) {
-        val answer = CompletableDeferred<CardEnd>()
+    private inner class Card<S>(val question: CardQuestion, private val stamp: () -> S) {
+        val answer = CompletableDeferred<CardEnd<S>>()
         var attached = false
             private set
         private var shownAt = 0L
@@ -132,7 +132,7 @@ internal class QuestionCard(
         }
 
         /** Removes the card and gives its caller [end], unless it has an answer already. */
-        fun end(end: CardEnd) {
+        fun end(end: CardEnd<S>) {
             if (!answer.complete(end)) return
             if (current === this) current = null
             if (attached) {

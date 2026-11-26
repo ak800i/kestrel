@@ -42,15 +42,15 @@ internal interface TouchWatch {
     suspend fun watch()
 }
 
-/** The owner's tap on the card over the app: his [choice], and the screen source's count of screen-offs at the tap. */
-internal data class ScreenTap(val choice: CardChoice, val offs: Long)
+/** The owner's tap on the card over the app: his [choice], and the screen source's [status] at the tap. */
+internal data class ScreenTap(val choice: CardChoice, val status: ScreenStatus)
 
 /** Kestrel's own parts of the screen: the question card, the feedback bar, the lock, and its own app in front. */
 internal interface OwnerScreen {
     /**
      * Shows [card] on Kestrel's question card until a button or the keypad answers it, and returns that choice with the
-     * screen source's count of screen-offs, taken on the main thread at the tap (design 10.3 of sub-project 7; plan
-     * 7F); null when no screen session is connected, or when the card gave no answer because a different question
+     * screen source's reading and count of screen-offs, taken on the main thread at the tap, in order with the source's
+     * reports (design 10.3 of sub-project 7; plan 7F); null when no screen session is connected, or when the card gave no answer because a different question
      * replaced it. Only [CardDesk] calls it: every question has one card.
      */
     suspend fun card(card: OwnerCard): ScreenTap?
@@ -62,10 +62,8 @@ internal interface OwnerScreen {
      */
     val screens: Flow<ScreenStatus>
 
-    /**
-     * The screen source's count of screen-offs now, which stamps the debug hook's press as the tap's own count does.
-     */
-    fun screenOffs(): Long
+    /** The screen source's reading and count of screen-offs now, which stamps the debug hook's press as a tap's own do. */
+    fun screenStatus(): ScreenStatus
 
     /**
      * How many screen sessions have connected so far; it changes when a new one connects, so that the card desk shows the
@@ -110,7 +108,7 @@ internal fun interface PermissionDialog {
  * The owner's parts on the phone, which both of the conversation's channels and a goal's rounds share (design 5.5 of
  * sub-project 7): the screen session that is connected ([sessions]; the one when it is asked), Android's audio, the pages
  * that [open] opens for the owner, the phone's [calls] (Kestrel sees them only with READ_PHONE_STATE), and the screen
- * source's readings ([screens]) and count of screen-offs ([offs]).
+ * source's readings ([screens]) and its status now ([status]), which stamps each tap.
  */
 internal class AndroidOwnerSupport(
     private val context: Context,
@@ -119,7 +117,7 @@ internal class AndroidOwnerSupport(
     private val open: suspend (Intent) -> Boolean,
     private val calls: () -> Flow<CallState>,
     override val screens: Flow<ScreenStatus>,
-    private val offs: () -> Long,
+    private val status: () -> ScreenStatus,
 ) : TouchWatch, OwnerScreen, OtherAudio, HandOverSignals {
     private val audio = context.getSystemService(AudioManager::class.java)
 
@@ -127,7 +125,7 @@ internal class AndroidOwnerSupport(
 
     private fun session(): ScreenSession? = sessions.value
 
-    override fun screenOffs(): Long = offs()
+    override fun screenStatus(): ScreenStatus = status()
 
     override suspend fun card(card: OwnerCard): ScreenTap? {
         val session = session() ?: return null
@@ -140,8 +138,8 @@ internal class AndroidOwnerSupport(
         }
         val pad = NumberPad(context.getString(R.string.card_delete_digit), context.getString(R.string.card_enter), context.getString(R.string.card_move), card.highest)
             .takeIf { card.numberPad }
-        // The count is taken on the main thread at the tap, in order with the screen source's reports.
-        return when (val end = session.ask(CardQuestion(card.key, card.text, labels, pad), offs)) {
+        // The status is taken on the main thread at the tap, in order with the screen source's reports.
+        return when (val end = session.ask(CardQuestion(card.key, card.text, labels, pad), status)) {
             is CardEnd.Tapped -> ScreenTap(card.choices[end.button], end.stamp)
             is CardEnd.Number -> ScreenTap(CardChoice.Pick(end.value), end.stamp)
             CardEnd.Withdrawn -> null

@@ -7,9 +7,6 @@ import dev.kestrel.app.conversation.ShownCard
 import dev.kestrel.app.conversation.TapEnd
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -23,7 +20,7 @@ class CardPresserTest {
     private val confirmation = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
 
     @Test
-    fun aPressAnswersOnlyTheCardThatTheHookReadWithAButtonThatItTakesOnceItTakesTaps() = runTest {
+    fun aPressAnswersOnlyTheCardThatTheHookReadWithAButtonThatItTakesOnceItTakesTaps() {
         assertEquals(CardPress.NOT_ON_OVERLAY, presser.press(4, QuestionKind.CONFIRM, CardChoice.Confirm))
         overlay.shown = ShownCard(confirmation, 2 * CARD_ARMING_MILLIS - 1)
         assertEquals(CardPress.NOT_ARMED, presser.press(4, QuestionKind.CONFIRM, CardChoice.Confirm))
@@ -40,21 +37,24 @@ class CardPresserTest {
         assertEquals(listOf<CardChoice>(CardChoice.Confirm), overlay.answers)
     }
 
-    // The second re-check's N2-M1: the press goes through the desk's one entry for taps, and the hook's answer follows
-    // what the desk did with it: a Continue that the desk holds for the owner's unlock is LOCKED, one that it dropped
-    // because the screen went off is SCREEN_OFF, and the question stays open for both.
+    // The second re-check's N2-M1 and the third's N3-N2: the press goes through the desk's one entry for taps, and the
+    // hook's answer names what the desk did with it: a Continue that the desk holds for the owner's unlock is HELD, which
+    // acts at the unlock, one that the screen being off dropped is SCREEN_OFF, and a card that was no longer the overlay's
+    // is WITHDRAWN.
     @Test
-    fun theHooksAnswerForAContinueFollowsWhatTheDeskDidWithIt() = runTest {
+    fun theHooksAnswerForAContinueNamesWhatTheDeskDidWithIt() {
         val handOver = OwnerCard.handOver(-1, "Sign in yourself, then tap Continue.")
         overlay.shown = ShownCard(handOver, 2 * CARD_ARMING_MILLIS)
 
         overlay.end = TapEnd.HELD
-        assertEquals(CardPress.LOCKED, presser.press(-1, null, CardChoice.Continue))
-        overlay.end = TapEnd.DROPPED
+        assertEquals(CardPress.HELD, presser.press(-1, null, CardChoice.Continue))
+        overlay.end = TapEnd.DROPPED_BY_SCREEN_OFF
         assertEquals(CardPress.SCREEN_OFF, presser.press(-1, null, CardChoice.Continue))
+        overlay.end = TapEnd.WITHDRAWN
+        assertEquals(CardPress.WITHDRAWN, presser.press(-1, null, CardChoice.Continue))
         overlay.end = TapEnd.ANSWERED
         assertEquals(CardPress.PRESSED, presser.press(-1, null, CardChoice.Cancel))
-        assertEquals(listOf(CardChoice.Continue, CardChoice.Continue, CardChoice.Cancel), overlay.answers)
+        assertEquals(listOf(CardChoice.Continue, CardChoice.Continue, CardChoice.Continue, CardChoice.Cancel), overlay.answers)
     }
 
     private class FakeOverlay : OverlayCards {
@@ -62,10 +62,10 @@ class CardPresserTest {
         var end = TapEnd.ANSWERED
         val answers = mutableListOf<CardChoice>()
 
-        override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> Deferred<TapEnd>) -> T): T =
+        override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> TapEnd) -> T): T =
             block(shown) { choice ->
                 answers += choice
-                CompletableDeferred(end)
+                end
             }
     }
 }

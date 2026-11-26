@@ -65,6 +65,8 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
     }
 
+    override fun status(): ScreenStatus = ScreenStatus(current(), offs)
+
     override fun read(reading: (ScreenReading) -> Unit) {
         if (main.looper.isCurrentThread) reading(current()) else main.post { reading(current()) }
     }

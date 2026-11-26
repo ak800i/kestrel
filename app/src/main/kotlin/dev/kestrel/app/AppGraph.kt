@@ -429,7 +429,7 @@ class AppGraph(context: Context) {
             open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
             calls = { phoneSignals.callStates() },
             screens = phoneSignals.screenStates(),
-            offs = phoneSignals::screenOffs,
+            status = phoneSignals::screenStatus,
         )
     }
 
@@ -497,7 +497,7 @@ class AppGraph(context: Context) {
      * The one card of each question, whichever channel asks it (design 10.3 of sub-project 7; plan 7F): the overlay while
      * the conversation screen is not in front, and the screen's copy while it is.
      */
-    internal val cardDesk: CardDesk by lazy { CardDesk(ownerSupport, scope, notice = { text -> feedbackBar.show(text) }) }
+    internal val cardDesk: CardDesk by lazy { CardDesk(ownerSupport, scope, reportFailure, notice = { text -> feedbackBar.show(text) }) }
 
     /**
      * Kestrel's feedback bar with its one writer (design 6.6 and 10.5 of sub-project 7; plan 7F): listening's texts, the
