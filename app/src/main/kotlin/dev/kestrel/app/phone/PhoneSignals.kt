@@ -109,6 +109,16 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     }
 
     /**
+     * Whether the screen is on and the phone unlocked while the flow is collected: the reading first, then every change
+     * ([watchScreen]). A card's Continue that the owner tapped while the phone was locked waits for it (plan 7F). The flow
+     * fails with what [watchScreen] throws.
+     */
+    fun screenStates(): Flow<Boolean> = callbackFlow {
+        val watch = watchScreen { onAndUnlocked -> trySend(onAndUnlocked) }
+        awaitClose { watch.stop() }
+    }
+
+    /**
      * The calls as one [CallMonitor] for listening (section 8.7): a start watches the calls with its report and ends the
      * watch of an earlier start, after the new one has begun, so that Android's listener never stops in between; a stop
      * ends the watch.

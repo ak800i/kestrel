@@ -428,6 +428,7 @@ class AppGraph(context: Context) {
             bar = feedbackBar,
             open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
             calls = { phoneSignals.callStates() },
+            screens = { phoneSignals.screenStates() },
         )
     }
 

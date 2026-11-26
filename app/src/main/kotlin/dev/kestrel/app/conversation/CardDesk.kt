@@ -2,6 +2,7 @@ package dev.kestrel.app.conversation
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
 /**
@@ -48,10 +50,12 @@ internal interface SharedCards : OwnerCards {
  * it is, the screen shows [open] above its field instead, so that the overlay never covers the field and the keyboard,
  * and a confirmation is never answered over Kestrel's own screen (design 12.2). "Reply…" on the overlay hides the card until
  * the screen has come to the front, or for [replyOpenMillis] when it does not come. A Continue that the owner taps while
- * the phone is locked waits for his unlock, as the goal notification's Continue does (plan 7E): the card shows again, and
- * [notice] tells the owner to unlock the phone first ([UNLOCK_FIRST]). A tap that answers takes its number among the
- * owner's inputs ([inputIds]) when it has come back from the card, before any caller runs, and every caller that it
- * answers gets that one number (plan 7F). A card that got no answer, because no screen session was connected or the
+ * the phone is locked waits for his unlock, as the goal notification's Continue does (plan 7E): it keeps its tap's number,
+ * [notice] tells the owner to unlock the phone ([UNLOCK_TO_CONTINUE]), and it answers once the screen is on and the phone
+ * unlocked ([OwnerScreen.unlocked]). The card shows again meanwhile, so that another of its choices, such as Stop, can
+ * answer in its place, which drops the waiting Continue; a newer Continue replaces it. A tap that answers takes its number
+ * among the owner's inputs ([inputIds]) when it has come back from the card, before any caller runs, and every caller that
+ * it answers gets that one number (plan 7F). A card that got no answer, because no screen session was connected or the
  * session closed, shows again when a screen session connects ([OwnerScreen.connections]).
  */
 internal class CardDesk(
@@ -77,6 +81,11 @@ internal class CardDesk(
     private val openCard = MutableStateFlow<OwnerCard?>(null)
     private val showing = MutableStateFlow<Showing?>(null)
     private var replyWait: Job? = null
+
+    // The Continue that waits for the owner's unlock: its card's question and the wait. Under the lock.
+    private class HeldContinue(val key: Int, val wait: Job)
+
+    private var heldContinue: HeldContinue? = null
 
     // The card on the overlay, from when the desk gave it to the screen, for the debug hook (Task 13a); under the lock.
     private class Presented(val card: OwnerCard, val at: Long)
@@ -145,6 +154,11 @@ internal class CardDesk(
         // A card that is no longer the newest question's is no longer the debug hook's to press, even in the moment before
         // the overlay withdraws it (Task 13a).
         if (presented?.card?.key != card?.key) presented = null
+        // A Continue waits only while its question still has callers that take it.
+        heldContinue?.takeIf { held -> callers.none { it.card.key == held.key && it.card.takes(CardChoice.Continue) } }?.let { held ->
+            held.wait.cancel()
+            heldContinue = null
+        }
     }
 
     // A card without an answer, as when no screen session is connected or its session closed, shows again when the next
@@ -160,15 +174,33 @@ internal class CardDesk(
         } ?: return
         when {
             choice == CardChoice.Reply -> replyOpened(shown.card.key)
-            choice == CardChoice.Continue && screen.locked() -> {
-                notice(UNLOCK_FIRST)
-                synchronized(lock) {
-                    round++
-                    publish()
-                }
-            }
+            choice == CardChoice.Continue && screen.locked() -> holdForUnlock(shown.card.key, CardTap(choice, inputIds()))
             // The tap's number among the owner's inputs, taken as the tap reaches the desk (plan 7F).
             else -> deliver(shown.card.key, CardTap(choice, inputIds()))
+        }
+    }
+
+    // The owner's Continue on a locked phone: it keeps the number that it took at the tap, and answers once he has unlocked
+    // the phone, if its question still waits for it; the card shows again meanwhile.
+    private fun holdForUnlock(key: Int, tap: CardTap) {
+        notice(UNLOCK_TO_CONTINUE)
+        synchronized(lock) {
+            heldContinue?.wait?.cancel()
+            val wait = scope.launch(start = CoroutineStart.LAZY) {
+                screen.unlocked()
+                val self = coroutineContext.job
+                synchronized(lock) {
+                    // Only the Continue that still waits answers: a newer one, or another choice, may have replaced it.
+                    if (heldContinue?.wait === self) {
+                        heldContinue = null
+                        deliver(key, tap)
+                    }
+                }
+            }
+            heldContinue = HeldContinue(key, wait)
+            round++
+            publish()
+            wait.start()
         }
     }
 
@@ -195,8 +227,8 @@ internal class CardDesk(
         /** How long a "Reply…" on the overlay waits for the conversation screen before it shows the card again. */
         const val REPLY_OPEN_MILLIS = 5_000L
 
-        /** A Continue tapped on the card while the phone is locked (plan 7E's rule for Continue). */
-        const val UNLOCK_FIRST = "Unlock the phone, then tap Continue."
+        /** A Continue tapped on the card while the phone is locked, which waits for the unlock (plan 7E's rule for Continue). */
+        const val UNLOCK_TO_CONTINUE = "Unlock the phone to continue."
     }
 }
 

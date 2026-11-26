@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -108,26 +109,50 @@ class CardDeskTest {
         older.cancel()
     }
 
-    // Plan 7E: a button that resumes a goal counts only after the owner's unlock.
+    private val heldGoal = OwnerCard(9, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 9, kind = QuestionKind.CONTINUE_GOAL)
+
+    // Plan 7E and decision 27 of plan 7F (the whole-plan review's M2): a Continue tapped while the phone is locked waits for
+    // the owner's unlock, as the goal notification's Continue does, and then answers with the number of its own tap.
     @Test
-    fun aContinueTappedWhileThePhoneIsLockedWaitsForTheUnlock() = runTest {
+    fun aContinueTappedWhileThePhoneIsLockedAnswersAfterTheUnlockWithItsTapsNumber() = runTest {
         val desk = desk()
-        val held = OwnerCard(9, "Continue the goal?", listOf(CardChoice.Stop, CardChoice.Continue), question = 9, kind = QuestionKind.CONTINUE_GOAL)
-        val asking = async { desk.ask(held) }
+        val asking = async { desk.ask(heldGoal) }
         runCurrent()
 
-        overlay.locked = true
+        overlay.screenUnlocked.value = false
         overlay.tap(CardChoice.Continue)
         runCurrent()
         assertFalse(asking.isCompleted)
         assertEquals(2, overlay.shown.size)
-        assertEquals(listOf(CardDesk.UNLOCK_FIRST), notices)
+        assertEquals(listOf(CardDesk.UNLOCK_TO_CONTINUE), notices)
 
-        overlay.locked = false
+        overlay.screenUnlocked.value = true
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+        assertNull(desk.open.value)
+    }
+
+    // The card shows again while the Continue waits, so the owner's Stop answers in its place, and the unlock then answers
+    // nothing.
+    @Test
+    fun aStopTappedWhileAContinueWaitsForTheUnlockAnswersInItsPlace() = runTest {
+        val desk = desk()
+        val asking = async { desk.ask(heldGoal) }
+        runCurrent()
+        overlay.screenUnlocked.value = false
         overlay.tap(CardChoice.Continue)
         runCurrent()
-        // The tap that waits for the unlock is no act yet; the one after the unlock is, with the first number.
-        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+
+        overlay.tap(CardChoice.Stop)
+        runCurrent()
+        assertEquals(CardTap(CardChoice.Stop, 2), asking.await())
+        val later = async { desk.ask(heldGoal.copy(key = 10, question = 10)) }
+        runCurrent()
+        overlay.screenUnlocked.value = true
+        runCurrent()
+
+        assertFalse(later.isCompleted)
+        later.cancel()
     }
 
     // Review N1 of plan 7F: the keypad's number answers its pick within the grid's range, and a number outside it does not.
@@ -212,7 +237,7 @@ class CardDeskTest {
     private class FakeOverlay : OwnerScreen {
         val shown = mutableListOf<OwnerCard>()
         var withdrawn = 0
-        var locked = false
+        val screenUnlocked = MutableStateFlow(true)
         override val connections = MutableStateFlow(1)
         private var tapped = CompletableDeferred<CardChoice?>()
 
@@ -236,7 +261,11 @@ class CardDeskTest {
             }
         }
 
-        override fun locked(): Boolean = locked
+        override fun locked(): Boolean = !screenUnlocked.value
+
+        override suspend fun unlocked() {
+            screenUnlocked.first { it }
+        }
 
         override suspend fun releaseBar() {}
 

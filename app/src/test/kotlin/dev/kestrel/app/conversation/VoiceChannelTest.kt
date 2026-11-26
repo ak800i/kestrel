@@ -582,6 +582,8 @@ class VoiceChannelTest {
 
         override fun locked(): Boolean = false
 
+        override suspend fun unlocked() {}
+
         override suspend fun releaseBar() {
             releases++
         }

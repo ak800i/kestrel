@@ -275,6 +275,8 @@ class TextChannelTest {
 
         override fun locked(): Boolean = false
 
+        override suspend fun unlocked() {}
+
         override suspend fun releaseBar() {}
 
         override suspend fun kestrelInFront(): Boolean = (kestrelPolls > 0).also { if (it) kestrelPolls-- }
