@@ -20,11 +20,13 @@ Describe 'The settings helpers' {
 
         # Gives the fake device these secure settings and makes its next commands fail as often as -Failures says. It is
         # kestrel-api37 unless -Avd and -Model say otherwise. With -KeepsTiles, its SystemUI keeps the list of Quick
-        # Settings tiles itself, as on Android 17 (observed).
+        # Settings tiles itself, as on Android 17 (observed). -Accessibility gives its accessibility manager the
+        # components that it has bound, is binding, holds as crashed and never binds (fake-adb.ps1).
         function Set-FakeDevice([System.Collections.IDictionary]$Settings = @{}, [int]$Failures = 0, [string]$Avd = 'kestrel-api37',
-            [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles) {
+            [string]$Model = 'sdk_gphone64_x86_64', [switch]$KeepsTiles, [System.Collections.IDictionary]$Accessibility = @{}) {
             $state = [ordered]@{
                 avd = $Avd; model = $Model; settings = $Settings; keepsTiles = [bool]$KeepsTiles; failures = $Failures; calls = @(); refused = @()
+                accessibility = $Accessibility
             }
             [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
         }
@@ -249,6 +251,120 @@ Describe 'The settings helpers' {
             $lines | Should -Contain 'accessibility_enabled=1'
             (Get-FakeDevice).calls | Should -BeExactly (@('settings list secure && echo && echo kestrel-end') * 3)
         }
+
+        It "binds Kestrel's service again when the saved list holds it and Android holds it as crashed under that list" {
+            $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+            Set-FakeDevice -Settings ([ordered]@{ accessibility_enabled = '0'; enabled_accessibility_services = $kestrel }) -Accessibility @{ crashed = @($kestrel) }
+
+            Restore-AccessibilitySettings -Serial emulator-5554 -Saved ([ordered]@{ accessibility_enabled = '0'; enabled_accessibility_services = $kestrel }) |
+                Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            $device.settings.enabled_accessibility_services | Should -BeExactly $kestrel
+            @($device.accessibility.bound) | Should -BeExactly @($kestrel)
+            @($device.accessibility.crashed) | Should -HaveCount 0
+        }
+    }
+
+    Context 'Connect-AccessibilityService' {
+        BeforeAll {
+            $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+            $reader = 'com.example.reader/com.example.reader.ReaderService'
+            function Get-ServiceWrites { @((Get-FakeDevice).calls | Where-Object { $_ -match '^settings (put|delete) secure enabled_accessibility_services' } | ForEach-Object { $_ -replace ' && echo && echo kestrel-end$' }) }
+        }
+
+        It 'binds a service that Android holds as crashed under an unchanged list, through an off that Android applied' {
+            # As after the Stop of Android's "Active apps": the list still names the service, which Android holds as crashed.
+            Set-FakeDevice -Settings @{ enabled_accessibility_services = $kestrel } -Accessibility @{ crashed = @($kestrel) }
+
+            Connect-AccessibilityService -Serial emulator-5554 -Services $kestrel | Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            $device.settings.enabled_accessibility_services | Should -BeExactly $kestrel
+            @($device.accessibility.bound) | Should -BeExactly @($kestrel)
+            @($device.accessibility.crashed) | Should -HaveCount 0
+            Get-ServiceWrites | Should -BeExactly @('settings delete secure enabled_accessibility_services', "settings put secure enabled_accessibility_services '$kestrel'")
+        }
+
+        It "keeps the other services on while it turns the component off, and puts the list back in its order" {
+            Set-FakeDevice -Settings @{ enabled_accessibility_services = "$kestrel`:$reader" } -Accessibility @{ bound = @($reader); binding = @($kestrel) }
+
+            Connect-AccessibilityService -Serial emulator-5554 -Services "$kestrel`:$reader" | Should -BeExactly $true
+
+            $device = Get-FakeDevice
+            $device.settings.enabled_accessibility_services | Should -BeExactly "$kestrel`:$reader"
+            @($device.accessibility.bound) | Should -BeExactly @($reader, $kestrel)
+            @($device.accessibility.binding) | Should -HaveCount 0
+            Get-ServiceWrites | Should -BeExactly @("settings put secure enabled_accessibility_services '$reader'", "settings put secure enabled_accessibility_services '$kestrel`:$reader'")
+        }
+
+        It 'writes nothing when the service is already bound under the list' {
+            Set-FakeDevice -Settings @{ enabled_accessibility_services = "$reader`:$kestrel" } -Accessibility @{ bound = @($reader, $kestrel) }
+
+            Connect-AccessibilityService -Serial emulator-5554 -Services "$reader`:$kestrel" | Should -BeExactly $true
+
+            Get-ServiceWrites | Should -HaveCount 0
+        }
+
+        It 'puts the list back and returns $false with a warning when Android does not bind the service' {
+            Set-FakeDevice -Settings @{ enabled_accessibility_services = $reader } -Accessibility @{ bound = @($reader); neverBinds = @($kestrel) }
+
+            $output = Connect-AccessibilityService -Serial emulator-5554 -Services "$reader`:$kestrel" -TimeoutSeconds 1 3>&1
+
+            $output | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] } | Should -BeExactly $false
+            $warnings = @($output | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $warnings | Should -HaveCount 1
+            $warnings[0].Message | Should -BeLike "Android did not bind $kestrel on emulator-5554 within 1 s after it was turned on again (enabled=True binding=True crashed=False bound=False).*"
+            (Get-FakeDevice).settings.enabled_accessibility_services | Should -BeExactly "$reader`:$kestrel"
+        }
+
+        It 'throws when the list does not hold the component' {
+            { Connect-AccessibilityService -Serial emulator-5554 -Services $reader } | Should -Throw "*does not hold $kestrel*"
+            Get-ServiceWrites | Should -HaveCount 0
+        }
+    }
+}
+
+Describe 'ConvertFrom-AccessibilityDump' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+        $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+        function New-UserBlock([int]$Id, [string]$Enabled = '', [string]$Binding = '', [string]$Crashed = '') {
+            'User state[', "     attributes:{id=$Id, touchExplorationEnabled=false}", '     Bound services:{}', "     Enabled services:{$Enabled}",
+            "     Binding services:{$Binding}", "     Crashed services:{$Crashed}"
+        }
+    }
+
+    It "reads only the block of the user that currentUserId names" {
+        $dump = @('ACCESSIBILITY MANAGER (dumpsys accessibility)', 'currentUserId=10') + (New-UserBlock 0 -Crashed "{$kestrel}") + (New-UserBlock 10 -Enabled "{$kestrel}")
+
+        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
+
+        $state.Enabled | Should -BeExactly $true
+        $state.Binding | Should -BeExactly $false
+        $state.Crashed | Should -BeExactly $false
+    }
+
+    It 'reads the first block when the answer names no current user' {
+        $dump = (New-UserBlock 0 -Enabled "{com.example.reader/com.example.reader.ReaderService}, {$kestrel}" -Crashed "{$kestrel}") + (New-UserBlock 10)
+
+        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
+
+        $state.Enabled | Should -BeExactly $true
+        $state.Crashed | Should -BeExactly $true
+    }
+
+    It 'does not count a component whose name only starts with the component' {
+        $dump = @('currentUserId=0') + (New-UserBlock 0 -Enabled "{$($kestrel)Old}" -Binding "{$($kestrel)Old}" -Crashed "{$($kestrel)Old}")
+
+        $state = ConvertFrom-AccessibilityDump -Dump $dump -Component $kestrel
+
+        $state.Enabled -or $state.Binding -or $state.Crashed | Should -BeExactly $false
+    }
+
+    It 'returns $null for an answer without the block of the current user' {
+        ConvertFrom-AccessibilityDump -Dump @('currentUserId=0', "Can't find service: accessibility") -Component $kestrel | Should -BeNullOrEmpty
+        ConvertFrom-AccessibilityDump -Dump (@('currentUserId=11') + (New-UserBlock 0)) -Component $kestrel | Should -BeNullOrEmpty
     }
 }
 

@@ -265,7 +265,8 @@ function Stop-Kestrel {
 # Turns Kestrel's accessibility service on, as the only enabled service, or off, and waits until Kestrel sees it.
 function Set-KestrelService([bool]$On) {
     if ($On) {
-        Invoke-Checked "settings put secure enabled_accessibility_services $service" | Out-Null
+        # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+        if (-not (Connect-AccessibilityService -Serial $Serial -Services $service)) { throw "Android did not bind Kestrel's accessibility service (see the warning above)." }
         Invoke-Checked 'settings put secure accessibility_enabled 1' | Out-Null
     } else {
         Invoke-Checked 'settings delete secure enabled_accessibility_services' | Out-Null

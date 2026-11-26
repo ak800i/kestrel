@@ -13,6 +13,12 @@
 #               setting. Otherwise SystemUI follows the setting, and set-tiles changes nothing.
 #   packages    the installed packages, each with its first-install time, which 'dumpsys package' shows for user 0
 #   accounts    how many Google accounts 'dumpsys account' lists
+#   accessibility  Android's accessibility manager, as AOSP's AccessibilityManagerService keeps it: the components that it
+#               has bound ('bound'), is binding ('binding') or holds as crashed ('crashed'), and those that it never
+#               finishes binding ('neverBinds'). A write of enabled_accessibility_services that changes the list drops
+#               every component that the list no longer holds from those sets, and binds each listed component that is
+#               in none of them; one that never binds stays binding. A write that leaves the list as it was changes
+#               nothing. 'dumpsys accessibility' and 'dumpsys activity services <component>' show the state.
 #   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
 #   calls       every settings command that it received and did not refuse, in order, without the check
 #   refused     every settings command that the check kept from running, in order
@@ -52,6 +58,10 @@ foreach ($property in $state.settings.PSObject.Properties) { $settings[$property
 $packages = [ordered]@{}
 if ($state.packages) { foreach ($property in $state.packages.PSObject.Properties) { $packages[$property.Name] = [string]$property.Value } }
 $accounts = [int]$state.accounts
+$accessibility = [ordered]@{}
+foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds') {
+    $accessibility[$set] = [string[]]@(@($state.accessibility.$set) | Where-Object { $_ })
+}
 $keepsTiles = [bool]$state.keepsTiles
 $failures = [int]$state.failures
 $calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
@@ -59,11 +69,29 @@ $refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object 
 
 function Save-State {
     $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
-            avd = $avd; model = $model; settings = $settings; packages = $packages; accounts = $accounts; keepsTiles = $keepsTiles; failures = $failures
-            calls = [string[]]$calls; refused = [string[]]$refused
+            avd = $avd; model = $model; settings = $settings; packages = $packages; accounts = $accounts; accessibility = $accessibility
+            keepsTiles = $keepsTiles; failures = $failures; calls = [string[]]$calls; refused = [string[]]$refused
         })
     [IO.File]::WriteAllText($statePath, $json)
 }
+
+function Get-EnabledServices { @("$($settings['enabled_accessibility_services'])" -split ':' | Where-Object { $_ }) }
+
+# What the accessibility manager's settings observer does after a write of enabled_accessibility_services.
+function Update-Accessibility([string[]]$Before) {
+    $enabled = @(Get-EnabledServices)
+    if (($Before -join ':') -ceq ($enabled -join ':')) { return }
+    foreach ($set in 'bound', 'binding', 'crashed') {
+        $accessibility[$set] = [string[]]@($accessibility[$set] | Where-Object { $enabled -ccontains $_ })
+    }
+    foreach ($component in $enabled) {
+        if (@($accessibility.bound) + @($accessibility.binding) + @($accessibility.crashed) -ccontains $component) { continue }
+        $set = if ($accessibility.neverBinds -ccontains $component) { 'binding' } else { 'bound' }
+        $accessibility[$set] = [string[]](@($accessibility[$set]) + $component)
+    }
+}
+
+function Format-ServiceSet([string[]]$Components) { '{' + (@($Components | ForEach-Object { "{$_}" }) -join ', ') + '}' }
 
 # The check that Format-TestDeviceCommand puts around a command. The commands in the warnings, which the owner pastes,
 # have none.
@@ -105,8 +133,10 @@ if ($deviceCommand -match '^printf %s (\S+)$') {
         [Console]::Error.WriteLine('/system/bin/sh: no closing quote')
         exit 1
     }
+    $before = @(Get-EnabledServices)
     # A SystemUI that keeps the list of tiles writes its own list back over the setting.
     if (-not ($keepsTiles -and $Matches[1] -eq 'sysui_qs_tiles')) { $settings[$Matches[1]] = $Matches[2].Replace("'\''", "'") }
+    if ($Matches[1] -eq 'enabled_accessibility_services') { Update-Accessibility $before }
 } elseif ($deviceCommand -match "^cmd statusbar set-tiles '") {
     if ($deviceCommand -notmatch "^cmd statusbar set-tiles '((?:[^']|'\\'')*)'$") {
         Save-State
@@ -116,7 +146,9 @@ if ($deviceCommand -match '^printf %s (\S+)$') {
     if ($keepsTiles) { $settings['sysui_qs_tiles'] = $Matches[1].Replace("'\''", "'") }
 } elseif ($deviceCommand -match '^settings delete secure (\S+)$') {
     $lines = @("Deleted $(if ($settings.Contains($Matches[1])) { 1 } else { 0 }) rows")
+    $before = @(Get-EnabledServices)
     $settings.Remove($Matches[1])
+    if ($Matches[1] -eq 'enabled_accessibility_services') { Update-Accessibility $before }
 } elseif ($deviceCommand -match '^pm list packages (\S+)$') {
     # As on the device, every package whose name contains the text.
     $text = $Matches[1]
@@ -141,6 +173,18 @@ if ($deviceCommand -match '^printf %s (\S+)$') {
 } elseif ($deviceCommand -eq 'dumpsys account') {
     $numbers = if ($accounts -gt 0) { 1..$accounts } else { @() }
     $lines = @('Accounts: ' + $accounts) + @($numbers | ForEach-Object { "  Account {name=account$_@example.com, type=com.google}" })
+} elseif ($deviceCommand -eq 'dumpsys accessibility') {
+    $labels = @($accessibility.bound | ForEach-Object { "Service[label=$(($_ -split '[/.]')[-1]), feedbackType[FEEDBACK_GENERIC]]" }) -join ', '
+    $lines = @('ACCESSIBILITY MANAGER (dumpsys accessibility)', 'currentUserId=0', 'User state[',
+        '     attributes:{id=0, touchExplorationEnabled=false}', "     Bound services:{$labels}",
+        "     Enabled services:$(Format-ServiceSet (Get-EnabledServices))", "     Binding services:$(Format-ServiceSet $accessibility.binding)",
+        "     Crashed services:$(Format-ServiceSet $accessibility.crashed)", 'User state[', '     attributes:{id=10, touchExplorationEnabled=false}',
+        '     Bound services:{}', '     Enabled services:{}', '     Binding services:{}', '     Crashed services:{}', '}]')
+} elseif ($deviceCommand -match '^dumpsys activity services (\S+)$') {
+    $lines = @('ACTIVITY MANAGER SERVICES (dumpsys activity services)')
+    $lines += if ($accessibility.bound -ccontains $Matches[1]) {
+        @("  * ServiceRecord{1a2b u0 $($Matches[1])}", '    app=ProcessRecord{3c4d 4242:dev.kestrel/u0a353}')
+    } else { @('  (nothing)') }
 } elseif ($deviceCommand -eq 'settings list secure') {
     $lines = @($settings.Keys | ForEach-Object { "$_=$($settings[$_])" })
 } else {

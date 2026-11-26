@@ -785,13 +785,11 @@ function Enable-KestrelService([string]$Device) {
         param($Data)
         if (-not (Restore-AccessibilitySettings -Serial $Data.Device -Saved $Data.Saved)) { throw 'see the warning above' }
     } | Out-Null
-    $service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
     $enabled = if ($saved.Contains('enabled_accessibility_services')) { "$($saved['enabled_accessibility_services'])" } else { 'null' }
-    $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service
-    if (-not (Set-SecureSetting -Serial $Device -Name 'enabled_accessibility_services' -Value ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service.' }
+    $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $KestrelAccessibilityService }) + $KestrelAccessibilityService
+    # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+    if (-not (Connect-AccessibilityService -Serial $Device -Services ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service (see the warning above).' }
     if (-not (Set-SecureSetting -Serial $Device -Name 'accessibility_enabled' -Value '1')) { throw 'Could not turn on accessibility.' }
-    # Android binds the service a moment after the setting.
-    Start-Sleep -Seconds 3
 }
 # The A71's (or, in a dry run, the emulator's) device: the step functions below take it from here.
 function Get-A71 { $Serial }

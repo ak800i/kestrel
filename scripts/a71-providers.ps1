@@ -232,13 +232,11 @@ function Enable-KestrelService([string]$Device) {
     }
     $saved = Get-AccessibilitySettings -Serial $Device
     $savedAccessibility[$Device] = $saved
-    $service = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
     $enabled = if ($saved.Contains('enabled_accessibility_services')) { "$($saved['enabled_accessibility_services'])" } else { 'null' }
-    $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service
-    if (-not (Set-SecureSetting -Serial $Device -Name 'enabled_accessibility_services' -Value ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service.' }
+    $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $KestrelAccessibilityService }) + $KestrelAccessibilityService
+    # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+    if (-not (Connect-AccessibilityService -Serial $Device -Services ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service (see the warning above).' }
     if (-not (Set-SecureSetting -Serial $Device -Name 'accessibility_enabled' -Value '1')) { throw 'Could not turn on accessibility.' }
-    # Android binds the service a moment after the setting.
-    Start-Sleep -Seconds 3
 }
 
 # Waits up to $Seconds until Kestrel's accessibility service on the device is bound (the hook state answers 'screen=on'),

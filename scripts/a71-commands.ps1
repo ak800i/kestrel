@@ -530,7 +530,8 @@ function Initialize-Session {
     # Kestrel's accessibility service, next to the owner's other services.
     $enabled = if ($accessibility.Contains('enabled_accessibility_services')) { "$($accessibility['enabled_accessibility_services'])" } else { 'null' }
     $services = @(@($enabled -split ':') | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) + $service
-    if (-not (Set-SecureSetting -Serial $Serial -Name 'enabled_accessibility_services' -Value ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service.' }
+    # Waits until Android has bound the service, also after a stop or a crash of Kestrel, which leave it crashed.
+    if (-not (Connect-AccessibilityService -Serial $Serial -Services ($services -join ':'))) { throw 'Could not turn on Kestrel''s accessibility service (see the warning above).' }
     if (-not (Set-SecureSetting -Serial $Serial -Name 'accessibility_enabled' -Value '1')) { throw 'Could not turn on accessibility.' }
     $marks.Home = Get-HomePackage @(Invoke-Checked 'cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME')
 }
@@ -1332,11 +1333,10 @@ function Invoke-SoundStep {
     $zoom = Register-Restore 'the end of the magnification' 'If the screen is still magnified, turn Kestrel off and on again in Settings > Accessibility > Installed apps.' $services {
         param($Data)
         Assert-TestDevice -Serial $Serial
-        $without = @("$Data" -split ':' | Where-Object { $_ -and $_ -ne 'null' -and $_ -ne $service }) -join ':'
-        $off = if ($without) { "settings put secure enabled_accessibility_services '$without'" } else { 'settings delete secure enabled_accessibility_services' }
-        Invoke-Checked $off | Out-Null
-        Start-Sleep -Seconds 1
-        if (-not (Set-SecureSetting -Serial $Serial -Name 'enabled_accessibility_services' -Value $Data)) { throw 'Android did not turn Kestrel''s accessibility service on again' }
+        # The off must apply before the list goes back, or Android neither ends the magnification nor binds the service
+        # again (Connect-AccessibilityService).
+        if (-not (Disconnect-AccessibilityService -Serial $Serial)) { throw 'Android did not turn Kestrel''s accessibility service off (see the warning above)' }
+        if (-not (Connect-AccessibilityService -Serial $Serial -Services $Data)) { throw 'Android did not turn Kestrel''s accessibility service on again (see the warning above)' }
     }
     try {
         Test-Command sound 'zoom in' c034 { New-Verdict ((ConvertFrom-Magnification (Get-LayerState)['magnification']).Scale -gt 1) 'the screen magnified' }

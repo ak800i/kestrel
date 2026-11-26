@@ -147,7 +147,9 @@ function Get-AccessibilitySettings([string]$Serial) {
 }
 
 # Puts back the settings that Get-AccessibilitySettings read, and deletes those that were not there. The list of enabled
-# services goes first, so that the shortcuts point to services that are on again. Returns whether everything is back.
+# services goes first, so that the shortcuts point to services that are on again. When that list holds Kestrel's
+# service, it goes back through Connect-AccessibilityService, which also binds Kestrel's service again after a stop or a
+# crash of Kestrel, when the list itself may be unchanged. Returns whether everything is back.
 function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     try {
         $now = Get-AccessibilitySettings -Serial $Serial
@@ -161,9 +163,127 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     foreach ($name in ($names | Select-Object -Unique)) {
         $value = if ($Saved.Contains($name)) { $Saved[$name] } else { 'null' }
         $current = if ($now.Contains($name)) { $now[$name] } else { 'null' }
-        if ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
+        if ($name -eq 'enabled_accessibility_services' -and (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService)) {
+            if (-not (Connect-AccessibilityService -Serial $Serial -Services $value)) { $back = $false }
+        } elseif ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
     }
     $back
+}
+
+$KestrelAccessibilityService = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+
+# Whether the value of the setting enabled_accessibility_services ('null', empty, or components separated by ':') lists
+# the component.
+function Test-ServiceListed([string]$Services, [string]$Component) {
+    @("$Services" -split ':') -ccontains $Component
+}
+
+# The state of an accessibility service in the answer of 'dumpsys accessibility': whether Android's accessibility
+# manager has it enabled, is binding it, or holds it as crashed. AOSP's AccessibilityUserState.dump prints a block
+# 'User state[' for each user, which starts with 'attributes:{id=<user>, ...' and has the lines 'Enabled services:{...}',
+# 'Binding services:{...}' and 'Crashed services:{...}', each with every component's full name in braces. Only the block of
+# the user that the line 'currentUserId=<user>' names counts, or the first block when that line is missing. Returns $null
+# when the answer has no such block, so that an answer that could not be read never counts as a service that is off.
+# 'Bound services:{...}' names only the services' labels, so Test-ServiceRecordBound tells whether the service is bound.
+function ConvertFrom-AccessibilityDump([string[]]$Dump, [string]$Component) {
+    $current = $null
+    foreach ($line in $Dump) { if ($line -match '^\s*currentUserId=(\d+)\s*$') { $current = $Matches[1]; break } }
+    $blocks = [Collections.Generic.List[object]]::new()
+    foreach ($line in $Dump) {
+        if ($line -match '^\s*User state\[') { $blocks.Add([Collections.Generic.List[string]]::new()) }
+        elseif ($blocks.Count -gt 0) { $blocks[$blocks.Count - 1].Add($line.Trim()) }
+    }
+    $block = $null
+    foreach ($candidate in $blocks) {
+        if ($null -eq $current -or ($candidate.Count -gt 0 -and $candidate[0] -match "^attributes:\{id=$current,")) { $block = $candidate; break }
+    }
+    if ($null -eq $block) { return $null }
+    $listed = { param($Name) @($block | Where-Object { $_.StartsWith("$Name services:{") -and $_.Contains("{$Component}") }).Count -gt 0 }
+    [pscustomobject]@{ Enabled = & $listed 'Enabled'; Binding = & $listed 'Binding'; Crashed = & $listed 'Crashed' }
+}
+
+# Whether the answer of 'dumpsys activity services <component>' shows the service running in a process, which for an
+# accessibility service means that Android's accessibility manager has bound it.
+function Test-ServiceRecordBound([string[]]$Dump) {
+    @($Dump | Where-Object { $_ -match '\bapp=ProcessRecord\{' }).Count -gt 0
+}
+
+# The state of an accessibility service on the device (ConvertFrom-AccessibilityDump, and whether it is bound), or $null
+# when the device's answers could not be read.
+function Get-AccessibilityServiceState([string]$Serial, [string]$Component = $KestrelAccessibilityService) {
+    try {
+        $state = ConvertFrom-AccessibilityDump -Dump @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys accessibility') -Component $Component
+        if (-not $state) { return $null }
+        $bound = Test-ServiceRecordBound @(Invoke-SettingsCommand -Serial $Serial -Command "dumpsys activity services $Component")
+        $state | Add-Member -NotePropertyName Bound -NotePropertyValue $bound -PassThru
+    } catch {
+        $null
+    }
+}
+
+# Whether the state shows an accessibility service that is off in every list of the accessibility manager and unbound.
+function Test-ServiceOff($State) { $State -and -not ($State.Enabled -or $State.Binding -or $State.Crashed -or $State.Bound) }
+
+# Whether the state shows an accessibility service that is enabled and bound, and that the manager neither still binds
+# nor holds as crashed.
+function Test-ServiceConnected($State) { $State -and $State.Enabled -and $State.Bound -and -not ($State.Binding -or $State.Crashed) }
+
+function Format-ServiceState($State) {
+    if (-not $State) { return 'its state could not be read' }
+    "enabled=$($State.Enabled) binding=$($State.Binding) crashed=$($State.Crashed) bound=$($State.Bound)"
+}
+
+# Reads the accessibility service's state once a second until $Until accepts it or $TimeoutSeconds have passed, and
+# returns the last state with whether $Until accepted it.
+function Wait-AccessibilityServiceState([string]$Serial, [string]$Component, [scriptblock]$Until, [int]$TimeoutSeconds) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $state = Get-AccessibilityServiceState -Serial $Serial -Component $Component
+        if (& $Until $state) { return [pscustomobject]@{ Reached = $true; State = $state } }
+        Start-Sleep -Seconds 1
+    } while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    [pscustomobject]@{ Reached = $false; State = $state }
+}
+
+# Takes the component out of the list of enabled accessibility services, keeping every other service, and waits up to
+# $TimeoutSeconds until Android's accessibility manager has applied that: it lists the component neither as enabled,
+# binding nor crashed, and the service is unbound. The manager's settings observer then runs AOSP's
+# AccessibilityUserState.removeDisabledServicesFromTemporaryStatesLocked, which drops a service that is no longer
+# enabled from its crashed and binding sets. Returns whether the service is off; otherwise it warns with the state.
+function Disconnect-AccessibilityService([string]$Serial, [string]$Component = $KestrelAccessibilityService, [int]$TimeoutSeconds = 30) {
+    $services = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+    $others = @("$services" -split ':' | Where-Object { $_ -and $_ -ne 'null' -and $_ -cne $Component }) -join ':'
+    $without = if ($others) { $others } else { 'null' }
+    if ($services -cne $without -and -not (Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $without)) { return $false }
+    $wait = Wait-AccessibilityServiceState -Serial $Serial -Component $Component -Until { param($State) Test-ServiceOff $State } -TimeoutSeconds $TimeoutSeconds
+    if (-not $wait.Reached) {
+        Write-Warning "Android did not turn $Component off on $Serial within $TimeoutSeconds s ($(Format-ServiceState $wait.State))."
+    }
+    $wait.Reached
+}
+
+# Puts the list of enabled accessibility services to $Services, which lists the component, and makes sure that Android
+# has bound the component then. Android's accessibility manager binds an enabled service only when the list changes,
+# and never a service that it holds as crashed or binding (AOSP's AccessibilityManagerService.updateServicesLocked).
+# A stop of the app, such as the Stop of Android's "Active apps" ('cmd activity stop-app'), or a crash, leaves its
+# service crashed while the list still names it, and writing the same list again changes nothing. So unless the service
+# is already bound with the list as $Services, the service goes off first (Disconnect-AccessibilityService), and then
+# the list goes back, after which the function waits up to $TimeoutSeconds until the service is bound. When the off does
+# not apply, the list still goes back. Returns whether the service is bound with the list as $Services; otherwise it
+# warns with the state and what the owner can do.
+function Connect-AccessibilityService([string]$Serial, [string]$Services, [string]$Component = $KestrelAccessibilityService, [int]$TimeoutSeconds = 30) {
+    if (-not (Test-ServiceListed -Services $Services -Component $Component)) { throw "The list '$Services' does not hold $Component." }
+    $now = Get-SecureSetting -Serial $Serial -Name enabled_accessibility_services
+    if ($now -ceq $Services -and (Test-ServiceConnected (Get-AccessibilityServiceState -Serial $Serial -Component $Component))) { return $true }
+    $off = Disconnect-AccessibilityService -Serial $Serial -Component $Component -TimeoutSeconds $TimeoutSeconds
+    if (-not (Set-SecureSetting -Serial $Serial -Name enabled_accessibility_services -Value $Services)) { return $false }
+    if (-not $off) { return $false }
+    $wait = Wait-AccessibilityServiceState -Serial $Serial -Component $Component -Until { param($State) Test-ServiceConnected $State } -TimeoutSeconds $TimeoutSeconds
+    if (-not $wait.Reached) {
+        Write-Warning ("Android did not bind $Component on $Serial within $TimeoutSeconds s after it was turned on again " +
+            "($(Format-ServiceState $wait.State)). Turn it off and on in Settings > Accessibility.")
+    }
+    $wait.Reached
 }
 
 # The AVD name in the answer of an emulator's console to 'avd name': the answer's first line, trimmed (the console ends
