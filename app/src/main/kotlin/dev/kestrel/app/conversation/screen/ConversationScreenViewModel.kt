@@ -7,9 +7,14 @@ import dev.kestrel.app.conversation.AndroidConversationClock
 import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.conversation.OwnerCard
 import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputIntent
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.time.ZoneId
 
 /**
@@ -49,6 +54,13 @@ internal class ConversationScreenViewModel(private val graph: AppGraph) : ViewMo
 
     val zone: ZoneId get() = AndroidConversationClock.zone()
 
+    private val pages = MutableStateFlow<PastPagesState?>(null)
+
+    /** The past conversations' pages while they are open (design 9.5), kept across configuration changes. */
+    val pastPages: StateFlow<PastPagesState?> = pages.asStateFlow()
+
+    val pastConversations: PastConversations get() = graph.pastConversations
+
     init {
         feed.start(viewModelScope)
     }
@@ -87,6 +99,33 @@ internal class ConversationScreenViewModel(private val graph: AppGraph) : ViewMo
     fun listen() = model.listened(graph.listening::assist)
 
     fun newConversation() = model.newConversation()
+
+    fun openPast() {
+        pages.value = PastPagesState()
+    }
+
+    fun closePast() {
+        pages.value = null
+    }
+
+    /** Changes the open pages; a change to null closes them. */
+    fun past(change: (PastPagesState) -> PastPagesState?) = pages.update { it?.let(change) }
+
+    /** The owner said yes to the deletion's question: the engine deletes the conversation, which never is the open one. */
+    fun confirmDelete() {
+        val id = pages.value?.deleting ?: return
+        past { it.copy(deleting = null) }
+        viewModelScope.launch {
+            val outcome = graph.pastConversations.delete(id)
+            past { PastPagesRules.deleted(it, id, outcome) }
+        }
+    }
+
+    /** "Continue this conversation" goes through the text channel, as the owner's other inputs do (design 9.6). */
+    fun continuePast(id: ConversationId) {
+        input(InputIntent.ContinueConversation(id))
+        closePast()
+    }
 
     override fun onCleared() {
         inFront(false)

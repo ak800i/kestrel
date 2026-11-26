@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Past conversations on the conversation screen (design 9.5 of sub-project 7; plan 7F). -->
+<resources>
+    <string name="past_title">Past conversations</string>
+    <string name="past_back">Back</string>
+    <string name="past_search">Search past conversations</string>
+    <string name="past_empty">No past conversations.</string>
+    <string name="past_none_found">No past conversation matches.</string>
+    <string name="past_loading">Loading past conversations…</string>
+    <string name="past_unavailable">Kestrel can\'t read past conversations right now. It will try again later.</string>
+    <string name="past_failed">Kestrel could not read its past conversations.</string>
+    <string name="past_gone">This conversation is no longer kept.</string>
+    <plurals name="past_commands">
+        <item quantity="one">%d command</item>
+        <item quantity="other">%d commands</item>
+    </plurals>
+    <string name="past_continue">Continue this conversation</string>
+    <string name="past_delete">Delete</string>
+    <string name="past_cancel">Cancel</string>
+    <string name="past_delete_question">Delete this conversation?</string>
+    <string name="past_open_now">This conversation is open now, so it stays.</string>
+    <string name="past_delete_failed">Kestrel could not delete the conversation.</string>
+</resources>

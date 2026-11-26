@@ -1,6 +1,7 @@
 package dev.kestrel.app.conversation.screen
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -50,6 +53,7 @@ internal class ConversationActions(
     val cancel: () -> Unit,
     val newConversation: () -> Unit,
     val settings: () -> Unit,
+    val past: () -> Unit,
     val setup: () -> Unit,
     val showApp: () -> Unit,
     val choose: (OwnerCard, CardChoice) -> Unit,
@@ -79,6 +83,7 @@ internal fun ConversationScreen(
                 Text(stringResource(if (ui.stopAndNew) R.string.conversation_stop_and_new else R.string.conversation_new))
             }
             TextButton(onClick = actions.settings) { Text(stringResource(R.string.conversation_settings)) }
+            MoreMenu(actions)
         }
         if (setupNeeded) {
             Card(onClick = actions.setup, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
@@ -105,6 +110,26 @@ internal fun ConversationScreen(
             )
             Button(onClick = actions.send, enabled = field.isNotBlank()) { Text(stringResource(R.string.conversation_send)) }
             OutlinedButton(onClick = actions.speak) { Text(stringResource(R.string.conversation_speak)) }
+        }
+    }
+}
+
+/** The top bar's menu (design 10.1 and 9.5 of sub-project 7): "Past conversations". */
+@Composable
+private fun MoreMenu(actions: ConversationActions) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) { Text(stringResource(R.string.conversation_more)) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            // The menu is a window of its own (design 12.2).
+            GuardWindow()
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.past_title)) },
+                onClick = {
+                    open = false
+                    actions.past()
+                },
+            )
         }
     }
 }

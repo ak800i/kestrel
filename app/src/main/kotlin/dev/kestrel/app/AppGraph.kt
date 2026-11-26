@@ -36,6 +36,7 @@ import dev.kestrel.app.conversation.TextChannel
 import dev.kestrel.app.conversation.TypedConversation
 import dev.kestrel.app.conversation.VoiceChannel
 import dev.kestrel.app.conversation.screen.ConversationActivity
+import dev.kestrel.app.conversation.screen.PastConversations
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.conversation.engine.ConversationEngine
 import dev.kestrel.conversation.engine.ConversationView
@@ -479,6 +480,11 @@ class AppGraph(context: Context) {
     /** The search over past conversations (design 9.5 of sub-project 7), within the owner's retention. */
     private val conversationSearch: HistorySearch by lazy {
         HistorySearch(conversationStore, { conversationSettings.value.keptDays }, AndroidConversationClock)
+    }
+
+    /** The conversation screen's past conversations (design 9.5 of sub-project 7; plan 7F), within the owner's retention. */
+    internal val pastConversations: PastConversations by lazy {
+        PastConversations(conversationStore, conversationSearch, conversations, { conversationSettings.value.keptDays }, AndroidConversationClock, reportFailure)
     }
 
     private val goalRunner: GoalRunner by lazy {

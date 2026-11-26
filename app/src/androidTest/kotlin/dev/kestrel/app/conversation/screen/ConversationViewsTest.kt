@@ -55,6 +55,7 @@ class ConversationViewsTest {
         cancel = { done += "cancel" },
         newConversation = { done += "new" },
         settings = { done += "settings" },
+        past = { done += "past" },
         setup = { done += "setup" },
         showApp = { done += "show app" },
         choose = { card, choice -> done += "choose ${card.key} $choice" },
@@ -200,5 +201,16 @@ class ConversationViewsTest {
         compose.onNodeWithText(text(R.string.conversation_settings)).performClick()
 
         assertEquals(listOf("send", "speak", "setup", "settings"), done)
+    }
+
+    // Design 9.5 of sub-project 7: the top bar's menu opens "Past conversations".
+    @Test
+    fun theMenuOpensThePastConversations() {
+        show(mutableStateOf(ScreenUi(emptyList(), GoalControls.None, stopAndNew = false, card = null)))
+
+        compose.onNodeWithText(text(R.string.conversation_more)).performClick()
+        compose.onNodeWithText(text(R.string.past_title)).performClick()
+
+        assertEquals(listOf("past"), done)
     }
 }

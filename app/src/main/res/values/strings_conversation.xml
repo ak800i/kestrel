@@ -11,6 +11,7 @@
     <string name="conversation_new">New conversation</string>
     <string name="conversation_stop_and_new">Stop and start new</string>
     <string name="conversation_settings">Settings</string>
+    <string name="conversation_more">More</string>
     <string name="conversation_show_app">Show the app</string>
     <string name="conversation_setup">Finish setting up Kestrel</string>
     <string name="conversation_empty">Type what Kestrel should do, or tap Speak.</string>
