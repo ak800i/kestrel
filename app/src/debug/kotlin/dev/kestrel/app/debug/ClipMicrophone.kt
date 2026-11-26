@@ -2,12 +2,13 @@ package dev.kestrel.app.debug
 
 import dev.kestrel.voice.SAMPLE_RATE
 import dev.kestrel.voice.Synthesizer
+import dev.kestrel.voice.listen.FrameSource
 import dev.kestrel.voice.listen.Microphone
+import dev.kestrel.voice.listen.MicrophoneThread
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.locks.LockSupport
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -26,17 +27,14 @@ class ClipMicrophone : Microphone {
     private val silencedState = MutableStateFlow(false)
 
     @Volatile
-    private var reader: Thread? = null
-
-    @Volatile
-    private var running = false
+    private var capture: MicrophoneThread? = null
 
     override val silenced: StateFlow<Boolean> = silencedState.asStateFlow()
 
     override val echoCancelling = false
 
     /** Whether the microphone records: from [start] until [stop], also after an error. */
-    val recording: Boolean get() = reader != null
+    val recording: Boolean get() = capture != null
 
     /** Queues [samples] of 16 kHz audio, which the microphone delivers after the clips before them. Any thread. */
     fun play(samples: FloatArray) {
@@ -51,7 +49,7 @@ class ClipMicrophone : Microphone {
      */
     fun silence(on: Boolean) {
         synchronized(this) {
-            check(!on || reader != null) { "The microphone does not record" }
+            check(!on || capture != null) { "The microphone does not record" }
             silencedState.value = on
         }
     }
@@ -64,53 +62,39 @@ class ClipMicrophone : Microphone {
     override fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
         checkNotOnTheMicrophonesThread()
         synchronized(this) {
-            check(reader == null) { "The microphone is already recording" }
-            running = true
-            val thread = Thread({ deliver(onFrame, onError) }, "Kestrel clip microphone")
-            reader = thread
-            thread.start()
+            check(capture == null) { "The microphone is already recording" }
+            capture = MicrophoneThread.start("Kestrel clip microphone", ClipFrames(), onFrame, onError)
         }
     }
 
     override fun stop() {
         checkNotOnTheMicrophonesThread()
         synchronized(this) {
-            val thread = reader ?: return
-            running = false
-            LockSupport.unpark(thread)
-            joinUninterruptibly(thread)
-            reader = null
+            val current = capture ?: return
+            val ended = current.stop()
+            capture = null
             silencedState.value = false
+            check(ended) { "The clip microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop" }
         }
     }
 
     // Checked before taking the monitor: a stop() on another thread holds it while it waits for the microphone's thread.
     private fun checkNotOnTheMicrophonesThread() {
-        check(Thread.currentThread() !== reader) { "start() and stop() must not be called from the microphone's thread" }
+        check(capture?.isCurrent != true) { "start() and stop() must not be called from the microphone's thread" }
     }
 
-    // As MicCapture does: an interrupt must not leave the thread running, so the wait goes on, and the interrupt is kept
-    // for the caller.
-    private fun joinUninterruptibly(thread: Thread) {
-        var interrupted = false
-        while (true) {
-            try {
-                thread.join()
-                break
-            } catch (e: InterruptedException) {
-                interrupted = true
-            }
-        }
-        if (interrupted) Thread.currentThread().interrupt()
-    }
+    // The queued clips in real time, one frame every 20 ms from the start. A slow frame is made up by the next ones, as a
+    // real microphone's buffer would. Used on the microphone's thread only.
+    private inner class ClipFrames : FrameSource {
+        private var clip: FloatArray? = null
+        private var offset = 0
+        private var due = System.nanoTime()
 
-    private fun deliver(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
-        var clip: FloatArray? = null
-        var offset = 0
-        var next = System.nanoTime()
-        while (running) {
-            val current = clip ?: clips.poll()
+        override fun next(): FloatArray? {
+            if (System.nanoTime() < due) return null
+            due += FRAME_NANOS
             val frame = FloatArray(FRAME)
+            val current = clip ?: clips.poll()
             if (current != null) {
                 val count = minOf(FRAME, current.size - offset)
                 current.copyInto(frame, 0, offset, offset + count)
@@ -123,20 +107,10 @@ class ClipMicrophone : Microphone {
                 }
             }
             if (silencedState.value) frame.fill(0f)
-            try {
-                onFrame(frame)
-            } catch (e: Exception) {
-                onError(e)
-                return
-            }
-            // A slow frame is made up by the next ones, as a real microphone's buffer would.
-            next += FRAME_NANOS
-            while (running) {
-                val wait = next - System.nanoTime()
-                if (wait <= 0) break
-                LockSupport.parkNanos(wait)
-            }
+            return frame
         }
+
+        override fun nanosToNextFrame(): Long = due - System.nanoTime()
     }
 
     companion object {

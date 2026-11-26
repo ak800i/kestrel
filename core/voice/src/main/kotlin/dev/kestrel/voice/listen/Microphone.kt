@@ -35,8 +35,11 @@ interface Microphone {
     fun start(onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit)
 
     /**
-     * Stops recording, and returns when the microphone's thread has finished, also when the calling thread is interrupted.
-     * It also closes a recording whose thread ended with an error, and does nothing when the microphone does not record.
+     * Stops recording, and returns when the microphone's thread has finished, also when the calling thread is interrupted,
+     * but never waits longer than [MicrophoneThread.STOP_MILLIS] for it ([MicrophoneThread], the one rule for every
+     * microphone's thread). It also closes a recording whose thread ended with an error, and does nothing when the
+     * microphone does not record. When the thread did not end in time, it releases everything all the same and then
+     * throws [IllegalStateException]; the thread ends as soon as its current callback returns, without another frame.
      */
     fun stop()
 }

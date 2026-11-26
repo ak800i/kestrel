@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 
 /**
  * Records the microphone for listening (design spec, section 8.1): source VOICE_RECOGNITION, 16 kHz, mono, 16-bit, in
@@ -56,13 +57,10 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
     private val level = LevelMeter()
 
     @Volatile
-    private var reader: Thread? = null
+    private var capture: MicrophoneThread? = null
 
     @Volatile
     private var record: AudioRecord? = null
-
-    @Volatile
-    private var running = false
 
     /**
      * True while Android silences Kestrel's recording, for any of the reasons above: "mic busy" on the feedback bar
@@ -189,17 +187,27 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         // The callback reports only changes. Reading the current recordings on the callback's thread keeps this reading
         // in order with the reports, so that it cannot replace a newer one.
         main.post { update(audio.activeRecordingConfigurations) }
-        running = true
-        // The thread is known before it runs, so that stop() can recognise a call from [onFrame] or [onError].
-        val thread = Thread({ read(recorder, onFrame, onError) }, "Kestrel microphone")
-        reader = thread
-        thread.start()
+        // Reads without blocking (MicrophoneThread): a stop() of the recording does not always wake a blocking read.
+        val frames = RecordFrames { samples, offset, count ->
+            recorder.read(samples, offset, count, AudioRecord.READ_NON_BLOCKING)
+        }
+        capture = MicrophoneThread.start(
+            name = "Kestrel microphone",
+            source = frames,
+            onFrame = { frame ->
+                measure(frame)
+                onFrame(frame)
+            },
+            onError = onError,
+            prepare = { Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO) },
+        )
     }
 
     /**
-     * Stops recording, and waits until the microphone's thread has finished. It also closes a recording whose thread
-     * ended with an error, and withdraws the request for the earbuds. Throws [IllegalStateException] when called from
-     * [start]'s callbacks, where it would wait for ever.
+     * Stops recording, and waits until the microphone's thread has finished, for at most [MicrophoneThread.STOP_MILLIS].
+     * It also closes a recording whose thread ended with an error, and withdraws the request for the earbuds. Throws
+     * [IllegalStateException] when called from [start]'s callbacks, where the thread would wait for itself, and, after it
+     * has released everything, when the thread did not end in time; the thread then ends as soon as its [onFrame] returns.
      */
     override fun stop() {
         checkNotOnTheMicrophonesThread()
@@ -208,11 +216,12 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
 
     private fun close() {
         val recorder = record ?: return
-        running = false
+        // The thread first. No read blocks, so it ends within a frame, and it never reads again once it was told to stop,
+        // also when it ends only after the recording was released.
+        val ended = capture?.stop() ?: true
+        capture = null
         try {
             recorder.stop()
-            reader?.let(::joinUninterruptibly)
-            reader = null
             audio.unregisterAudioRecordingCallback(callback)
             echoCancelling = false
             canceller?.release()
@@ -228,6 +237,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
             silencedState.value = false
         }
         recorder.release()
+        check(ended) { "The microphone's thread did not end within ${MicrophoneThread.STOP_MILLIS} ms of the stop" }
     }
 
     // The earbuds went away, or a call took the audio over, and the route has withdrawn its request. Runs on the main
@@ -240,21 +250,15 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
 
     // Checked before taking the monitor: a stop() on another thread holds it while it waits for the microphone's thread.
     private fun checkNotOnTheMicrophonesThread() {
-        check(Thread.currentThread() !== reader) { "start() and stop() must not be called from the microphone's thread" }
+        check(capture?.isCurrent != true) { "start() and stop() must not be called from the microphone's thread" }
     }
 
-    // An interrupt must not leave the microphone open, so the wait goes on, and the interrupt is kept for the caller.
-    private fun joinUninterruptibly(thread: Thread) {
-        var interrupted = false
-        while (true) {
-            try {
-                thread.join()
-                break
-            } catch (e: InterruptedException) {
-                interrupted = true
-            }
-        }
-        if (interrupted) Thread.currentThread().interrupt()
+    // For routeReport: the loudest sample in percent, and the levels.
+    private fun measure(frame: FloatArray) {
+        var peak = 0f
+        for (sample in frame) peak = maxOf(peak, abs(sample))
+        loudest.accumulateAndGet((peak * 100).toInt()) { a, b -> maxOf(a, b) }
+        level.add(frame)
     }
 
     // A report that does not list the current recording, such as one that Android queued before the last stop(),
@@ -267,39 +271,7 @@ class MicCapture(private val context: Context, private val earbud: () -> Boolean
         }
     }
 
-    private fun read(recorder: AudioRecord, onFrame: (FloatArray) -> Unit, onError: (Exception) -> Unit) {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
-        val buffer = ShortArray(FRAME)
-        while (running) {
-            val count = recorder.read(buffer, 0, FRAME, AudioRecord.READ_BLOCKING)
-            // A read returns fewer samples when stop() interrupts it, or when an error follows some samples; then the next
-            // read reports the error. The rest is dropped.
-            if (count == FRAME) {
-                var peak = 0
-                val frame = FloatArray(count) { index ->
-                    val sample = buffer[index].toInt()
-                    if (sample > peak) peak = sample else if (-sample > peak) peak = -sample
-                    sample / 32_768f
-                }
-                loudest.accumulateAndGet(peak * 100 / 32_768) { a, b -> maxOf(a, b) }
-                level.add(frame)
-                // Errors, such as OutOfMemoryError, are not caught.
-                try {
-                    onFrame(frame)
-                } catch (e: Exception) {
-                    onError(e)
-                    return
-                }
-            } else if (count < 0 && running) {
-                onError(IllegalStateException("The microphone failed with error $count"))
-                return
-            }
-        }
-    }
-
     private companion object {
-        const val FRAME = SAMPLE_RATE / 50
-
         /** The name of an audio device's type for routeReport, such as "bluetooth-sco", or "none". */
         fun typeName(type: Int?): String = when (type) {
             null -> "none"

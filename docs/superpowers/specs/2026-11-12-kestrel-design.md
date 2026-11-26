@@ -254,6 +254,7 @@ flowchart TD
 - It never uses a privacy-sensitive source (`CAMCORDER`, `VOICE_COMMUNICATION` or `setPrivacySensitive(true)`), because such a source would silence other listeners such as Voice Access or a phone call (B2).
 - Android treats accessibility services as privileged when it shares the microphone between apps (B2, B3). Kestrel still registers an `AudioRecordingCallback`, and the feedback bar shows "Microphone blocked" whenever Android silences Kestrel's recording (section 14.6).
 - Kestrel attaches Android's echo canceller (`AcousticEchoCanceler`) when the device supports it for this source.
+- The microphone's thread reads the recording without blocking (`READ_NON_BLOCKING`) and waits for each frame itself, because `AudioRecord.stop()` does not always wake a blocking read: in an emulated call on kestrel-api37 the read went on waiting, and the stop waited for it for ever. A stop of the microphone waits at most 2 s for its thread, and always releases the recording.
 - The voice activity detector returns each utterance from its start, also when the keyword spotter hears "Kestrel" in the middle of it, so Kestrel needs no separate buffer of recent audio.
 
 ### 8.2 Engines and models
