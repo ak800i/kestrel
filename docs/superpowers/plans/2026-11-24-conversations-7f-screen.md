@@ -59,7 +59,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 - **The screenshot question's card** has Yes, No and "Reply…": the design's "Cancel" would mean the same as No.
 - **The screen leaves the front when the goal that the owner started on it works and its service runs.** After the owner sends a typed command, answers a goal's question, taps Continue or taps the microphone, the screen calls `moveTaskToBack(true)` once the conversation's goal acts and `GoalForeground` says that its service is in the foreground and that Android has answered every start that Kestrel asked for. So the service starts while `ConversationActivity` is in front (design 10.6), a typed request that starts no goal (such as "remember that …") keeps its reply on the screen, and a spoken command after the microphone leaves the screen as a typed one does. One reducer, `ConversationScreenModel`, takes every input in any order, and the screen's `ViewModel` keeps it across configuration changes. The screen never leaves on its own while the owner did not act on it, so a tap on the goal notification's Open interrupts the goal (D13) and shows Continue and Cancel.
 - **The microphone** calls `Listening.assist()`, the path of the side key and the assistant gesture (design 10.1): Kestrel turns on if it is off and says "Yes?".
-- **Every input of the owner's on the screen, on a card or on the notification is his act of its moment.** Plan 7D's `ScreenTurns` decides who acts on the screen by the numbers of the owner's inputs: a goal's round asks an instant command to let go only for an input that came after the command started, and otherwise waits until it has ended (amendment of 2026-11-26; Task 2 is obsolete). So a typed input and a button on the screen's copy of a card take their number as they arrive (Task 4), a button of the goal notification does (plan 7E), and a tap on the card over the app does too: the card desk takes it as the tap reaches it, and the answer carries it into the engine (`CardAnswer`, Task 1), so that a round that the tap resumes never cancels a command that the owner started after his tap.
+- **Every input of the owner's on the screen, on a card or on the notification is his act of its moment.** Plan 7D's `ScreenTurns` decides who acts on the screen by the numbers of the owner's inputs: a goal's round asks an instant command to let go only for an input that came after the command started, and otherwise waits until it has ended (amendment of 2026-11-26; Task 2 is obsolete). So a typed input and a button on the screen's copy of a card take their number as they arrive (Task 4), a button of the goal notification does (plan 7E), and a tap on the card over the app does too: the card desk takes it as the tap reaches it, and the answer carries it into the engine (`CardAnswer`, Task 1), so that a round that the tap resumes never cancels a command that the owner started after his tap; a tap on a hand-over's Continue carries its number to the round in the same way (`HandOverAnswer`).
 - **The bar's goal progress is this plan's, and the bar has one writer.** Design 10.5's "Step 12 · 3 of 7 · Replying to Mila" and "On hold: say 'Kestrel, continue' or open Kestrel." are in no earlier plan; `GoalBar` gives them for both channels from the conversation's view, and plan 7D's `OwnedBar`, which the app graph builds and gives to listening, the text channel and the owner's parts, shows them as `BarOwner.Progress` only while no kept text (a question, a hand-over's sentence) holds the bar and no other text showed in the last 4 s.
 - **The speech of typed replies with listening off.** With "Speak replies to typed commands" on and Kestrel off, the voice channel speaks a typed conversation's words with `AppOffVoice`, which loads the owner's voice for the reply inside plan 7E's `GoalForeground.whileSpeaking` and closes it 30 s after the last reply.
 - **Deleting past conversations.** One past conversation is deleted from the list or its transcript after a question; "Delete all past conversations" deletes every closed conversation, also one in a format that this version cannot read, in one transaction of the archive's own (`RecordArchive.deleteClosed`, which plan 7C's table carries out) with the index without them, keeps the logs and the archive's key, unlike "delete history", and reads no body (`ConversationStore.deleteClosed(keep)` to `ConversationEngine.deleteAllPast`); it raises the store's generation first, as "delete history" does, and while the index cannot be read it deletes nothing and says so. One conversation's deletion is checked by the engine's loop, which refuses to delete the open conversation or the one that a running switch opens, and done by its writer after the writes before it; "Delete all" keeps every conversation that is open at some moment between the owner's ask and its transaction (review M1), waits at the engine's writer's barrier for the writes queued before it, and then runs beside the engine's inbox and writer, never in them, because the store may wait minutes for its index (review N2); the store keeps the open conversation, which its index never holds. So a conversation that the owner continued meanwhile is kept either way, and the page shows "Deleting past conversations…" until the outcome comes back, which it reads out.
@@ -76,7 +76,7 @@ These are this plan's readings of the design where it leaves a choice open. The 
 Plans 7D and 7E are built and on `main` at `284eb0ec`. This amendment makes Tasks 1 to 15 apply to that code and follow plan 7D's "Changes to the design" and "Interfaces for 7E and 7F" and plan 7E's amendments and "Interfaces for 7F and 7G" as built. Each change:
 
 - **The base.** "Before you start" names `284eb0ec`, its `Select-String` checks five more of plan 7D's and 7E's names (23 matches), and it gives the measured base counts: A₀ = 717, C₀ = 293, G₀ = 315, S₀ = 101, P₀ = 94, AD₀ = 469, PD₀ = 35. The plan checker runs clean from Task 1 against `284eb0ec` alone, and from Tasks 4, 8 and 11 on the earlier tasks' simulated files.
-- **Task 1: a tap on the card over the app keeps its own number** (the controller's decision of 2026-11-26). The card desk takes the tap's `InputIds` number as the tap arrives (`CardTap`), the channels return it with the answer (`CardAnswer`, the new return of `OwnerChannel.ask`), and `ConversationOwner.reply`, `ContinueAnswered.tap`, `ResumeGoal.tap` and `OwnerAct.tap` carry it into `RunningGoal.actedFor`; the engine's `inputIds` goes. `ConversationEngineTest`'s case of the card's yes is rewritten, test first, so that a command that the owner started after his tap is not cancelled by the round.
+- **Task 1: a tap on the card over the app keeps its own number** (the controller's decision of 2026-11-26). The card desk takes the tap's `InputIds` number as the tap arrives (`CardTap`), the channels return it with the answer (`CardAnswer`, the new return of `OwnerChannel.ask`), and `ConversationOwner.reply`, `ContinueAnswered.tap`, `ResumeGoal.tap` and `OwnerAct.tap` carry it into `RunningGoal.actedFor`; the engine's `inputIds` goes. `ConversationEngineTest`'s case of the card's yes is rewritten, test first, so that a command that the owner started after his tap is not cancelled by the round. A Continue or Cancel tapped on a hand-over's card is an owner input too (the controller's decision on item 38): `OwnerChannel.handOver` returns `HandOverAnswer(end, act)`, and `ConversationOwner` gives the act to the running round (`acted`) before the hand-over returns; `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` is new and fails first (C₀ + 1).
 - **Task 1: `QuestionCard`'s number field** is `entered`; as `display` it was hidden by `View.display` inside `apply` and did not compile (found by the rebuild check).
 - **Task 2 is obsolete.** Plan 7D's `ScreenTurns` already has the final rule (`take(after, waiting)`: cancel only for a newer input of the owner's, otherwise wait), so the task keeps its heading without steps, and its counts, file row and interfaces go.
 - **Task 3** meets the engine fixture without `{ ++inputs }`, and the held goal's new sentence moves to Task 8.
@@ -88,8 +88,8 @@ Plans 7D and 7E are built and on `main` at `284eb0ec`. This amendment makes Task
 - **Task 13a** meets Task 1's desk (`inputIds`, `CardTap`), and the hook's press takes its number at the press, as the owner's tap does.
 - **Task 14** is written for a delegated agent, as plan 7E's Task 8: step helpers, `Get-OwnerDataState` and `Compare-OwnerData` before and after every step, the stand-in round set and checked before anything typed reaches a round, a stop and a report at the first failure, the headless emulator and the exact name (`Test-KestrelAvdAnswer`), `Connect-AccessibilityService` to put the accessibility setting back, the typed start's audio focus, and no `--live`.
 - **Task 15** waits for the owner with plan 7E's Task 9 safeguards: the A71 helpers, its data checks, the stand-in before typing, listening off throughout, the shade's rule, and a put-back step that runs whatever ended the task.
-- **The counts.** `:app` JVM A₀ + 60 (777), device AD₀ + 31 (500), `:core:conversation` C₀ + 7 (300), `:core:agent` G₀ (315), `:core:screen` S₀ (101), `:core:privacy` P₀ + 1 (95) and PD₀ + 1 (36), as the rebuild check measured them.
-- **Decisions** 7, 8, 28 and 34 follow these changes; 36 to 40 are new.
+- **The counts.** `:app` JVM A₀ + 60 (777), device AD₀ + 31 (500), `:core:conversation` C₀ + 8 (301), `:core:agent` G₀ (315), `:core:screen` S₀ (101), `:core:privacy` P₀ + 1 (95) and PD₀ + 1 (36), as the rebuild check measured them.
+- **Decisions** 7, 8, 28 and 34 follow these changes; 36 to 40 are new, and 38 (a hand-over's Continue on the card) and 39 are settled by the controller.
 ## File structure
 
 | File | Responsibility |
@@ -708,7 +708,7 @@ Design 10.3 of sub-project 7: `QuestionCard` in `:core:screen`'s `overlay` packa
 
 Plan 7D's interfaces ask for one card per question number, whichever channel asks it. `CardDesk` in `:app` is the card's one owner: every channel that asks question N joins one card, drawn with the choices of the caller that has the most (the voice's screenshot card `[Yes, No]` and the text channel's `[Yes, No, Reply…]` are one card with "Reply…"), and each caller gets the tapped `CardChoice`. A caller whose card lacks the tapped choice (the voice and "Reply…") keeps waiting. The desk shows its card on the overlay while the conversation screen is not in front, and gives it to the screen otherwise (Task 7). A card's Continue that the owner taps while the phone is locked waits for his unlock, as the goal notification's Continue does (plan 7E). The voice channel's confirmation and screenshot cards move onto the desk now; the text channel joins it in Task 4.
 
-A tap on the card over the app is the owner's act of its moment, as a spoken or typed input and a button of the goal notification are (plan 7E's `GoalActionReceiver`): the desk takes its number among his inputs (`InputIds.next`) when the tap reaches it, before any caller's coroutine runs, and every caller that the tap answers gets that one number (`CardTap`). The channels give it to the conversation with the answer (`CardAnswer`, the new return of `OwnerChannel.ask`), and the engine lets the round that a yes on "Continue the goal?" resumes act for that number (plan 7D's `RunningGoal.actedFor`). Before, a tap came without a number, and the engine took the next one when its loop handled the answer (`ConversationEngine`'s `inputIds`): an instant command that the owner started after his tap, before the loop, was then older than the round's act, so the round cancelled it (`ScreenTurns.take`, `after > since`). Now the round waits for it, as plan 7D's rule says for an act that came before the command. Every act of the owner's now comes with its number, so the engine numbers nothing itself, and its `inputIds` goes.
+A tap on the card over the app is the owner's act of its moment, as a spoken or typed input and a button of the goal notification are (plan 7E's `GoalActionReceiver`): the desk takes its number among his inputs (`InputIds.next`) when the tap reaches it, before any caller's coroutine runs, and every caller that the tap answers gets that one number (`CardTap`). The channels give it to the conversation with the answer (`CardAnswer`, the new return of `OwnerChannel.ask`), and the engine lets the round that a yes on "Continue the goal?" resumes act for that number (plan 7D's `RunningGoal.actedFor`). Before, a tap came without a number, and the engine took the next one when its loop handled the answer (`ConversationEngine`'s `inputIds`): an instant command that the owner started after his tap, before the loop, was then older than the round's act, so the round cancelled it (`ScreenTurns.take`, `after > since`). Now the round waits for it, as plan 7D's rule says for an act that came before the command. A tap on the Continue or Cancel of a hand-over's card (or a permission request's) is an act of the owner's in the same way, as a spoken "Kestrel, continue" is (plan 7D's `EndHandOver(…, act)`): the channel's hand-over returns its end with the tap's number (`HandOverAnswer`, the new return of `OwnerChannel.handOver`), and `ConversationOwner` gives the number to the running round (`acted`, which the engine points at `RunningGoal.actedFor`) before the hand-over returns to it, so that the round's next screen turn names it: it may cancel an instant command that the owner started before his tap, and waits for one that he started after it. Before, such a Continue gave the round no act, and the round waited for every command. Every act of the owner's now comes with its number, so the engine numbers nothing itself, and its `inputIds` goes.
 
 **Files:**
 - Create: `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/CardQuestion.kt`, `core/screen/src/main/kotlin/dev/kestrel/screen/overlay/QuestionCard.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/OwnerCard.kt`, `app/src/main/kotlin/dev/kestrel/app/conversation/CardDesk.kt`, `app/src/main/res/values/strings_card.xml`
@@ -718,9 +718,9 @@ A tap on the card over the app is the owner's act of its moment, as a spoken or 
 
 **Interfaces:**
 - Consumes: plan 7B's `ChannelQuestion(number, text, kind, spoken, choices, confirmation, highest)` (its choices and its highest number filled by Task A1), `QuestionKind`, `ChannelAnswer`, `OwnerChannel`, `ConversationOwner`, `ConversationEvent.ContinueAnswered`, `GoalRules.continueAnswered` and `resume`, `ConversationEffect.ResumeGoal` and `OwnerAct`; Task A1's `OwnerPort.MAX_CHOICES`; plan 7D's `OwnerScreen`, `AndroidOwnerSupport`, `VoiceChannel`, `InputIds.next()`, `RunningGoal.actedFor` and the engine's `inputIds`, which this task removes.
-- Produces: `:core:screen`'s `data class CardQuestion(key: Int, text: String, buttons: List<String>, pad: NumberPad? = null)`, `data class NumberPad(delete: String, enter: String, move: String, highest: Int = 0)` with `takes(value)`, `sealed interface CardEnd { Tapped(button: Int); Number(value: Int); Withdrawn }`, `CARD_TITLE = "Kestrel question"` and `CARD_ARMING_MILLIS = 600L` and `suspend fun ScreenSession.ask(question: CardQuestion): CardEnd` (in place of `confirm(question: String): Boolean`); `:app`'s `internal sealed interface CardChoice` (`Yes`, `No`, `Confirm`, `Cancel`, `Continue`, `Stop`, `Reply`, `Pick(number)`, each with `answer: ChannelAnswer?` and `label: Int?`), `internal data class OwnerCard(key, text, choices, picks, question, kind, numberPad, highest)` with `answersOnScreen` and `takes(choice)`, `OwnerCard.of(question: ChannelQuestion, reply: Boolean)` and `OwnerCard.handOver(key: Int, text: String)`; `internal data class CardTap(choice: CardChoice, act: Long)`; `internal interface OwnerCards { suspend fun ask(card: OwnerCard, onReply: () -> Unit = {}): CardTap }`; `internal class CardDesk(screen: OwnerScreen, scope: CoroutineScope, replyOpenMillis: Long = REPLY_OPEN_MILLIS, inputIds: () -> Long = InputIds::next) : OwnerCards` with `open: StateFlow<OwnerCard?>`, `screenInFront(inFront: Boolean)` and `REPLY_OPEN_MILLIS = 5_000L`; `OwnerScreen.card(card: OwnerCard): CardChoice?` (in place of `card(question: String): Boolean?`) and `OwnerScreen.locked(): Boolean`; `VoiceChannel(voice, screen, cards: OwnerCards, audio, handOvers, permissions, audioSettleMillis)`; `AppGraph.cardDesk: CardDesk`; `:core:conversation`'s `data class CardAnswer(answer: ChannelAnswer, act: Long)` (package `dev.kestrel.conversation.channel`) and `OwnerChannel.ask(question): CardAnswer` (in place of `ChannelAnswer`), `data class OwnerReply(answer: ChannelAnswer, tap: Long?)` and `ConversationOwner.reply(text, kind): OwnerReply`, `ConversationEvent.ContinueAnswered(answer, tap: Long? = null)`, `ConversationEffect.ResumeGoal(command, cause, steer, input, tap: Long? = null)`, `OwnerAct(input, tap: Long? = null)` with `number: Long?`, `GoalRules.continueAnswered(state, answer, tap, now)` and `resume(state, goal, input, steer, now, tap = null)`, `FakeChannel.taps: () -> Long`; the engine's constructor without `inputIds`.
+- Produces: `:core:screen`'s `data class CardQuestion(key: Int, text: String, buttons: List<String>, pad: NumberPad? = null)`, `data class NumberPad(delete: String, enter: String, move: String, highest: Int = 0)` with `takes(value)`, `sealed interface CardEnd { Tapped(button: Int); Number(value: Int); Withdrawn }`, `CARD_TITLE = "Kestrel question"` and `CARD_ARMING_MILLIS = 600L` and `suspend fun ScreenSession.ask(question: CardQuestion): CardEnd` (in place of `confirm(question: String): Boolean`); `:app`'s `internal sealed interface CardChoice` (`Yes`, `No`, `Confirm`, `Cancel`, `Continue`, `Stop`, `Reply`, `Pick(number)`, each with `answer: ChannelAnswer?` and `label: Int?`), `internal data class OwnerCard(key, text, choices, picks, question, kind, numberPad, highest)` with `answersOnScreen` and `takes(choice)`, `OwnerCard.of(question: ChannelQuestion, reply: Boolean)` and `OwnerCard.handOver(key: Int, text: String)`; `internal data class CardTap(choice: CardChoice, act: Long)`; `internal interface OwnerCards { suspend fun ask(card: OwnerCard, onReply: () -> Unit = {}): CardTap }`; `internal class CardDesk(screen: OwnerScreen, scope: CoroutineScope, replyOpenMillis: Long = REPLY_OPEN_MILLIS, inputIds: () -> Long = InputIds::next) : OwnerCards` with `open: StateFlow<OwnerCard?>`, `screenInFront(inFront: Boolean)` and `REPLY_OPEN_MILLIS = 5_000L`; `OwnerScreen.card(card: OwnerCard): CardChoice?` (in place of `card(question: String): Boolean?`) and `OwnerScreen.locked(): Boolean`; `VoiceChannel(voice, screen, cards: OwnerCards, audio, handOvers, permissions, audioSettleMillis)`; `AppGraph.cardDesk: CardDesk`; `:core:conversation`'s `data class CardAnswer(answer: ChannelAnswer, act: Long)` (package `dev.kestrel.conversation.channel`) and `OwnerChannel.ask(question): CardAnswer` (in place of `ChannelAnswer`), `data class OwnerReply(answer: ChannelAnswer, tap: Long?)` and `ConversationOwner.reply(text, kind): OwnerReply`, `ConversationEvent.ContinueAnswered(answer, tap: Long? = null)`, `ConversationEffect.ResumeGoal(command, cause, steer, input, tap: Long? = null)`, `OwnerAct(input, tap: Long? = null)` with `number: Long?`, `data class HandOverAnswer(end: HandOverEnd, act: Long?)` and `OwnerChannel.handOver(handOver): HandOverAnswer` (in place of `HandOverEnd`), `ConversationOwner(channels, permissions, voiceOn, routing, acted: (Long) -> Unit = {}, events)`, the engine's `running` read by `acted` (`@Volatile`), `GoalRules.continueAnswered(state, answer, tap, now)` and `resume(state, goal, input, steer, now, tap = null)`, `FakeChannel.taps: () -> Long`; the engine's constructor without `inputIds`.
 
-Counts: `:app` JVM A₀ + 10 (`OwnerCardTest` 3, `CardDeskTest` 6, `VoiceChannelTest` + 1). `:core:conversation` C₀, unchanged (`ConversationEngineTest`'s case of the card's yes is rewritten for the tap's own number). `:core:screen` S₀, unchanged. Device tests AD₀ + 2 (`QuestionCardTest` 6 in place of `ConfirmationCardTest`'s 4).
+Counts: `:app` JVM A₀ + 10 (`OwnerCardTest` 3, `CardDeskTest` 6, `VoiceChannelTest` + 1). `:core:conversation` C₀ + 1 (`ConversationEngineTest`: its case of the card's yes is rewritten for the tap's own number, and `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` is new). `:core:screen` S₀, unchanged. Device tests AD₀ + 2 (`QuestionCardTest` 6 in place of `ConfirmationCardTest`'s 4).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1104,6 +1104,33 @@ with:
         var card = CompletableDeferred<CardChoice?>()
         val cards = mutableListOf<OwnerCard>()
         private var taps = 0L
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, replace:
+
+```kotlin
+        assertEquals(HandOverEnd.DONE_BY_ITSELF, handing.await())
+```
+
+with:
+
+```kotlin
+        assertEquals(HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null), handing.await())
+```
+
+In `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, replace:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.QuestionKind
+```
+
+with:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
+import dev.kestrel.conversation.channel.QuestionKind
 ```
 
 In `app/src/test/kotlin/dev/kestrel/app/conversation/VoiceChannelTest.kt`, replace:
@@ -1564,6 +1591,61 @@ with:
             settings, testMode, voiceOn, clock, report, onStep = onStep,
 ```
 
+In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, add before its last closing brace:
+
+```kotlin
+
+    // Plan 7F: a Continue tapped on a hand-over's card is the owner's act of the moment of his tap, as a spoken "Kestrel,
+    // continue" is: the round that goes on names the tap's number at its next screen turn. So it may cancel an instant
+    // command that the owner started before his tap, and waits for one that he started after it (plan 7D's ScreenTurns:
+    // `after > since`).
+    @Test
+    fun aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber() = scope.runTest {
+        val environment = FakeGoalEnvironment(listOf(listSms, listSms, finish(1))).apply {
+            data.answer("list_sms", DataResult.NeedsAccess(AccessKind.NOTIFICATIONS), sms)
+        }
+        text.handOverEnds += HandOverEnd.CONTINUED
+        // A command that the owner started before his tap holds the screen since the newest number then.
+        var before = 0L
+        var tap = 0L
+        text.taps = {
+            before = inputs
+            (++inputs).also { tap = it }
+        }
+        val afters = mutableListOf<Long?>()
+        val engine = engine(environment, screen = FakeScreenTurn { after -> afters += after; false })
+        engine.restore()
+        val command = typed("Read my latest SMS")
+        engine.submit(command)
+        runCurrent()
+
+        assertEquals(1, text.handOvers.size)
+        assertEquals(listOf(command.id, tap), afters.filterNotNull())
+        val after = afters.filterNotNull().last()
+        // Newer than the command that started before the tap: the round may cancel it.
+        assertTrue(after > before)
+        // Not newer than one that starts after the tap, which holds the screen since the tap's number or a later one: the
+        // round waits for it.
+        assertFalse(after > tap)
+        assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
+    }
+```
+
+In `core/conversation/src/test/kotlin/dev/kestrel/conversation/engine/ConversationEngineTest.kt`, replace:
+
+```kotlin
+import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.PermissionEnd
+```
+
+with:
+
+```kotlin
+import dev.kestrel.agent.port.DataResult
+import dev.kestrel.agent.port.HandOverEnd
+import dev.kestrel.agent.port.PermissionEnd
+```
+
 Delete `app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`: `git rm -q app/src/androidTest/kotlin/dev/kestrel/app/screen/ConfirmationCardTest.kt`. Its four tests are `QuestionCardTest`'s first four.
 
 - [ ] **Step 2: Run the JVM tests to see them fail**
@@ -1572,7 +1654,7 @@ Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversa
 Expected: FAIL: the compiler does not know `OwnerCard`, `CardChoice`, `CardDesk`, `CardTap`, `CardAnswer`, `OwnerCards` and `OwnerScreen.locked`.
 
 Run: `scripts\gradle.ps1 :core:conversation:test --tests=dev.kestrel.conversation.engine.ConversationEngineTest`
-Expected: FAIL: the compiler does not know `FakeChannel.taps`, and the engine still takes `inputIds`.
+Expected: FAIL: the compiler does not know `FakeChannel.taps`, and the engine still takes `inputIds`. (Once it compiles, without Step 4's change of the hand-over, `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` fails: the round's turn after the hand-over names no act.)
 
 - [ ] **Step 3: The card in `:core:screen`**
 
@@ -2007,7 +2089,7 @@ with:
      * Whether the question card is on the screen (design D8 and D32 item 20 of sub-project 5): `AppScreenPort` waits
 ```
 
-- [ ] **Step 4: The tap's number reaches the engine**
+- [ ] **Step 4: The tap's number reaches the engine, from a question's card and from a hand-over's**
 
 In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/OwnerChannel.kt`, replace:
 
@@ -2483,8 +2565,243 @@ with:
             onStep = { event, state, step -> conversationSteps?.invoke(event, state, step) },
 ```
 
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/OwnerChannel.kt`, replace:
+
+```kotlin
+    /** A hand-over: returns when the owner continued or cancelled on the channel, or when it ended by itself. */
+    suspend fun handOver(handOver: HandOver): HandOverEnd
+```
+
+with:
+
+```kotlin
+    /**
+     * A hand-over: returns when the owner continued or cancelled on the channel, with the number of his tap on its card's
+     * button, or when it ended by itself.
+     */
+    suspend fun handOver(handOver: HandOver): HandOverAnswer
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/OwnerChannel.kt`, replace:
+
+```kotlin
+/**
+ * The owner's answer to a question of the conversation's own, and [tap], the number of his tap on its card when a card gave
+ * it; null when the answer came as an input, which has its own number (plan 7F).
+ */
+data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)
+```
+
+with:
+
+```kotlin
+/**
+ * The owner's answer to a question of the conversation's own, and [tap], the number of his tap on its card when a card gave
+ * it; null when the answer came as an input, which has its own number (plan 7F).
+ */
+data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)
+
+/**
+ * How a hand-over ended on a channel (design 10.3 of sub-project 7): [end], and [act], the number among the owner's inputs
+ * of his tap on the card's Continue or Cancel, which `:app` took as the tap reached Kestrel; null when the hand-over ended
+ * by itself. A Continue on the card is the owner's act of its moment, as a spoken "Kestrel, continue" is (plan 7F).
+ */
+data class HandOverAnswer(val end: HandOverEnd, val act: Long?)
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, replace:
+
+```kotlin
+ * conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the engine's [endHandOver]; after
+ * "Kestrel, continue" a permission request asks [permissions] whether Android granted them.
+ */
+class ConversationOwner(
+    private val channels: Map<InputChannel, OwnerChannel>,
+    private val permissions: (List<String>) -> PermissionEnd,
+    private val voiceOn: StateFlow<Boolean>,
+    private val routing: () -> Routing,
+    private val events: (DialogueEvent) -> Unit,
+```
+
+with:
+
+```kotlin
+ * conversation can ask "Continue the goal?" meanwhile; they end by the channel, or by the engine's [endHandOver]; after
+ * "Kestrel, continue" a permission request asks [permissions] whether Android granted them. A tap on the card of a
+ * hand-over or a permission request is the owner's act of its moment: [acted] gets its number before the round goes on,
+ * so that the round's next screen turn names it, as it names the input of a spoken "Kestrel, continue" (design 6.5; plan
+ * 7F).
+ */
+class ConversationOwner(
+    private val channels: Map<InputChannel, OwnerChannel>,
+    private val permissions: (List<String>) -> PermissionEnd,
+    private val voiceOn: StateFlow<Boolean>,
+    private val routing: () -> Routing,
+    private val acted: (Long) -> Unit = {},
+    private val events: (DialogueEvent) -> Unit,
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, replace:
+
+```kotlin
+    override suspend fun handOver(handOver: HandOver): HandOverEnd =
+        handedOver(handOver.kind, { it.handOver(handOver) }, { it.handOver(handOver) }) { it }
+
+    // Android's dialog is shown once, by the owner's channel. The card that a spoken conversation gets once Kestrel is off
+    // is a hand-over's card, whose Continue checks what Android granted, so the dialog never shows a second time.
+    override suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd {
+        val ended = { end: HandOverEnd -> if (end == HandOverEnd.CONTINUED) this.permissions(permissions) else PermissionEnd.REFUSED }
+        return handedOver(HandOverKind.PERMISSION, { it.askPermission(permissions, why) }, { ended(it.handOver(HandOver.of(HandOverKind.PERMISSION))) }, ended)
+    }
+```
+
+with:
+
+```kotlin
+    override suspend fun handOver(handOver: HandOver): HandOverEnd {
+        val answered = { answer: HandOverAnswer -> Ended(answer.end, answer.act) }
+        return handedOver(handOver.kind, { answered(it.handOver(handOver)) }, { answered(it.handOver(handOver)) }) { it }
+    }
+
+    // Android's dialog is shown once, by the owner's channel. The card that a spoken conversation gets once Kestrel is off
+    // is a hand-over's card, whose Continue checks what Android granted, so the dialog never shows a second time.
+    override suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd {
+        val ended = { end: HandOverEnd -> if (end == HandOverEnd.CONTINUED) this.permissions(permissions) else PermissionEnd.REFUSED }
+        return handedOver(
+            HandOverKind.PERMISSION,
+            { Ended(it.askPermission(permissions, why), act = null) },
+            { channel -> channel.handOver(HandOver.of(HandOverKind.PERMISSION)).let { Ended(ended(it.end), it.act) } },
+            ended,
+        )
+    }
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, replace:
+
+```kotlin
+    private suspend fun <T> handedOver(
+        kind: HandOverKind,
+        itself: suspend (OwnerChannel) -> T,
+        card: suspend (OwnerChannel) -> T,
+        ended: (HandOverEnd) -> T,
+    ): T = inTurnAfterPause {
+```
+
+with:
+
+```kotlin
+    /** How a hand-over or a permission request ended: its [value], and the number of the owner's tap that ended it ([act]). */
+    private class Ended<T>(val value: T, val act: Long?)
+
+    // The tap's number reaches the round before the hand-over returns to it, so that the round's next screen turn names it
+    // (plan 7F).
+    private suspend fun <T> handedOver(
+        kind: HandOverKind,
+        itself: suspend (OwnerChannel) -> Ended<T>,
+        card: suspend (OwnerChannel) -> Ended<T>,
+        ended: (HandOverEnd) -> T,
+    ): T {
+        val result = handedOverInTurn(kind, itself, card, ended)
+        result.act?.let(acted)
+        return result.value
+    }
+
+    private suspend fun <T> handedOverInTurn(
+        kind: HandOverKind,
+        itself: suspend (OwnerChannel) -> Ended<T>,
+        card: suspend (OwnerChannel) -> Ended<T>,
+        ended: (HandOverEnd) -> T,
+    ): Ended<T> = inTurnAfterPause {
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/channel/ConversationOwner.kt`, replace:
+
+```kotlin
+                select<T> {
+                    waiting.done.onAwait { ended(it) }
+```
+
+with:
+
+```kotlin
+                // The engine's end comes for an input, which named the round's act itself (`EndHandOver`), or by itself.
+                select<Ended<T>> {
+                    waiting.done.onAwait { Ended(ended(it), act = null) }
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+    private var recordsOf: ConversationId? = null
+    private var running: RunningGoal? = null
+```
+
+with:
+
+```kotlin
+    private var recordsOf: ConversationId? = null
+
+    // The owner's tap on a hand-over's card also reaches it, from the round's own coroutine, while the round runs (plan 7F).
+    @Volatile
+    private var running: RunningGoal? = null
+```
+
+In `core/conversation/src/main/kotlin/dev/kestrel/conversation/engine/ConversationEngine.kt`, replace:
+
+```kotlin
+    val owner = ConversationOwner(channels, permissions, voiceNow.asStateFlow(), { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) }) {
+```
+
+with:
+
+```kotlin
+    val owner = ConversationOwner(
+        channels,
+        permissions,
+        voiceNow.asStateFlow(),
+        { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) },
+        // Design 6.5: a tap on a hand-over's card lets the running round act now, as "Kestrel, continue" does (plan 7F).
+        acted = { act -> running?.actedFor(act) },
+    ) {
+```
+
+In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeChannel.kt`, replace:
+
+```kotlin
+    override suspend fun handOver(handOver: HandOver): HandOverEnd {
+        handOvers += handOver
+        return handOverEnds.removeFirstOrNull() ?: awaitCancellation()
+    }
+```
+
+with:
+
+```kotlin
+    // A queued end other than DONE_BY_ITSELF is the owner's tap on the card, which takes its number.
+    override suspend fun handOver(handOver: HandOver): HandOverAnswer {
+        handOvers += handOver
+        val end = handOverEnds.removeFirstOrNull() ?: awaitCancellation()
+        return HandOverAnswer(end, if (end == HandOverEnd.DONE_BY_ITSELF) null else taps())
+    }
+```
+
+In `core/conversation/src/testFixtures/kotlin/dev/kestrel/conversation/testing/FakeChannel.kt`, replace:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.OwnerChannel
+```
+
+with:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
+import dev.kestrel.conversation.channel.OwnerChannel
+```
+
 Run: `scripts\gradle.ps1 :core:conversation:test`
-Expected: BUILD SUCCESSFUL; `ConversationEngineTest.aYesOnTheCardOfContinueTheGoalNamesTheTapsOwnNumber` passes, and `:core:conversation` keeps C₀ tests.
+Expected: BUILD SUCCESSFUL; `ConversationEngineTest.aYesOnTheCardOfContinueTheGoalNamesTheTapsOwnNumber` and `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` pass, and `:core:conversation` has C₀ + 1 tests.
 
 - [ ] **Step 5: The card's buttons and the desk in `:app`, and the owner's parts**
 
@@ -2970,6 +3287,42 @@ with:
 In `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, replace:
 
 ```kotlin
+    override suspend fun handOver(handOver: HandOver): HandOverEnd = try {
+        voice.handOver(handOver.text)
+        handOvers.opened(handOver.kind)
+        handOvers.endedByItself(handOver.kind)
+        HandOverEnd.DONE_BY_ITSELF
+```
+
+with:
+
+```kotlin
+    // The voice's hand-over has no button: the owner's "Kestrel, continue" reaches the conversation as an input.
+    override suspend fun handOver(handOver: HandOver): HandOverAnswer = try {
+        voice.handOver(handOver.text)
+        handOvers.opened(handOver.kind)
+        handOvers.endedByItself(handOver.kind)
+        HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null)
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, replace:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.OwnerChannel
+```
+
+with:
+
+```kotlin
+import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
+import dev.kestrel.conversation.channel.OwnerChannel
+```
+
+In `app/src/main/kotlin/dev/kestrel/app/conversation/VoiceChannel.kt`, replace:
+
+```kotlin
 import dev.kestrel.app.listen.VoicePath
 import dev.kestrel.conversation.channel.ChannelOutput
 ```
@@ -3065,7 +3418,7 @@ Run: `scripts\gradle.ps1 :app:testDebugUnitTest --tests=dev.kestrel.app.conversa
 Expected: BUILD SUCCESSFUL; `OwnerCardTest` 3, `CardDeskTest` 6 and `VoiceChannelTest` 10 tests pass (plan 7D leaves 9).
 
 Run: `scripts\gradle.ps1 :core:screen:testDebugUnitTest :core:conversation:test :app:testDebugUnitTest :app:assembleDebugAndroidTest; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL. Count the results as "Before you start" says: `:app` JVM A₀ + 10, `:core:conversation` C₀, `:core:screen` S₀. The device tests compile; they run in Task 14.
+Expected: BUILD SUCCESSFUL. Count the results as "Before you start" says: `:app` JVM A₀ + 10, `:core:conversation` C₀ + 1, `:core:screen` S₀. The device tests compile; they run in Task 14.
 
 Run: `git grep -n "inputIds" -- core/conversation/src/main app/src/main`
 Expected: no output: the engine numbers no act of the owner's itself.
@@ -3100,7 +3453,7 @@ Design 9.5 of sub-project 7: a past conversation can be deleted, or all of them,
 - Consumes: plan 7B's index store (Tasks 5a to 5d): `ConversationStore` (`delete(id)`, `generation`, `searchable()`, `list()`), `Searchable` (`Ready(past, open)`, `Rebuilding`, `Failed`), `PastUnavailableException`, `PastIndex` (`conversations`, `kept`, `searches`, `without(ids)`), `ArchivedConversationStore` (its `withIndex` with a suspend block, `change` and `deleted`), `HistorySearch`, `HistoryRanking.rank` and `wanted`, the fixtures' `MemoryArchive` (`calls`, `failures`, `keyErased`, `readShardsGate`, `changing`), `RecordArchive` (`purge`, `deleteAll`); plan 7C's archive as fixed in `ae33cfda`: `ConversationDao` (`purge`, `change`, `deleteClosedOutside`), `ConversationArchiveStore` (`purge`, `key.storing`, `encrypted`) and `RoomRecordArchive` (`purge`, `plain()`); plan 7B's `ConversationEngine` as fixed in `25cdca0a` and `e76ad7a6` (its `Message` inbox, its writer's `Write`s and the barrier `stored()`, `switchTo` and `reopened`, and `startTimer` with its deadline on `clock.sinceBootMillis()`) and `Timer`; plan 7D's `AppGraph.conversations` and `conversationSteps`.
 - Produces: `RecordArchive.deleteClosed(keep: Collection<String>, index: IndexWrite): Int`, `ConversationDao.deleteClosed(keep: List<String>, index: IndexRowUpdate): Int`, `ConversationArchiveStore.deleteClosed(keep: Collection<String>, index: IndexUpdate): Int`, `RoomRecordArchive.deleteClosed` and `MemoryArchive.deleteClosed`; `ConversationStore.deleteClosed(keep: () -> Set<ConversationId>): Int`; `sealed interface PastMatches { All; Only(ids: Set<ConversationId>); Rebuilding; Failed }` and `HistorySearch.matching(text: String): PastMatches` (package `dev.kestrel.conversation.store`); `ConversationEngine.deletePast(id: ConversationId): PastDeletion` and `deleteAllPast(): PastDeletion`; `enum class PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED }` (package `dev.kestrel.conversation.engine`); the engine constructor's last parameter `timerMillis: (Timer, Long) -> Long = { _, millis -> millis }`; `AppGraph.conversationTimers: ((Timer, Long) -> Long)?`.
 
-Counts: `:core:conversation` C₀ + 7 (`ArchivedConversationStoreTest` + 1, `HistorySearchTest` + 1, `ConversationEngineTest` + 5), where C₀ is the count before Task 1 ("Before you start"; Tasks 1 and 2 add none there). `:core:privacy` JVM P₀ + 1 (`ConversationArchiveStoreTest` + 1) and device tests PD₀ + 1 (`KestrelDatabaseTest` + 1). `:app` JVM unchanged; `:app` device tests AD₂ + 1 (`RoomRecordArchiveTest` + 1), where AD₂ is the count after Task 2.
+Counts: `:core:conversation` C₁ + 7 (`ArchivedConversationStoreTest` + 1, `HistorySearchTest` + 1, `ConversationEngineTest` + 5), where C₁ = C₀ + 1 is the count after Task 1 (Task 2 adds none). `:core:privacy` JVM P₀ + 1 (`ConversationArchiveStoreTest` + 1) and device tests PD₀ + 1 (`KestrelDatabaseTest` + 1). `:app` JVM unchanged; `:app` device tests AD₂ + 1 (`RoomRecordArchiveTest` + 1), where AD₂ is the count after Task 2.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4139,7 +4492,7 @@ Run: `scripts\gradle.ps1 :core:privacy:testDebugUnitTest --tests=dev.kestrel.pri
 Expected: BUILD SUCCESSFUL; the new test passes.
 
 Run: `scripts\gradle.ps1 :core:conversation:test :core:privacy:testDebugUnitTest :app:testDebugUnitTest :core:privacy:assembleDebugAndroidTest :app:assembleDebugAndroidTest; scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `:core:conversation` C₀ + 7, `:core:privacy` JVM P₀ + 1, `:app` JVM unchanged. The device tests compile; `KestrelDatabaseTest` and `RoomRecordArchiveTest` run in Task 14.
+Expected: BUILD SUCCESSFUL; `:core:conversation` C₁ + 7, `:core:privacy` JVM P₀ + 1, `:app` JVM unchanged. The device tests compile; `KestrelDatabaseTest` and `RoomRecordArchiveTest` run in Task 14.
 
 - [ ] **Step 7: Commit**
 
@@ -4163,7 +4516,7 @@ A button on the screen's copy of a card is the owner's input, as his typed words
 
 **Interfaces:**
 - Consumes: Task 1's `OwnerCard`, `CardChoice`, `CardTap`, `CardAnswer`, `CardDesk` (`ask`, `open`, `screenInFront`) and `OwnerScreen`; plan 7D's `OwnedBar`, `HandOverSignals`, `PermissionDialog`, `InputIds.next()`, `Requests.typed(text)`, `Request.Other`, `VoiceAnswers.read(kind, text, named, request)`; plan 7B's `ConversationView` (`asking`, `question`), `OwnerChannel`, `ChannelOutput`, `ChannelQuestion`, `QuestionKind`, `ChannelAnswer` (`Text(text)` since `693f3dde`), `OwnerInput`, `InputIntent` (`Answer(answer, question)` since Task A2), `InputChannel`; plan 7A's `OwnerPort.KESTREL_LEAVE_MILLIS`, `HandOverEnd`, `PermissionEnd`.
-- Produces: `internal object TypedInputs { fun read(text: String, view: ConversationView): InputIntent? }`; `internal interface TypedConversation { fun view(): ConversationView; fun submit(input: OwnerInput); fun replyOpened(question: Int); fun composing(active: Boolean) }`; `internal fun interface ReplyScreen { fun open(question: Int) }`; `internal class TextChannel(bar: OwnedBar, screen: OwnerScreen, cards: CardDesk, handOvers: HandOverSignals, permissions: PermissionDialog, replies: ReplyScreen, conversation: TypedConversation, clock: () -> Long = System::currentTimeMillis) : OwnerChannel` with `sent: SharedFlow<InputIntent>`, `choose(key: Int, choice: CardChoice)`, `read(text: String): OwnerInput?`, `input(intent: InputIntent): OwnerInput`, `submit(input: OwnerInput)`, `composing(active: Boolean)`; `internal suspend fun OwnerScreen.awaitKestrelLeft(): Boolean` and `KESTREL_POLL_MILLIS` (moved from `VoiceChannel`).
+- Produces: `internal object TypedInputs { fun read(text: String, view: ConversationView): InputIntent? }`; `internal interface TypedConversation { fun view(): ConversationView; fun submit(input: OwnerInput); fun replyOpened(question: Int); fun composing(active: Boolean) }`; `internal fun interface ReplyScreen { fun open(question: Int) }`; `TextChannel.handOver` returns `HandOverAnswer` with the tap's number; `internal class TextChannel(bar: OwnedBar, screen: OwnerScreen, cards: CardDesk, handOvers: HandOverSignals, permissions: PermissionDialog, replies: ReplyScreen, conversation: TypedConversation, clock: () -> Long = System::currentTimeMillis) : OwnerChannel` with `sent: SharedFlow<InputIntent>`, `choose(key: Int, choice: CardChoice)`, `read(text: String): OwnerInput?`, `input(intent: InputIntent): OwnerInput`, `submit(input: OwnerInput)`, `composing(active: Boolean)`; `internal suspend fun OwnerScreen.awaitKestrelLeft(): Boolean` and `KESTREL_POLL_MILLIS` (moved from `VoiceChannel`).
 
 Counts: `:app` JVM A₂ + 13 (`TypedInputsTest` 4, `TextChannelTest` 9), where A₂ is the count after Task 2 (A₂ = A₁: Task 2 has no steps).
 
@@ -4244,6 +4597,7 @@ import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.ChannelAnswer
@@ -4385,12 +4739,15 @@ class TextChannelTest {
         assertNull(support.cards.single().question)
 
         support.endedByItself.complete(Unit)
-        assertEquals(HandOverEnd.DONE_BY_ITSELF, handing.await())
+        assertEquals(HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null), handing.await())
 
         val other = async { channel.handOver(HandOver.of(HandOverKind.PERMISSION)) }
         runCurrent()
         support.tap(CardChoice.Cancel)
-        assertEquals(HandOverEnd.CANCELLED, other.await())
+        // The tap on Cancel carries its number, which the desk took at the tap.
+        val cancelled = other.await()
+        assertEquals(HandOverEnd.CANCELLED, cancelled.end)
+        assertTrue(cancelled.act != null)
         assertFalse(support.cards[0].key == support.cards[1].key)
     }
 
@@ -4655,6 +5012,7 @@ import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
+import dev.kestrel.conversation.channel.HandOverAnswer
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.engine.ConversationView
 import dev.kestrel.conversation.model.InputChannel
@@ -4769,15 +5127,20 @@ internal class TextChannel(
         return CardAnswer(checkNotNull(tapped.choice.answer) { "Reply… is no answer" }, tapped.act)
     }
 
-    override suspend fun handOver(handOver: HandOver): HandOverEnd = coroutineScope {
+    // A tap on the card's Continue or Cancel carries the number that the desk took at the tap, so that the round that goes on
+    // names the owner's act of that moment (plan 7F).
+    override suspend fun handOver(handOver: HandOver): HandOverAnswer = coroutineScope {
         handOvers.opened(handOver.kind)
         val card = OwnerCard.handOver(-handOverKeys.incrementAndGet(), handOver.text)
         val byItself = async {
             handOvers.endedByItself(handOver.kind)
-            HandOverEnd.DONE_BY_ITSELF
+            HandOverAnswer(HandOverEnd.DONE_BY_ITSELF, act = null)
         }
-        val tapped = async { if (cards.ask(card).choice == CardChoice.Continue) HandOverEnd.CONTINUED else HandOverEnd.CANCELLED }
-        select<HandOverEnd> {
+        val tapped = async {
+            val tap = cards.ask(card)
+            HandOverAnswer(if (tap.choice == CardChoice.Continue) HandOverEnd.CONTINUED else HandOverEnd.CANCELLED, tap.act)
+        }
+        select<HandOverAnswer> {
             byItself.onAwait { it }
             tapped.onAwait { it }
         }.also { currentCoroutineContext().cancelChildren() }
@@ -11881,13 +12244,13 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7F": the build's commit on
 | `:core:conversation`, Tasks A1 and A2 | Cₐ | Cₐ + 2 | Task A1 (`ConversationOwnerTest` + 1), Task A2 (`ConversationMachineTest` + 1) |
 | `:app` JVM (with `app/src/testDebug`) | A₀ | A₀ + 60 | Task 1 + 10, Task 2 + 0 (no steps), Task 4 + 13, Task 5 + 8, Task 6 + 12, Task 8 + 1, Task 10 + 2, Task 11 + 4, Task 13 + 3, Task 13a + 7 |
 | `:app` device tests | AD₀ | AD₀ + 31 | Task 1 + 2 (`QuestionCardTest` 6 for `ConfirmationCardTest`'s 4), Task 3 + 1, Task 7 + 6, Task 8 + 4, Task 9 + 9, Task 10 + 2, Task 11 + 3, Task 12 + 3, Task 13 + 1 |
-| `:core:conversation`, Tasks 1 to 15 | C₀ | C₀ + 7 | Task 3 (Task 1 rewrites one `ConversationEngineTest` case and adds none) |
+| `:core:conversation`, Tasks 1 to 15 | C₀ | C₀ + 8 | Task 1 + 1 (`ConversationEngineTest`: the hand-over card's Continue; its case of the card's yes is rewritten), Task 3 + 7 |
 | `:core:agent`, Tasks 1 to 15 | G₀ | G₀ | none |
 | `:core:screen` JVM | S₀ | S₀ | none |
 | `:core:privacy` JVM and device tests | P₀, PD₀ | P₀ + 1, PD₀ + 1 | Task 3 (`ConversationArchiveStoreTest` + 1, `KestrelDatabaseTest` + 1); Task 14 runs the device tests |
 | `:tools:eval`, `build-logic`, Pester | E₀, … | unchanged | none |
 
-At `284eb0ec` (the amendment of 2026-11-26) the base is A₀ = 717, C₀ = 293, G₀ = 315, S₀ = 101, P₀ = 94, AD₀ = 469 and PD₀ = 35, so the end is `:app` JVM 777, device 500, `:core:conversation` 300, `:core:agent` 315, `:core:screen` 101, `:core:privacy` JVM 95 and device 36; the amendment's rebuild check, with every task's code applied, measured exactly these.
+At `284eb0ec` (the amendment of 2026-11-26) the base is A₀ = 717, C₀ = 293, G₀ = 315, S₀ = 101, P₀ = 94, AD₀ = 469 and PD₀ = 35, so the end is `:app` JVM 777, device 500, `:core:conversation` 301, `:core:agent` 315, `:core:screen` 101, `:core:privacy` JVM 95 and device 36; the amendment's rebuild check, with every task's code applied, measured exactly these.
 
 ## Interfaces for 7G
 
@@ -11909,7 +12272,7 @@ Plan 7G (the hooks' script entries, `:tools:eval`'s turns, typed answers and the
 - **The goal service for the screen:** `GoalForeground.foreground: StateFlow<ForegroundState>` (`goal`, `running`, `settled`).
 - **The held goal's sentence after Android's refusal:** `ConversationTexts.OPEN_AND_CONTINUE` ("Open Kestrel and tap Continue.") in place of `CONTINUE_IN_NOTIFICATION`, since Task 8.
 - **The goal on the screen:** `GoalControls.Working(behindCommand)`: while plan 7E's `ConversationView.waitsBehindCommand` is set, the screen shows `GoalTexts.BEHIND_COMMAND` ("Waiting for your command to finish") above Stop.
-- **Instant commands and rounds:** plan 7D's `ScreenTurns` as built, unchanged by this plan (Task 2 is obsolete). Every act of the owner's reaches the conversation with its number among his inputs, taken as it arrives: a typed input and a button of the screen's copy of a card (`TextChannel.input`), a tap on the card over the app (`CardTap.act`, which `CardAnswer.act`, `OwnerReply.tap`, `ConversationEvent.ContinueAnswered.tap`, `ConversationEffect.ResumeGoal.tap` and `OwnerAct.tap` carry into `RunningGoal.actedFor`), and a button of the goal notification (plan 7E); the engine has no `inputIds` and numbers nothing itself. A hand-over's Continue on the card ends the hand-over through its channel and gives the round no act (`RunningGoal.actedFor` keeps the act that started or resumed the goal; see "Decisions for the controller", item 38).
+- **Instant commands and rounds:** plan 7D's `ScreenTurns` as built, unchanged by this plan (Task 2 is obsolete). Every act of the owner's reaches the conversation with its number among his inputs, taken as it arrives: a typed input and a button of the screen's copy of a card (`TextChannel.input`), a tap on the card over the app (`CardTap.act`, which `CardAnswer.act`, `OwnerReply.tap`, `ConversationEvent.ContinueAnswered.tap`, `ConversationEffect.ResumeGoal.tap` and `OwnerAct.tap` carry into `RunningGoal.actedFor`), and a button of the goal notification (plan 7E); the engine has no `inputIds` and numbers nothing itself. A tap on a hand-over's (or a permission request's) card returns its number with the end (`HandOverAnswer.act`), which `ConversationOwner`'s `acted` gives to `RunningGoal.actedFor` before the hand-over returns to the round (item 38).
 
 ## Decisions for the controller
 
@@ -11952,8 +12315,8 @@ Each item is a reading of the design that the design leaves open, or a choice of
 35. **The keypad card arms again after Move** (decided, review L2), because a tap may have been aimed at what was under the card's new place.
 36. **A tap on the card over the app is the owner's act of its moment** (decided by the controller, 2026-11-26): the card desk takes its `InputIds` number as the tap arrives in `:app`, as plan 7E's notification buttons do, and the answer carries it into the engine (`CardAnswer`, `OwnerReply`, `ContinueAnswered.tap`, `ResumeGoal.tap`, `OwnerAct.tap`; Task 1), so that a command that the owner started between his tap and the engine's loop is never cancelled by the round that the tap resumes. The engine's `inputIds` goes, because no act of the owner's comes without its number any more.
 37. **Typed words are read by plan 7D's typed reading, and their answers name their question** (decided by the controller, 2026-11-26): `TypedInputs` reads with `Requests.typed` (the exact name only; "never mind", "nothing", "forget it" and "turn off" stay the owner's words) and gives `InputIntent.Answer(answer, question)` with the view's open question (Task 4).
-38. **A hand-over's Continue on the card gives the round no act.** The card's Continue ends the hand-over through the text channel (`HandOverEnd.CONTINUED`), not as an input, so the round that goes on takes the screen's turn for the act that started or resumed the goal, and waits for an instant command that the owner started during the hand-over instead of cancelling it, whereas a spoken or typed "Kestrel, continue" lets the round cancel one that he started before it (plan 7D's `EndHandOver(…, act)`). The safe side is kept: no command of his is cancelled by a card's Continue. Recommendation: accept for this plan, and give the hand-over's card the tap's number in the same way as item 36 when the controller wants the two Continues to act alike (it changes `OwnerChannel.handOver`'s return and plan 7B's hand-over end, and needs a decision of its own).
-39. **The eval dry suite of Task 14 runs without plan 7D's stand-in round**, because the stand-in replaces every round and the suite's tasks need their own scripted rounds; `scripts\eval.ps1 suite` without `--live` gives every input its scripted model and checks the accounts and the profile itself, as at plan 7D's gate, and listening is on only for the suite. Recommendation: accept; every other step that can start a round sets the stand-in first.
+38. **A hand-over's Continue on the card is an owner input** (settled by the controller, 2026-11-26: one rule for every act of the owner's): the card desk takes the tap's `InputIds` number at the tap, the channel's hand-over returns it with its end (`HandOverAnswer`), and `ConversationOwner` gives it to the running round (`acted`) before the hand-over returns, as the spoken `Kestrel, continue` gives its input's number (`EndHandOver(…, act)`). So the round may cancel an instant command that the owner started before his tap, and waits for one that he started after it (Task 1, `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber`). The same holds for the card of a permission request.
+39. **The eval dry suite of Task 14 runs without plan 7D's stand-in round** (accepted by the controller, 2026-11-26), because the stand-in replaces every round and the suite's tasks need their own scripted rounds; `scripts\eval.ps1 suite` without `--live` gives every input its scripted model and checks the accounts and the profile itself, as at plan 7D's gate, and listening is on only for the suite. Recommendation: accept; every other step that can start a round sets the stand-in first.
 40. **The screen says when the goal waits behind the owner's command** with plan 7E's notification words, "Waiting for your command to finish", above Stop (Tasks 6 and 7). Recommendation: accept.
 
 ## Self-review
@@ -11961,6 +12324,6 @@ Each item is a reading of the design that the design leaves open, or a choice of
 - **Review findings.** C1 (no `leftScreen` on answers; screen buttons as inputs): Tasks 4 and 7. C2 and C3 (the list's search and deleting all on the index): Task 3. S1 and S2: Tasks 1, 4 and 7. S3 (the copy's arming): Task 7. S4 (dialogs and menus guarded): Tasks 7, 11 and 12. S5 (no queued tap; the hook refuses what only the overlay answers): Tasks 4 and 13. A1 to A3 (service in the foreground, one reducer, a `ViewModel`): Tasks 5, 6 and 8. A5 (Enter sends, up to four lines): Task 7. A6 (`SetupState`): Task 8. T1 and T2: Tasks 8 to 11 and 13. E1 to E3 and G5: Tasks 13 to 15. G1: Task A1 and Task 1. G3 (one card per number): Task 1. G4: Task 9. GoalBar's one writer: Task 5. The pages' logic out of the Composables: Tasks 6 and 11. The re-review: N1 (a keypad's number within the pick's range): Tasks A1 and 1; N2 ("Delete all" beside the inbox): Tasks 3 and 12; N3 (no disarming during a configuration change): Task 8; N4 (the hooks mark only the conversations that they opened, and the checks send "do new" first): Tasks 13 to 15; N5 (Tasks A1 and A2 before plan 7B's Task 8, with their own checks): their section; N6 (the pages draw the open card): Task 11; low items a to d: Tasks 1, 5, A2 and 3; plan 7G's amendments with its review N1 and N2: Task 13a. The third review: R1 (the `async` import): Task 3; R2 (the checks stop by themselves when a conversation or goal is open after `do new`): Tasks 14 and 15; R3 (the press checks and answers under one lock): Task 13a; R4 (the engine works while "Delete all" waits for the index): Task 3; L1: Task 5; L2: Task 1; L3 (the press in debug code behind `OverlayCards`): Task 13a; the low risk (the owner's command takes a mark away): Task 13a.
 - **Design coverage.** D20 and 10.1: Tasks 7 and 8 (the screen, the launcher, the banner, Settings, New conversation, the microphone). 10.2 (leaving Kestrel's screen): Tasks 4, 5, 6 and 8. 10.3 and D21 (cards, "Reply…", waits, picks): Tasks A1, 1, 4 and 9. 10.4 (Stop, Continue, Cancel; a touch that interrupts): Tasks 6, 7 and 9. 10.5 (the bar): Task 5. 10.6 (the typed start of the service): Task 8 and Task 14's Step 8, and Task 15. 11 (speech rules, typed replies with listening off): Tasks 5 and 9. 12.2 and 12.3 (the typed-input boundary; confirmations only over the app): Tasks 1, 4, 7, 8 and 10, and Task 13's hook for DUMP callers only. 9.5 and 9.6 (past conversations on the index, their search, Continue and Delete): Tasks 3 and 11. 13 (the Conversations page): Task 12. 14.4 (`conversation-type`, typed answers): Task 13. 15.2's device tests: Tasks 7 to 13, run in Task 14. Plan 7E's moved checks (its decision 2): Task 14's Step 8 and Task 15.
 - **Placeholder scan.** No step says "to be decided", "as needed" or "similar to"; every step that changes code gives the whole code, and every replacement names its old text. Tasks 14 and 15 name two values that the controller fills in from an earlier step: Step 1's or Step 2's listening mode and "stay awake" setting.
-- **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `CardTap`, `CardAnswer`, `OwnerReply`, `TextChannel`, `TypedInputs`, `GoalBar`, `OwnedBar.progress`, `BarOwner.Progress`, `GoalControls.Working(behindCommand)`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
+- **Names across tasks.** `OwnerPort.MAX_CHOICES`, `ChannelQuestion.highest`, `InputIntent.Answer(answer, question)`, `CardQuestion`, `NumberPad`, `CardEnd`, `CARD_TITLE`, `CARD_ARMING_MILLIS`, `OwnerCard`, `CardChoice`, `CardDesk`, `CardTap`, `CardAnswer`, `OwnerReply`, `HandOverAnswer`, `TextChannel`, `TypedInputs`, `GoalBar`, `OwnedBar.progress`, `BarOwner.Progress`, `GoalControls.Working(behindCommand)`, `ForegroundState`, `AppOffVoice`, `Transcript`, `ConversationScreenRules`, `ConversationScreenModel`, `ConversationActions`, `ScreenGuard`, `GuardWindow`, `ConversationScreen`, `ConversationApp`, `ConversationScreenViewModel`, `ConversationActivity`, `SetupState`, `TypedTests`, `PastMatches`, `PastList`, `PastPagesRules`, `PastConversations`, `PastPages`, `ConversationsPage`, `HookConversations`, `CommandTags.typed`, `CommandTags.ownConversation`, `ownerConversation` and `untagged`, `VoiceHooks.untagged`, `OverlayCards`, `ShownCard`, `CardPresser`, `CardPress`, `AgentHookAnswers.cardChoice` and `overlayChoice` keep one signature from the task that makes them to every task that uses them.
 - **The plan checker** (with its new `END_TASK`) ran clean at `410ae0fd` over plan 7B's Tasks 8 to 10, plan 7C from Task 5, plans 7D and 7E, and this plan's Tasks A1 to 13a. At `c1ff29ac` (plans 7A and 7B, this plan's Tasks A1 and A2, plan 7C's Tasks 1 to 6, 9 and 9b, and plan 7D's Tasks 1 and 2 built; plan 7B's engine after the fixes of its Task 10, its re-checks (`e76ad7a6`, `50b99c61`), its whole-plan review (`a05ea85a`) and that review's re-check (`4b0cf87f`: `Message.Reopened` carries the chosen and the closed conversation, and the switch's end is `switchEnd`); plan 7C's archive after `ae33cfda` and `6999fa5c`), it runs clean over plan 7C's Task 7, plan 7D from its Task 3 (as committed in `c1ff29ac`, with its writes held during the settings page's "Delete history", which this plan's single deletion joins through `send`, and `inTurn` for spoken outputs), plan 7E (`0b60ddea`) and this plan's Tasks 1 to 13a (241 operations, 97 files for this plan), with no `PROBLEM:` line. Against `sp3`'s HEAD alone, Tasks 1 to 13a meet the texts that plans 7B to 7E create, which is why "Before you start" runs the checker on them only after those plans are merged.
-- **The amendment of 2026-11-26.** The plan checker runs clean against `284eb0ec` alone from Task 1 (282 operations, 111 files), and from Tasks 4, 8 and 11 on the simulated files of the tasks before them; every task's code, applied to `284eb0ec` in order, builds, and `:core:conversation:test :core:agent:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug :core:privacy:testDebugUnitTest :core:screen:testDebugUnitTest` pass with the end's counts; every PowerShell command of Tasks 14 and 15 parses in PowerShell 7 and 5.1 with the step helpers before it. Plans 7D's and 7E's findings: `ScreenTurns`' final rule (Task 2), the numbered answers and the inputs' numbers at arrival (Tasks 1 and 4), the one bar writer (Task 5), the one card per question number (Task 1), no new notification (so no new `KestrelNotification` ID), the screen's Continue in the refusal's sentence (Task 8), `waitsBehindCommand` on the screen (Tasks 6 and 7), and the setup state read through `SetupStatusReader` and `AccessibilitySettings` (Task 8's `SetupState`).
+- **The amendment of 2026-11-26.** The plan checker runs clean against `284eb0ec` alone from Task 1 (298 operations, 111 files), and from Tasks 4, 8 and 11 on the simulated files of the tasks before them; every task's code, applied to `284eb0ec` in order, builds, and `:core:conversation:test :core:agent:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin :app:lintDebug :core:privacy:testDebugUnitTest :core:screen:testDebugUnitTest` pass with the end's counts, and `aContinueTappedOnAHandOversCardNamesTheTapsOwnNumber` fails without Task 1's change of the hand-over; every PowerShell command of Tasks 14 and 15 parses in PowerShell 7 and 5.1 with the step helpers before it. Plans 7D's and 7E's findings: `ScreenTurns`' final rule (Task 2), the numbered answers and the inputs' numbers at arrival (Tasks 1 and 4), the one bar writer (Task 5), the one card per question number (Task 1), no new notification (so no new `KestrelNotification` ID), the screen's Continue in the refusal's sentence (Task 8), `waitsBehindCommand` on the screen (Tasks 6 and 7), and the setup state read through `SetupStatusReader` and `AccessibilitySettings` (Task 8's `SetupState`).
