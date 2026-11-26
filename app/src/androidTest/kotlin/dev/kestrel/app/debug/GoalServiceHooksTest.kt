@@ -63,20 +63,22 @@ class GoalServiceHooksTest {
             answer,
             Regex(
                 "service=running notice=working posted=none actions=stop,open progress=none types=special-use applied=special-use " +
-                    "android=running androidTypes=special-use starts=\\d+ refusals=0 refuse=none focus=(none|granted|failed) " +
+                    "android=running androidTypes=special-use starts=\\d+ refusals=\\d+ refuse=none focus=(none|granted|failed) " +
                     "focusBy=(none|speak|focus) focusTypes=\\S+ focusRequests=(?<sent>\\d+) focusAnswered=\\k<sent>",
             ).matches(answer),
         )
         val requests = Regex("focusRequests=(\\d+)").find(answer)!!.groupValues[1].toInt() + 1
+        // The process's count, which an earlier test's refused start may have raised; an armed refusal counts only once a start takes it.
+        val refusals = Regex("refusals=(\\d+)").find(answer)!!.groupValues[1]
         assertEquals("speak=sent", hook("GOAL_CONTROL", "do" to "speak"))
         check(VoiceTests.waitUntil(10_000) {
             hook("GOAL_SERVICE_STATE").endsWith("focusBy=speak focusTypes=special-use+media-playback focusRequests=$requests focusAnswered=$requests")
         }) { "The speak request did not answer with the speech's types" }
         assertEquals("refuse=armed", hook("GOAL_CONTROL", "do" to "refuse"))
-        assertTrue(hook("GOAL_SERVICE_STATE").contains(" refusals=0 refuse=armed "))
+        assertTrue(hook("GOAL_SERVICE_STATE").contains(" refusals=$refusals refuse=armed "))
         assertEquals("refuse=disarmed", hook("GOAL_CONTROL", "do" to "refuse-off"))
         assertEquals("refuse=none", hook("GOAL_CONTROL", "do" to "refuse-off"))
-        assertTrue(hook("GOAL_SERVICE_STATE").contains(" refusals=0 refuse=none "))
+        assertTrue(hook("GOAL_SERVICE_STATE").contains(" refusals=$refusals refuse=none "))
         assertEquals("error: add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later", hook("GOAL_CONTROL", "do" to "other"))
         assertEquals("error: add --es action with one of stop, open, continue or cancel", hook("GOAL_CONTROL", "do" to "tap"))
         model.release()

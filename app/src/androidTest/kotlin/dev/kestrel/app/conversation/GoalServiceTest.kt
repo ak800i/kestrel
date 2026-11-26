@@ -143,6 +143,8 @@ class GoalServiceTest {
         awaitCalls(model, 1)
         awaitTypes(setOf(ForegroundType.SPECIAL_USE))
         val starts = graph.goalForeground.status().starts
+        // The process's count, which an earlier test's refused start may have raised.
+        val refusals = graph.goalForeground.status().refusals
 
         // D13: a touch holds the goal; the conversation takes it as the touch watcher gives it.
         conversations.touched()
@@ -162,7 +164,7 @@ class GoalServiceTest {
         awaitCalls(model, 2)
         val resumed = conversations.view.value.command
         awaitStarts(starts + 1)
-        assertEquals(0, graph.goalForeground.status().refusals)
+        assertEquals(refusals, graph.goalForeground.status().refusals)
         model.release()
         awaitCalls(model, 3)
         model.release()
