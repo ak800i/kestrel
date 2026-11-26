@@ -59,10 +59,16 @@ import dev.kestrel.providers.chat.ChatRequest
 import dev.kestrel.providers.chat.Part
 import dev.kestrel.safety.HandOverKind
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Delay
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -77,6 +83,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import kotlin.coroutines.CoroutineContext
 
 /** Whole conversations on the JVM (design 15.1 of sub-project 7), with the scripted model, fake channels and the in-memory archive. */
 class ConversationEngineTest {
@@ -109,12 +116,13 @@ class ConversationEngineTest {
         report: (String, Throwable) -> Unit = { _, error -> throw error },
         screen: ScreenTurn = FakeScreenTurn { false },
         timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
+        engineScope: CoroutineScope = backgroundScope,
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
         val goals = GoalRunner(environment, screen, search, clock) { _, error -> throw error }
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
-            backgroundScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
+            engineScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
             settings, testMode, voiceOn, clock, report, onStep = onStep, timerMillis = timerMillis,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
@@ -1166,6 +1174,23 @@ class ConversationEngineTest {
         assertNull(engine.view.value.id)
     }
 
+    // Keeps back what is dispatched while [holding] until [release], so that a test can run other work before it; delays go
+    // to [inner].
+    @OptIn(InternalCoroutinesApi::class)
+    private class HeldDispatcher(private val inner: CoroutineDispatcher) : CoroutineDispatcher(), Delay by inner as Delay {
+        var holding = false
+        private val held = mutableListOf<Pair<CoroutineContext, Runnable>>()
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            if (holding) held += context to block else inner.dispatch(context, block)
+        }
+
+        fun release() {
+            held.forEach { (context, block) -> inner.dispatch(context, block) }
+            held.clear()
+        }
+    }
+
     // A store whose saves wait for [gate], whose switches wait for [reopenGate] and whose deletion waits for [deleting],
     // while they are set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
@@ -1542,6 +1567,36 @@ class ConversationEngineTest {
         runCurrent()
         assertEquals(PastDeletion.DELETED, deleting.await())
         assertEquals(setOf(open, started), store.list().map { it.id }.toSet())
+        assertNull(store.get(past))
+    }
+
+    // Plan 7F, Task 3's review M1: the conversation that is open when the owner asks stays, also when it closes before the
+    // deletion's coroutine starts, as it can on the app's thread pool.
+    @Test
+    fun deleteAllKeepsTheConversationThatWasOpenAtTheAskAlsoWhenItClosesBeforeTheDeletionStarts() = scope.runTest {
+        val dispatcher = HeldDispatcher(StandardTestDispatcher(testScheduler))
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), engineScope = CoroutineScope(backgroundScope.coroutineContext + dispatcher))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val past = engine.view.value.id!!
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("Read my latest SMS again"))
+        runCurrent()
+        val open = engine.view.value.id!!
+
+        dispatcher.holding = true
+        val deleting = async(start = CoroutineStart.UNDISPATCHED) { engine.deleteAllPast() }
+        dispatcher.holding = false
+        engine.endQuietTime()
+        runCurrent()
+        assertNull(engine.view.value.id)
+
+        dispatcher.release()
+        runCurrent()
+        assertEquals(PastDeletion.DELETED, deleting.await())
+        assertEquals(listOf(open), store.list().map { it.id })
         assertNull(store.get(past))
     }
 

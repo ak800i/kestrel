@@ -387,21 +387,23 @@ class ConversationEngine(
     suspend fun deleteAllPast(): PastDeletion = synchronized(allPast) {
         allPastRun?.takeIf { it.isActive } ?: run {
             allPast.value = AllPastDeletion.Running
+            // The keep-set holds the conversation that is open now before this call returns: the coroutine may start a
+            // little later, on another thread, after a step of the loop has closed it (Task 3's review M1).
+            val keep = HashSet<ConversationId>()
+            synchronized(keeping) {
+                state.id?.let(keep::add)
+                keeping.add(keep)
+            }
             scope.async {
-                val keep = HashSet<ConversationId>()
-                synchronized(keeping) {
-                    state.id?.let(keep::add)
-                    keeping.add(keep)
-                }
-                val outcome = try {
-                    stored()
-                    deleteAllPastNow { synchronized(keeping) { keep.toSet() } }
-                } finally {
-                    synchronized(keeping) { keeping.removeAll { it === keep } }
-                }
+                stored()
+                val outcome = deleteAllPastNow { synchronized(keeping) { keep.toSet() } }
                 allPast.value = AllPastDeletion.Ended(outcome)
                 outcome
-            }.also { allPastRun = it }
+            }.also { deletion ->
+                // Also when the coroutine never starts, because the engine's scope ended first.
+                deletion.invokeOnCompletion { synchronized(keeping) { keeping.removeAll { it === keep } } }
+                allPastRun = deletion
+            }
         }
     }.await()
 
