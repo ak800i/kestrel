@@ -306,8 +306,10 @@ sealed interface Event {
     data class Assist(val taps: List<Long>) : Event
 
     /**
-     * The owner's Stop that did not come by voice: typed, on the conversation screen or on the goal notification (plan 7F).
-     * Kestrel's speech stops as for a spoken stop.
+     * Every Stop input of the owner's, however it came: spoken, typed, on the conversation screen or on the goal
+     * notification (plan 7F; `VoiceChannel.stopSpeech`). Kestrel's speech stops as for a spoken stop. For a spoken one the
+     * Rules stopped the speech already, and this stop also keeps unspoken the words that the conversation emitted before
+     * it took the Stop ([State.stoppedThrough]).
      */
     data object StopSpeaking : Event
 
