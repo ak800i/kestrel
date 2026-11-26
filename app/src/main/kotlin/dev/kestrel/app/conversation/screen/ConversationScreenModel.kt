@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 /**
  * The conversation screen's one reducer (plan 7F). It takes every input of the screen: the conversation's view, what the
  * goal service's coordinator knows ([foreground]), each input that the owner gave on the screen ([sent], which counts only
- * while the screen is in front), the microphone, "New conversation" and whether the screen is in front. After each one it
+ * while the screen is in front), the microphone and its listening that heard no command, "New conversation" and whether the screen is in front. After each one it
  * applies [ConversationScreenRules.viewed] to the newest of them, so that no order of their arrival keeps the screen in
  * front of a goal that works. [effects] are what the screen does. It is Android-free; the screen's view model keeps it
  * across configuration changes. Any thread may call it.
@@ -44,6 +44,9 @@ internal class ConversationScreenModel(private val nowWall: () -> Long) {
     fun sent(intent: InputIntent) = step { if (front) ConversationScreenRules.sent(it, intent, view) else it }
 
     fun listened() = step { ConversationScreenRules.listened(it, view) }
+
+    /** The listening that the microphone started ended without a command for the conversation. */
+    fun heardNoCommand() = step(ConversationScreenRules::heardNoCommand)
 
     fun inFront(inFront: Boolean) = step {
         front = inFront

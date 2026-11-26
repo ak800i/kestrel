@@ -32,22 +32,55 @@ internal sealed interface GoalControls {
 internal data class ScreenUi(val lines: List<TranscriptLine>, val goal: GoalControls, val stopAndNew: Boolean, val card: OwnerCard?)
 
 /**
+ * The owner's act on the screen that asked for work (design 10.2): the screen leaves once that work's goal acts. The arm
+ * lasts only as long as the act: once the act is [over] without a goal that acted, no later goal, such as one that the
+ * owner started by voice without the screen, moves the screen.
+ */
+internal sealed interface Arm {
+    /** Whether the goal that acts in [view] is this act's work. */
+    fun moves(view: ConversationView): Boolean
+
+    /** Whether the act ended in [view] without a goal that acted. */
+    fun over(view: ConversationView): Boolean
+
+    /**
+     * A command typed after command number [after], or one spoken after the owner tapped the microphone ([spoken]): any
+     * goal that acts is its work, because the view may show the goal before the screen hears of the input (review A2).
+     * It is over once a newer command ended without a goal; a spoken one also when the listening heard no command.
+     */
+    data class Command(val after: Int, val spoken: Boolean = false) : Arm {
+        override fun moves(view: ConversationView): Boolean = view.goal == GoalPhase.ACTING
+
+        override fun over(view: ConversationView): Boolean = view.goal == null && view.command > after && view.quiet is QuietClock.Running
+    }
+
+    /**
+     * Continue, or an answer that lets the open goal go on: the goal of record [record] in conversation [id], which
+     * keeps its record when it resumes. It is over once that goal is no longer the open one.
+     */
+    data class Goal(val id: ConversationId, val record: Int) : Arm {
+        override fun moves(view: ConversationView): Boolean = view.goal == GoalPhase.ACTING && !over(view)
+
+        override fun over(view: ConversationView): Boolean = view.goal == null || view.id != id || view.goalRecord != record
+    }
+}
+
+/**
  * The screen's own state: the transcript that it shows ([records] of conversation [id], or of the one that ended at
- * [endedAtWall]), the command number at which the owner's last action on the screen asked for work ([armedAt]: the screen
- * leaves once that work's goal works), and the two steps of "Stop and start new" ([newAfterStop], then [clearAtClose]).
- * toString prints no words.
+ * [endedAtWall]), the owner's act on the screen that waits for its goal to act ([armed]), and the two steps of "Stop and
+ * start new" ([newAfterStop], then [clearAtClose]). toString prints no words.
  */
 internal data class ScreenState(
     val id: ConversationId? = null,
     val records: List<CommandRecord> = emptyList(),
     val continuedAtWall: Long? = null,
     val endedAtWall: Long? = null,
-    val armedAt: Int? = null,
+    val armed: Arm? = null,
     val newAfterStop: Boolean = false,
     val clearAtClose: Boolean = false,
 ) {
     override fun toString(): String =
-        "ScreenState(open=${id != null}, records=${records.size}, ended=${endedAtWall != null}, armedAt=$armedAt, newAfterStop=$newAfterStop, clearAtClose=$clearAtClose)"
+        "ScreenState(open=${id != null}, records=${records.size}, ended=${endedAtWall != null}, armed=$armed, newAfterStop=$newAfterStop, clearAtClose=$clearAtClose)"
 }
 
 /** What the screen does after a step: leave the front, or give the conversation an input of its own. */
@@ -64,7 +97,8 @@ internal data class ScreenStep(val state: ScreenState, val effects: List<ScreenE
  * view; a conversation that closes keeps its transcript with the line where it ended until the next one opens, unless the
  * owner asked for a new one. After the owner's command, Continue, microphone or an answer that lets a goal go on, the
  * screen leaves the front once the goal acts and Android has answered the goal service's start, so that Android sees the
- * start while the screen is in front (design 10.6); a reply without a goal keeps the screen.
+ * start while the screen is in front (design 10.6); a reply without a goal keeps the screen, and once the owner's act
+ * ended without a goal that acts, no later goal moves the screen.
  */
 internal object ConversationScreenRules {
     fun ui(state: ScreenState, view: ConversationView, card: OwnerCard?): ScreenUi = ScreenUi(
@@ -94,15 +128,15 @@ internal object ConversationScreenRules {
             else -> state.copy(id = null, endedAtWall = nowWall)
         }
         val effects = mutableListOf<ScreenEffect>()
-        val armed = next.armedAt
+        val armed = next.armed
         if (armed != null) {
             // The coordinator saw the goal act too, the service is in the foreground, and Android answered every start.
-            if (view.goal == GoalPhase.ACTING && foreground.goal == GoalPhase.ACTING && foreground.running && foreground.settled) {
-                next = next.copy(armedAt = null)
+            if (armed.moves(view) && foreground.goal == GoalPhase.ACTING && foreground.running && foreground.settled) {
+                next = next.copy(armed = null)
                 effects += ScreenEffect.Leave
-            } else if (view.goal == null && view.command > armed && view.quiet is QuietClock.Running) {
-                // The owner's command ended without a goal that works: its reply stays on the screen.
-                next = next.copy(armedAt = null)
+            } else if (armed.over(view)) {
+                // The owner's act ended without a goal that works: its reply stays on the screen.
+                next = next.copy(armed = null)
             }
         }
         if (next.newAfterStop && view.goal == null) {
@@ -113,14 +147,26 @@ internal object ConversationScreenRules {
     }
 
     /** The owner's [intent] reached the conversation from the screen, while [view] was the conversation's view. */
-    fun sent(state: ScreenState, intent: InputIntent, view: ConversationView): ScreenState =
-        if (leaves(intent, view)) state.copy(armedAt = view.command) else state
+    fun sent(state: ScreenState, intent: InputIntent, view: ConversationView): ScreenState = when {
+        !leaves(intent, view) -> state
+        intent is InputIntent.Command -> state.copy(armed = Arm.Command(view.command))
+        else -> state.copy(
+            armed = Arm.Goal(
+                checkNotNull(view.id) { "A goal belongs to an open conversation" },
+                checkNotNull(view.goalRecord) { "An open goal has a record" },
+            ),
+        )
+    }
 
     /** The owner tapped the microphone: the spoken command's goal moves the screen as a typed command's does. */
-    fun listened(state: ScreenState, view: ConversationView): ScreenState = state.copy(armedAt = view.command)
+    fun listened(state: ScreenState, view: ConversationView): ScreenState = state.copy(armed = Arm.Command(view.command, spoken = true))
+
+    /** The listening that the microphone started ended without a command: the tap's act is over. */
+    fun heardNoCommand(state: ScreenState): ScreenState =
+        if ((state.armed as? Arm.Command)?.spoken == true) state.copy(armed = null) else state
 
     /** The screen left the front: what the owner asked of it there is over. */
-    fun left(state: ScreenState): ScreenState = state.copy(armedAt = null)
+    fun left(state: ScreenState): ScreenState = state.copy(armed = null)
 
     /** "New conversation", or "Stop and start new" while a goal is open (design 6.8). */
     fun newConversation(state: ScreenState, view: ConversationView): ScreenStep = when {

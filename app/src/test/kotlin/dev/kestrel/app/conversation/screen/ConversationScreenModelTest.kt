@@ -42,7 +42,7 @@ class ConversationScreenModelTest {
         model.sent(InputIntent.Command("Open Viber"))
 
         assertEquals(listOf(ScreenEffect.Leave), effects)
-        assertNull(model.state.value.armedAt)
+        assertNull(model.state.value.armed)
     }
 
     @Test
@@ -50,11 +50,11 @@ class ConversationScreenModelTest {
         collecting()
         model.viewed(idle)
         model.sent(InputIntent.Command("Open Viber"))
-        assertNull(model.state.value.armedAt)
+        assertNull(model.state.value.armed)
 
         model.inFront(true)
         model.sent(InputIntent.Command("Open Viber"))
-        assertEquals(1, model.state.value.armedAt)
+        assertEquals(Arm.Command(1), model.state.value.armed)
         model.inFront(false)
         model.viewed(acting)
         model.foreground(inForeground)

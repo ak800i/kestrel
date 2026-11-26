@@ -52,14 +52,44 @@ class ConversationScreenRulesTest {
         // A command that starts no goal, as without a provider profile: its reply ends the wait for work.
         val armed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
         val replied = ConversationScreenRules.viewed(armed, idle.copy(command = 2, quiet = QuietClock.Running(2, 0)), none, nowWall = 0).state
-        assertNull(replied.armedAt)
+        assertNull(replied.armed)
         // A later goal that a spoken command started while the screen is in front moves nothing.
         val later = ConversationScreenRules.viewed(replied, idle.copy(command = 3, goal = GoalPhase.ACTING), inForeground, nowWall = 0)
         assertEquals(emptyList<ScreenEffect>(), later.effects)
         // The microphone waits for the spoken command's goal as a typed command does.
         val listening = ConversationScreenRules.listened(replied, idle.copy(command = 3))
         assertEquals(listOf(ScreenEffect.Leave), ConversationScreenRules.viewed(listening, idle.copy(command = 4, goal = GoalPhase.ACTING), inForeground, nowWall = 0).effects)
-        assertNull(ConversationScreenRules.left(listening).armedAt)
+        assertNull(ConversationScreenRules.left(listening).armed)
+    }
+
+    // Review M1: the owner's act on the screen ends with it, so that a goal that he then starts by voice moves nothing.
+    @Test
+    fun anAnswerArmsOnlyForItsOwnGoalAndEndsWhenThatGoalEnds() {
+        val asking = ConversationView(id = id, command = 1, goal = GoalPhase.ASKING, asking = QuestionKind.FREE, goalRecord = 1)
+        val answered = ConversationScreenRules.sent(ScreenState(), InputIntent.Answer(ChannelAnswer.Text("Mila")), asking)
+        val voiceGoal = ConversationView(id = id, command = 2, goal = GoalPhase.ACTING, goalRecord = 2)
+
+        // The answered goal ends before a view of it acting meets a settled service: the answer's act is over.
+        val ended = ConversationScreenRules.viewed(answered, ConversationView(id = id, command = 1, quiet = QuietClock.Running(1, 0)), none, nowWall = 0).state
+        assertNull(ended.armed)
+        assertEquals(emptyList<ScreenEffect>(), ConversationScreenRules.viewed(ended, voiceGoal, inForeground, nowWall = 0).effects)
+        // The same when the views between them were conflated: another goal acting is not the answer's work.
+        assertEquals(emptyList<ScreenEffect>(), ConversationScreenRules.viewed(answered, voiceGoal, inForeground, nowWall = 0).effects)
+        // The answered goal going on moves the screen.
+        assertEquals(listOf(ScreenEffect.Leave), ConversationScreenRules.viewed(answered, asking.copy(goal = GoalPhase.ACTING), inForeground, nowWall = 0).effects)
+    }
+
+    @Test
+    fun aTapOnTheMicrophoneThatHearsNoCommandEndsTheTapsAct() {
+        val idle = ConversationView(id = id, command = 1, quiet = QuietClock.Running(1, 0))
+        val voiceGoal = idle.copy(command = 2, goal = GoalPhase.ACTING, goalRecord = 2)
+
+        val unheard = ConversationScreenRules.heardNoCommand(ConversationScreenRules.listened(ScreenState(), idle))
+        assertNull(unheard.armed)
+        assertEquals(emptyList<ScreenEffect>(), ConversationScreenRules.viewed(unheard, voiceGoal, inForeground, nowWall = 0).effects)
+        // A listening without a command ends no typed command's wait.
+        val typed = ConversationScreenRules.sent(ScreenState(), InputIntent.Command("Open Viber"), idle)
+        assertEquals(typed, ConversationScreenRules.heardNoCommand(typed))
     }
 
     @Test
