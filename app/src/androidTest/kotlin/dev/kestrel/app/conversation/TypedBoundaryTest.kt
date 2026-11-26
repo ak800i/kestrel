@@ -71,7 +71,7 @@ class TypedBoundaryTest {
     @Test
     fun aTapThatPassesThroughAnotherAppsWindowSendsNothing() {
         screen.open("ObscuringActivity", "Obscuring fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         check(VoiceTests.waitUntil(10_000) { screen.showsWindow(OVERLAY) }) { "The fixture's window is not over the screen" }
         runBlocking { screen.awaitInputWindow(OVERLAY) }
         val before = conversations.view.value.command
@@ -133,8 +133,7 @@ class TypedBoundaryTest {
 
     // Send's centre on the screen, read after the keyboard has settled.
     private fun sendCentre(): Point {
-        compose.waitForIdle()
-        Thread.sleep(SETTLE_MILLIS)
+        ScreenKeyboard.settle(compose)
         val bounds = compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).fetchSemanticsNode().boundsInWindow
         val origin = IntArray(2)
         compose.runOnUiThread { compose.activity.window.decorView.getLocationOnScreen(origin) }

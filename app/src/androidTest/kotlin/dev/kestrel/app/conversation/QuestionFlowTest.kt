@@ -108,7 +108,7 @@ class QuestionFlowTest {
     // screen has left for the goal, so that the question's card shows over the fixture, not inline on the screen.
     private fun typedGoal(model: ScriptedModel, words: String, open: () -> Unit): Int {
         open()
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         val held = HeldModel(model)
         TypedTests.prepare(held)
         val command = TypedTests.send(compose, words)
@@ -129,7 +129,7 @@ class QuestionFlowTest {
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag(FIELD_TAG).assertIsFocused()
         compose.onNodeWithTag(FIELD_TAG).performTextInput("Half past seven")
-        compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).performClick()
+        TypedTests.tapSend(compose)
 
         val ended = AgentTests.ended(command)
         assertEquals(EndReason.FAILED_BY_MODEL, ended.report.end)
@@ -190,7 +190,7 @@ class QuestionFlowTest {
     fun aTouchInterruptsATypedGoalAndTheScreensContinueResumesIt() {
         val model = interruptedGoal()
 
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         compose.onNodeWithText(TypedTests.text(R.string.conversation_continue)).performClick()
 
         // The goal goes on from its next step: only now does the model get its second request, and the screen leaves for it.
@@ -206,7 +206,7 @@ class QuestionFlowTest {
     fun cancelOnTheScreenEndsAHeldGoal() {
         interruptedGoal()
 
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         compose.onNodeWithText(TypedTests.text(R.string.conversation_cancel)).performClick()
 
         check(VoiceTests.waitUntil(30_000) { conversations.view.value.goal == null }) { "Cancel did not end the goal" }
@@ -219,7 +219,7 @@ class QuestionFlowTest {
     fun continueTheGoalShowsItsCardAndItsCopyAndTheGoalStaysHeldAfterItsWait() {
         shortenWaits()
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         val model = HeldModel(ScriptedModel(listOf(onIt, fail)))
         TypedTests.prepare(model)
         TypedTests.send(compose, "Look at the fixture")
@@ -234,7 +234,7 @@ class QuestionFlowTest {
         check(VoiceTests.waitUntil(30_000) { conversations.view.value.asking == QuestionKind.CONTINUE_GOAL }) { "No \"Continue the goal?\" after the unlock" }
         awaitButton(TypedTests.text(R.string.card_continue))
 
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         // While the goal is held the screen's own row says Cancel and Continue; Stop is the card's.
         compose.waitUntil(5_000) { compose.onAllNodesWithText(TypedTests.text(R.string.card_stop)).fetchSemanticsNodes().isNotEmpty() }
         check(VoiceTests.waitUntil(QUESTION_MILLIS / divisor + 30_000) { conversations.view.value.asking == null }) { "The question did not end after its wait" }
@@ -273,7 +273,7 @@ class QuestionFlowTest {
         graph.settings.set(SettingKeys.CONVERSATIONS, stored.copy(speakTypedReplies = true))
         try {
             screen.open("ViewsActivity", "Views fixture")
-            TypedTests.bringScreen(screen)
+            TypedTests.bringScreen(screen, compose)
             val before = graph.offVoice.replies
             TypedTests.prepare(ScriptedModel(listOf(onIt, fail)))
 
@@ -300,7 +300,7 @@ class QuestionFlowTest {
         graph.ownVoicePlayback = watch::wrap
         try {
             screen.open("ViewsActivity", "Views fixture")
-            TypedTests.bringScreen(screen)
+            TypedTests.bringScreen(screen, compose)
             val scripted = ScriptedModel(listOf(ask, onIt, done, fail))
             val model = HeldModel(scripted)
             TypedTests.prepare(model)
@@ -314,7 +314,7 @@ class QuestionFlowTest {
             check(VoiceTests.waitUntil(60_000) { watch.holding }) { "Kestrel's own voice did not speak the question" }
             // Kestrel's own voice speaks one reply at a time, so that every reply before the question's copy has ended.
             val before = graph.offVoice.replies
-            compose.onNodeWithText(TypedTests.text(R.string.conversation_send)).performClick()
+            TypedTests.tapSend(compose)
 
             check(VoiceTests.waitUntil(COPY_END_MILLIS) { !watch.holding && !watch.playing }) { "The question's spoken copy went on after the answer" }
             check(VoiceTests.waitUntil(30_000) { model.calls == 2 }) { "The answer did not reach the goal" }
@@ -339,7 +339,7 @@ class QuestionFlowTest {
     // Once that reply goes, the goal stays held at its next step and asks the model nothing more (plan 7D's GoalPauseTest).
     private fun interruptedGoal(): HeldModel {
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         val model = HeldModel(ScriptedModel(listOf(onIt, fail)))
         TypedTests.prepare(model)
         TypedTests.send(compose, "Look at the fixture")

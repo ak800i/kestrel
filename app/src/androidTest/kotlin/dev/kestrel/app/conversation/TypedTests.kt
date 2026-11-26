@@ -1,7 +1,7 @@
 package dev.kestrel.app.conversation
 
 import androidx.annotation.StringRes
-import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -11,6 +11,7 @@ import dev.kestrel.agent.port.ModelPort
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.R
 import dev.kestrel.app.agent.AgentTests
+import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.conversation.screen.FIELD_TAG
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
@@ -87,23 +88,33 @@ internal object TypedTests {
     /** Whether the conversation screen is Android's resumed activity, in front. */
     fun screenInFront(screen: ScreenServiceRule): Boolean = RESUMED.containsMatchIn(screen.shell("dumpsys activity activities"))
 
-    /** Brings the conversation screen back to the front, as the launcher does, and waits until it is there. */
-    fun bringScreen(screen: ScreenServiceRule) {
+    /**
+     * Brings the conversation screen back to the front, as the launcher does, and waits until it is there and its keyboard,
+     * which Android shows again when the field kept its focus, has settled.
+     */
+    fun bringScreen(screen: ScreenServiceRule, compose: AndroidComposeTestRule<*, ConversationActivity>) {
         screen.shell("am start -W -n dev.kestrel/.app.conversation.screen.ConversationActivity")
         check(VoiceTests.waitUntil(10_000) { screenInFront(screen) }) { "The conversation screen did not come to the front" }
+        ScreenKeyboard.settle(compose)
     }
 
     /**
      * Types [words] with this run's [marker] into the screen's field and taps Send, as the owner does, notes the conversation
      * as the tests' own, and returns the command number that they started.
      */
-    fun send(nodes: SemanticsNodeInteractionsProvider, words: String): Int {
+    fun send(compose: AndroidComposeTestRule<*, ConversationActivity>, words: String): Int {
         val before = graph.conversations.view.value.command
-        nodes.onNodeWithTag(FIELD_TAG).performTextInput(marked(words))
-        nodes.onNodeWithText(text(R.string.conversation_send)).performClick()
+        compose.onNodeWithTag(FIELD_TAG).performTextInput(marked(words))
+        tapSend(compose)
         check(VoiceTests.waitUntil(5_000) { graph.conversations.view.value.command > before }) { "The typed words started no command" }
         graph.conversations.view.value.id?.let(::own)
         return graph.conversations.view.value.command
+    }
+
+    /** Taps Send once the keyboard that typing in the field brought up has settled, so that Send stays under the tap. */
+    fun tapSend(compose: AndroidComposeTestRule<*, ConversationActivity>) {
+        ScreenKeyboard.settle(compose)
+        compose.onNodeWithText(text(R.string.conversation_send)).performClick()
     }
 
     private fun endGoal() {

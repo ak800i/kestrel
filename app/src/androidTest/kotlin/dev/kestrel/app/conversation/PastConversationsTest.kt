@@ -116,10 +116,10 @@ class PastConversationsTest {
     // A closed conversation whose one command was [words] with the run's marker, typed on the screen over the fixture.
     private fun closed(words: String): ConversationId {
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         AgentTests.ended(TypedTests.send(compose, words))
         val id = checkNotNull(conversations.view.value.id)
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         compose.onNodeWithText(TypedTests.text(R.string.conversation_new)).performClick()
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
         return id

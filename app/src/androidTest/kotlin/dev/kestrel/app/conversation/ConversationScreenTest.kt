@@ -73,7 +73,7 @@ class ConversationScreenTest {
     @Test
     fun aTypedCommandLeavesKestrelsScreenAndWorksOnTheAppBelowWithListeningOff() {
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         val model = ScriptedModel(listOf(onIt, fail))
         TypedTests.prepare(model)
         val spoken = graph.offVoice.replies
@@ -92,12 +92,12 @@ class ConversationScreenTest {
     @Test
     fun aSecondTypedCommandGetsTheFirstOnesRecord() {
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         val model = ScriptedModel(listOf(onIt, fail, fail))
         TypedTests.prepare(model)
 
         AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         compose.onNodeWithText(TypedTests.marked("Look at the fixture")).assertIsDisplayed()
         AgentTests.ended(TypedTests.send(compose, "And look again"))
 
@@ -110,10 +110,10 @@ class ConversationScreenTest {
     @Test
     fun newConversationClosesTheConversationIntoTheListAndClearsTheScreen() {
         screen.open("ViewsActivity", "Views fixture")
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
         TypedTests.prepare(ScriptedModel(listOf(fail)))
         AgentTests.ended(TypedTests.send(compose, "Look at the fixture"))
-        TypedTests.bringScreen(screen)
+        TypedTests.bringScreen(screen, compose)
 
         compose.onNodeWithText(TypedTests.text(R.string.conversation_new)).performClick()
 
