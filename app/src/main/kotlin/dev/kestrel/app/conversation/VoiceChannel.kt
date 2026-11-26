@@ -91,11 +91,11 @@ internal class VoiceChannel(
     private suspend fun said(output: ChannelOutput.Said, marks: Marks) {
         try {
             inTurn {
-                if (output.typedCopy && !voice.kestrelOn) {
-                    offVoice.speak(output.text, marks.ownStops)
-                } else {
-                    voice.say(output.text, marks.arrival, question = output.question)
-                }
+                // The own voice's mark before the mode: a switch of voice between the two keeps the words from the own voice,
+                // which then gives them back for the voice session.
+                val own = offVoice.mark(marks.ownStops)
+                val ownVoiceTook = output.typedCopy && !voice.kestrelOn && offVoice.speak(output.text, own)
+                if (!ownVoiceTook) voice.say(output.text, marks.arrival, question = output.question)
             }
         } catch (e: CancellationException) {
             output.question?.let(voice::withdraw)

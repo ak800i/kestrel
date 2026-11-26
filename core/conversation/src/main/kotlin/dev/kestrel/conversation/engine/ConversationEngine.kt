@@ -103,7 +103,7 @@ class ConversationEngine(
     permissions: (List<String>) -> PermissionEnd,
     private val settings: Flow<ConversationSettings>,
     private val testMode: Flow<Boolean>,
-    private val voiceOn: Flow<Boolean>,
+    private val voiceOn: StateFlow<Boolean>,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
@@ -236,14 +236,11 @@ class ConversationEngine(
     // How many ledger lines the running goal's record held when its round started; the round's report replaces the rest.
     private var roundLedgerFrom = 0
 
-    // Whether Kestrel is on, for the owner, which adds the cards from the moment it turns off; [restore] reads it first.
-    private val voiceNow = MutableStateFlow(false)
-
     /** The owner as goals and the conversation talk to him; the hooks read its open question, confirmation and hand-over. */
     val owner = ConversationOwner(
         channels,
         permissions,
-        voiceNow.asStateFlow(),
+        voiceOn,
         { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) },
         // Design 6.5: a tap on a hand-over's card lets the running round act now, as "Kestrel, continue" does (plan 7F).
         acted = { act -> running?.actedFor(act) },
@@ -277,10 +274,7 @@ class ConversationEngine(
             combine(settings, testMode) { conversations, test -> ConversationEvent.SettingsChanged(conversations, test) }.collect { post(it) }
         }
         scope.launch {
-            voiceOn.collect { on ->
-                voiceNow.value = on
-                post(ConversationEvent.Voice(on))
-            }
+            voiceOn.collect { on -> post(ConversationEvent.Voice(on)) }
         }
     }
 
@@ -292,9 +286,7 @@ class ConversationEngine(
         check(!started.isCompleted) { "restore() runs once, before any input" }
         try {
             process(ConversationEvent.SettingsChanged(settings.first(), testMode.first()))
-            val on = voiceOn.first()
-            voiceNow.value = on
-            process(ConversationEvent.Voice(on))
+            process(ConversationEvent.Voice(voiceOn.value))
             val snapshot = try {
                 store.open()
             } catch (e: CancellationException) {

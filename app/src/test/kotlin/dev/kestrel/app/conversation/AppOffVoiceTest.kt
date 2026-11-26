@@ -5,12 +5,14 @@ import dev.kestrel.voice.speak.Spoke
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,7 +51,7 @@ class AppOffVoiceTest {
     fun aStopWhileTheVoiceLoadsKeepsTheReplyFromStarting() = runTest {
         val offVoice = offVoice()
         loading = CompletableDeferred()
-        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
+        val speaking = launch { offVoice.speak("Done.", offVoice.mark(offVoice.stops)) }
         runCurrent()
 
         offVoice.stop()
@@ -60,7 +62,7 @@ class AppOffVoiceTest {
         assertEquals(emptyList<String>(), voice.spoken)
         // The stop held only the reply that was asked for before it.
         voice.finishes = true
-        offVoice.speak("Sent.", offVoice.stops)
+        offVoice.speak("Sent.", offVoice.mark(offVoice.stops))
         assertEquals(listOf("Sent."), voice.spoken)
         assertEquals(1, loads)
     }
@@ -74,7 +76,7 @@ class AppOffVoiceTest {
         val came = offVoice.stops
 
         offVoice.stop()
-        offVoice.speak("Done.", came)
+        offVoice.speak("Done.", offVoice.mark(came))
 
         assertEquals(emptyList<String>(), voice.spoken)
     }
@@ -83,7 +85,7 @@ class AppOffVoiceTest {
     fun aStopWhileTheServiceTakesMediaPlaybackKeepsTheReplyFromStarting() = runTest {
         val offVoice = offVoice()
         applying = CompletableDeferred()
-        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
+        val speaking = launch { offVoice.speak("Done.", offVoice.mark(offVoice.stops)) }
         runCurrent()
 
         offVoice.stop()
@@ -99,7 +101,7 @@ class AppOffVoiceTest {
     @Test
     fun aStopEndsTheReplyThatPlaysAndTheVoiceUnloadsOnceIdle() = runTest {
         val offVoice = offVoice()
-        val speaking = launch { offVoice.speak("Done.", offVoice.stops) }
+        val speaking = launch { offVoice.speak("Done.", offVoice.mark(offVoice.stops)) }
         runCurrent()
         assertEquals(listOf("Done."), voice.spoken)
 
@@ -113,25 +115,26 @@ class AppOffVoiceTest {
         assertEquals(1, voice.closes)
     }
 
-    // Plan 7F: turning Kestrel on ends the reply that has its turn now, also one that still waits for mediaPlayback, but it
-    // is no stop: it does not count in the stops, so words that came before it are still spoken in their turn.
+    // Plan 7F: turning Kestrel on is a switch of voice, not a stop: words whose mark came before it do not start, also while
+    // they wait for mediaPlayback, and go back for the voice session (false); it does not count in the stops, so words that
+    // the voice channel marks after it are spoken.
     @Test
-    fun turningKestrelOnEndsOnlyTheReplyThatHasItsTurn() = runTest {
+    fun turningKestrelOnGivesTheWordsThatHaveNotStartedBack() = runTest {
         val offVoice = offVoice()
         applying = CompletableDeferred()
         val came = offVoice.stops
-        val speaking = launch { offVoice.speak("Done.", came) }
+        val speaking = async { offVoice.speak("Done.", offVoice.mark(came)) }
         runCurrent()
 
         offVoice.endSpeech()
         applying!!.complete(Unit)
         runCurrent()
 
-        assertTrue(speaking.isCompleted)
+        assertFalse(speaking.await())
         assertEquals(emptyList<String>(), voice.spoken)
         assertEquals(came, offVoice.stops)
         voice.finishes = true
-        offVoice.speak("Sent.", came)
+        assertTrue(offVoice.speak("Sent.", offVoice.mark(came)))
         assertEquals(listOf("Sent."), voice.spoken)
     }
 
@@ -140,7 +143,7 @@ class AppOffVoiceTest {
     @Test
     fun aCancelledReplyEndsAndTheVoiceUnloadsOnceIdle() = runTest {
         val offVoice = offVoice()
-        val speaking = launch { offVoice.speak("Shall I send it to Mila?", offVoice.stops) }
+        val speaking = launch { offVoice.speak("Shall I send it to Mila?", offVoice.mark(offVoice.stops)) }
         runCurrent()
 
         speaking.cancel()
@@ -157,7 +160,7 @@ class AppOffVoiceTest {
         val offVoice = offVoice()
         voice.failure = IllegalStateException("The audio output failed")
 
-        offVoice.speak("Done.", offVoice.stops)
+        offVoice.speak("Done.", offVoice.mark(offVoice.stops))
 
         assertEquals(1, reports.size)
         assertTrue(reports.single().second is IllegalStateException)

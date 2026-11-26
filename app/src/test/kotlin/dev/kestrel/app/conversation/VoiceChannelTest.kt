@@ -50,11 +50,16 @@ class VoiceChannelTest {
         override val stops: Long get() = offStops.toLong()
 
         // As AppOffVoice: words that a stop came after are never spoken.
-        override suspend fun speak(text: String, asked: Long) {
-            offAsked += asked
-            if (asked != stops) return
+        override fun mark(asked: Long) = OwnVoiceMark(asked, offEnds.toLong())
+
+        // As AppOffVoice: a switch of voice after the mark gives the words back for the voice session.
+        override suspend fun speak(text: String, mark: OwnVoiceMark): Boolean {
+            offAsked += mark.stops
+            if (mark.stops != stops) return true
+            if (mark.switches != offEnds.toLong()) return false
             offSpoken += text
             offHeld?.await()
+            return true
         }
 
         override fun stop() {
@@ -273,10 +278,26 @@ class VoiceChannelTest {
 
         channel.show(ChannelOutput.Said("Sent."))
         assertEquals(listOf("Sent."), voice.said)
-        voice.kestrelOn = true
+        voice.turnOn()
         channel.show(ChannelOutput.Said("Opened.", typedCopy = true))
         assertEquals(listOf("Sent.", "Opened."), voice.said)
         assertEquals(1, offSpoken.size)
+    }
+
+    // Plan 7F: the channel takes the own voice's mark before it reads whether Kestrel is on, so that a switch of voice
+    // between the two reads gives the words to the voice session, and never lets both voices speak.
+    @Test
+    fun aSwitchOfVoiceBetweenTheChannelsReadsGivesTheWordsToTheSession() = runTest {
+        val channel = channel()
+        voice.afterRead = {
+            voice.afterRead = {}
+            voice.turnOn()
+        }
+
+        channel.show(ChannelOutput.Said("Done.", typedCopy = true))
+
+        assertEquals(emptyList<String>(), offSpoken)
+        assertEquals(listOf("Done."), voice.said)
     }
 
     // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
@@ -471,7 +492,14 @@ class VoiceChannelTest {
             speechStopped = action
         }
 
-        override var kestrelOn = false
+        private var on = false
+
+        // Runs right after each read of [kestrelOn], as a switch of voice that comes just then.
+        var afterRead: () -> Unit = {}
+
+        override val kestrelOn: Boolean
+            get() = on.also { afterRead() }
+
         private var turnedOn: () -> Unit = {}
 
         override fun onKestrelOn(action: () -> Unit) {
@@ -480,7 +508,7 @@ class VoiceChannelTest {
 
         // As the Orchestrator when Kestrel turns on: Effect.EndOwnVoice, a switch of voice, not a stop.
         fun turnOn() {
-            kestrelOn = true
+            on = true
             turnedOn()
         }
 

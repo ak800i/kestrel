@@ -603,7 +603,7 @@ class AppGraph(context: Context) {
             permissions = { permissions -> Permissions.granted(appContext, permissions) },
             settings = storedSettings,
             testMode = settings.observe(SettingKeys.SAFETY).map { it.testMode },
-            voiceOn = listening.state.map { it.mode != Mode.OFF }.distinctUntilChanged(),
+            voiceOn = listening.kestrelOn,
             clock = AndroidConversationClock,
             report = reportFailure,
             onStep = { event, state, step ->

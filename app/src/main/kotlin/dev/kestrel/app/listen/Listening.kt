@@ -453,6 +453,15 @@ class Listening internal constructor(
     private val arrivalLock = Any()
     private var arrivals = 0L
 
+    // Set in the Orchestrator's own step, before its effects run (plan 7F).
+    private val kestrelOnNow = MutableStateFlow(false)
+
+    /**
+     * Whether Kestrel is on (its mode is not OFF), as the Rules decided in their latest step: the one source of the mode for
+     * the conversation's routing and the voice channel's choice of voice (plan 7F).
+     */
+    val kestrelOn: StateFlow<Boolean> = kestrelOnNow.asStateFlow()
+
     // What else each Effect.StopSaying stops, and what Effect.EndOwnVoice ends: Kestrel's own voice, which the voice channel
     // sets (VoicePath.onSpeechStopped and onKestrelOn).
     @Volatile
@@ -498,7 +507,7 @@ class Listening internal constructor(
             kestrelTurnedOn = action
         }
 
-        override val kestrelOn: Boolean get() = state.value.mode != Mode.OFF
+        override val kestrelOn: Boolean get() = kestrelOnNow.value
     }
 
     /**
@@ -523,6 +532,7 @@ class Listening internal constructor(
         onError = { report("An effect", it) },
         commandFailed = ListeningTexts.COMMAND_FAILED,
         onStep = { event, before, step ->
+            kestrelOnNow.value = step.state.mode != Mode.OFF
             commandTaps.stepped(event, before, step)?.let(waitEnds::tryEmit)
             steps?.invoke(event, before, step)
         },
