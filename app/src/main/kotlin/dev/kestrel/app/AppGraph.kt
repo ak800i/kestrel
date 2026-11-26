@@ -619,7 +619,7 @@ class AppGraph(context: Context) {
             permissions = { permissions -> Permissions.granted(appContext, permissions) },
             settings = storedSettings,
             testMode = settings.observe(SettingKeys.SAFETY).map { it.testMode },
-            voiceOn = listening.kestrelOn,
+            kestrelOn = listening.kestrelOn,
             clock = AndroidConversationClock,
             report = reportFailure,
             onStep = { event, state, step ->

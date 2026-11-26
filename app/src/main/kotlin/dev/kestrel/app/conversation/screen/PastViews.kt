@@ -225,8 +225,13 @@ private fun Note(@StringRes text: Int) {
     Text(stringResource(text), Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyMedium)
 }
 
-/** What one read of the list was for: the search field's text and the deletions that the list had seen. */
-private data class ListRead(val query: String, val deletions: Int)
+/**
+ * What one read of the list was for: the search field's text and the deletions that the list had seen. toString prints no
+ * words.
+ */
+private data class ListRead(val query: String, val deletions: Int) {
+    override fun toString(): String = "ListRead(query=${query.length} chars, deletions=$deletions)"
+}
 
 /** How long the owner's typing pauses before the search runs. */
 private const val SEARCH_DELAY_MILLIS = 300L

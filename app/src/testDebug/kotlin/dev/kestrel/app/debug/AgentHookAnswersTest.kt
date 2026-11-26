@@ -278,6 +278,15 @@ class AgentHookAnswersTest {
         assertNull(AgentHookAnswers.cardChoice("Half past seven", listOf(CardChoice.Reply, CardChoice.Cancel)))
     }
 
+    // The whole-plan review's nit of plan 7F: the hook's errors name an answer's kind, never the words of a free answer.
+    @Test
+    fun anAnswersErrorNamesAButtonsWordOrTheAnswersKindAndNeverItsWords() {
+        assertEquals("yes", AgentHookAnswers.answerKind("yes"))
+        assertEquals("continue", AgentHookAnswers.answerKind("continue"))
+        assertEquals("a number", AgentHookAnswers.answerKind("12"))
+        assertEquals("a text answer", AgentHookAnswers.answerKind("Half past seven"))
+    }
+
     // Plan 7G's amendment F1: on the card over the app, a confirmation's yes and no are Confirm and Cancel.
     @Test
     fun theOverlaysButtonIsTheOneThatTheWordsNameAndAConfirmationsYesAndNoAreConfirmAndCancel() {

@@ -13,6 +13,7 @@ import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Requests
 import dev.kestrel.app.orchestrator.Work
 import dev.kestrel.app.settings.speedText
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.voice.ModelsNotReadyException
 import dev.kestrel.voice.SAMPLE_RATE
@@ -311,8 +312,23 @@ internal class VoiceHooks(private val graph: AppGraph) {
             return event
         }
 
-        /** A typed input's kind in lower case, such as command, answer or stop: never its words. */
-        fun kindOf(input: OwnerInput): String = input.intent.javaClass.simpleName.lowercase()
+        /**
+         * A typed input's kind as `conversation-type` answers it (plan 7G's wire values), such as command, answer or stop:
+         * never its words. Each kind is named here, so that renaming a Kotlin class changes no answer.
+         */
+        fun kindOf(input: OwnerInput): String = when (input.intent) {
+            is InputIntent.Command -> "command"
+            is InputIntent.Answer -> "answer"
+            InputIntent.Stop -> "stop"
+            InputIntent.Continue -> "continue"
+            InputIntent.NewConversation -> "newconversation"
+            is InputIntent.ContinueConversation -> "continueconversation"
+            is InputIntent.ContinuePast -> "continuepast"
+            InputIntent.DeleteHistory -> "deletehistory"
+            is InputIntent.Remember -> "remember"
+            is InputIntent.Forget -> "forget"
+            is InputIntent.SaveRoutine -> "saveroutine"
+        }
 
         /**
          * Starts the record of the Orchestrator's steps and the tags of the conversation's inputs (plan 4D, H1; design 14.4

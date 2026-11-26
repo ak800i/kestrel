@@ -233,17 +233,26 @@ internal object AgentHookAnswers {
      * The button of a card with [choices] that agent-answer's [words] press, as the owner's tap on it (design 10.3 of
      * sub-project 7): yes, no, confirm, cancel, continue, stop or a pick's number; null when the card has no such button.
      */
-    fun cardChoice(words: String, choices: List<CardChoice>): CardChoice? {
-        val named = when (words) {
-            "yes" -> CardChoice.Yes
-            "no" -> CardChoice.No
-            "confirm" -> CardChoice.Confirm
-            "cancel" -> CardChoice.Cancel
-            "continue" -> CardChoice.Continue
-            "stop" -> CardChoice.Stop
-            else -> words.toIntOrNull()?.let(CardChoice::Pick)
-        }
-        return named?.takeIf { it in choices }
+    fun cardChoice(words: String, choices: List<CardChoice>): CardChoice? = named(words)?.takeIf { it in choices }
+
+    /**
+     * agent-answer's [words] as its errors name them: a button's word, "a number" or "a text answer", never the words of a
+     * free answer (the whole-plan review's nit of plan 7F).
+     */
+    fun answerKind(words: String): String = when (named(words)) {
+        null -> "a text answer"
+        is CardChoice.Pick -> "a number"
+        else -> words
+    }
+
+    private fun named(words: String): CardChoice? = when (words) {
+        "yes" -> CardChoice.Yes
+        "no" -> CardChoice.No
+        "confirm" -> CardChoice.Confirm
+        "cancel" -> CardChoice.Cancel
+        "continue" -> CardChoice.Continue
+        "stop" -> CardChoice.Stop
+        else -> words.toIntOrNull()?.let(CardChoice::Pick)
     }
 
     /**

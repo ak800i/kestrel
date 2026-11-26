@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Kestrel's words go to the channel of the owner's latest input ([routing]); with "Speak replies to typed commands" on, a
  * typed conversation's words and questions are spoken too, and a typed final reply reaches the voice as words only, so
  * that it opens no follow-up window (design 11). A question goes to that channel, and in a spoken conversation
- * "Continue the goal?" shows its card as well. While Kestrel is off ([voiceOn] is false: its listening mode is `OFF`, so
+ * "Continue the goal?" shows its card as well. While Kestrel is off ([kestrelOn] is false: its listening mode is `OFF`, so
  * the voice hears nothing and speaks only a typed conversation's words with the setting on, design 11), a spoken
  * conversation's words are only shown, and every question, hand-over and permission request also gets the text channel's
  * card (a permission request's is a hand-over's card, because Android's dialog is shown once), from the moment Kestrel
@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class ConversationOwner(
     private val channels: Map<InputChannel, OwnerChannel>,
     private val permissions: (List<String>) -> PermissionEnd,
-    private val voiceOn: StateFlow<Boolean>,
+    private val kestrelOn: StateFlow<Boolean>,
     private val routing: () -> Routing,
     private val acted: (Long) -> Unit = {},
     private val events: (DialogueEvent) -> Unit,
@@ -106,18 +106,14 @@ class ConversationOwner(
     var handOverKind: HandOverKind? = null
         private set
 
-    override suspend fun say(text: String) = show(ChannelOutput.Said(text))
-
-    /**
-     * Says or shows [output] on the owner's latest channel, and speaks it too when a typed reply is spoken. While Kestrel
-     * is off, a spoken conversation's words are only shown, so that no follow-up window opens (design 10.6 and 11).
-     */
-    suspend fun show(output: ChannelOutput) = take(output).show()
+    override suspend fun say(text: String) = take(ChannelOutput.Said(text)).show()
 
     /**
      * Takes [output] as the conversation emits it ([OwnerChannel.take]): its places on the channels, with their marks, are
      * this moment's, and the result shows it in its turn, routed as the mode is then, so that turning Kestrel on or off,
-     * which is never a stop, sends the waiting words to the voice that fits (plan 7F). [show] does both at once.
+     * which is never a stop, sends the waiting words to the voice that fits (plan 7F). It says or shows the words on the
+     * owner's latest channel, and speaks them too when a typed reply is spoken; while Kestrel is off, a spoken
+     * conversation's words are only shown, so that no follow-up window opens (design 10.6 and 11).
      */
     fun take(output: ChannelOutput): TakenOutput {
         val slots = channels.mapValues { (_, channel) -> channel.take() }
@@ -131,7 +127,7 @@ class ConversationOwner(
                 slots[InputChannel.TEXT]?.show(output)
                 if (route.speakTyped) slots[InputChannel.VOICE]?.show(spokenCopy(output))
             }
-            voiceOn.value -> slots[InputChannel.VOICE]?.show(output)
+            kestrelOn.value -> slots[InputChannel.VOICE]?.show(output)
             else -> slots[InputChannel.VOICE]?.show(ChannelOutput.Shown(textOf(output)))
         }
     }
@@ -262,7 +258,7 @@ class ConversationOwner(
         channels[route.channel]?.let { primary -> askers += async { primary.ask(asked) } }
         if (route.channel == InputChannel.VOICE && text != null) {
             askers += async {
-                if (asked.kind != QuestionKind.CONTINUE_GOAL) voiceOn.first { on -> !on }
+                if (asked.kind != QuestionKind.CONTINUE_GOAL) kestrelOn.first { on -> !on }
                 text.ask(asked)
             }
         }
@@ -311,7 +307,7 @@ class ConversationOwner(
                 // A spoken conversation's hand-over gets its card with Continue and Cancel once Kestrel is off (design 10.3).
                 val card = channels[InputChannel.TEXT]?.takeIf { route.channel == InputChannel.VOICE }?.let { text ->
                     async {
-                        voiceOn.first { on -> !on }
+                        kestrelOn.first { on -> !on }
                         card(text)
                     }
                 }

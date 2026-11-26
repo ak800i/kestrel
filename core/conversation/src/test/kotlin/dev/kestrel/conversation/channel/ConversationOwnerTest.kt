@@ -30,9 +30,9 @@ class ConversationOwnerTest {
     private val text = FakeChannel(InputChannel.TEXT)
     private var route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
     private var granted = PermissionEnd.GRANTED
-    private val voiceOn = MutableStateFlow(true)
+    private val kestrelOn = MutableStateFlow(true)
     private val events = mutableListOf<DialogueEvent>()
-    private val owner = ConversationOwner(mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { granted }, voiceOn, { route }) { events += it }
+    private val owner = ConversationOwner(mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { granted }, kestrelOn, { route }) { events += it }
 
     private val confirmation = Confirmation(
         question = "Send \"I'm late\" to Ana on Viber?",
@@ -53,7 +53,7 @@ class ConversationOwnerTest {
     fun theOwnersLatestChannelGetsKestrelsWords() = runTest {
         owner.say("Looking.")
         typed()
-        owner.show(ChannelOutput.Report(3, "Done."))
+        owner.take(ChannelOutput.Report(3, "Done.")).show()
 
         assertEquals(listOf(ChannelOutput.Said("Looking.")), voice.shown)
         assertEquals(listOf(ChannelOutput.Report(3, "Done.")), text.shown)
@@ -76,9 +76,9 @@ class ConversationOwnerTest {
 
     @Test
     fun whileKestrelIsOffTheVoiceOnlyShowsAndEveryQuestionGetsTheCard() = runTest {
-        voiceOn.value = false
+        kestrelOn.value = false
         owner.say("Looking.")
-        owner.show(ChannelOutput.Report(2, "Done."))
+        owner.take(ChannelOutput.Report(2, "Done.")).show()
         assertEquals(listOf(ChannelOutput.Shown("Looking."), ChannelOutput.Shown("Done.")), voice.shown)
 
         val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
@@ -89,7 +89,7 @@ class ConversationOwnerTest {
 
         // A typed conversation's replies are still spoken with the setting on (design 11), by Kestrel's own voice (plan 7F).
         typed(speak = true)
-        owner.show(ChannelOutput.Report(3, "Sent."))
+        owner.take(ChannelOutput.Report(3, "Sent.")).show()
         assertEquals(ChannelOutput.Said("Sent.", typedCopy = true), voice.shown.last())
     }
 
@@ -98,28 +98,28 @@ class ConversationOwnerTest {
         val answer = async { owner.ask("Which one?", AnswerKind.FREE) }
         runCurrent()
         assertTrue(text.asked.isEmpty())
-        voiceOn.value = false
+        kestrelOn.value = false
         runCurrent()
         owner.answer(text.asked.single().number, ChannelAnswer.Text("The first"))
         assertEquals(Answer.Text("The first"), answer.await())
 
-        voiceOn.value = true
+        kestrelOn.value = true
         text.handOverEnds += HandOverEnd.CONTINUED
         val handing = async { owner.handOver(HandOver.of(HandOverKind.PAYMENT)) }
         runCurrent()
         assertEquals(1, voice.handOvers.size)
         assertTrue(text.handOvers.isEmpty())
-        voiceOn.value = false
+        kestrelOn.value = false
         assertEquals(HandOverEnd.CONTINUED, handing.await())
         assertEquals(1, text.handOvers.size)
 
         // A permission request's card is a hand-over's: Android's dialog is not shown again, and Continue checks the grant.
-        voiceOn.value = true
+        kestrelOn.value = true
         granted = PermissionEnd.PARTLY
         text.handOverEnds += HandOverEnd.CONTINUED
         val asking = async { owner.askPermission(listOf("android.permission.READ_CALENDAR"), "Kestrel needs to read your calendar.") }
         runCurrent()
-        voiceOn.value = false
+        kestrelOn.value = false
         assertEquals(PermissionEnd.PARTLY, asking.await())
         assertEquals(HandOverKind.PERMISSION, text.handOvers.last().kind)
     }
@@ -128,7 +128,7 @@ class ConversationOwnerTest {
     fun aTypedReplyThatIsSpokenTooReachesTheVoiceAsWordsOnly() = runTest {
         typed(speak = true)
 
-        owner.show(ChannelOutput.Report(4, "Done."))
+        owner.take(ChannelOutput.Report(4, "Done.")).show()
 
         assertEquals(listOf(ChannelOutput.Report(4, "Done.")), text.shown)
         assertEquals(listOf(ChannelOutput.Said("Done.", typedCopy = true)), voice.shown)
@@ -362,7 +362,7 @@ class ConversationOwnerTest {
         assertFalse(owner.leaveKestrel())
 
         // With no channel for the latest input, nothing can take Kestrel's screen away.
-        val voiceOnly = ConversationOwner(mapOf(InputChannel.VOICE to voice), { granted }, voiceOn, { route }) {}
+        val voiceOnly = ConversationOwner(mapOf(InputChannel.VOICE to voice), { granted }, kestrelOn, { route }) {}
         assertFalse(voiceOnly.leaveKestrel())
     }
 
@@ -375,7 +375,7 @@ class ConversationOwnerTest {
         assertEquals(listOf(HandOverPart.OWN), voice.handOverParts)
         assertTrue(text.handOvers.isEmpty())
 
-        voiceOn.value = false
+        kestrelOn.value = false
         runCurrent()
         assertEquals(listOf(HandOverPart.CARD), text.handOverParts)
         owner.endHandOver((events.last() as DialogueEvent.HandedOver).number, HandOverEnd.CONTINUED)
@@ -388,7 +388,7 @@ class ConversationOwnerTest {
     fun theVoicesCopyOfATypedConversationsWordsIsMarkedAsOne() = runTest {
         typed(speak = true)
         owner.say("On it.")
-        voiceOn.value = false
+        kestrelOn.value = false
         owner.say("Done.")
         route = ConversationOwner.Routing(InputChannel.VOICE, speakTyped = false)
         owner.say("Looking.")
@@ -407,9 +407,9 @@ class ConversationOwnerTest {
         val words = owner.take(ChannelOutput.Said("Sent."))
         assertEquals(2, voice.takes)
 
-        voiceOn.value = false
+        kestrelOn.value = false
         report.show()
-        voiceOn.value = true
+        kestrelOn.value = true
         words.show()
 
         assertEquals(listOf(ChannelOutput.Shown("Done."), ChannelOutput.Said("Sent.")), voice.shown)

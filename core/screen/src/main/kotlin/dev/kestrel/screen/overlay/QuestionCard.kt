@@ -19,15 +19,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Kestrel's card at the bottom of the screen (design 10.3 of sub-project 7; spec 12.4): a question, its buttons and, for a
- * pick over many numbers, a compact keypad, which gives only a number of the pick's range and whose Move key takes the card
- * to the other end of the screen, so that it never hides a number that the owner needs. Unlike the other overlays it takes touches, but only on itself, and it drops a touch
- * that passed through another app's window above it (design 12.2). A card ignores taps for its first [CARD_ARMING_MILLIS],
- * and again after its Move key took it to its new place,
- * and a new card appears no sooner than [CARD_ARMING_MILLIS] after the previous one closed, so that a tap aimed at an old card's
- * button never answers a new one (design D32 item 21 of sub-project 5); that wait runs in [scope], so that it depends on no
- * single caller. A new question replaces the card, whose caller gets [CardEnd.Withdrawn]: `:app`'s card desk gives every
- * question one card, whichever channel asks it. Use it on the main thread.
+ * Kestrel's card at the bottom of the screen (design 10.3 of sub-project 7; spec 12.4): a question, its buttons and,
+ * for a pick over many numbers, a compact keypad, which gives only a number of the pick's range and whose Move key
+ * takes the card to the other end of the screen, so that it never hides a number that the owner needs. Unlike the other
+ * overlays it takes touches, but only on itself, and it drops a touch that passed through another app's window above it
+ * (design 12.2). A card ignores taps for its first [CARD_ARMING_MILLIS], and again after its Move key took it to its
+ * new place, and a new card appears no sooner than [CARD_ARMING_MILLIS] after the previous one closed, so that a tap
+ * aimed at an old card's button never answers a new one (design D32 item 21 of sub-project 5); that wait runs in
+ * [scope], so that it depends on no single caller. A new question replaces the card, whose caller gets
+ * [CardEnd.Withdrawn]: `:app`'s card desk gives every question one card, whichever channel asks it. Use it on the main
+ * thread.
  */
 internal class QuestionCard(
     private val host: OverlayHost,
@@ -40,17 +41,21 @@ internal class QuestionCard(
     private var current: Card? = null
 
     /**
-     * Whether a card is on the screen, or ended less than one settle ago ([CardPresence]); `ScreenActions` acts on nothing
-     * while it is (design D32 item 20 of sub-project 5).
+     * Whether a card is on the screen, or ended less than one settle ago ([CardPresence]); `ScreenActions` acts on
+     * nothing while it is (design D32 item 20 of sub-project 5).
      */
     val isShowing: Boolean get() = presence.isShowing
 
-    /** The card's bounds on the screen once Android has laid it out, also while it closes, or null while no card counts as shown. */
+    /**
+     * The card's bounds on the screen once Android has laid it out, also while it closes, or null while no card counts
+     * as shown.
+     */
     val bounds: IntRect? get() = presence.bounds
 
     /**
      * Shows [question] and returns the owner's tap or number, or [CardEnd.Withdrawn] when another question replaces the
-     * card, [dismiss] ends it, or no card can show because the session has closed. Cancelling the call removes the card.
+     * card, [dismiss] ends it, or no card can show because the session has closed. Cancelling the call removes the
+     * card.
      */
     suspend fun ask(question: CardQuestion): CardEnd {
         current?.end(CardEnd.Withdrawn)
@@ -69,8 +74,8 @@ internal class QuestionCard(
         current?.end(CardEnd.Withdrawn)
     }
 
-    // The card shows once the arming delay after the previous card has passed, unless it ended meanwhile. A wait that the
-    // session's end cancels gives the card's caller no answer.
+    // The card shows once the arming delay after the previous card has passed, unless it ended meanwhile. A wait that
+    // the session's end cancels gives the card's caller no answer.
     private fun appear(card: Card) {
         scope.launch {
             presence.closedAt?.let { closed ->
@@ -164,8 +169,8 @@ internal class QuestionCard(
         // The number typed so far, when the keypad gives it: a number outside the pick's range gives nothing.
         private fun entered(): Int? = digits.toString().toIntOrNull()?.takeIf { question.pad?.takes(it) == true }
 
-        // The card goes to the other end of the screen and keeps its number. It arms again there, because a tap may have
-        // been aimed at what was under the card's new place (review L2).
+        // The card goes to the other end of the screen and keeps its number. It arms again there, because a tap may
+        // have been aimed at what was under the card's new place (review L2).
         private fun move() {
             host.hide(view)
             atTop = !atTop
@@ -187,7 +192,8 @@ internal class QuestionCard(
                     cornerRadius = dp(16f)
                 }
                 elevation = dp(8f)
-                // Design 12.2 of sub-project 7: a touch that passed through another app's window above the card answers nothing.
+                // Design 12.2 of sub-project 7: a touch that passed through another app's window above the card answers
+                // nothing.
                 filterTouchesWhenObscured = true
                 addView(TextView(context).apply {
                     text = question.text
@@ -204,8 +210,8 @@ internal class QuestionCard(
             }
         }
 
-        // Low, so that it covers little of the numbers: the number as the owner types it with the deletion, the entry and the
-        // move, and then the digits, five to a row.
+        // Low, so that it covers little of the numbers: the number as the owner types it with the deletion, the entry
+        // and the move, and then the digits, five to a row.
         private fun keypad(pad: NumberPad): LinearLayout {
             val context = host.context
             return LinearLayout(context).apply {

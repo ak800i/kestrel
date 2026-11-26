@@ -11,12 +11,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 
 /**
- * The conversation screen's one reducer (plan 7F). It takes every input of the screen: the conversation's view, what the
- * goal service's coordinator knows ([foreground]), each input that the owner gave on the screen ([sent], which counts only
- * while the screen is in front), the microphone and its listening that heard no command, "New conversation" and whether the screen is in front. After each one it
- * applies [ConversationScreenRules.viewed] to the newest of them, so that no order of their arrival keeps the screen in
- * front of a goal that works. [effects] are what the screen does. It is Android-free; the screen's view model keeps it
- * across configuration changes. Any thread may call it.
+ * The conversation screen's one reducer (plan 7F). It takes every input of the screen: the conversation's view, what
+ * the goal service's coordinator knows ([foreground]), each input that the owner gave on the screen ([sent], which
+ * counts only while the screen is in front), the microphone and its listening that heard no command, "New conversation"
+ * and whether the screen is in front. After each one it applies [ConversationScreenRules.viewed] to the newest of them,
+ * so that no order of their arrival keeps the screen in front of a goal that works. [effects] are what the screen does.
+ * It is Android-free; the screen's view model keeps it across configuration changes. Any thread may call it.
  */
 internal class ConversationScreenModel(private val nowWall: () -> Long) {
     private val lock = Any()

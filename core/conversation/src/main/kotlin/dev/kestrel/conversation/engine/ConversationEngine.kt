@@ -85,8 +85,9 @@ import kotlinx.coroutines.launch
  * the machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order; each is taken
  * by its channels as the engine emits it (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs that
  * wait behind the one that plays (plan 7B's decision 10; plan 7F), and the end of a final reply's `show` is the machine's
- * `ReplyShown`. [view] is what the voice rules, the screen, the goal service and
- * the hooks read. [restore] must run once at process start; inputs wait for it. [report] gets a failure by its class.
+ * `ReplyShown`. [view] is what the voice rules, the screen, the goal service and the hooks read. [restore] must run once at
+ * process start; inputs wait for it. [report] gets a failure by its class. [kestrelOn] is whether Kestrel is on, from
+ * listening's one source (`Listening.kestrelOn`); the machine's `Voice` event mirrors it.
  * Every act of the owner's that lets a goal's round act comes with its number among his inputs, an input with its own and a
  * tap on a card with the one that `:app` took as the tap reached Kestrel (plan 7F), so that the screen's turn can tell
  * whether it came after an instant command started (design 6.5); the engine numbers nothing itself.
@@ -103,7 +104,7 @@ class ConversationEngine(
     permissions: (List<String>) -> PermissionEnd,
     private val settings: Flow<ConversationSettings>,
     private val testMode: Flow<Boolean>,
-    private val voiceOn: StateFlow<Boolean>,
+    private val kestrelOn: StateFlow<Boolean>,
     private val clock: ConversationClock,
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
@@ -240,7 +241,7 @@ class ConversationEngine(
     val owner = ConversationOwner(
         channels,
         permissions,
-        voiceOn,
+        kestrelOn,
         { ConversationOwner.Routing(state.replyChannel, state.settings.speakTypedReplies) },
         // Design 6.5: a tap on a hand-over's card lets the running round act now, as "Kestrel, continue" does (plan 7F).
         acted = { act -> running?.actedFor(act) },
@@ -274,7 +275,7 @@ class ConversationEngine(
             combine(settings, testMode) { conversations, test -> ConversationEvent.SettingsChanged(conversations, test) }.collect { post(it) }
         }
         scope.launch {
-            voiceOn.collect { on -> post(ConversationEvent.Voice(on)) }
+            kestrelOn.collect { on -> post(ConversationEvent.Voice(on)) }
         }
     }
 
@@ -286,7 +287,7 @@ class ConversationEngine(
         check(!started.isCompleted) { "restore() runs once, before any input" }
         try {
             process(ConversationEvent.SettingsChanged(settings.first(), testMode.first()))
-            process(ConversationEvent.Voice(voiceOn.value))
+            process(ConversationEvent.Voice(kestrelOn.value))
             val snapshot = try {
                 store.open()
             } catch (e: CancellationException) {

@@ -94,7 +94,7 @@ class ConversationEngineTest {
     private val store = ArchivedConversationStore(archive, scope.backgroundScope) {}
     private val settings = MutableStateFlow(ConversationSettings())
     private val testMode = MutableStateFlow(false)
-    private val voiceOn = MutableStateFlow(true)
+    private val kestrelOn = MutableStateFlow(true)
     private val clock = ManualConversationClock({ scope.testScheduler.currentTime })
     private val failures = mutableListOf<Throwable>()
     private var inputs = 0L
@@ -123,7 +123,7 @@ class ConversationEngineTest {
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             engineScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, voiceOn, clock, report, onStep = onStep, timerMillis = timerMillis,
+            settings, testMode, kestrelOn, clock, report, onStep = onStep, timerMillis = timerMillis,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -204,7 +204,7 @@ class ConversationEngineTest {
 
     @Test
     fun theRestoreReadsWhetherKestrelIsOnBeforeItRestores() = scope.runTest {
-        voiceOn.value = false
+        kestrelOn.value = false
         var restoredOn: Boolean? = null
         val engine = engine(environment(), onStep = { event, before, _ -> if (event is ConversationEvent.Restored) restoredOn = before.voiceOn })
 

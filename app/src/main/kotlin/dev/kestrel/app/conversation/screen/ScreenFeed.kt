@@ -15,12 +15,12 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
- * What feeds the conversation screen's model, and where its effects go (plan 7F), Android-free so that the screen's view
- * model only names the app's parts. [start] follows the conversation's [view], the goal service's [foreground], each input
- * that the owner gave on the screen ([sent]) and the end of the listening that each assistant tap asked for ([waitEnds]) for as long as
- * [model] lives, and gives the model's own inputs to [submit] at once, so that none waits for a screen that comes back
- * (review of Task 6). Only [leaves] waits for the activity. [visits] counts the screen's arrivals in front, so that the
- * card's buttons arm again on each one (review of Task 7).
+ * What feeds the conversation screen's model, and where its effects go (plan 7F), Android-free so that the screen's
+ * view model only names the app's parts. [start] follows the conversation's [view], the goal service's [foreground],
+ * each input that the owner gave on the screen ([sent]) and the end of the listening that each assistant tap asked for
+ * ([waitEnds]) for as long as [model] lives, and gives the model's own inputs to [submit] at once, so that none waits
+ * for a screen that comes back (review of Task 6). Only [leaves] waits for the activity. [visits] counts the screen's
+ * arrivals in front, so that the card's buttons arm again on each one (review of Task 7).
  */
 internal class ScreenFeed(
     private val model: ConversationScreenModel,
@@ -45,8 +45,9 @@ internal class ScreenFeed(
         scope.launch { view.collect(model::viewed) }
         scope.launch { foreground.collect(model::foreground) }
         scope.launch { sent.collect(model::sent) }
-        // The end of the listening that a microphone tap asked for, with an input that starts or resumes work, is the tap's
-        // command; any other end is no command. Each end names its taps, so that only the armed tap's own end counts.
+        // The end of the listening that a microphone tap asked for, with an input that starts or resumes work, is the
+        // tap's command; any other end is no command. Each end names its taps, so that only the armed tap's own end
+        // counts.
         scope.launch {
             waitEnds.collect { end ->
                 if (end.input?.let { ConversationScreenRules.leaves(it, view.value) } != true) model.heardNoCommand(end.taps)

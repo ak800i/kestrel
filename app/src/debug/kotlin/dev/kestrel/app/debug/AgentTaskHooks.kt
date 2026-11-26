@@ -109,7 +109,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         // M2 of Task 13a).
         val input = when (val choice = AgentHookAnswers.cardChoice(words, card.choices)) {
             null -> channel.read(words) ?: throw HookError("the answer holds no words")
-            else -> channel.answer(card.key, choice) ?: throw HookError("the card no longer takes the answer $words; read agent-state again")
+            else -> channel.answer(card.key, choice) ?: throw HookError("the card no longer takes the answer ${AgentHookAnswers.answerKind(words)}; read agent-state again")
         }
         channel.submit(VoiceHooks.untagged(graph, input))
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=text"
@@ -127,12 +127,12 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         // A keypad's number within the pick's range is the owner's entry on the card.
         val choice = AgentHookAnswers.overlayChoice(words, card.choices)
             ?: words.toIntOrNull()?.let(CardChoice::Pick)?.takeIf(card::takes)
-            ?: throw HookError("the card has no button for the answer $words")
+            ?: throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
         when (CardPresser(desk).press(card.key, card.kind, choice)) {
             CardPress.PRESSED -> Unit
             CardPress.NOT_ON_OVERLAY -> throw HookError("the card is not on the overlay: Kestrel's screen is in front, or no screen session shows it")
             CardPress.OTHER_CARD -> throw HookError("another card took the overlay; read agent-state again")
-            CardPress.NO_BUTTON -> throw HookError("the card has no button for the answer $words")
+            CardPress.NO_BUTTON -> throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
             CardPress.NOT_ARMED -> throw HookError("the card does not take taps yet; answer again in a second")
             CardPress.LOCKED -> throw HookError("the phone is locked, and Continue waits for the owner's unlock")
         }
