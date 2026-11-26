@@ -181,7 +181,7 @@ The engine, which the app graph owns:
 package dev.kestrel.conversation.engine
 
 class ConversationEngine(
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val store: ConversationStore,
     private val goals: GoalRunner,
     private val local: LocalRequests,
@@ -189,24 +189,39 @@ class ConversationEngine(
     permissions: (List<String>) -> PermissionEnd,  // what Android granted, after "Kestrel, continue" on a permission request
     private val settings: Flow<ConversationSettings>,
     private val testMode: Flow<Boolean>,           // the Safety page's value
-    private val voiceOn: Flow<Boolean>,            // Kestrel is on: its listening mode is not OFF
+    private val kestrelOn: StateFlow<Boolean>,     // Kestrel is on, from listening's one source, `Listening.kestrelOn` (plan 7F)
     private val clock: ConversationClock,          // the wall clock for storage, the clock since boot for timers
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
+    private val timerMillis: (Timer, Long) -> Long = { _, millis -> millis }, // only the device tests shorten D21's waits (15.2)
 ) {
     val owner: ConversationOwner                    // the owner as goals and the conversation talk to him; the hooks read it
     val view: StateFlow<ConversationView>
     var restored: RestoreResult?                    // what restore() found, for the hooks; null before it ran
     suspend fun restore(previous: ProcessEnd = ProcessEnd.Other): RestoreResult // at process start, before any input
+    suspend fun awaitRestored()                     // returns once restore() has run (plan 7E)
     fun submit(input: OwnerInput)                   // any thread; never blocks
     fun signal(signal: PhoneSignal)                 // LOCKED, UNLOCKED, RINGING, CALL_ACTIVE, CALL_IDLE, AGENT_CALL, SCREEN_ON
     fun touched()                                   // the touch watcher saw the owner's touch during a goal
+    fun backgroundRefused(command: Int)             // Android refused the goal service's start for that command's goal (plan 7E)
     fun composing(active: Boolean)                  // the screen's field holds text while the screen is in front
-    fun awaitingCommand(active: Boolean)            // Kestrel waits for a command after "Kestrel" alone or the side key
+    fun awaitingCommand(active: Boolean)            // Kestrel waits for a command after "Kestrel" alone, the side key or the microphone
     fun replyOpened(question: Int)                  // the owner tapped "Reply…" on the question's card
     fun endQuietTime()                              // the hook conversation-control do=expire
+    suspend fun deleteHistory(): HistoryDeletion    // the settings page's "Delete history" after its own question (plan 7D)
+    suspend fun deletePast(id: ConversationId): PastDeletion // one past conversation, from the list or its transcript (9.5)
+    suspend fun deleteAllPast(): PastDeletion       // "Delete all past conversations" (9.5)
+    val allPastDeletion: StateFlow<AllPastDeletion> // Idle, Running or Ended(outcome): whether a "Delete all" runs
     fun outcome(command: Int): CommandOutcome?      // the newest 16, for the debug hooks
+}
+
+enum class PastDeletion { DELETED, OPEN, UNAVAILABLE, FAILED } // OPEN: it is the open conversation; UNAVAILABLE: the index cannot be read
+
+sealed interface AllPastDeletion {
+    data object Idle : AllPastDeletion
+    data object Running : AllPastDeletion
+    data class Ended(val outcome: PastDeletion) : AllPastDeletion
 }
 
 /** What the voice rules, the conversation screen, the goal notification and the hooks read. */
@@ -224,6 +239,12 @@ data class ConversationView(
     val testMode: Boolean = true,             // the open conversation's, or the Safety page's while none is open
     val quiet: QuietClock = QuietClock.Off,
     val keptForOwner: Boolean = false,        // Kestrel keeps a final reply or a held goal's report until the owner is back
+    val ownRequest: Boolean = false,          // one of Kestrel's own requests runs, and "stop" has not cancelled it yet (plan 7D)
+    val hold: GoalHold? = null,               // why a held goal is held, which the goal notification names (plan 7E)
+    val goalEnding: GoalEnding? = null,       // the goal is ending, so the goal service does not start for it (plan 7E)
+    val goalRecord: Int? = null,              // the open goal's record, which with `id` names the goal across processes (plan 7E)
+    val goalCommand: Int? = null,             // the input that started or last resumed the open goal (plan 7E)
+    val waitsBehindCommand: Boolean = false,  // the working goal's round waits for the owner's instant command (plan 7E)
 )
 
 enum class GoalPhase { ACTING, ASKING, HANDED_OVER, PAUSED, PAUSED_AT_LIMIT, INTERRUPTED }
@@ -243,14 +264,27 @@ interface OwnerChannel {
     suspend fun show(output: ChannelOutput)
 
     /**
-     * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
-     * so leaves no screen of Kestrel's; an answer that the owner says or types, also after "Reply…", reaches the
-     * conversation as an input instead. Cancelling the call withdraws the question.
+     * Takes an output's place at the moment the conversation emits it, also while earlier outputs still wait to be shown;
+     * what the place shows is decided at its turn, from the mode of that moment (plan 7F). A channel that judges words by
+     * when they came, as the voice does against the stops of Kestrel's speech, takes its marks here; [show] is the same as
+     * taking a place and showing at once.
      */
-    suspend fun ask(question: ChannelQuestion): ChannelAnswer
+    fun take(): OutputSlot = OutputSlot { output -> show(output) }
 
-    /** A hand-over: returns when the owner continued or cancelled on the channel, or when it ended by itself. */
-    suspend fun handOver(handOver: HandOver): HandOverEnd
+    /**
+     * Asks [question] and returns the answer that the channel itself got, as a card's button, which acts over the app and
+     * so leaves no screen of Kestrel's, with the number of the owner's tap; an answer that the owner says or types, also
+     * after "Reply…", reaches the conversation as an input instead. Cancelling the call withdraws the question.
+     */
+    suspend fun ask(question: ChannelQuestion): CardAnswer
+
+    /**
+     * A hand-over: returns when the owner continued or cancelled on the channel, with the number of his tap on its card's
+     * button, or when it ended by itself. As the hand-over's own channel ([HandOverPart.OWN]) the channel opens what the
+     * hand-over opens and watches for its end by itself; as the copy of its card beside the owner's channel
+     * ([HandOverPart.CARD]) it shows only the card, so that one hand-over opens its page once (plan 7F).
+     */
+    suspend fun handOver(handOver: HandOver, part: HandOverPart = HandOverPart.OWN): HandOverAnswer
 
     /** Shows Android's permission dialog for [permissions] after saying [why]. */
     suspend fun askPermission(permissions: List<String>, why: String): PermissionEnd
@@ -259,8 +293,18 @@ interface OwnerChannel {
     suspend fun leaveKestrel(): Boolean
 }
 
+fun interface OutputSlot { suspend fun show(output: ChannelOutput) }   // an output's place on a channel, taken at its emission
+fun interface TakenOutput { suspend fun show() }                        // an output with its channels' places (ConversationOwner.take)
+
+data class CardAnswer(val answer: ChannelAnswer, val act: Long)        // a card's answer, with the number of the owner's tap (6.5)
+data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)       // the answer to a question of the conversation's own; tap: when a card gave it
+data class HandOverAnswer(val end: HandOverEnd, val act: Long?)        // act: the tap on the card's Continue or Cancel; null when it ended by itself
+enum class HandOverPart { OWN, CARD }                                  // the owner's channel's hand-over, or only its card on the text channel
+
 sealed interface ChannelOutput {
-    data class Said(val text: String) : ChannelOutput                 // spoken by the voice, shown on the bar and in the transcript
+    data class Said(val text: String, val typedCopy: Boolean = false, val question: Int? = null) : ChannelOutput
+        // spoken by the voice, shown on the bar and in the transcript; typedCopy: the spoken copy of a typed conversation's
+        // words, with "Speak replies to typed commands" on (11); question: the spoken copy of that question, whose end ends it
     data class Shown(val text: String) : ChannelOutput                // shown only, never spoken: "Got it." for steering
     data class Report(val command: Int, val text: String) : ChannelOutput // the final reply; a spoken one opens the follow-up window
 }
@@ -291,7 +335,29 @@ Whether the owner gave an answer on Kestrel's own screen belongs to the answer's
 
 The bar's progress ("Step 12 · 3 of 7 · …") is not a channel output: the bar draws it from `ConversationView` (10.5).
 
-`ConversationOwner` implements `:core:agent`'s `OwnerPort` for one goal. It takes over the parts of today's `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, the pause gate (`gate()`) and the wait for Kestrel's own screen (`leaveKestrel()`, with the channel's `leaveKestrel()`, section 10.2). It picks the channel by the conversation's latest input (section 11). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
+`ConversationOwner` implements `:core:agent`'s `OwnerPort` for one goal. It takes over the parts of today's `AppOwnerPort` that are not Android: one question at a time, the waits and wakes, the pause gate (`gate()`) and the wait for Kestrel's own screen (`leaveKestrel()`, with the channel's `leaveKestrel()`, section 10.2). It picks the channel by the conversation's latest input (section 11).
+
+```kotlin
+class ConversationOwner(
+    private val channels: Map<InputChannel, OwnerChannel>,
+    private val permissions: (List<String>) -> PermissionEnd,
+    private val kestrelOn: StateFlow<Boolean>,     // the engine's, `Listening.kestrelOn`
+    private val routing: () -> Routing,            // the owner's latest input's channel, and whether typed replies are spoken too
+    private val acted: (Long) -> Unit = {},        // a tap on a hand-over's or a permission request's card, for the running round
+    private val events: (DialogueEvent) -> Unit,
+) : OwnerPort, Dialogue {
+    fun take(output: ChannelOutput): TakenOutput   // the output's places on every channel, taken as the engine emits it (11)
+    suspend fun reply(text: String, kind: QuestionKind): OwnerReply // the conversation's own question, with the card's tap
+    fun answer(number: Int, answer: ChannelAnswer, leftScreen: Boolean = false)
+    fun endHandOver(number: Int, end: HandOverEnd)
+    fun pause()                                    // withdraws a goal's open question and closes the gate until resume()
+    fun resume()
+    fun startWork()                                // clears what earlier work left: a late pause, a fresh look
+    // and OwnerPort's say, ask, confirm, handOver, askPermission, gate and leaveKestrel, and Dialogue's question
+}
+```
+
+Every output takes its places when the engine emits it (`take`), and is routed at its turn (section 11): to the channel of the owner's latest input, with a spoken copy for a typed conversation when "Speak replies to typed commands" is on, and only shown for a spoken conversation while Kestrel is off. A typed conversation's questions, hand-overs and permission requests get the text channel's card; a spoken conversation's get it too from the moment Kestrel turns off, and "Continue the goal?" always (10.3). The first answer wins, and the others are withdrawn. A tap on a card is the owner's act of its moment: `:app` takes its number among his inputs when the tap reaches Kestrel, and the answer carries it (`CardAnswer.act`, `OwnerReply.tap`, `HandOverAnswer.act`, and on to `ContinueAnswered.tap`, `ResumeGoal.tap` and the round), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
 
 ### 5.4 New ports and fields in `:core:agent`
 
@@ -541,7 +607,7 @@ sealed interface ConversationEvent {
     data class Signal(val signal: PhoneSignal) : ConversationEvent
     data class SettingsChanged(val settings: ConversationSettings, val testMode: Boolean) : ConversationEvent
     data class Restored(val snapshot: ConversationSnapshot?, val previous: ProcessEnd = ProcessEnd.Other) : ConversationEvent
-    data class ContinueAnswered(val answer: ChannelAnswer) : ConversationEvent
+    data class ContinueAnswered(val answer: ChannelAnswer, val tap: Long? = null) : ConversationEvent // tap: the card's (plan 7F)
     data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent // Reply, Quiet, Switch or Deleted
     data class Switched(val snapshot: ConversationSnapshot?, val sentence: String, val failed: Boolean = false) : ConversationEvent
     data object EndQuietTime : ConversationEvent                        // the hook conversation-control do=expire
@@ -556,7 +622,7 @@ sealed interface DialogueEvent {                                        // from 
 ```
 
 The machine is one function, `ConversationMachine.next(state, event, now)`, which gives the new state and its effects (`ConversationEffect`), in order:
-- for goals: `StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause)`, `CancelGoal(reason, sentence)` and `EndHeldGoal(reason)`;
+- for goals: `StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input, tap)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause)`, `CancelGoal(reason, sentence)` and `EndHeldGoal(reason)`;
 - for the owner's dialogue: `AnswerQuestion(number, answer, leftScreen)`, `EndHandOver(number, end)`, `AskContinueGoal`, `CancelContinueQuestion` and `Output(output)`;
 - for the records: `AddLine(conversation, record, kind, text, channel)` and `EndRecord(conversation, record, end, answer)`; each names the record with its conversation, because the same step may close it;
 - for Kestrel's own requests: `RunLocal(command, record, request, input)`, `CancelLocal`, `EndLocal(command, end, answer, input)`, `SwitchTo(command, id, input)`, `OpenSwitched(snapshot)` and `UndoSwitch` (a "stop" that came while the store switched: the store puts both conversations back as they were);
@@ -970,9 +1036,10 @@ No other match.
 
 ### 9.5 Browsing past conversations
 
-- The conversation screen's menu opens "Past conversations": a list, newest first, of the closed conversations within retention, each with its date, its first request (cut at 80 characters, as the index keeps it) and its number of commands, and a search field that filters the list with the same matching as 9.4. Each filtering ranks the whole index, so it runs when the typing pauses, not at each letter. The list comes from the index of past conversations (9.2), so opening it decrypts no conversation. While the index is being read or rebuilt, the list waits for it and shows "Loading past conversations…". When the index can be neither read nor rebuilt, it shows "Kestrel can't read past conversations right now. It will try again later."
+- The conversation screen's menu opens "Past conversations": a list, newest first, of the closed conversations within retention, each with its date (the day on which it began, with its year), its first request (cut at 80 characters, as the index keeps it) and its number of commands, and a search field that filters the list with the same matching as 9.4: `HistorySearch.matching(text)` ranks the index's shards by the search's own rule (`HistoryRanking`) and gives `PastMatches` (`All` when the text holds no word that counts, `Only(ids)`, `Rebuilding` or `Failed`), and reads no body. Each filtering ranks the whole index, so it runs once the typing pauses, not at each letter, and off the main thread. The list comes from the index of past conversations (9.2), so opening it decrypts no conversation. Until the list's first read ends, it shows "Loading past conversations…"; a later read (a search, or the list after a deletion) keeps the rows that it shows under a thin progress line until its own come, and a row that stays meanwhile has no Delete until the list is current (plan 7F). When the index can be neither read nor rebuilt, it shows "Kestrel can't read past conversations right now. It will try again later."
 - Opening one shows its transcript read-only, drawn from its records: the owner's commands and answers, Kestrel's words and questions, the checklists and the final answers, with the time of each command. Its body is read when it opens. It has "Continue this conversation" and "Delete".
-- Each conversation can be deleted, from the list or the open transcript. The Conversations settings page has "Delete all past conversations" with a question; it deletes every closed conversation that the index lists, with the index's change, in one transaction.
+- Each conversation can be deleted, from the list or the open transcript, after the question "Delete this conversation?" (`ConversationEngine.deletePast(id)`): the engine's loop checks it between the machine's steps and refuses the open conversation and the one that a running switch opens ("This conversation is open now, so it stays.", `PastDeletion.OPEN`), and the engine's writer deletes it after the writes that the loop gave it before (plan 7F).
+- The Conversations settings page has "Delete all past conversations" with the question "Delete all past conversations? The open conversation stays." (`ConversationEngine.deleteAllPast()`). One transaction of the archive's own (`RecordArchive.deleteClosed(keep, index)`, over `ConversationStore.deleteClosed(keep)`) deletes every closed conversation, whatever the index lists, also one in a format that this version cannot read, with the index's change. It keeps every conversation that is open at some moment between the owner's ask and the transaction (the engine's keep-set, which the loop fills and the store reads under its lock), and, unlike "delete history" (9.7), the logs and the archive's key; it reads no body. The store raises its generation first, as for "delete history". The deletion waits at the engine's writer's barrier for the writes queued before it, so that a conversation that closed before the owner asked goes too, and then runs beside the engine's inbox and writer, in the engine's scope, because the store may wait minutes for its index; a second call while one runs waits for it and deletes nothing again (`allPastDeletion`: `Idle`, `Running`, `Ended(outcome)`). While the index cannot be read, it deletes nothing and the page says "Kestrel can't read past conversations right now, so it deleted none. Try again later." (`PastDeletion.UNAVAILABLE`). The page shows "Deleting past conversations…" until the outcome comes, reads the outcome out, and shows one only for a deletion that it started or saw running (plan 7F).
 
 ### 9.6 Continuing a past conversation
 
@@ -1004,31 +1071,37 @@ No other match.
   - a text field ("Tell Kestrel what to do"), a Send button and a microphone button;
   - while a goal is open: Stop; with the goal held, Continue and Cancel;
   - in the top bar: "New conversation" (or "Stop and start new"), the gear, and a menu with "Past conversations".
-- It works with listening off. The microphone button acts as the side key does (spec 8.6): it starts listening if needed and waits for one command, which then runs as a spoken one.
-- The screen holds no state of its own. It draws `ConversationEngine.view` and sends `OwnerInput`s through `TextChannel`.
+- It works with listening off. The microphone button acts as the side key does (spec 8.6): it calls `Listening.assist()`, which turns Kestrel on if it is off, says "Yes?" and waits for one command, which then runs as a spoken one.
+- The screen keeps no conversation of its own. It draws `ConversationEngine.view` and sends `OwnerInput`s through `TextChannel`; its one reducer, `ConversationScreenModel`, which its `ViewModel` keeps across configuration changes, holds only what the screen itself shows and waits for (plan 7F).
 
 ### 10.2 Kestrel leaves its own screen before it acts
 
 - Kestrel's own app is never an action target: it is always agent-free (`AgentFreeApps.KESTREL`), `open_app` and the link check refuse it, and the observation builder leaves its windows out.
-- When the owner sends a typed command, or answers a question on the conversation screen, the activity calls `moveTaskToBack(true)`, so the app that he was in comes back, or the home screen when he came from the launcher. `TextChannel.leaveKestrel()` then waits, up to 3 s, until Android's window list holds no window of Kestrel's except its overlays. Only then does a goal take its first observation, or its fresh one after an answer.
+- When the owner sends a typed command, answers a goal's question, taps Continue or taps the microphone on the conversation screen, the screen arms for that act, and it calls `moveTaskToBack(true)` once the goal that the act started or let go on acts and the goal service runs in the foreground, with every start that Kestrel asked for answered by Android (`GoalForeground.foreground`), so that Android sees the service's start while Kestrel's screen is in front (10.6); the app that he was in comes back, or the home screen when he came from the launcher. An act that ends without a goal that acts, as "remember that …", keeps its reply on the screen, and no later goal, such as one that he starts by voice, moves the screen; the screen never leaves on its own otherwise, so the notification's Open interrupts a goal (D13). Each act is read against the conversation's view from before the conversation got it (`TextChannel.sent`, `SentInput.before`), whatever order the screen hears of them in (plan 7F). `TextChannel.leaveKestrel()` then waits, up to 3 s, until Android's window list holds no window of Kestrel's except its overlays. Only then does a goal take its first observation, or its fresh one after an answer.
 - The task run waits for Kestrel's own screen through one function, `FrontCheck.pastKestrel`, before every look at the screen: in the front check (`FrontCheck.checked`) before each observation, and before `finish`'s fresh snapshot. When Kestrel's own app is in front, it calls `OwnerPort.leaveKestrel()`, which `ConversationOwner` implements with the channel's `leaveKestrel()` and which waits at most `OwnerPort.KESTREL_LEAVE_MILLIS` (3 s); this wait does not count as work. Then it reads the screen again, because the screen may come back, and it waits at most three times. When Kestrel's screen stays through a wait, or is still in front after the third, the run ends as `INTERRUPTED` with `Interruption.KESTREL_SCREEN`, which gives the route notes no strike, and the goal becomes held ("Leave Kestrel's screen, then tap Continue or say 'Kestrel, continue'."). The other agent-free apps still end the task as `AGENT_FREE`, as today.
 - Until plan 7D, today's `AppOwnerPort` waits the same 3 s for Kestrel's settings to leave the front. Nothing moves them, so a task that starts on Kestrel's own screen ends as `INTERRUPTED` after 3 s instead of as `AGENT_FREE`, and `AgentTexts` says "I stopped because Kestrel's own screen stayed in front.".
 
 ### 10.3 Question cards and "Reply…"
 
-- `QuestionCard` in `:core:screen`'s `overlay` package replaces `ConfirmationCard` and keeps its rules: an accessibility overlay that takes touches only on itself, the arming delay (`ARMING_MILLIS`), and `ScreenActions` acting on nothing while a card shows (D32 item 20 of sub-project 5). Its buttons follow the question's kind:
+- `QuestionCard` in `:core:screen`'s `overlay` package replaces `ConfirmationCard` and keeps its rules: an accessibility overlay that takes touches only on itself and drops a touch that passed through another app's window above it, the arming delay (`CARD_ARMING_MILLIS`, 600 ms, also after the keypad's Move and before a new card after the previous one closed), and `ScreenActions` acting on nothing while a card shows (D32 item 20 of sub-project 5). Its window title is "Kestrel question" (`CARD_TITLE`; it was "Kestrel confirmation"). Its buttons follow the question's kind (plan 7F, `OwnerCard.of`); a button that resumes a goal comes last, as on the goal notification:
 
 | Kind | Buttons |
 |---|---|
 | Yes or no | Yes, No, Reply… |
 | Confirmation | Confirm, Cancel (never Reply…, so a confirmation is always a button) |
-| Pick | Up to 4 choices, Reply… |
-| Free question, screenshot question | Reply…, Cancel (the screenshot question also Yes, No, as spec 11.6 asks) |
-| "Continue the goal?", a limit's "Continue?", "Continue the conversation …?" | Continue, Stop (the switch: Yes, No) |
-| Hand-over | Continue, Cancel, with the hand-over's sentence |
+| Pick | Its choices (up to 4, from the agent's question), Cancel; without choices, as `look_closer`'s grid, a low keypad (the number, "Delete digit", OK and Move; the digits 1 to 5 and 6 to 0) that gives only a number from 1 to the pick's highest, and Cancel; never Reply…, whose screen would cover the numbers |
+| Free question | Reply…, Cancel |
+| Screenshot question | Yes, No, Reply… (spec 11.6's Yes and No; a Cancel would mean No) |
+| "Continue the goal?", a limit's "Continue?" | Stop, Continue |
+| "Continue the conversation …?", "Delete the activity log, …?" | Yes, No |
+| Hand-over (also a spoken conversation's permission request while Kestrel is off, whose Continue checks what Android granted) | Cancel, Continue, with the hand-over's sentence |
 
-- In a typed conversation, every question shows its card. In a spoken conversation, a confirmation shows the card as today, and the other questions are spoken and shown on the bar as today, plus a card for "Continue the goal?".
-- **Reply…** opens `ConversationActivity` with the question in focus and the keyboard up. The tap acts on the card (spec 14.1). From the tap until the answer is sent and Kestrel's screen has left, the owner's touches interrupt nothing, because he is expected to touch Kestrel's screen. After the answer, Kestrel leaves its screen (10.2), and the owner port's gate returns `RESUMED` once, so `TaskRun` looks at the screen afresh before its next model call, as after a pause (`resumed()`).
+- **One card per question number** (`CardDesk` in `:app`), whichever channel asks it: every channel that asks question N joins one card, drawn with the choices of the caller that has the most, so that the voice's `[Yes, No]` and the text channel's `[Yes, No, Reply…]` of one screenshot question are one card with Reply…. A tap answers every caller whose card takes that choice; a caller whose card lacks it keeps waiting, and the card shows again for it. The newest question's card shows, and an older one comes back once the newer has ended; a card that a different question replaced gives no answer instead of a "no", so that a card that went away never declines a confirmation. A card that got no answer because no screen session was connected, or the session closed, shows again when a screen session connects.
+- In a typed conversation, every question shows its card. In a spoken conversation, a confirmation and the screenshot question show the card (Yes and No for the screenshot question, without Reply…), the other questions are spoken and shown on the bar as today, and "Continue the goal?" also shows its card. While Kestrel is off, every question, hand-over and permission request of a spoken conversation also gets the text channel's card, which stays until what it shows has ended (section 11).
+- **While the conversation screen is in front**, the overlay shows no card, so that it never covers the field and the keyboard; the screen shows the open card above its field instead, on the past conversations' pages too. A button on the screen's copy reaches the conversation as an input that names its question (`InputIntent.Answer(answer, question)`), so that a late tap answers no later question and the goal looks at the screen afresh, and the copy ignores taps for its first 600 ms and again on each of the screen's visits in front. A confirmation, a hand-over and a pick are answered only on the card over the app (12.2 and 12.3): their copy on the screen shows the words and "Show the app", which takes the screen to the back, where the overlay's card answers them.
+- **Reply…** on the card over the app opens `ConversationActivity` with the question in focus and the keyboard up, and the card hides until the screen is in front, or for 5 s when it does not come; Reply… on the screen's copy puts the keyboard on the field. Both hold the question for 5 minutes (10.4). The tap acts on the card (spec 14.1). From the tap until the answer is sent and Kestrel's screen has left, the owner's touches interrupt nothing, because he is expected to touch Kestrel's screen. After the answer, Kestrel leaves its screen (10.2), and the owner port's gate returns `RESUMED` once, so `TaskRun` looks at the screen afresh before its next model call, as after a pause (`resumed()`).
+- **A Continue tapped while the phone is locked** waits for the owner's unlock, as the goal notification's Continue does (plan 7E): the card desk keeps the tap with its number, the bar says "Unlock the phone to continue.", and the tap answers once the screen is on and the phone unlocked; the card shows again meanwhile, so that its Stop can answer in its place.
+- **Every tap on a card is the owner's act of its moment**: the card desk takes its number among his inputs as the tap reaches Kestrel, and the answer carries it (`CardAnswer`, `HandOverAnswer`), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F).
 - Voice answers still work while a card shows, when listening is on, with today's rules (D32 item 17 of sub-project 5).
 
 ### 10.4 Waits in a typed conversation
@@ -1046,9 +1119,11 @@ Spoken conversations keep today's waits: 15 s to start an answer and 35 s once s
 
 ### 10.5 The feedback bar
 
-- During a goal the bar shows its progress: "Step 12 · 3 of 7 · Replying to Mila", from `ConversationView.checklist`, and Kestrel's questions as today.
-- With a goal held it shows briefly "On hold: say 'Kestrel, continue' or open Kestrel." The bar takes no touches (spec 8.9), so it names the words; the buttons are on the conversation screen, the card and the notification.
-- In the follow-up window it shows "Go on…" with the seconds left (6.6).
+- The bar has one writer, `OwnedBar` (plan 7D's, which the app graph builds): listening's texts, the text channel's words, the owner's parts' release of a question's or a hand-over's text and the goal's progress all reach the bar through it, in order, and it knows whose text the bar shows last (`BarOwner`), so that a text is taken over only from the owner that it follows and released only by its own owner.
+- During a goal the bar shows its progress: "Step 12 · 3 of 7 · Replying to Mila", from `ConversationView.step` and `checklist` (`GoalBar`, for both channels), and Kestrel's questions as today.
+- With a goal held it shows "On hold: say 'Kestrel, continue' or open Kestrel." (`GoalBar.ON_HOLD`). The bar takes no touches (spec 8.9), so it names the words; the buttons are on the conversation screen, the card and the notification.
+- The progress never hides another text: while a kept text (a question, a hand-over's sentence) holds the bar, or another text showed less than 4 s ago (`OwnedBar.OTHERS_MILLIS`, the bar's own time before it fades), the newest progress waits, and it shows once the kept text is released or that time has passed; it replaces only an earlier progress. So "On hold" shows after the held goal's own sentence. At the goal's end a line that still waits is dropped, and one that shows fades by itself.
+- In the follow-up window it shows "Go on…" with the seconds left (6.6). A final reply holds the bar against the progress until its follow-up countdown takes it over, and lets it go when the Rules say that no window follows it (`Effect.NoFollowUp`: unspoken, Kestrel off, a newer reply, or no window possible).
 - In a typed conversation it also shows the final answer for a few seconds.
 
 ### 10.6 The goal service and its notification
@@ -1091,7 +1166,11 @@ Spoken conversations keep today's waits: 15 s to start an answer and 35 s once s
 
 - The latest input decides (D10): a typed steering message or a typed answer in a spoken goal switches the replies to written from then on, and a spoken input switches them back (`ConversationState.replyChannel`).
 - Silent mode and the volume behave exactly as today: Kestrel speaks on the assistant stream (spec 8.4).
-- With listening off, Kestrel speaks only typed replies with the setting on (section 10.6).
+- With listening off, Kestrel speaks only typed replies with the setting on (section 10.6), with its own voice (`AppOffVoice`), which loads the owner's voice inside the goal service's `mediaPlayback` and closes it 30 s after the last reply.
+- **Each output takes its places when the conversation emits it, and its voice at its turn** (plan 7F). The engine takes every output's places on the channels as it emits it (`ConversationOwner.take`, `OwnerChannel.take`): the voice channel marks it with the voice session's latest words (`VoicePath.came()`) and with Kestrel's own voice's count of stops (`OffVoice.stops`). Which voice speaks it is decided when its turn comes: a typed conversation's spoken copy (`ChannelOutput.Said.typedCopy`) goes to Kestrel's own voice while Kestrel is off at that moment and to the voice session while it is on; `Listening.kestrelOn` is the one source of whether Kestrel is on, for the engine, `ConversationOwner` and the voice channel.
+- **Turning Kestrel on or off is a switch of voice, never a stop**: turning off ends the voice session's speech and drops no waiting output, and turning on ends what Kestrel's own voice speaks; a copy whose voice switched after its mark goes to the voice that fits now (`OffVoice.speak(text, mark)` returns false).
+- **Every stop counts for both voices**: each stop of the Orchestrator's speech also stops Kestrel's own voice, and the owner's Stop, however it came (spoken, typed, on the screen or on the notification), stops the voice session's speech and Kestrel's own voice and drops the words that the conversation emitted before it, also those that wait for their turn (`VoiceChannel.stopSpeech`, the Rules' `Event.StopSpeaking`).
+- **A question's spoken copy ends with the question**: when the question ends, as by the owner's typed answer, its copy stops at once, and the replies after it are still spoken.
 - The transcript always shows everything, whatever the channel.
 
 ## 12. Safety

@@ -91,8 +91,8 @@ sealed interface ChannelOutput {
      * Kestrel's words: spoken by the voice channel, and shown on the bar and in the transcript. [typedCopy]: they are the
      * spoken copy of a typed conversation's words, with "Speak replies to typed commands" on; the voice speaks them with
      * Kestrel's own voice while Kestrel is off and with the voice session while it is on, as Kestrel is when their turn
-     * comes (design 11 of sub-project 7; plan 7F). [question]: they are
-     * the spoken copy of the conversation's question with this number, whose end also ends them (plan 7F).
+     * comes (design 11 of sub-project 7; plan 7F). [question]: they are the spoken copy of the conversation's question with
+     * this number, whose end also ends them (plan 7F).
      */
     data class Said(val text: String, val typedCopy: Boolean = false, val question: Int? = null) : ChannelOutput {
         override fun toString(): String = "Said(${text.length} chars, typedCopy=$typedCopy, question=$question)"
