@@ -97,7 +97,8 @@ class VoicePlayer(context: Context, private val synthesizer: Synthesizer) {
     /**
      * Speaks [text] after the replies that came before it, and completes when it has been spoken, stopped, interrupted
      * or refused, or with the error when synthesis or the audio output fails. A [stop] after this call ends the reply,
-     * also when it has not begun yet. A reply whose sentences all lack letters and digits plays nothing and completes
+     * also when it has not begun yet. Cancelling the result ends this reply alone, also while it waits for its turn, and
+     * the replies after it play. A reply whose sentences all lack letters and digits plays nothing and completes
      * with [Spoke.FINISHED]. After [close], the reply completes with [Spoke.STOPPED] at once.
      */
     fun speak(text: String): Deferred<Spoke> {

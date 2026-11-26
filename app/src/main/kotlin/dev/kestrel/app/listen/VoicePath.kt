@@ -19,9 +19,10 @@ internal interface VoicePath {
 
     /**
      * Says [text] and shows it on the bar; returns once it has been spoken, stopped or refused, or only shown while Kestrel
-     * is off. A [final] reply's end opens the follow-up window (design 6.6 of sub-project 7).
+     * is off. A [final] reply's end opens the follow-up window (design 6.6 of sub-project 7). [question]: the words are the
+     * spoken copy of the conversation's question with this number, so that its [withdraw] stops them (plan 7F).
      */
-    suspend fun say(text: String, final: Boolean = false)
+    suspend fun say(text: String, final: Boolean = false, question: Int? = null)
 
     /** Shows [text] on the bar without speaking it. */
     fun show(text: String)
@@ -32,7 +33,11 @@ internal interface VoicePath {
     /** Says a hand-over's [text], which the bar keeps until the channel releases it. */
     fun handOver(text: String)
 
-    /** The conversation's question number [question] ended: the voice no longer waits for its answer. */
+    /**
+     * The conversation's question number [question] ended, however the owner answered it: the voice no longer waits for its
+     * answer, and Kestrel stops speaking it, as it asked it ([ask]) or as its spoken copy ([say]), while the other words go
+     * on (plan 7F).
+     */
     fun withdraw(question: Int)
 
     /**

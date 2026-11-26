@@ -72,10 +72,11 @@ sealed interface ChannelOutput {
     /**
      * Kestrel's words: spoken by the voice channel, and shown on the bar and in the transcript. [ownVoice]: the engine
      * routed them while Kestrel was off, as a typed conversation's words with "Speak replies to typed commands" on, so that
-     * Kestrel's own voice speaks them, never a voice session (design 11 of sub-project 7; plan 7F).
+     * Kestrel's own voice speaks them, never a voice session (design 11 of sub-project 7; plan 7F). [question]: they are
+     * the spoken copy of the conversation's question with this number, whose end also ends them (plan 7F).
      */
-    data class Said(val text: String, val ownVoice: Boolean = false) : ChannelOutput {
-        override fun toString(): String = "Said(${text.length} chars, ownVoice=$ownVoice)"
+    data class Said(val text: String, val ownVoice: Boolean = false, val question: Int? = null) : ChannelOutput {
+        override fun toString(): String = "Said(${text.length} chars, ownVoice=$ownVoice, question=$question)"
     }
 
     /** Shown on the bar and in the transcript, never spoken: "Got it." for steering, a replaced goal's report. */

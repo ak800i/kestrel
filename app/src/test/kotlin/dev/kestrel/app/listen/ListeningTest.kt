@@ -271,6 +271,37 @@ class ListeningTest {
         assertEquals("Later.", shown.last())
     }
 
+    // Plan 7F: the owner's typed answer, with Kestrel on, ends the question; the question's withdrawal stops its spoken
+    // copy alone, whether it plays or waits, and the words after it still play.
+    @Test
+    fun aQuestionsEndStopsOnlyItsOwnSpeech() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+
+        val copy = async { listening.voicePath.say("Which one?", question = 5) }
+        val later = async { listening.voicePath.say("Done.") }
+        runCurrent()
+        listening.voicePath.ask(6, "Shall I send it?", QuestionKind.CONFIRM, voice = true)
+        runCurrent()
+        assertEquals(listOf("Which one?", "Done.", "Shall I send it?"), session.said)
+        log.clear()
+
+        listening.voicePath.withdraw(5)
+        listening.voicePath.withdraw(6)
+        runCurrent()
+
+        assertTrue(session.replies[0].isCancelled)
+        assertTrue(copy.isCompleted)
+        assertTrue(session.replies[2].isCancelled)
+        assertFalse(session.replies[1].isCompleted)
+        assertFalse(later.isCompleted)
+        assertFalse("stop speaking" in log)
+        assertEquals(0L, listening.voicePath.speechStops)
+        session.replies[1].complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(later.isCompleted)
+    }
+
     @Test
     fun theFollowUpWindowCountsItsSecondsDownOnTheBarAndFadesAtItsEnd() = runTest {
         val listening = listeningWithSession()

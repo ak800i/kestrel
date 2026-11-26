@@ -1368,7 +1368,7 @@ class RulesTest {
         val step = Rules.next(acting, Event.ChannelAsks(4, text, QuestionKind.YES_NO))
 
         assertEquals(
-            listOf(Effect.Show(Feedback.ConversationText(text, keep = true)), Effect.Say(Reply.Text(text, kept = true)), Effect.WaitForAnswer()),
+            listOf(Effect.Show(Feedback.ConversationText(text, keep = true)), Effect.Say(Reply.Question(4, text)), Effect.WaitForAnswer()),
             step.effects,
         )
         assertEquals(VoiceQuestion(4, QuestionKind.YES_NO), step.state.voiceQuestion)
@@ -1385,6 +1385,23 @@ class RulesTest {
         // An answer on its card, or the conversation's withdrawal, ends the wait; an older question's end changes nothing.
         assertEquals(Step(spoken.state), Rules.next(spoken.state, Event.ChannelWithdraws(3)))
         assertEquals(null, Rules.next(spoken.state, Event.ChannelWithdraws(4)).state.voiceQuestion)
+    }
+
+    // Plan 7F: a question's end, however the owner answered it, stops Kestrel's speech of that question alone: the one
+    // that the voice asks, and a typed question's spoken copy with Kestrel on.
+    @Test
+    fun aQuestionsEndStopsOnlyItsOwnSpeech() {
+        val text = "Which one?"
+        val asked = Rules.next(acting, Event.ChannelAsks(4, text, QuestionKind.FREE)).state
+        val answered = Rules.next(asked, Event.ChannelWithdraws(4))
+        assertEquals(listOf(Effect.StopQuestion(4)), answered.effects)
+        assertEquals(null, answered.state.voiceQuestion)
+
+        val copy = Rules.next(listening, Event.ChannelSays(3, text, question = 5))
+        assertEquals(Effect.Say(Reply.Channel(3, text, question = 5)), copy.effects.last())
+        val later = Rules.next(copy.state, Event.ChannelSays(4, "Done.")).state
+        // Only the question's own speech stops: no StopSaying, which would end "Done." too.
+        assertEquals(listOf(Effect.StopQuestion(5)), Rules.next(later, Event.ChannelWithdraws(5)).effects)
     }
 
     // The voice's answer names the question that the voice read it for, so that an answer that comes after that question

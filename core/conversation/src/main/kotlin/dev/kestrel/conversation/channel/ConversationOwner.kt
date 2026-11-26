@@ -256,7 +256,7 @@ class ConversationOwner(
         }
         if (route.channel == InputChannel.TEXT && route.speakTyped && voice != null) {
             askers += async {
-                voice.show(ChannelOutput.Said(asked.spoken, ownVoice = !voiceOn.value))
+                voice.show(ChannelOutput.Said(asked.spoken, ownVoice = !voiceOn.value, question = asked.number))
                 awaitCancellation()
             }
         }

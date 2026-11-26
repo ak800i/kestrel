@@ -271,6 +271,28 @@ class VoiceChannelTest {
         assertEquals(0L, voice.speechStops)
     }
 
+    // Plan 7F: the owner's typed answer, with Kestrel on, cancels the typed question's spoken copy, and the channel
+    // withdraws that question, which stops its speech; the words after it, and words that ended by themselves, withdraw
+    // nothing.
+    @Test
+    fun aCancelledQuestionsCopyWithdrawsItsQuestionAlone() = runTest {
+        val channel = channel()
+        voice.holds = true
+        val copy = launch { channel.show(ChannelOutput.Said("Which one?", question = 5)) }
+        runCurrent()
+        assertEquals(listOf<Int?>(5), voice.questions)
+
+        copy.cancel()
+        runCurrent()
+        assertEquals(listOf(5), voice.withdrawn)
+
+        voice.holds = false
+        channel.show(ChannelOutput.Said("Done."))
+        channel.show(ChannelOutput.Said("Which one?", question = 6))
+        assertEquals(listOf<Int?>(5, null, 6), voice.questions)
+        assertEquals(listOf(5), voice.withdrawn)
+    }
+
     // Without a card, as without a screen session, the voice still answers (plan 7F): the question stays spoken, also
     // when a voice session opens again, and the spoken answer, which withdraws the question, ends it.
     @Test
@@ -331,9 +353,12 @@ class VoiceChannelTest {
             ends.removeFirstOrNull()?.complete(Unit)
         }
 
-        override suspend fun say(text: String, final: Boolean) {
+        val questions = mutableListOf<Int?>()
+
+        override suspend fun say(text: String, final: Boolean, question: Int?) {
             said += text
             finals += final
+            questions += question
             if (holds) CompletableDeferred<Unit>().also(ends::addLast).await()
         }
 

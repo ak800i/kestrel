@@ -13,6 +13,7 @@ import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
 import dev.kestrel.safety.HandOver
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -59,10 +60,22 @@ internal class VoiceChannel(
             // The engine decided how the words are spoken when it routed them (`ConversationOwner`): Kestrel's own voice
             // speaks only a typed conversation's words that it routed while Kestrel was off (design 10.6 and 11 of
             // sub-project 7), in their turn among the spoken outputs, and a stop drops them as it drops the others.
-            is ChannelOutput.Said -> inTurn { if (output.ownVoice) offVoice.speak(output.text) else voice.say(output.text) }
+            is ChannelOutput.Said -> said(output)
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
             is ChannelOutput.Report -> inTurn { voice.say(output.text, final = true) }
             is ChannelOutput.Shown -> voice.show(output.text)
+        }
+    }
+
+    // A question's spoken copy ends with the question (plan 7F): the conversation cancels it once the owner answered on
+    // another channel, and the question's withdrawal stops Kestrel's speech of it, while the other words go on. Kestrel's
+    // own voice stops a cancelled reply itself.
+    private suspend fun said(output: ChannelOutput.Said) {
+        try {
+            inTurn { if (output.ownVoice) offVoice.speak(output.text) else voice.say(output.text, question = output.question) }
+        } catch (e: CancellationException) {
+            output.question?.let(voice::withdraw)
+            throw e
         }
     }
 

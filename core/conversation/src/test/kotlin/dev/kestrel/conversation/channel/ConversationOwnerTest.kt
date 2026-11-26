@@ -70,7 +70,7 @@ class ConversationOwnerTest {
 
         assertEquals(Answer.Text("The first"), answer.await())
         assertEquals(listOf(ChannelOutput.Said("Looking.")), text.shown)
-        assertEquals(listOf(ChannelOutput.Said("Looking."), ChannelOutput.Said("Which one?")), voice.shown)
+        assertEquals(listOf(ChannelOutput.Said("Looking."), ChannelOutput.Said("Which one?", question = text.asked.single().number)), voice.shown)
         assertTrue(voice.asked.isEmpty())
     }
 

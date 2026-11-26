@@ -28,7 +28,10 @@ internal interface Session {
     /** The options of the voice that the session speaks with, or null when they are not known. */
     val voice: VoiceOptions? get() = null
 
-    /** Speaks [text] in Kestrel's voice. The result completes as `VoicePlayer.speak`'s does. */
+    /**
+     * Speaks [text] in Kestrel's voice. The result completes as `VoicePlayer.speak`'s does, and cancelling it ends this
+     * reply alone.
+     */
     fun speak(text: String): Deferred<Spoke>
 
     /** Stops the reply that plays and the replies that wait. */

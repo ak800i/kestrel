@@ -339,10 +339,12 @@ sealed interface Event {
     /**
      * The conversation says [text] through the voice channel (design 11 of sub-project 7). [reply] numbers it, so that
      * the channel learns when it has been spoken, or that it was only shown ([Effect.EndReply]). [final]: it is a command's
-     * or a local request's final reply, whose end opens the follow-up window (design 6.6).
+     * or a local request's final reply, whose end opens the follow-up window (design 6.6). [question]: the words are the
+     * spoken copy of the conversation's question with this number, as a typed question's with "Speak replies to typed
+     * commands" on, so that the question's end also ends them ([ChannelWithdraws]; plan 7F).
      */
-    data class ChannelSays(val reply: Int, val text: String, val final: Boolean = false) : Event {
-        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final)"
+    data class ChannelSays(val reply: Int, val text: String, val final: Boolean = false, val question: Int? = null) : Event {
+        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final, question=$question)"
     }
 
     /** The follow-up window's length from the Conversations page (design 6.6 and 13 of sub-project 7); 0 is off. */
@@ -372,7 +374,8 @@ sealed interface Event {
 
     /**
      * The voice channel's question number [question] ended: answered on its card or by voice, or withdrawn by the
-     * conversation (design 11 of sub-project 7). The voice no longer waits for its answer.
+     * conversation (design 11 of sub-project 7). The voice no longer waits for its answer, and Kestrel no longer speaks
+     * the question, whether it asked it or speaks a typed question's copy ([Effect.StopQuestion]; plan 7F).
      */
     data class ChannelWithdraws(val question: Int) : Event
 
@@ -421,8 +424,13 @@ sealed interface Reply {
      * What the conversation says through the voice channel, as its reply number [reply] (design 11 of sub-project 7);
      * the bar shows it already. Listening tells the channel when it has been spoken, stopped or refused.
      */
-    data class Channel(val reply: Int, val text: String) : Reply {
-        override fun toString() = "Channel($reply, ${text.length} characters)"
+    data class Channel(val reply: Int, val text: String, val question: Int? = null) : Reply {
+        override fun toString() = "Channel($reply, ${text.length} characters, question=$question)"
+    }
+
+    /** The conversation's question number [question], which the voice channel asks; the Rules keep [text] on the bar. */
+    data class Question(val question: Int, val text: String) : Reply {
+        override fun toString() = "Question($question, ${text.length} characters)"
     }
 }
 
@@ -505,6 +513,13 @@ sealed interface Effect {
 
     /** Reply number [reply] of the conversation was only shown, because Kestrel is off: its channel goes on at once. */
     data class EndReply(val reply: Int) : Effect
+
+    /**
+     * The conversation's question number [question] ended, so Kestrel stops speaking it, whether it plays or waits for its
+     * turn: the reply that asks it ([Reply.Question]) or speaks its copy ([Reply.Channel.question]). The replies before
+     * and after it go on (plan 7F).
+     */
+    data class StopQuestion(val question: Int) : Effect
 
     /**
      * No follow-up window follows final reply number [reply] (design 6.6 of sub-project 7): it was not spoken to its end,
@@ -1199,8 +1214,11 @@ object Rules {
 
     // Design 11 of sub-project 7: the voice channel's question ended, so its answer wait ends; a newer question that the
     // voice asked meanwhile stays.
-    private fun channelWithdraws(state: State, question: Int): Step =
-        if (state.voiceQuestion?.number == question) Step(state.copy(voiceQuestion = null, voiceAnswers = true)) else Step(state)
+    // Plan 7F: a question that ended, however the owner answered it, is no longer spoken.
+    private fun channelWithdraws(state: State, question: Int): Step {
+        val ended = if (state.voiceQuestion?.number == question) state.copy(voiceQuestion = null, voiceAnswers = true) else state
+        return Step(ended, listOfNotNull(Effect.StopQuestion(question).takeIf { state.speaking }))
+    }
 
     // "Stay off" after an unlock waited for the goal's end and its final reply (design D2 of sub-project 5).
     private fun stayOff(state: State): Step =
@@ -1216,7 +1234,7 @@ object Rules {
         val finalReply = event.reply.takeIf { event.final }
         val shown = Effect.Show(Feedback.ConversationText(event.text, finalReply = finalReply))
         if (state.mode == Mode.OFF) return Step(state, listOfNotNull(shown, Effect.EndReply(event.reply), finalReply?.let { Effect.NoFollowUp(it) }))
-        return say(state, Reply.Channel(event.reply, event.text), shown, finalReply = finalReply)
+        return say(state, Reply.Channel(event.reply, event.text, event.question), shown, finalReply = finalReply)
     }
 
     // Design D2 of sub-project 5 and 11 of sub-project 7: the conversation asks one question at a time. The question stays
@@ -1224,7 +1242,7 @@ object Rules {
     private fun channelAsks(state: State, event: Event.ChannelAsks): Step {
         if (state.mode == Mode.OFF) return Step(state)
         val asked = state.copy(voiceQuestion = VoiceQuestion(event.question, event.kind), voiceAnswers = event.voice, answered = null)
-        return say(asked, Reply.Text(event.text, kept = true), Effect.Show(Feedback.ConversationText(event.text, keep = true)))
+        return say(asked, Reply.Question(event.question, event.text), Effect.Show(Feedback.ConversationText(event.text, keep = true)))
             .then { waitForAnswer(it) }
     }
 

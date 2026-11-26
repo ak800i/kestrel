@@ -30,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -433,6 +434,10 @@ class Listening internal constructor(
     private val replies = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
     private val replyNumbers = AtomicInteger()
 
+    // The replies that speak the conversation's questions, by the questions' numbers, while they play or wait for their
+    // turn: a question's end stops only its own speech (Effect.StopQuestion; plan 7F).
+    private val questionSpeeches = ConcurrentHashMap<Int, Deferred<Spoke>>()
+
     // How many times the Orchestrator stopped Kestrel's speech; the voice channel drops the spoken outputs that waited for
     // their turn across a stop (decision 10 of sub-project 7).
     private val stopsOfSpeech = AtomicLong()
@@ -441,12 +446,12 @@ class Listening internal constructor(
     internal val voicePath: VoicePath = object : VoicePath {
         override val ready: StateFlow<Boolean> get() = sessionOpen
 
-        override suspend fun say(text: String, final: Boolean) {
+        override suspend fun say(text: String, final: Boolean, question: Int?) {
             val reply = replyNumbers.incrementAndGet()
             val ended = CompletableDeferred<Unit>()
             replies[reply] = ended
             try {
-                send(Event.ChannelSays(reply, text, final))
+                send(Event.ChannelSays(reply, text, final, question))
                 ended.await()
             } finally {
                 replies.remove(reply)
@@ -1078,6 +1083,8 @@ class Listening internal constructor(
                 converse(inputs?.invoke(effect.heard, input) ?: input)
             }
             is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
+            // Cancelling a reply ends it alone, as VoicePlayer.speak says; it ends as a stopped one.
+            is Effect.StopQuestion -> questionSpeeches[effect.question]?.cancel()
             // The final reply's text no longer waits for a countdown, so a goal's progress may follow it (review A-R2).
             is Effect.NoFollowUp -> bar.release(BarOwner.FinalReply(effect.reply))
             is Effect.RunCommand -> {
@@ -1191,6 +1198,7 @@ class Listening internal constructor(
             is Reply.Text -> reply.text
             is Reply.Command -> reply.text
             is Reply.Channel -> reply.text
+            is Reply.Question -> reply.text
         }
         // A command's say() and the voice channel's say() wait for this reply, and return once it has ended in any way.
         val ended = when (reply) {
@@ -1202,7 +1210,7 @@ class Listening internal constructor(
         // which the bar shows already at the start of the wait for the task (Feedback.AwaitingTask), and the texts that
         // the Rules showed already: a command's text, and what the conversation says, asks or hands over (design 11 of
         // sub-project 7).
-        val kept = reply is Reply.Command || reply is Reply.Channel || (reply as? Reply.Text)?.kept == true
+        val kept = reply is Reply.Command || reply is Reply.Channel || reply is Reply.Question || (reply as? Reply.Text)?.kept == true
         val showInstead = { if (reply != Reply.Yes && !kept) bar.show(text) }
         val current = session
         if (current == null) {
@@ -1223,9 +1231,12 @@ class Listening internal constructor(
             ended?.complete(Unit)
             throw e
         }
+        val question = (reply as? Reply.Question)?.question ?: (reply as? Reply.Channel)?.question
+        question?.let { questionSpeeches[it] = spoken }
         // Registered last: nothing after it may throw, or the Orchestrator would end the reply a second time. Only a reply
         // that Kestrel spoke to its end counts as spoken (design 6.6 of sub-project 7).
         spoken.invokeOnCompletion { error ->
+            question?.let { questionSpeeches.remove(it, spoken) }
             val spoke = if (error == null) spoken.getCompleted() else null
             if (error != null && error !is CancellationException) {
                 report("A reply", error)
