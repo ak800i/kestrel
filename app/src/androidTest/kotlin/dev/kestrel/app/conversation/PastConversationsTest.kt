@@ -49,6 +49,9 @@ class PastConversationsTest {
     val screen = ScreenServiceRule()
 
     @get:Rule(order = 1)
+    val keyboard = ScreenKeyboard.rule
+
+    @get:Rule(order = 2)
     val compose = createAndroidComposeRule<ConversationActivity>()
 
     private val graph get() = TypedTests.graph
