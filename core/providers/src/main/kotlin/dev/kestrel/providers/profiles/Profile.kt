@@ -1,6 +1,7 @@
 package dev.kestrel.providers.profiles
 
 import dev.kestrel.providers.catalog.AuthMethod
+import dev.kestrel.providers.catalog.CatalogLoader
 import dev.kestrel.providers.catalog.LocalServerKind
 import dev.kestrel.providers.chat.RequestStyle
 import dev.kestrel.providers.cost.Price
@@ -30,6 +31,9 @@ data class Profile(
     val signedInAt: Long? = null,
 ) {
     fun model(role: ModelRole): ProfileModel = if (role == ModelRole.LIGHTWEIGHT) lightweight else versatile
+
+    /** Whether the profile's use counts AI Credits, so that a round's credits limit it: only Copilot's does (plan 5A). */
+    val countsCredits: Boolean get() = providerId == CatalogLoader.COPILOT
 
     override fun toString(): String = "Profile(id=$id, provider=$providerId)"
 }

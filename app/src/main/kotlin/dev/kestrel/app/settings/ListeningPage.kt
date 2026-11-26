@@ -97,7 +97,7 @@ internal fun ListeningPage(data: SettingsData, status: SetupStatus, onAction: (S
 
 /** A switch whose whole row toggles it, so that its title names it for Voice Access and TalkBack, with a detail below. */
 @Composable
-private fun OptionSwitch(@StringRes title: Int, @StringRes detail: Int, on: Boolean?, onChange: (Boolean) -> Unit) {
+internal fun OptionSwitch(@StringRes title: Int, @StringRes detail: Int, on: Boolean?, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()

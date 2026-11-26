@@ -30,7 +30,7 @@ import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.voice.VoiceChoice
 
 /** The pages of the settings app (design spec, section 15). Later sub-projects add their own pages. */
-enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT, PROVIDERS, MEMORY }
+enum class SettingsPage { HOME, CHECKLIST, LISTENING, VOICE, COMMANDS, SAFETY, ACTIVITY_LOG, NETWORK_LOG, ABOUT, PROVIDERS, MEMORY, CONVERSATIONS }
 
 /**
  * A request to show [page], from an intent that opened the settings app, such as "What can I say?" (design spec, section
@@ -111,6 +111,7 @@ fun SettingsApp(
             SettingsPage.COMMANDS -> ScrollingPage { CommandsPage(data, home) }
             SettingsPage.SAFETY -> ScrollingPage { SafetyPage(data, home) }
             SettingsPage.MEMORY -> ScrollingPage { MemoryPage(data, home) }
+            SettingsPage.CONVERSATIONS -> ScrollingPage { ConversationsPage(data, home) }
             SettingsPage.ACTIVITY_LOG -> ActivityLogPage(data, onExportLogs, home)
             SettingsPage.NETWORK_LOG -> NetworkLogPage(data, onExportLogs, home)
             SettingsPage.ABOUT -> when (val shown = licence) {
@@ -149,6 +150,9 @@ private fun HomePage(states: Map<SetupStep, StepState>, data: SettingsData, onOp
         onOpen(SettingsPage.PROVIDERS)
     }
     PageEntry(stringResource(R.string.settings_safety), testModeSummary(testMode)) { onOpen(SettingsPage.SAFETY) }
+    PageEntry(stringResource(R.string.settings_conversations), stringResource(R.string.settings_conversations_summary)) {
+        onOpen(SettingsPage.CONVERSATIONS)
+    }
     PageEntry(stringResource(R.string.settings_memory), stringResource(R.string.settings_memory_summary)) { onOpen(SettingsPage.MEMORY) }
     PageEntry(stringResource(R.string.settings_activity_log), logsSummary) { onOpen(SettingsPage.ACTIVITY_LOG) }
     PageEntry(stringResource(R.string.settings_network_log), logsSummary) { onOpen(SettingsPage.NETWORK_LOG) }

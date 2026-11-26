@@ -119,7 +119,7 @@ internal object ModelInfos {
         return ModelInfo(
             providerName = provider?.label ?: profile.providerId,
             providerId = profile.providerId,
-            countsCredits = copilot,
+            countsCredits = profile.countsCredits,
             localOllama = profile.localServer == LocalServerKind.OLLAMA,
             lightweight = role(ModelRole.LIGHTWEIGHT),
             versatile = role(ModelRole.VERSATILE),

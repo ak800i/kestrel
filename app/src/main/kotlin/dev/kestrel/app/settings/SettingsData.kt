@@ -20,7 +20,10 @@ import dev.kestrel.app.download.DownloadState
 import dev.kestrel.app.download.ModelDownloadSetting
 import dev.kestrel.app.download.VoiceSuggestion
 import dev.kestrel.app.download.readHardware
+import dev.kestrel.conversation.engine.AllPastDeletion
 import dev.kestrel.conversation.engine.HistoryDeletion
+import dev.kestrel.conversation.engine.PastDeletion
+import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.LogEntry
 import dev.kestrel.privacy.logs.NetworkEvent
@@ -180,6 +183,25 @@ interface SettingsData {
 
     /** Takes back one approval: the screenshot question comes again for that app and provider. */
     suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) {}
+
+    // Sub-project 7: the Conversations page
+
+    /** The Conversations page's settings (design 13 of sub-project 7). */
+    val conversations: Flow<ConversationSettings> get() = flowOf(ConversationSettings())
+
+    suspend fun setConversations(settings: ConversationSettings) {}
+
+    /** Whether the default profile counts AI Credits, so that the page offers a round's credits (design 13). */
+    val countsCredits: Flow<Boolean> get() = flowOf(false)
+
+    /**
+     * "Delete all past conversations" (design 9.5 of sub-project 7): every closed conversation goes; the open one stays. A
+     * call while one runs deletes nothing again and gets the running one's outcome.
+     */
+    suspend fun deleteAllPast(): PastDeletion = PastDeletion.DELETED
+
+    /** "Delete all past conversations" as it stands, which the page shows also after the owner left it (review B-M4). */
+    val allPastDeletion: Flow<AllPastDeletion> get() = flowOf(AllPastDeletion.Idle)
 }
 
 /**
@@ -374,6 +396,20 @@ class StoredSettingsData(private val graph: AppGraph, private val context: Conte
     override suspend fun networkLog() = graph.logs.network()
 
     override suspend fun deleteHistory(): HistoryDeletion = graph.conversations.deleteHistory()
+
+    override val conversations: Flow<ConversationSettings> = graph.settings.observe(SettingKeys.CONVERSATIONS)
+
+    override suspend fun setConversations(settings: ConversationSettings) = write {
+        graph.settings.set(SettingKeys.CONVERSATIONS, settings)
+    }
+
+    // Design 13 of sub-project 7: the round's credits only for a default profile that counts them, by the agent's own rule.
+    override val countsCredits: Flow<Boolean> =
+        graph.settings.observe(SettingKeys.PROVIDERS).map { it.defaultProfile?.countsCredits == true }
+
+    override suspend fun deleteAllPast(): PastDeletion = graph.conversations.deleteAllPast()
+
+    override val allPastDeletion: Flow<AllPastDeletion> = graph.conversations.allPastDeletion
 
     override val version: String by lazy {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The settings page "Conversations" (design 13 of sub-project 7; plan 7F). -->
+<resources>
+    <string name="settings_conversations">Conversations</string>
+    <string name="settings_conversations_summary">How long a conversation lasts, spoken replies, past conversations</string>
+    <string name="conversations_quiet">Quiet time between commands</string>
+    <string name="conversations_quiet_detail">A conversation ends when this time passes after your command and Kestrel is not busy.</string>
+    <string name="conversations_follow_up">Follow-up window</string>
+    <string name="conversations_follow_up_detail">After Kestrel\'s spoken reply, you can answer without saying \"Kestrel\" for this long.</string>
+    <string name="conversations_off">Off</string>
+    <string name="conversations_speak_typed">Speak replies to typed commands</string>
+    <string name="conversations_speak_typed_detail">Kestrel also speaks its replies to what you type.</string>
+    <string name="conversations_retention">Keep past conversations for</string>
+    <string name="conversations_round">Before Kestrel asks \"Continue?\"</string>
+    <string name="conversations_replies_title">Model replies per round</string>
+    <string name="conversations_minutes_title">Working time per round</string>
+    <string name="conversations_credits_title">AI Credits per round</string>
+    <string name="conversations_replies">%1$s replies</string>
+    <string name="conversations_credits">%1$s AI Credits</string>
+    <plurals name="conversations_seconds">
+        <item quantity="one">%d second</item>
+        <item quantity="other">%d seconds</item>
+    </plurals>
+    <plurals name="conversations_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <plurals name="conversations_hours">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
+    <plurals name="conversations_days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+    <string name="conversations_delete_all">Delete all past conversations</string>
+    <string name="conversations_delete_all_question">Delete all past conversations? The open conversation stays.</string>
+    <string name="conversations_delete_all_confirm">Delete all</string>
+    <string name="conversations_cancel">Cancel</string>
+    <string name="conversations_deleted">Past conversations deleted.</string>
+    <string name="conversations_deleting">Deleting past conversations…</string>
+    <string name="conversations_delete_failed">Kestrel could not delete the past conversations.</string>
+    <string name="conversations_delete_unavailable">Kestrel can\'t read past conversations right now, so it deleted none. Try again later.</string>
+</resources>

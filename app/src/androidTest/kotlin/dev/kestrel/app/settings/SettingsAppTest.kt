@@ -8,10 +8,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -33,7 +38,11 @@ import dev.kestrel.screen.overlay.NumbersMode
 import dev.kestrel.app.listen.VoiceOptionsSetting
 import dev.kestrel.app.orchestrator.WakeUpMode
 import dev.kestrel.app.providers.SignInState
+import dev.kestrel.agent.goal.GoalLimits
+import dev.kestrel.conversation.engine.AllPastDeletion
 import dev.kestrel.conversation.engine.HistoryDeletion
+import dev.kestrel.conversation.engine.PastDeletion
+import dev.kestrel.conversation.model.ConversationSettings
 import dev.kestrel.privacy.logs.ActivityEvent
 import dev.kestrel.privacy.logs.ActivityKind
 import dev.kestrel.privacy.logs.LogEntry
@@ -346,6 +355,94 @@ class SettingsAppTest {
 
         assertEquals(listOf(SetupAction.DEFAULT_APPS), actions)
     }
+
+    // Design 13 of sub-project 7: each choice counts at once.
+    @Test
+    fun theConversationsPageChangesTheTimesTheSpokenRepliesAndTheRetention() {
+        show(NOTHING_SET_UP)
+        openConversations()
+
+        choice(ConversationsTags.QUIET, R.plurals.conversations_minutes, 1).assertIsSelected()
+        choice(ConversationsTags.QUIET, R.plurals.conversations_minutes, 2).performScrollTo().performClick()
+        choice(ConversationsTags.FOLLOW_UP, R.plurals.conversations_seconds, 20).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.conversations_speak_typed)).performScrollTo().assertIsOff().performClick()
+        choice(ConversationsTags.RETENTION, R.plurals.conversations_days, 90).performScrollTo().performClick()
+
+        compose.onNodeWithText(text(R.string.conversations_speak_typed)).assertIsOn()
+        choice(ConversationsTags.QUIET, R.plurals.conversations_minutes, 2).assertIsSelected()
+        assertEquals(
+            ConversationSettings(quietSeconds = 120, followUpSeconds = 20, speakTypedReplies = true, retentionDays = 90),
+            data.conversations.value,
+        )
+    }
+
+    @Test
+    fun theConversationsPageSetsARoundsLimitsAndItsCreditsOnlyForAProfileThatCountsThem() {
+        show(NOTHING_SET_UP)
+        openConversations()
+        compose.onAllNodesWithText(text(R.string.conversations_credits_title)).assertCountEquals(0)
+
+        compose.onNode(hasText(text(R.string.conversations_replies, "1,000")) and hasAnyAncestor(hasTestTag(ConversationsTags.REPLIES)))
+            .performScrollTo().performClick()
+        choice(ConversationsTags.MINUTES, R.plurals.conversations_hours, 2).performScrollTo().performClick()
+        data.credits.value = true
+        compose.onNode(hasText(text(R.string.conversations_credits, "2,500")) and hasAnyAncestor(hasTestTag(ConversationsTags.CREDITS)))
+            .performScrollTo().performClick()
+
+        compose.waitForIdle()
+        assertEquals(GoalLimits(replies = 1_000, workMinutes = 120, credits = 2_500), data.conversations.value.limits)
+    }
+
+    @Test
+    fun deleteAllPastConversationsAsksFirst() {
+        show(NOTHING_SET_UP)
+        openConversations()
+
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.conversations_delete_all_question)).assertIsDisplayed()
+        compose.onNode(hasText(text(R.string.conversations_cancel)) and hasAnyAncestor(isDialog())).performClick()
+        assertEquals(0, data.pastDeletions)
+
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).performScrollTo().performClick()
+        compose.onNode(hasText(text(R.string.conversations_delete_all_confirm)) and hasAnyAncestor(isDialog())).performClick()
+
+        compose.onNodeWithText(text(R.string.conversations_deleted)).performScrollTo().assertIsDisplayed()
+        assertEquals(1, data.pastDeletions)
+    }
+
+    // Review B-M4 of plan 7F: a deletion that runs shows when the owner opens the page again, and the page offers no second.
+    @Test
+    fun aDeletionThatRunsShowsWhenThePageOpensAgainAndOffersNoSecond() {
+        data.allPastDeletion.value = AllPastDeletion.Running
+        show(NOTHING_SET_UP)
+        openConversations()
+
+        compose.onNodeWithText(text(R.string.conversations_deleting)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).performScrollTo().assertIsNotEnabled()
+
+        data.allPastDeletion.value = AllPastDeletion.Ended(PastDeletion.DELETED)
+        compose.onNodeWithText(text(R.string.conversations_deleted)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).assertIsEnabled()
+    }
+
+    // Review B-N1 of plan 7F: the outcome of a deletion that the page did not see running is not shown or read out again.
+    @Test
+    fun anEarlierDeletionsOutcomeIsNotShownAgain() {
+        data.allPastDeletion.value = AllPastDeletion.Ended(PastDeletion.DELETED)
+        show(NOTHING_SET_UP)
+        openConversations()
+
+        compose.onNodeWithText(text(R.string.conversations_delete_all)).performScrollTo().assertIsEnabled()
+        compose.onAllNodesWithText(text(R.string.conversations_deleted)).assertCountEquals(0)
+    }
+
+    private fun openConversations() {
+        compose.onNodeWithText(text(R.string.settings_conversations)).performScrollTo().performClick()
+    }
+
+    // The choice labelled with plural [id] of [count] in the group with [tag]: the groups share labels such as "30 seconds".
+    private fun choice(tag: String, id: Int, count: Int) =
+        compose.onNode(hasText(compose.activity.resources.getQuantityString(id, count, count)) and hasAnyAncestor(hasTestTag(tag)))
 
     @Test
     fun theListeningPageChangesTheOptions() {
@@ -807,6 +904,25 @@ class SettingsAppTest {
 
         override suspend fun revokeScreenshots(row: dev.kestrel.app.agent.eyes.ScreenshotApprovalRow) {
             approvals.value = approvals.value - row
+        }
+
+        // Sub-project 7: the fake Conversations page
+        override val conversations = MutableStateFlow(ConversationSettings())
+        val credits = MutableStateFlow(false)
+        var pastDeletions = 0
+
+        override val countsCredits: kotlinx.coroutines.flow.Flow<Boolean> get() = credits
+
+        override suspend fun setConversations(settings: ConversationSettings) {
+            conversations.value = settings
+        }
+
+        override val allPastDeletion = MutableStateFlow<AllPastDeletion>(AllPastDeletion.Idle)
+
+        override suspend fun deleteAllPast(): PastDeletion {
+            pastDeletions++
+            allPastDeletion.value = AllPastDeletion.Ended(PastDeletion.DELETED)
+            return PastDeletion.DELETED
         }
 
         // release plan: the fake model download

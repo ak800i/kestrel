@@ -299,7 +299,7 @@ private fun spendingText(data: ProviderData, profile: Profile, use: MonthUse): S
     val choice = data.catalog.choice(profile.providerId, profile.choiceId)?.settings
     return when {
         choice?.planUsage == true -> pluralStringResource(R.plurals.providers_cost_tokens, use.tokens.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(), use.tokens)
-        profile.providerId == CatalogLoader.COPILOT -> stringResource(R.string.providers_cost_credits, decimal(use.credits))
+        profile.countsCredits -> stringResource(R.string.providers_cost_credits, decimal(use.credits))
         else -> stringResource(R.string.providers_cost_usd, decimal(use.credits / 100), decimal(use.credits))
     }
 }
