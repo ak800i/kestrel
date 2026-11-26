@@ -5,6 +5,7 @@ import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.VoicePath
 import dev.kestrel.app.phone.ScreenReading
+import dev.kestrel.app.phone.ScreenStatus
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.CardAnswer
 import dev.kestrel.conversation.channel.ChannelOutput
@@ -575,13 +576,15 @@ class VoiceChannelTest {
             answer.complete(null)
         }
 
-        override suspend fun card(card: OwnerCard): CardChoice? {
+        override suspend fun card(card: OwnerCard): ScreenTap? {
             cards += card
             answer = CompletableDeferred()
-            return answer.await()
+            return answer.await()?.let { ScreenTap(it, offs = 0) }
         }
 
-        override val screens = MutableStateFlow(ScreenReading.UNLOCKED)
+        override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
+
+        override fun screenOffs(): Long = 0
 
         override suspend fun releaseBar() {
             releases++

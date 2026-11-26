@@ -6,6 +6,7 @@ import dev.kestrel.agent.port.PermissionEnd
 import dev.kestrel.app.listen.FeedbackBar
 import dev.kestrel.app.listen.OwnedBar
 import dev.kestrel.app.phone.ScreenReading
+import dev.kestrel.app.phone.ScreenStatus
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ChannelQuestion
 import dev.kestrel.conversation.channel.HandOverAnswer
@@ -272,18 +273,20 @@ class TextChannelTest {
 
         override fun release() {}
 
-        override suspend fun card(card: OwnerCard): CardChoice? {
+        override suspend fun card(card: OwnerCard): ScreenTap? {
             cards += card
             answer = CompletableDeferred()
             try {
-                return answer.await()
+                return answer.await()?.let { ScreenTap(it, offs = 0) }
             } catch (e: CancellationException) {
                 withdrawn++
                 throw e
             }
         }
 
-        override val screens = MutableStateFlow(ScreenReading.UNLOCKED)
+        override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
+
+        override fun screenOffs(): Long = 0
 
         override suspend fun releaseBar() {}
 

@@ -293,15 +293,15 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
     suspend fun hideFeedback() = withContext(Dispatchers.Main) { feedback.hide() }
 
     /**
-     * Shows [question] on Kestrel's card and returns the owner's tap or number (design 10.3 of sub-project 7; spec 12.4),
-     * or [CardEnd.Withdrawn] when another question replaces the card, the session closes or no card can show; the card
-     * then goes at once. A caller that also listens for the owner's voice, or that gives up after its wait, cancels this
-     * call, which removes the card.
+     * Shows [question] on Kestrel's card and returns the owner's tap or number, stamped with what [stamp] gave at the
+     * tap on the main thread (design 10.3 of sub-project 7; spec 12.4; plan 7F), or [CardEnd.Withdrawn] when another
+     * question replaces the card, the session closes or no card can show; the card then goes at once. A caller that
+     * also listens for the owner's voice, or that gives up after its wait, cancels this call, which removes the card.
      */
-    suspend fun ask(question: CardQuestion): CardEnd = withContext(Dispatchers.Main) {
+    suspend fun ask(question: CardQuestion, stamp: () -> Long = { 0L }): CardEnd = withContext(Dispatchers.Main) {
         // An action that Kestrel made before the question can never hide the owner's touch (design D19 of sub-project 5).
         ownActions.clear()
-        card.ask(question)
+        card.ask(question, stamp)
     }
 
     /**

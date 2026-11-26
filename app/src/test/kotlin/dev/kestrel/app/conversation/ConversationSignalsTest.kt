@@ -175,6 +175,7 @@ class ConversationSignalsTest {
 
     private class FakeScreens : ScreenSource {
         var now = true
+        override val offs = 0L
         var starts = 0
         var stops = 0
         private var report: ((ScreenReading) -> Unit)? = null

@@ -138,6 +138,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
                 throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
             CardPress.NOT_ARMED -> throw HookError("the card does not take taps yet; answer again in a second")
             CardPress.LOCKED -> throw HookError("the phone is locked, and Continue waits for the owner's unlock")
+            CardPress.SCREEN_OFF -> throw HookError("the screen went off since the press, so Continue did not count")
         }
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=card"
     }

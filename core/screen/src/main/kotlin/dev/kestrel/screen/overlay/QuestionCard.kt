@@ -53,13 +53,13 @@ internal class QuestionCard(
     val bounds: IntRect? get() = presence.bounds
 
     /**
-     * Shows [question] and returns the owner's tap or number, or [CardEnd.Withdrawn] when another question replaces the
-     * card, [dismiss] ends it, or no card can show because the session has closed. Cancelling the call removes the
-     * card.
+     * Shows [question] and returns the owner's tap or number, stamped with what [stamp] gave at the tap, on the main
+     * thread, or [CardEnd.Withdrawn] when another question replaces the card, [dismiss] ends it, or no card can show
+     * because the session has closed. Cancelling the call removes the card.
      */
-    suspend fun ask(question: CardQuestion): CardEnd {
+    suspend fun ask(question: CardQuestion, stamp: () -> Long = { 0L }): CardEnd {
         current?.end(CardEnd.Withdrawn)
-        val card = Card(question)
+        val card = Card(question, stamp)
         current = card
         appear(card)
         try {
@@ -97,7 +97,7 @@ internal class QuestionCard(
         data object Move : PadKey
     }
 
-    private inner class Card(val question: CardQuestion) {
+    private inner class Card(val question: CardQuestion, private val stamp: () -> Long) {
         val answer = CompletableDeferred<CardEnd>()
         var attached = false
             private set
@@ -145,7 +145,7 @@ internal class QuestionCard(
         private fun armed(): Boolean = attached && clock() - shownAt >= CARD_ARMING_MILLIS
 
         private fun tapped(button: Int) {
-            if (armed()) end(CardEnd.Tapped(button))
+            if (armed()) end(CardEnd.Tapped(button, stamp()))
         }
 
         private fun pressed(key: PadKey) {
@@ -154,7 +154,7 @@ internal class QuestionCard(
                 is PadKey.Digit -> if (digits.length < MAX_DIGITS) digits.append(key.digit)
                 PadKey.Delete -> if (digits.isNotEmpty()) digits.deleteCharAt(digits.lastIndex)
                 PadKey.Enter -> {
-                    entered()?.let { end(CardEnd.Number(it)) }
+                    entered()?.let { end(CardEnd.Number(it, stamp())) }
                     return
                 }
                 PadKey.Move -> {

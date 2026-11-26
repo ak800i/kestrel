@@ -23,12 +23,20 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
     private var unlocked = false
     private var receiver: BroadcastReceiver? = null
 
+    // Raised on the main thread at each SCREEN_OFF, before its report.
+    @Volatile
+    override var offs: Long = 0
+        private set
+
     override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
         val screen = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.action) {
                     Intent.ACTION_USER_PRESENT -> unlocked = true
-                    Intent.ACTION_SCREEN_OFF -> unlocked = false
+                    Intent.ACTION_SCREEN_OFF -> {
+                        unlocked = false
+                        offs++
+                    }
                 }
                 report(current())
                 if (intent.action == Intent.ACTION_SCREEN_ON) cameOn()

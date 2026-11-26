@@ -31,13 +31,22 @@ data class NumberPad(val delete: String, val enter: String, val move: String, va
     fun takes(value: Int): Boolean = value >= 1 && (highest == 0 || value <= highest)
 }
 
-/** How a card's question ended for its caller. */
+/**
+ * How a card's question ended for its caller. An answer carries [Answered.stamp], what the caller's stamp gave on the
+ * main thread at the owner's tap, so that the caller can order the tap against what else the main thread reported
+ * around it (plan 7F: the screen's lock).
+ */
 sealed interface CardEnd {
+    /** An answer of the owner's, with its [stamp]. */
+    sealed interface Answered : CardEnd {
+        val stamp: Long
+    }
+
     /** The owner tapped the question's button number [button], from 0. */
-    data class Tapped(val button: Int) : CardEnd
+    data class Tapped(val button: Int, override val stamp: Long = 0) : Answered
 
     /** The owner entered [value] on the card's keypad. */
-    data class Number(val value: Int) : CardEnd
+    data class Number(val value: Int, override val stamp: Long = 0) : Answered
 
     /** The card gave no answer: a different question replaced it, the session closed or dismissed it, or no card could show. */
     data object Withdrawn : CardEnd

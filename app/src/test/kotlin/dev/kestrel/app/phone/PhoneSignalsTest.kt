@@ -165,7 +165,7 @@ class PhoneSignalsTest {
     // every change, and the watch ends with the collection.
     @Test
     fun theScreenStatesFlowGivesTheReadingFirstThenEveryChangeAndStopsWithItsCollection() = runTest {
-        val seen = mutableListOf<ScreenReading>()
+        val seen = mutableListOf<ScreenStatus>()
         screens.now = ScreenReading.LOCKED
         val collecting = backgroundScope.launch { phone.screenStates().collect { seen += it } }
         runCurrent()
@@ -174,7 +174,14 @@ class PhoneSignalsTest {
         screens.change(ScreenReading.UNLOCKED)
         screens.change(ScreenReading.OFF)
         runCurrent()
-        assertEquals(listOf(ScreenReading.LOCKED, ScreenReading.UNLOCKED, ScreenReading.OFF), seen)
+        // Each reading carries the count of screen-offs of its moment.
+        val expected = listOf(
+            ScreenStatus(ScreenReading.LOCKED, 0),
+            ScreenStatus(ScreenReading.UNLOCKED, 0),
+            ScreenStatus(ScreenReading.OFF, 1),
+        )
+        assertEquals(expected, seen)
+        assertEquals(1L, phone.screenOffs())
 
         collecting.cancel()
         runCurrent()
@@ -183,6 +190,7 @@ class PhoneSignalsTest {
 
     private class FakeScreens : ScreenSource {
         var now = ScreenReading.OFF
+        override var offs = 0L
         var starts = 0
         var stops = 0
         var failure: Exception? = null
@@ -210,6 +218,7 @@ class PhoneSignalsTest {
 
         fun change(reading: ScreenReading) {
             now = reading
+            if (reading == ScreenReading.OFF) offs++
             val report = checkNotNull(report) { "Nothing watches the screen" }
             onThread { report(reading) }
         }

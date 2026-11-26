@@ -30,6 +30,13 @@ internal enum class ScreenReading {
 }
 
 /**
+ * A [reading] of the screen source with its count of screen-offs ([offs]) at that reading (plan 7F's second re-check):
+ * a card's tap stamped with the count at the tap belongs to the lock of that count, so that a screen-off after it is
+ * seen even when it came before the reading that the tap's wait gets first.
+ */
+internal data class ScreenStatus(val reading: ScreenReading, val offs: Long)
+
+/**
  * Android's screen and lock (design spec, section 8.5). Any thread may call it. Every report, every [start]'s cameOn and
  * every [read] runs on the source's one thread, in the order in which they happen there, so that no reading can come
  * after a newer change.
@@ -43,6 +50,12 @@ internal interface ScreenSource {
 
     /** Stops the reports. */
     fun stop()
+
+    /**
+     * How many times the screen has gone off while the source reported; it rises on the source's thread before the
+     * report of the screen-off. Any thread may read it.
+     */
+    val offs: Long
 
     /**
      * Gives [reading] the [ScreenReading], read on the source's thread: at once when the caller is on it, otherwise
@@ -126,14 +139,18 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     }
 
     /**
-     * The [ScreenReading] while the flow is collected: the reading first, then every change ([watchScreen]). A question
-     * card's Continue counts only on [ScreenReading.UNLOCKED], and one that the owner tapped on the lock screen waits
-     * on it for his unlock or the screen's end (plan 7F). The flow fails with what [watchScreen] throws.
+     * The [ScreenStatus] while the flow is collected: the reading first, then every change ([watchScreen]), each with
+     * the count of screen-offs of its moment. A question card's Continue counts only on [ScreenReading.UNLOCKED] within
+     * the lock that it was tapped in (plan 7F). The flow fails with what [watchScreen] throws.
      */
-    fun screenStates(): Flow<ScreenReading> = callbackFlow {
-        val watch = watchScreen { reading -> trySend(reading) }
+    fun screenStates(): Flow<ScreenStatus> = callbackFlow {
+        // On the source's thread, so that each reading carries the count of the same moment.
+        val watch = watchScreen { reading -> trySend(ScreenStatus(reading, screens.offs)) }
         awaitClose { watch.stop() }
     }
+
+    /** The screen source's count of screen-offs now ([ScreenSource.offs]), which stamps a card's tap. */
+    fun screenOffs(): Long = screens.offs
 
     /**
      * The calls as one [CallMonitor] for listening (section 8.7): a start watches the calls with its report and ends the

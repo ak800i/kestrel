@@ -429,6 +429,7 @@ class AppGraph(context: Context) {
             open = { intent -> screen.value?.actions?.openIntent(intent) is ActionResult.Done },
             calls = { phoneSignals.callStates() },
             screens = phoneSignals.screenStates(),
+            offs = phoneSignals::screenOffs,
         )
     }
 
