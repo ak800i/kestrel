@@ -12,6 +12,8 @@ import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.model.ConversationId
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 import java.security.MessageDigest
 import java.util.IdentityHashMap
@@ -52,6 +54,31 @@ internal class CommandTags {
     @Volatile
     var lastGoalWords: Int = 0
         private set
+
+    /**
+     * Gets the conversation that a tagged input's work opened, which the hooks count as their own (Task 13a);
+     * [VoiceHooks.install] sets it to [HookConversations.own]. It runs under this object's lock.
+     */
+    @Volatile
+    var ownConversation: (ConversationId) -> Unit = {}
+
+    /**
+     * Gets the conversation that the owner's own command (typed or spoken, without a tag, and not typed by a hook) opened
+     * or continued, which is his and never the hooks' (Task 13a, review low risk); [VoiceHooks.install] sets it to
+     * [HookConversations.forget]. It runs under this object's lock.
+     */
+    @Volatile
+    var ownerConversation: (ConversationId) -> Unit = {}
+
+    // The inputs that conversation-type gave without a tag: the hooks', not the owner's.
+    private val untaggedInputs = LinkedHashSet<Long>()
+
+    /** Notes [input], which `conversation-type` gives the conversation without a tag, as the hooks' and not the owner's. */
+    @Synchronized
+    fun untagged(input: OwnerInput) {
+        untaggedInputs += input.id
+        while (untaggedInputs.size > MAX_TAGS) untaggedInputs.remove(untaggedInputs.first())
+    }
 
     /**
      * Links [tag] and the hook's [options] to [event] before Kestrel handles it; false when the tag is among the newest
@@ -189,6 +216,11 @@ internal class CommandTags {
      */
     @Synchronized
     fun onConversationStep(event: ConversationEvent, state: ConversationState, step: MachineStep) {
+        // The owner's own command makes its conversation his: a hook's mark on it goes (review low risk). An answer may be
+        // a hook's press of the card, so only a command counts.
+        val owners = (event as? ConversationEvent.Input)?.input
+            ?.takeIf { it.intent is InputIntent.Command && it.id !in inputs && it.id !in untaggedInputs }
+        if (owners != null) step.state.id?.let(ownerConversation)
         val started = mutableSetOf<Long>()
         for (effect in step.effects) {
             val (command, input) = when (effect) {
@@ -202,6 +234,12 @@ internal class CommandTags {
                 else -> continue
             }
             if (input != null) started += input.id
+            // Only a conversation that a hook's input's work opened is the hooks' own, the input tagged or typed by
+            // conversation-type without a tag, a goal's work or a local request's: a switch moves into a past conversation,
+            // and a follow-up continues the open one, either of which may be the owner's (plan 7G's review N1). This is the
+            // one rule that marks the hooks' conversations (review B-I2 of plan 7F).
+            val hooks = input != null && (input.id in inputs || untaggedInputs.remove(input.id))
+            if (hooks && effect !is ConversationEffect.SwitchTo && step.state.id != state.id) step.state.id?.let(ownConversation)
             val tag = input?.let { inputs.remove(it.id) } ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }

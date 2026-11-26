@@ -261,4 +261,17 @@ class AgentHookAnswersTest {
         assertNull(AgentHookAnswers.cardChoice("3", pick))
         assertNull(AgentHookAnswers.cardChoice("Half past seven", listOf(CardChoice.Reply, CardChoice.Cancel)))
     }
+
+    // Plan 7G's amendment F1: on the card over the app, a confirmation's yes and no are Confirm and Cancel.
+    @Test
+    fun theOverlaysButtonIsTheOneThatTheWordsNameAndAConfirmationsYesAndNoAreConfirmAndCancel() {
+        val confirmation = listOf(CardChoice.Confirm, CardChoice.Cancel)
+        assertEquals(CardChoice.Confirm, AgentHookAnswers.overlayChoice("confirm", confirmation))
+        assertEquals(CardChoice.Confirm, AgentHookAnswers.overlayChoice("yes", confirmation))
+        assertEquals(CardChoice.Cancel, AgentHookAnswers.overlayChoice("no", confirmation))
+        assertEquals(CardChoice.Continue, AgentHookAnswers.overlayChoice("continue", listOf(CardChoice.Cancel, CardChoice.Continue)))
+        assertEquals(CardChoice.Pick(2), AgentHookAnswers.overlayChoice("2", listOf(CardChoice.Pick(1), CardChoice.Pick(2), CardChoice.Cancel)))
+        assertNull(AgentHookAnswers.overlayChoice("5", listOf(CardChoice.Pick(1), CardChoice.Cancel)))
+        assertNull(AgentHookAnswers.overlayChoice("yes", listOf(CardChoice.Stop, CardChoice.Continue)))
+    }
 }

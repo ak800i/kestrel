@@ -38,7 +38,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
         val tag = intent.getStringExtra(EXTRA_TAG)
         val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
         val options = VoiceHooks.taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER))
-        channel.submit(if (tag != null) VoiceHooks.typed(graph, tag, input, options) else input)
+        channel.submit(if (tag != null) VoiceHooks.typed(graph, tag, input, options) else VoiceHooks.untagged(graph, input))
         return "typed read=${VoiceHooks.kindOf(input)}" + (tag?.let { " tag=$it" } ?: "")
     }
 

@@ -289,6 +289,16 @@ internal class VoiceHooks(private val graph: AppGraph) {
             return tags.typed(tag, input, kindOf(input), options) ?: throw HookError("the tag $tag is in use; give each transcript a new tag")
         }
 
+        /**
+         * Notes [input], which the hook `conversation-type` gives the conversation without a tag, as the hooks' own, so that
+         * it is not taken for the owner's command, and starts the record of the steps ([install]; Task 13a); returns it.
+         */
+        fun untagged(graph: AppGraph, input: OwnerInput): OwnerInput {
+            install(graph)
+            tags.untagged(input)
+            return input
+        }
+
         /** A typed input's kind in lower case, such as command, answer or stop: never its words. */
         fun kindOf(input: OwnerInput): String = input.intent.javaClass.simpleName.lowercase()
 
@@ -302,6 +312,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
             val listening = graph.listening
             if (listening.steps != null) return
             listening.inputs = tags::input
+            tags.ownConversation = { HookConversations.own(it) }
+            tags.ownerConversation = { HookConversations.forget(listOf(it)) }
             graph.conversationSteps = tags::onConversationStep
             graph.goalEnvironment.evidences = RoundEvidences()
             graph.goalEnvironment.witnesses = { options -> DebugTaskWitness.open(options) }

@@ -10,6 +10,8 @@ import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.model.ChannelAnswer
+import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
@@ -158,5 +160,71 @@ class CommandTagsTest {
 
         assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "command", task = 4), tags.tagged("typed"))
         assertNull(tags.typed("typed", typed.copy(id = 12), "command"))
+    }
+
+    // Plan 7G's review N1: only the conversation that a tagged input's work opened is the hooks' own: never one that a switch
+    // moved into, which may be the owner's past conversation, nor one that a tagged follow-up continues there, nor one
+    // that an input without a tag opened.
+    @Test
+    fun onlyTheConversationThatATaggedInputsWorkOpenedIsMarked() {
+        val own = mutableListOf<ConversationId>()
+        tags.ownConversation = { own += it }
+        val conversation = ConversationId("0123456789abcdef0123456789abcdef")
+        val goal = checkNotNull(tags.typed("goal", OwnerInput(21, InputChannel.TEXT, InputIntent.Command("open the maps"), 0), "command"))
+        val opened = ConversationState(id = conversation)
+        tags.onConversationStep(ConversationEvent.Input(goal), ConversationState(), MachineStep(opened, listOf(ConversationEffect.StartGoal(5, 1, goal, "open the maps"))))
+
+        val past = ConversationId("fedcba9876543210fedcba9876543210")
+        val switch = checkNotNull(tags.typed("switch", OwnerInput(22, InputChannel.TEXT, InputIntent.Command("continue the conversation about the bus"), 0), "command"))
+        val moved = ConversationState(id = past)
+        tags.onConversationStep(ConversationEvent.Input(switch), opened, MachineStep(moved, listOf(ConversationEffect.SwitchTo(6, past, switch))))
+        val followUp = checkNotNull(tags.typed("follow-up", OwnerInput(23, InputChannel.TEXT, InputIntent.Command("and the times"), 0), "command"))
+        tags.onConversationStep(ConversationEvent.Input(followUp), moved, MachineStep(moved, listOf(ConversationEffect.StartGoal(7, 2, followUp, "and the times"))))
+        val plain = OwnerInput(24, InputChannel.TEXT, InputIntent.Command("open the settings"), 0)
+        val other = ConversationState(id = ConversationId("ab".repeat(16)))
+        tags.onConversationStep(ConversationEvent.Input(plain), ConversationState(), MachineStep(other, listOf(ConversationEffect.StartGoal(8, 1, plain, "open the settings"))))
+
+        assertEquals(listOf(conversation), own)
+    }
+
+    // Review low risk of plan 7F: the owner's own command, without a tag, in a marked conversation makes it his again, so
+    // that delete-typed leaves it; a command that conversation-type gave without a tag, or an answer, does not.
+    @Test
+    fun theOwnersOwnCommandInAMarkedConversationTakesItsMarkAway() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+        val hooks = OwnerInput(31, InputChannel.TEXT, InputIntent.Command("and the times"), 0)
+        tags.untagged(hooks)
+        tags.onConversationStep(ConversationEvent.Input(hooks), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(9, 2, hooks, "and the times"))))
+        val answer = OwnerInput(32, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes), 0)
+        tags.onConversationStep(ConversationEvent.Input(answer), marked, MachineStep(marked, emptyList()))
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        val owners = OwnerInput(33, InputChannel.VOICE, InputIntent.Command("and the prices"), 0)
+        tags.onConversationStep(ConversationEvent.Input(owners), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(10, 3, owners, "and the prices"))))
+        assertEquals(listOf(marked.id), gone)
+    }
+
+    // Review B-I2 of plan 7F: one rule marks the hooks' conversations, the conversation's steps. An untagged command of
+    // conversation-type whose work opens a conversation marks it; a hook's command that joins a conversation that the
+    // owner's command opened marks nothing.
+    @Test
+    fun anUntaggedHookCommandThatOpensAConversationMarksItAndOneThatJoinsTheOwnersMarksNothing() {
+        val own = mutableListOf<ConversationId>()
+        tags.ownConversation = { own += it }
+        val opened = ConversationId("0123456789abcdef0123456789abcdef")
+        val hooks = OwnerInput(41, InputChannel.TEXT, InputIntent.Command("open the maps"), 0)
+        tags.untagged(hooks)
+        tags.onConversationStep(ConversationEvent.Input(hooks), ConversationState(), MachineStep(ConversationState(id = opened), listOf(ConversationEffect.StartGoal(11, 1, hooks, "open the maps"))))
+
+        val his = ConversationState(id = ConversationId("ab".repeat(16)))
+        val owners = OwnerInput(42, InputChannel.VOICE, InputIntent.Command("read my messages"), 0)
+        tags.onConversationStep(ConversationEvent.Input(owners), ConversationState(), MachineStep(his, listOf(ConversationEffect.StartGoal(12, 1, owners, "read my messages"))))
+        val joins = OwnerInput(43, InputChannel.TEXT, InputIntent.Command("and the times"), 0)
+        tags.untagged(joins)
+        tags.onConversationStep(ConversationEvent.Input(joins), his, MachineStep(his, listOf(ConversationEffect.StartGoal(13, 2, joins, "and the times"))))
+
+        assertEquals(listOf(opened), own)
     }
 }

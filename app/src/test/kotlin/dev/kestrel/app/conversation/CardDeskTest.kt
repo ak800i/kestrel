@@ -3,6 +3,7 @@ package dev.kestrel.app.conversation
 import dev.kestrel.conversation.channel.QuestionKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -165,6 +166,49 @@ class CardDeskTest {
         assertEquals(textCard, overlay.shown.last())
         asking.cancel()
     }
+    // Task 13a (plan 7G's F1, review R3 of plan 7F): the debug hook sees the card on the overlay, and for how long the desk
+    // has given it to the screen, under the desk's lock, only while it shows, and its answer answers that card's question.
+    @Test
+    fun theHookSeesTheOverlaysCardWhileItShowsAndItsAnswerAnswersTheQuestion() = runTest {
+        val desk = CardDesk(overlay, backgroundScope, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
+        val confirmation = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
+        val asking = async { desk.ask(confirmation) }
+        runCurrent()
+        advanceTimeBy(1_200)
+
+        assertEquals(confirmation to 1_200L, desk.withShown { shown, _ -> shown?.let { it.card to it.shownMillis } })
+        // Kestrel's screen in front takes the card from the overlay at once, before the overlay has withdrawn it.
+        desk.screenInFront(true)
+        assertNull(desk.withShown { shown, _ -> shown })
+        desk.screenInFront(false)
+        runCurrent()
+        desk.withShown { shown, answer -> if (shown != null) answer(CardChoice.Confirm) }
+        runCurrent()
+
+        assertEquals(CardChoice.Confirm, asking.await().choice)
+        assertNull(desk.withShown { shown, _ -> shown })
+        assertNull(desk.open.value)
+    }
+
+    // Plan 7G's review N2: once a newer question took the overlay, the hook no longer sees the card that it read, even in
+    // the moment before the overlay has withdrawn it.
+    @Test
+    fun aCardThatANewerQuestionReplacedIsNotTheOneThatTheHookSees() = runTest {
+        val desk = CardDesk(overlay, backgroundScope, replyOpenMillis = 5_000, clock = { testScheduler.currentTime })
+        val read = OwnerCard(4, "Send the message?", listOf(CardChoice.Confirm, CardChoice.Cancel), question = 4, kind = QuestionKind.CONFIRM)
+        val older = async { desk.ask(read) }
+        runCurrent()
+        assertEquals(4, desk.withShown { shown, _ -> shown?.card?.key })
+
+        val newer = async(start = CoroutineStart.UNDISPATCHED) { desk.ask(read.copy(key = 5, text = "Delete the chat?", question = 5)) }
+        assertNull(desk.withShown { shown, _ -> shown })
+        runCurrent()
+        assertEquals(5, desk.withShown { shown, _ -> shown?.card?.key })
+        assertFalse(older.isCompleted || newer.isCompleted)
+        older.cancel()
+        newer.cancel()
+    }
+
     private class FakeOverlay : OwnerScreen {
         val shown = mutableListOf<OwnerCard>()
         var withdrawn = 0

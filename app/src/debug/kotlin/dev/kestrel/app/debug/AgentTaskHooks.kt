@@ -12,6 +12,7 @@ import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.agent.RoundEvidences
+import dev.kestrel.app.conversation.CardChoice
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.conversation.channel.QuestionKind
@@ -59,8 +60,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     }
 
     // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>]
-    // [--es channel text], as the owner's voice would answer, or with --es channel text as he answers on the card or the
-    // conversation screen; an answer to a confirmation other than no or cancel needs the category that agent-state read.
+    // [--es channel text|card], as the owner's voice would answer, with --es channel text as he answers on the conversation
+    // screen's copy of the card, and with --es channel card as he taps the card over the app (Task 13a); an answer to a
+    // confirmation other than no or cancel needs the category that agent-state read.
     fun answer(intent: Intent): String {
         val (tag, number) = taggedTask(intent)
         val reply = intent.getStringExtra(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
@@ -76,7 +78,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         when (val channel = intent.getStringExtra(EXTRA_CHANNEL)) {
             null, "voice" -> Unit
             "text" -> return typedAnswer(tag, words, asking)
-            else -> throw HookError("add --es channel with voice or text, not $channel")
+            "card" -> return cardAnswer(tag, words, asking)
+            else -> throw HookError("add --es channel with voice, text or card, not $channel")
         }
         val event = if (asking == null) {
             // A hand-over is not a question: it ends with "Kestrel, continue" or "cancel" (design D2).
@@ -94,16 +97,40 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
 
     // Design 10.3, 12.2 and 12.3 of sub-project 7: the open card's button that the words name, as the owner's tap on the
     // screen's copy, which reaches the conversation as an input, or else the words typed on the screen. A confirmation, a
-    // hand-over and a pick are answered only on the card over the app, which the caller taps with `input tap`.
+    // hand-over and a pick are answered only on the card over the app, which --es channel card presses (cardAnswer).
     private fun typedAnswer(tag: String, words: String, asking: QuestionKind?): String {
         val card = graph.cardDesk.open.value ?: throw HookError("no card is open: Kestrel listens, and the conversation is spoken")
-        if (!card.answersOnScreen) throw HookError("only the card over the app answers this; tap its button with input tap")
+        if (!card.answersOnScreen) throw HookError("only the card over the app answers this; answer with --es channel card")
         val channel = graph.textChannel
         when (val choice = AgentHookAnswers.cardChoice(words, card.choices)) {
             null -> channel.submit(channel.read(words) ?: throw HookError("the answer holds no words"))
             else -> channel.choose(card.key, choice)
         }
         return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=text"
+    }
+
+    // Task 13a (plan 7G's F1): the button of the card over the app that the words name, pressed through the card desk as the
+    // owner's tap, never by the screen's coordinates, and only after the guard of CardPresser: the overlay shows
+    // the card of the question that agent-state read, by its number and kind, the card takes that button, and it takes
+    // taps. A confirmation, a hand-over and a pick are answered here; a refusal leaves the question open for the caller's
+    // next try.
+    private fun cardAnswer(tag: String, words: String, asking: QuestionKind?): String {
+        val desk = graph.cardDesk
+        val card = desk.open.value ?: throw HookError("no card is open: Kestrel listens, and the conversation is spoken")
+        if (card.kind != asking) throw HookError("the open card is not the question that agent-state read; read it again")
+        // A keypad's number within the pick's range is the owner's entry on the card.
+        val choice = AgentHookAnswers.overlayChoice(words, card.choices)
+            ?: words.toIntOrNull()?.let(CardChoice::Pick)?.takeIf(card::takes)
+            ?: throw HookError("the card has no button for the answer $words")
+        when (CardPresser(desk).press(card.key, card.kind, choice)) {
+            CardPress.PRESSED -> Unit
+            CardPress.NOT_ON_OVERLAY -> throw HookError("the card is not on the overlay: Kestrel's screen is in front, or no screen session shows it")
+            CardPress.OTHER_CARD -> throw HookError("another card took the overlay; read agent-state again")
+            CardPress.NO_BUTTON -> throw HookError("the card has no button for the answer $words")
+            CardPress.NOT_ARMED -> throw HookError("the card does not take taps yet; answer again in a second")
+            CardPress.LOCKED -> throw HookError("the phone is locked, and Continue waits for the owner's unlock")
+        }
+        return "answered tag=$tag asking=${asking?.let(AgentHookAnswers::asking) ?: "hand-over"} channel=card"
     }
     // agent-script --es file <name> | --ez clear true
     suspend fun script(intent: Intent): String {

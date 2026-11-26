@@ -246,6 +246,17 @@ internal object AgentHookAnswers {
     }
 
     /**
+     * The button of the card over the app that agent-answer's [words] press with `--es channel card` (Task 13a): as
+     * [cardChoice], and on a confirmation's card, whose buttons are Confirm and Cancel, "yes" as Confirm and "no" as
+     * Cancel, as the voice reads them; null when the card has no such button.
+     */
+    fun overlayChoice(words: String, choices: List<CardChoice>): CardChoice? = cardChoice(words, choices) ?: when (words) {
+        "yes" -> CardChoice.Confirm.takeIf { it in choices }
+        "no" -> CardChoice.Cancel.takeIf { it in choices && CardChoice.Confirm in choices }
+        else -> null
+    }
+
+    /**
      * Why agent-answer may not send [words] to the open question of kind [asking], whose confirmation, if any, has the
      * category [open], when the script read the category [expected] (a wire name) with agent-state; null when it may
      * (design D28; task-5b-20-review M1). With [expected], the open question must be a confirmation of exactly that

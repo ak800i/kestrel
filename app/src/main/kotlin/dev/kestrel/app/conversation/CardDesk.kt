@@ -60,7 +60,8 @@ internal class CardDesk(
     private val notice: (String) -> Unit = {},
     private val replyOpenMillis: Long = REPLY_OPEN_MILLIS,
     private val inputIds: () -> Long = InputIds::next,
-) : SharedCards {
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+) : SharedCards, OverlayCards {
     private class Caller(val card: OwnerCard, val onReply: () -> Unit) {
         val tapped = CompletableDeferred<CardTap>()
     }
@@ -76,6 +77,11 @@ internal class CardDesk(
     private val openCard = MutableStateFlow<OwnerCard?>(null)
     private val showing = MutableStateFlow<Showing?>(null)
     private var replyWait: Job? = null
+
+    // The card on the overlay, from when the desk gave it to the screen, for the debug hook (Task 13a); under the lock.
+    private class Presented(val card: OwnerCard, val at: Long)
+
+    private var presented: Presented? = null
 
     override val open: StateFlow<OwnerCard?> = openCard.asStateFlow()
 
@@ -97,6 +103,21 @@ internal class CardDesk(
         if (inFront) replied.value = null
         front.value = inFront
     }
+
+    // The card that the overlay shows and its answer in one block under the lock (review R3), for the debug hook's press
+    // (Task 13a): no other card takes the overlay between the hook's check and its answer.
+    override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> Unit) -> T): T = synchronized(lock) {
+        val mine = presented?.takeIf { !front.value }
+        block(mine?.let { ShownCard(it.card, clock() - it.at) }) { choice ->
+            if (mine != null && presented === mine) {
+                presented = null
+                // The hook's press is the owner's tap: it takes its number as it reaches the desk (plan 7F).
+                deliver(mine.card.key, CardTap(choice, inputIds()))
+            }
+        }
+    }
+
+    override fun locked(): Boolean = screen.locked()
 
     override suspend fun ask(card: OwnerCard, onReply: () -> Unit): CardTap {
         val caller = Caller(card, onReply)
@@ -121,12 +142,22 @@ internal class CardDesk(
         val card = callers.filter { it.card.key == key }.maxByOrNull { it.card.choices.size }?.card
         openCard.value = card
         showing.value = card?.let { Showing(it, round) }
+        // A card that is no longer the newest question's is no longer the debug hook's to press, even in the moment before
+        // the overlay withdraws it (Task 13a).
+        if (presented?.card?.key != card?.key) presented = null
     }
 
     // A card without an answer, as when no screen session is connected or its session closed, shows again when the next
     // screen session connects.
     private suspend fun present(shown: Showing) {
-        val choice = screen.card(shown.card) ?: return
+        val mine = Presented(shown.card, clock())
+        // A newer question may have taken the overlay since this card's turn began: it is not the hook's to press.
+        synchronized(lock) { if (showing.value?.card?.key == shown.card.key) presented = mine }
+        val choice = try {
+            screen.card(shown.card)
+        } finally {
+            synchronized(lock) { if (presented === mine) presented = null }
+        } ?: return
         when {
             choice == CardChoice.Reply -> replyOpened(shown.card.key)
             choice == CardChoice.Continue && screen.locked() -> {
@@ -167,4 +198,23 @@ internal class CardDesk(
         /** A Continue tapped on the card while the phone is locked (plan 7E's rule for Continue). */
         const val UNLOCK_FIRST = "Unlock the phone, then tap Continue."
     }
+}
+
+/** The card that the overlay shows, and how long ago the card desk gave it to the screen (Task 13a). */
+internal class ShownCard(val card: OwnerCard, val shownMillis: Long)
+
+/**
+ * The question card over the app, for the debug hook `agent-answer --es channel card` (Task 13a; plan 7G's F1): Kestrel's
+ * main code never presses a card, the owner does, so only debug code (`CardPresser`) answers through this (review L3).
+ */
+internal interface OverlayCards {
+    /**
+     * Runs [block] under the card desk's lock with the card that the overlay shows, or null while none does (also while
+     * Kestrel's screen is in front), and with `answer`, which answers that card's question as the owner's tap on a button
+     * does and takes the card from the hook. No other card takes the overlay while [block] runs.
+     */
+    fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> Unit) -> T): T
+
+    /** Whether the phone is locked, when a Continue waits for the owner's unlock (plan 7E). */
+    fun locked(): Boolean
 }
