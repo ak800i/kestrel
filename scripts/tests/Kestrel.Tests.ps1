@@ -554,13 +554,27 @@ Describe 'The emulator''s window and clipboard sharing' {
             Should -BeNullOrEmpty
     }
 
-    It 'closes nothing when the console does not name kestrel-api37' {
+    It 'names kestrel-api37 only when the first line of the console''s answer to avd name is exactly that name' {
+        Test-KestrelAvdAnswer @('kestrel-api37', 'OK') | Should -BeTrue
+        Test-KestrelAvdAnswer "kestrel-api37`r`nOK" | Should -BeTrue
+        Test-KestrelAvdAnswer @(' kestrel-api37 ', 'OK') | Should -BeTrue
+        Test-KestrelAvdAnswer @('kestrel-api37-old', 'OK') | Should -BeFalse
+        Test-KestrelAvdAnswer "kestrel-api37 x`r`nOK" | Should -BeFalse
+        Test-KestrelAvdAnswer @('zoran', 'OK') | Should -BeFalse
+        Test-KestrelAvdAnswer @('OK', 'kestrel-api37') | Should -BeFalse
+        Test-KestrelAvdAnswer $null | Should -BeFalse
+        ConvertFrom-AvdNameAnswer @('zoran', 'OK') | Should -Be 'zoran'
+    }
+
+    It 'closes nothing when the console does not name kestrel-api37 exactly' {
         Mock Get-Adb { 'adb' }
-        Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "zoran`r`nOK" } }
+        foreach ($name in 'zoran', 'kestrel-api37-old') {
+            Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "$name`r`nOK" } }
 
-        Restart-KestrelEmulator -Serial 'emulator-5554' -Window $true | Should -Be 'emulator-5554 is not the emulator kestrel-api37, so it was not closed'
+            Restart-KestrelEmulator -Serial 'emulator-5554' -Window $true | Should -Be 'emulator-5554 is not the emulator kestrel-api37, so it was not closed'
+        }
 
-        Should -Invoke Invoke-TimedProcess -Times 1 -Exactly
+        Should -Invoke Invoke-TimedProcess -Times 2 -Exactly
         Should -Invoke Invoke-TimedProcess -Times 0 -Exactly -ParameterFilter { $ArgumentList -contains 'kill' }
     }
 }

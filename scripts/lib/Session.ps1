@@ -491,8 +491,8 @@ function Set-EmulatorHostMicrophone([string]$Serial, [bool]$On) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line.
     $ErrorActionPreference = 'Continue'
-    $name = "$(& $adb -s $Serial emu avd name 2>$null | Select-Object -First 1)".Trim()
-    if ($Serial -notlike 'emulator-*' -or $name -ne 'kestrel-api37') { throw "$Serial is not the emulator kestrel-api37." }
+    $answer = @(& $adb -s $Serial emu avd name 2>$null)
+    if ($Serial -notlike 'emulator-*' -or -not (Test-KestrelAvdAnswer $answer)) { throw "$Serial is not the emulator kestrel-api37." }
     $command = if ($On) { 'hostmicon' } else { 'hostmicoff' }
     $answer = @(& $adb -s $Serial emu avd $command 2>&1 | ForEach-Object { "$_".Trim() })
     if ($answer -notcontains 'OK' -or @($answer | Where-Object { $_ -like 'KO*' }).Count -gt 0) {
@@ -530,17 +530,19 @@ function Get-EmulatorHostMicrophone([string]$Serial) {
     Get-EmulatorStartMicrophone -WindowType $type -CommandLine "$($process[0].CommandLine)" -AvdSettings $lines
 }
 
-# For a dry run of the A71 sessions: turns kestrel-api37's host audio input off, so that this computer's sound reaches
-# no step, after it registered, through the calling script's Register-Restore, the restore that puts back the state that
+# Turns kestrel-api37's host audio input off, so that this computer's sound reaches nothing that the calling script
+# does, after it registered, through the calling script's Register-Restore, the restore that puts back the state that
 # the emulator started with (Get-EmulatorHostMicrophone): off when scripts\start-emulator.ps1 started it without a window.
+# Returns that restore, for a script that completes it itself.
 function Disable-EmulatorHostMicrophone([string]$Serial) {
     $on = Get-EmulatorHostMicrophone -Serial $Serial
     $command = if ($on) { 'hostmicon' } else { 'hostmicoff' }
-    Register-Restore 'the host audio input of kestrel-api37' "Run: & '$(Get-Adb)' -s $Serial emu avd $command" ([pscustomobject]@{ Serial = $Serial; On = $on }) {
+    $restore = Register-Restore 'the host audio input of kestrel-api37' "Run: & '$(Get-Adb)' -s $Serial emu avd $command" ([pscustomobject]@{ Serial = $Serial; On = $on }) {
         param($Data)
         Set-EmulatorHostMicrophone -Serial $Data.Serial -On $Data.On
-    } | Out-Null
+    }
     Set-EmulatorHostMicrophone -Serial $Serial -On $false
+    $restore
 }
 
 # The newest record of PowerShell's error list $Error, or $null when the list is empty, for Remove-NewErrorRecord.

@@ -166,6 +166,16 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     $back
 }
 
+# The AVD name in the answer of an emulator's console to 'avd name': the answer's first line, trimmed (the console ends
+# it with 'OK' on a line of its own). $Answer is adb's output as lines, or as one text; without an answer it is ''.
+function ConvertFrom-AvdNameAnswer($Answer) {
+    "$(@($Answer | ForEach-Object { "$_" -split '\r?\n' }) | Select-Object -First 1)".Trim()
+}
+
+# Whether an emulator console's answer to 'avd name' names exactly kestrel-api37, and not, for example,
+# kestrel-api37-old.
+function Test-KestrelAvdAnswer($Answer) { (ConvertFrom-AvdNameAnswer $Answer) -eq 'kestrel-api37' }
+
 function Find-EmulatorSerial([string]$AvdName) {
     $adb = Get-Adb
     # Windows PowerShell 5.1 would stop at adb's first error line.
@@ -173,8 +183,8 @@ function Find-EmulatorSerial([string]$AvdName) {
     foreach ($line in (& $adb devices | Select-Object -Skip 1)) {
         if ($line -match '^(emulator-\d+)\s+device') {
             $serial = $Matches[1]
-            $name = & $adb -s $serial emu avd name 2>$null | Select-Object -First 1
-            if ($name -and $name.Trim() -eq $AvdName) { return $serial }
+            $name = ConvertFrom-AvdNameAnswer @(& $adb -s $serial emu avd name 2>$null)
+            if ($name -and $name -eq $AvdName) { return $serial }
         }
     }
     return $null
@@ -412,7 +422,7 @@ function Get-EmulatorWindowWarning([string]$AvdName, [string]$WindowType, [bool]
 function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBoot) {
     $adb = Get-Adb
     $name = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'avd', 'name' -TimeoutSeconds 30
-    if (-not $name.Completed -or "$($name.Output)".Trim() -notmatch '^kestrel-api37\b') {
+    if (-not $name.Completed -or -not (Test-KestrelAvdAnswer $name.Output)) {
         return "$Serial is not the emulator kestrel-api37, so it was not closed"
     }
     $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30

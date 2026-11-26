@@ -168,8 +168,8 @@ function Invoke-Emulator([string]$Command) {
     # adb's error lines become part of the error message, as in Invoke-Once.
     $ErrorActionPreference = 'Continue'
     # Read before the if, because PSScriptAnalyzer takes a 2> in an if's condition for a comparison.
-    $name = "$(& $adb -s $Serial emu avd name 2>$null)"
-    if ($name -notmatch '^kestrel-api37\b') {
+    $answer = @(& $adb -s $Serial emu avd name 2>$null)
+    if (-not (Test-KestrelAvdAnswer $answer)) {
         throw "Refusing to send '$Command' to ${Serial}: it is no longer kestrel-api37."
     }
     $output = @(& $adb -s $Serial emu @($Command -split ' ') 2>&1)

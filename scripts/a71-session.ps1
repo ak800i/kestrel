@@ -437,7 +437,7 @@ function Initialize-Session {
         # The emulator's microphone carries this computer's sound, which would count in the steps' measures and could
         # start commands, so a dry run turns the host audio input off. The restore puts back the state that the emulator
         # started with (Get-EmulatorHostMicrophone): off without a window, as scripts\start-emulator.ps1 starts it.
-        Disable-EmulatorHostMicrophone -Serial $Serial
+        Disable-EmulatorHostMicrophone -Serial $Serial | Out-Null
     }
     $script:sessionStart = Get-DeviceTime
 }

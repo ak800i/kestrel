@@ -432,6 +432,7 @@ Describe 'The helpers of the re-checks of plan 2E' {
 
 Describe 'The host audio input of kestrel-api37 in the dry runs' {
     BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
         . "$PSScriptRoot\..\lib\Session.ps1"
         # Set-EmulatorHostMicrophone runs adb through Get-Adb of scripts\lib\Kestrel.ps1; the tests give it this stand-in,
         # which answers the console's commands as the emulator does.
@@ -459,6 +460,8 @@ Describe 'The host audio input of kestrel-api37 in the dry runs' {
         $console.Name = 'zoran'
 
         { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'emulator-5554 is not the emulator kestrel-api37.'
+        $console.Name = 'kestrel-api37-old'
+        { Set-EmulatorHostMicrophone -Serial 'emulator-5554' -On $false } | Should -Throw 'emulator-5554 is not the emulator kestrel-api37.'
         { Set-EmulatorHostMicrophone -Serial 'R58N66RVD7Z' -On $false } | Should -Throw 'R58N66RVD7Z is not the emulator kestrel-api37.'
         @($console.Calls | Where-Object { $_ -like '*hostmic*' }).Count | Should -Be 0
     }
@@ -485,15 +488,18 @@ Describe 'The host audio input of kestrel-api37 in the dry runs' {
     It 'turns it off for a dry run, with a restore that puts back the state that the emulator started with' {
         $registered = [System.Collections.Generic.List[object]]::new()
         function Register-Restore([string]$What, [string]$ByHand, $Data, [scriptblock]$Action) {
-            $registered.Add([pscustomobject]@{ What = $What; ByHand = $ByHand; Data = $Data; Action = $Action })
+            $restore = [pscustomobject]@{ What = $What; ByHand = $ByHand; Data = $Data; Action = $Action }
+            $registered.Add($restore)
+            $restore
         }
         foreach ($on in $false, $true) {
             $registered.Clear()
             $console.Calls.Clear()
             function Get-EmulatorHostMicrophone { $on }
 
-            Disable-EmulatorHostMicrophone -Serial 'emulator-5554'
+            $restore = Disable-EmulatorHostMicrophone -Serial 'emulator-5554'
 
+            $restore | Should -Be $registered[0]
             $command = if ($on) { 'hostmicon' } else { 'hostmicoff' }
             $registered[0].ByHand | Should -Be "Run: & 'Invoke-FakeConsole' -s emulator-5554 emu avd $command"
             @($console.Calls) | Should -Be @('-s emulator-5554 emu avd name', '-s emulator-5554 emu avd hostmicoff')

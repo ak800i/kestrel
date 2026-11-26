@@ -346,6 +346,17 @@ function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { Invoke-DeviceHo
 
 function Invoke-Device([string]$Device, [string]$Command) { Invoke-SettingsCommand -Serial $Device -Command $Command }
 
+# A stop of the whole sitting, which no item or step catches, so that the sitting goes straight to its restores: the
+# owner's q, or a restart of kestrel-api37 that failed or after which the owner's data there differed (AGENTS.md: then
+# no further command on the device). Test-SittingStop tells it from any other error.
+function New-SittingStop([string]$Message) {
+    $stop = [System.Exception]::new($Message)
+    $stop.Data['KestrelSittingStop'] = $true
+    $stop
+}
+
+function Test-SittingStop($ErrorRecord) { [bool]$ErrorRecord.Exception.Data['KestrelSittingStop'] }
+
 # One item of the owner's: this computer beeps, and the prompt says what he does and what the phone shows; Enter starts
 # it, s skips it and q stops the sitting. A dry run answers $DryRunAnswer itself.
 function Request-OwnerItem([string]$Prompt, [string]$DryRunAnswer = 'go') {
@@ -355,7 +366,7 @@ function Request-OwnerItem([string]$Prompt, [string]$DryRunAnswer = 'go') {
     }
     try { [console]::Beep(880, 300) } catch { Write-Verbose 'This console cannot beep.' }
     $answer = "$(Read-Host $Prompt)".Trim().ToLowerInvariant()
-    if ($answer -eq 'q') { throw 'The owner stopped the sitting.' }
+    if ($answer -eq 'q') { throw (New-SittingStop 'The owner stopped the sitting.') }
     if ($answer -in 's', 'skip') { 'skip' } else { 'go' }
 }
 
@@ -691,8 +702,12 @@ function Get-MissingApps([string]$Device) {
     @(foreach ($package in (Get-TelegramPackage $Device), 'com.waze', 'com.google.android.gm') { if (-not (Test-Installed $Device $package)) { $package } })
 }
 
-# The emulator's location at the test location (adb emu geo fix takes the longitude first).
+# The emulator's location at the test location (adb emu geo fix takes the longitude first), sent only when the
+# emulator's console names kestrel-api37.
 function Set-EmulatorFix([string]$Device) {
+    # Read before the if, because PSScriptAnalyzer takes a 2> in an if's condition for a comparison.
+    $answer = @(& $adb -s $Device emu avd name 2>$null)
+    if (-not (Test-KestrelAvdAnswer $answer)) { throw "$Device is not the emulator kestrel-api37." }
     $latitude, $longitude = "$($config.testLocation)" -split ','
     & $adb -s $Device emu geo fix $longitude $latitude | Out-Null
 }
@@ -898,7 +913,7 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
     try {
         & $Body
     } catch {
-        if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
+        if (Test-SittingStop $_) { throw }
         Add-Result owner "${Name}: failed: $(Format-Failure $_)"
     }
 }
@@ -906,31 +921,48 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
 # Restarts kestrel-api37 with its window ($Window) or without one, through Restart-KestrelEmulator, which closes it only
 # after its console named kestrel-api37 and brings Android back from its Quick Boot snapshot. The owner's data on it (the
 # Google accounts and Kestrel's profiles, AGENTS.md) is read just before and compared just after, so that only the
-# restart is checked, not the owner's item between two restarts. Throws when the restart or the comparison fails.
+# restart is checked, not the owner's item between two restarts. A failed restart or a difference stops the sitting
+# (New-SittingStop). After a difference, AGENTS.md allows no further command on the device, also not the restart that
+# would take the window away again, so the stop names the commands with which the owner does that himself once he has
+# looked at his data.
 function Switch-EmulatorWindow([string]$StepName, [bool]$Window) {
     $how = if ($Window) { 'with its window' } else { 'without a window' }
     $before = Get-OwnerDataState $EmulatorSerial
     $problem = Restart-KestrelEmulator -Serial $EmulatorSerial -Window $Window
-    if ($problem) { throw "kestrel-api37 could not be restarted $how`: $problem" }
+    if ($problem) { throw (New-SittingStop "kestrel-api37 could not be restarted $how`: $problem") }
     $changes = @(Compare-OwnerData -Serial $EmulatorSerial -Before $before -During "the sitting's restart of kestrel-api37 $how")
-    if ($changes) { throw "The owner's data on kestrel-api37 changed in its restart $how`: $($changes -join ' ')" }
+    if ($changes) {
+        $after = if ($Window) {
+            " kestrel-api37 keeps its window. Once you have checked your data there, close it with & '$adb' -s $EmulatorSerial emu kill and start it without a window with scripts\start-emulator.ps1."
+        } else { '' }
+        throw (New-SittingStop "The owner's data on kestrel-api37 changed in its restart $how, so the sitting sends no further command to it: $($changes -join ' ')$after")
+    }
     Add-Result $StepName "kestrel-api37 restarted $how; the owner's data there as before"
 }
 
 # Runs $Body, an item of the owner's in kestrel-api37's window. scripts\start-emulator.ps1 starts kestrel-api37 without
 # a window, because the window links its clipboard to this computer's (README), so when its console answers 'headless'
 # the sitting restarts it with its window first, and without one again afterwards, also when $Body fails or the owner
-# stops the sitting. An emulator that already has its window is left as it is.
+# stops the sitting. An emulator that already has its window is left as it is. When the restart back fails after $Body
+# failed, the stop names both errors, $Body's first.
 function Invoke-EmulatorWindowItem([string]$StepName, [scriptblock]$Body) {
     if ((Get-EmulatorWindowType $EmulatorSerial) -ne 'headless') { return & $Body }
     Switch-EmulatorWindow $StepName $true
+    $failure = $null
     try {
         & $Body
+    } catch {
+        $failure = $_
+        throw
     } finally {
-        Switch-EmulatorWindow $StepName $false
+        try {
+            Switch-EmulatorWindow $StepName $false
+        } catch {
+            if (-not $failure) { throw }
+            throw (New-SittingStop "$($failure.Exception.Message) Then: $($_.Exception.Message)")
+        }
     }
 }
-
 # kestrel-api37's Google account and its apps for the owner's step of sitting 1. The emulator holds the owner's own
 # account (emulatorGmailAddress equals gmailAddress), which the script never signs in or out, so he is asked for nothing
 # there; only for a test account of another address, when the emulator has no Google account, does he sign it in, as
@@ -1540,17 +1572,21 @@ function Invoke-SpeechOn([string]$Serial) {
 }
 
 # Design D30 step 12: the speech checks (D28) on the A71 with the emulator's microphone off, then on kestrel-api37 with
-# its host microphone on for that part only. They inform and do not gate (D27).
+# its host microphone on for that part only; afterwards the microphone is as the emulator started with it
+# (Disable-EmulatorHostMicrophone), also when a part fails. They inform and do not gate (D27).
 function Invoke-SpeechStep {
     $a71 = Get-A71
     if (-not $DryRun) {
         if (-not (Unlock-Device $a71)) { throw 'the A71 is locked, and the sitting could not unlock it' }
-        Set-EmulatorHostMicrophone -Serial $EmulatorSerial -On $false
-        Invoke-SpeechOn $a71
-        Start-Listening $a71 'quiet'
-        $restore = Register-Restore 'the emulator''s host microphone off' "Run: & '$adb' -s $EmulatorSerial emu avd hostmicoff" $EmulatorSerial { param($Device) Set-EmulatorHostMicrophone -Serial $Device -On $false }
-        Set-EmulatorHostMicrophone -Serial $EmulatorSerial -On $true
-        try { Invoke-SpeechOn $EmulatorSerial } finally { Complete-Restore $restore }
+        $restore = Disable-EmulatorHostMicrophone -Serial $EmulatorSerial
+        try {
+            Invoke-SpeechOn $a71
+            Start-Listening $a71 'quiet'
+            Set-EmulatorHostMicrophone -Serial $EmulatorSerial -On $true
+            Invoke-SpeechOn $EmulatorSerial
+        } finally {
+            Complete-Restore $restore
+        }
         Start-Listening $EmulatorSerial 'quiet'
     } else {
         Invoke-SpeechOn $EmulatorSerial
@@ -2227,7 +2263,7 @@ function Invoke-SittingSteps([object[]]$Entries) {
         try {
             & $entry.Run
         } catch {
-            if ($_.Exception.Message -eq 'The owner stopped the sitting.') { throw }
+            if (Test-SittingStop $_) { throw }
             if ($_.Exception.Message -in @($ceilingMessage, $unknownMessage, $resultsGoneMessage, $noRecordMessage | Where-Object { $_ })) {
                 if (-not $creditStop) { $creditStop = $_.Exception.Message }
                 Add-Result $entry.Name "stopped: $($_.Exception.Message)"

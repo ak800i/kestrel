@@ -525,7 +525,7 @@ function Initialize-Session {
     if ($DryRun) {
         # The emulator's microphone carries this computer's sound. The restore puts back the state that the emulator
         # started with (Get-EmulatorHostMicrophone): off without a window, as scripts\start-emulator.ps1 starts it.
-        Disable-EmulatorHostMicrophone -Serial $Serial
+        Disable-EmulatorHostMicrophone -Serial $Serial | Out-Null
     }
     # Kestrel's accessibility service, next to the owner's other services.
     $enabled = if ($accessibility.Contains('enabled_accessibility_services')) { "$($accessibility['enabled_accessibility_services'])" } else { 'null' }

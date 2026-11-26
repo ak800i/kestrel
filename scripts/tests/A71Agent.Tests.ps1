@@ -36,7 +36,7 @@ BeforeAll {
     # Telegram's Saved Messages, reached from a new task without typing (fix-5c-final).
     $helpers += @('Start-AppNewTask', 'Open-TelegramSavedMessages')
     # kestrel-api37's window for the owner's items there, which it has only for them (review of the headless emulator, I1).
-    $helpers += @('Switch-EmulatorWindow', 'Invoke-EmulatorWindowItem')
+    $helpers += @('Switch-EmulatorWindow', 'Invoke-EmulatorWindowItem', 'New-SittingStop', 'Test-SittingStop', 'Invoke-SpeechStep', 'Invoke-SpeechOn')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
@@ -1094,7 +1094,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
 
         # The window goes away again also when the owner stops the sitting; an emulator that has its window keeps it.
         $events.Clear()
-        Mock Request-OwnerItem { throw 'The owner stopped the sitting.' }
+        Mock Request-OwnerItem { throw (New-SittingStop 'The owner stopped the sitting.') }
         { Invoke-OwnerStep2 } | Should -Throw 'The owner stopped the sitting.'
         @($events | Where-Object { $_ -like 'restart*' }) | Should -Be @('restart window=True', 'restart window=False')
         $events.Clear()
@@ -1117,6 +1117,66 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         Mock Compare-OwnerData { 'emulator-5554: 0 Google accounts, not 1' }
         { Invoke-EmulatorWindowItem owner { Request-OwnerItem 'item' } } | Should -Throw 'The owner''s data on kestrel-api37 changed in its restart with its window*'
         Should -Invoke Request-OwnerItem -Times 0 -Exactly
+    }
+
+    It 'names the item''s error first and then the failed restart back, as a stop of the sitting that no item catches' {
+        Mock Get-EmulatorWindowType { 'headless' }
+        Mock Get-OwnerDataState { 'state' }
+        Mock Compare-OwnerData { }
+        Mock Restart-KestrelEmulator { if (-not $Window) { 'it did not start again' } }
+
+        $caught = $null
+        try { Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { throw 'Play did not open' } } } catch { $caught = $_ }
+
+        $caught.Exception.Message | Should -Be 'Play did not open Then: kestrel-api37 could not be restarted without a window: it did not start again'
+        Test-SittingStop $caught | Should -BeTrue
+        @($results | Where-Object { $_ -like '*failed*' }) | Should -BeNullOrEmpty
+
+        # Without the item's error, the restart's own stop comes alone; an item's error alone stays an item's failure.
+        { Invoke-EmulatorWindowItem owner { 'go' } } | Should -Throw 'kestrel-api37 could not be restarted without a window: it did not start again'
+        Mock Restart-KestrelEmulator { }
+        Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { throw 'Play did not open' } }
+        $results | Should -Contain 'owner: Item 3: failed: Play did not open'
+    }
+
+    It 'stops the sitting with the commands for the owner, and sends nothing more to kestrel-api37, when his data differs after the restart with the window' {
+        Mock Get-EmulatorWindowType { 'headless' }
+        Mock Get-OwnerDataState { 'state' }
+        Mock Compare-OwnerData { 'emulator-5554: 0 Google accounts, not 1' }
+        Mock Restart-KestrelEmulator { }
+        Mock Request-OwnerItem { 'go' }
+        $adb = 'adb.exe'
+
+        $caught = $null
+        try { Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { Request-OwnerItem 'item' } } } catch { $caught = $_ }
+
+        Test-SittingStop $caught | Should -BeTrue
+        $caught.Exception.Message | Should -Match "^The owner's data on kestrel-api37 changed in its restart with its window, so the sitting sends no further command to it: emulator-5554: 0 Google accounts, not 1 "
+        $caught.Exception.Message | Should -Match "close it with & 'adb\.exe' -s emulator-5554 emu kill and start it without a window with scripts\\start-emulator\.ps1\.$"
+        Should -Invoke Restart-KestrelEmulator -Times 1 -Exactly
+        Should -Invoke Request-OwnerItem -Times 0 -Exactly
+    }
+
+    It 'turns kestrel-api37''s host microphone on only for its speech checks, and puts back the state that it started with, also when they fail' {
+        $mic = [System.Collections.Generic.List[string]]::new()
+        Mock Get-A71 { $A71 }
+        Mock Unlock-Device { $true }
+        Mock Start-Listening { }
+        Mock Get-Adb { 'adb' }
+        Mock Get-EmulatorHostMicrophone { $true }
+        Mock Set-EmulatorHostMicrophone { $mic.Add("$On") }
+        Mock Complete-Restore { & $Restore.Action $Restore.Data }
+        Mock Invoke-SpeechOn { $mic.Add("speech on $Serial") }
+
+        Invoke-SpeechStep
+
+        @($mic) | Should -Be @('False', "speech on $A71", 'True', "speech on $EmulatorSerial", 'True')
+
+        $mic.Clear()
+        Mock Get-EmulatorHostMicrophone { $false }
+        Mock Invoke-SpeechOn { throw 'no answer' } -ParameterFilter { $Serial -eq $A71 }
+        { Invoke-SpeechStep } | Should -Throw 'no answer'
+        @($mic) | Should -Be @('False', 'False')
     }
 
     It 'records the test account that the owner signed in on kestrel-api37 in its window before the restart without one' {
