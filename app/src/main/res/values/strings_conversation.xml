@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The conversation screen (design 10.1 of sub-project 7; plan 7F). -->
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <string name="conversation_title">Kestrel</string>
+    <string name="conversation_hint">Tell Kestrel what to do</string>
+    <string name="conversation_send">Send</string>
+    <string name="conversation_speak">Speak</string>
+    <string name="conversation_stop">Stop</string>
+    <string name="conversation_continue">Continue</string>
+    <string name="conversation_cancel">Cancel</string>
+    <string name="conversation_new">New conversation</string>
+    <string name="conversation_stop_and_new">Stop and start new</string>
+    <string name="conversation_settings">Settings</string>
+    <string name="conversation_show_app">Show the app</string>
+    <string name="conversation_setup">Finish setting up Kestrel</string>
+    <string name="conversation_empty">Type what Kestrel should do, or tap Speak.</string>
+    <string name="conversation_typed">Typed</string>
+    <string name="conversation_spoken">Spoken</string>
+    <string name="conversation_you_answered">You answered</string>
+    <string name="conversation_you_added">You added</string>
+    <string name="conversation_you_added_too_late">You added, too late for the goal</string>
+    <string name="conversation_you_continued">You continued</string>
+    <string name="conversation_kestrel_asked">Kestrel asked</string>
+    <string name="conversation_checklist">Checklist: %1$d of %2$d done</string>
+    <string name="conversation_left_out" tools:ignore="PluralsCandidate">Earlier lines that are not kept: %1$d; data notes that are not kept: %2$d.</string>
+    <string name="conversation_continued">Continued on %1$s</string>
+    <string name="conversation_ended">Conversation ended at %1$s</string>
+    <string name="conversation_item_todo">To do</string>
+    <string name="conversation_item_doing">Doing</string>
+    <string name="conversation_item_done">Done</string>
+    <string name="conversation_item_skipped">Skipped</string>
+    <string name="conversation_item_failed">Failed</string>
+</resources>
