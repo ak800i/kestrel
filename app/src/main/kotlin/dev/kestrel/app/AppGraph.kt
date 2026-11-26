@@ -27,6 +27,7 @@ import dev.kestrel.app.conversation.AppOffVoice
 import dev.kestrel.app.conversation.ConversationSignals
 import dev.kestrel.app.conversation.GoalBar
 import dev.kestrel.app.conversation.PermissionDialog
+import dev.kestrel.app.conversation.playerVoices
 import dev.kestrel.app.conversation.storedConversationSettings
 import dev.kestrel.app.conversation.VoiceChannel
 import dev.kestrel.app.orchestrator.Event
@@ -511,8 +512,7 @@ class AppGraph(context: Context) {
      */
     internal val offVoice: AppOffVoice by lazy {
         AppOffVoice(
-            context = appContext,
-            engines = voice,
+            load = playerVoices(appContext, voice),
             options = { settings.get(SettingKeys.VOICE).options() },
             foreground = { block -> goalForeground.whileSpeaking(block) },
             scope = scope,

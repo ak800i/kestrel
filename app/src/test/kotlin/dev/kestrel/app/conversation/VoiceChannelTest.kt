@@ -249,7 +249,8 @@ class VoiceChannelTest {
     }
 
     // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
-    // speech stops, Kestrel's own voice stops, and the words that wait are dropped.
+    // speech stops, Kestrel's own voice stops, and the words that wait are dropped. While Kestrel is off, the Orchestrator
+    // speaks nothing and so stops nothing, and only the channel's own count of stops drops the waiting words.
     @Test
     fun aStopStopsKestrelsSpeechAndDropsItsWaitingWords() = runTest {
         val channel = channel()
@@ -266,7 +267,8 @@ class VoiceChannelTest {
 
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
-        assertEquals(1L, voice.speechStops)
+        assertEquals(1, voice.stopRequests)
+        assertEquals(0L, voice.speechStops)
     }
 
     // Without a card, as without a screen session, the voice still answers (plan 7F): the question stays spoken, also
@@ -351,8 +353,14 @@ class VoiceChannelTest {
             withdrawn += question
         }
 
-        // As Listening: the Orchestrator's StopSaying for the owner's Stop that did not come by voice.
-        override fun stopSpeaking() = stop()
+        // As Listening: the Orchestrator's StopSaying for the owner's Stop that did not come by voice, which the Rules emit
+        // only while Kestrel speaks.
+        var stopRequests = 0
+
+        override fun stopSpeaking() {
+            stopRequests++
+            if (ends.isNotEmpty()) stop()
+        }
     }
 
     private class FakeSupport : OwnerScreen, OtherAudio, HandOverSignals, PermissionDialog {
