@@ -175,7 +175,19 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
     $current = if ($now.Contains($list)) { $now[$list] } else { 'null' }
     if (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService) {
         if (-not (Connect-AccessibilityService -Serial $Serial -Services $value)) { $back = $false }
-    } elseif ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $list -Value $value)) { $back = $false }
+    } elseif ($value -cne $current) {
+        # When Kestrel runs now, Android unbinds it a moment after the list, and only then clears its targets, which the
+        # read below must see.
+        $running = Get-AccessibilityServiceState -Serial $Serial
+        if (-not (Set-SecureSetting -Serial $Serial -Name $list -Value $value)) { $back = $false }
+        elseif ($running -and -not (Test-ServiceOff $running)) {
+            $wait = Wait-AccessibilityServiceState -Serial $Serial -Component $KestrelAccessibilityService -Until { param($State) Test-ServiceOff $State } -TimeoutSeconds 30
+            if (-not $wait.Reached) {
+                Write-Warning "Android did not turn $KestrelAccessibilityService off on $Serial within 30 s ($(Format-ServiceState $wait.State)), so the settings that it changes then may not be back."
+                $back = $false
+            }
+        }
+    }
     try { $now = Get-AccessibilitySettings -Serial $Serial } catch { & $warnUnread $_.Exception.Message; return $false }
     $names = @('accessibility_enabled') + @(@($Saved.Keys) + @($now.Keys) | Sort-Object -Unique) | Where-Object { $_ -ne $list }
     foreach ($name in ($names | Select-Object -Unique)) {
@@ -184,6 +196,13 @@ function Restore-AccessibilitySettings([string]$Serial, $Saved) {
         if ($value -cne $current -and -not (Set-SecureSetting -Serial $Serial -Name $name -Value $value)) { $back = $false }
     }
     $back
+}
+
+# The device shell's filter for the answer of 'dumpsys accessibility' that succeeds when the accessibility manager lists
+# the component as enabled, binding or crashed. It reads only those lines, because the lines of the shortcut targets
+# name the component in the same form.
+function Format-ServiceListedFilter([string]$Component) {
+    "grep -E '^ *(Enabled|Binding|Crashed) services:' | grep -qF '{$Component}'"
 }
 
 # The commands for the device's shell that put back the accessibility settings that Get-AccessibilitySettings read, for a
@@ -200,7 +219,7 @@ function Get-AccessibilityRestoreCommands($Saved, [string[]]$Delete = @('enabled
         if ($name -eq $list -and (Test-ServiceListed -Services $value -Component $KestrelAccessibilityService)) {
             $others = @($value -split ':' | Where-Object { $_ -and $_ -cne $KestrelAccessibilityService }) -join ':'
             Format-SecureSettingCommand -Name $list -Value $(if ($others) { $others } else { 'null' })
-            'i=0; while [ $i -lt 30 ] && dumpsys accessibility | grep -qF ''{' + $KestrelAccessibilityService + '}''; do sleep 1; i=$((i+1)); done'
+            "i=0; while [ `$i -lt 30 ] && dumpsys accessibility | $(Format-ServiceListedFilter $KestrelAccessibilityService); do sleep 1; i=`$((i+1)); done"
         }
         if ($value -ne 'null' -or $name -in $Delete) { Format-SecureSettingCommand -Name $name -Value $value }
     }

@@ -272,13 +272,14 @@ Describe 'The settings helpers' {
                 $reader = 'com.example.reader/com.example.reader.ReaderService'
                 # What Invoke-ActivationStep leaves: the owner's other services and Kestrel's, Kestrel bound, and Kestrel as
                 # the target of the accessibility shortcut and of the button.
-                function Set-ShortcutStepDevice {
+                # With -UnbindsLate, Android unbinds Kestrel and clears its targets only a moment after the list's write.
+                function Set-ShortcutStepDevice([switch]$UnbindsLate) {
                     Set-FakeDevice -Settings ([ordered]@{
                             accessibility_button_targets          = $kestrel
                             accessibility_enabled                 = '1'
                             accessibility_shortcut_target_service = $kestrel
                             enabled_accessibility_services        = "$reader`:$kestrel"
-                        }) -Accessibility @{ bound = @($reader, $kestrel); requestsButton = @($kestrel) }
+                        }) -Accessibility @{ bound = @($reader, $kestrel); requestsButton = @($kestrel); unbindsLate = [bool]$UnbindsLate }
                 }
             }
 
@@ -307,6 +308,19 @@ Describe 'The settings helpers' {
                 $device = Get-FakeDevice
                 $device.settings.enabled_accessibility_services | Should -BeExactly $reader
                 @($device.accessibility.bound) | Should -Not -Contain $kestrel
+                $device.settings.accessibility_shortcut_target_service | Should -BeExactly $kestrel
+                $device.settings.PSObject.Properties.Name | Should -Not -Contain 'accessibility_button_targets'
+            }
+
+            It 'waits until Android has turned Kestrel off, so that a target that Android clears late goes back too' {
+                Set-ShortcutStepDevice -UnbindsLate
+                $saved = [ordered]@{ accessibility_enabled = '1'; accessibility_shortcut_target_service = $kestrel; enabled_accessibility_services = $reader }
+
+                Restore-AccessibilitySettings -Serial emulator-5554 -Saved $saved | Should -BeExactly $true
+
+                # Anything that Android still had to do happens at the next look at its state.
+                Test-ServiceOff (Get-AccessibilityServiceState -Serial emulator-5554) | Should -BeExactly $true
+                $device = Get-FakeDevice
                 $device.settings.accessibility_shortcut_target_service | Should -BeExactly $kestrel
                 $device.settings.PSObject.Properties.Name | Should -Not -Contain 'accessibility_button_targets'
             }
@@ -451,11 +465,29 @@ Describe 'The settings helpers' {
 
             Get-AccessibilityRestoreCommands -Saved $saved | Should -BeExactly @(
                 "settings put secure enabled_accessibility_services 'com.example.reader/.Reader'"
-                "i=0; while [ `$i -lt 30 ] && dumpsys accessibility | grep -qF '{$kestrel}'; do sleep 1; i=`$((i+1)); done"
+                "i=0; while [ `$i -lt 30 ] && dumpsys accessibility | grep -E '^ *(Enabled|Binding|Crashed) services:' | grep -qF '{$kestrel}'; do sleep 1; i=`$((i+1)); done"
                 "settings put secure enabled_accessibility_services 'com.example.reader/.Reader`:$kestrel'"
                 'settings delete secure accessibility_enabled'
                 "settings put secure accessibility_button_targets '$kestrel'"
             )
+        }
+
+        It "waits only while Android lists Kestrel's service as enabled, binding or crashed, not while it is a shortcut target" {
+            $kestrel = 'dev.kestrel/dev.kestrel.app.KestrelAccessibilityService'
+            # The device's shell runs the filter; Git for Windows brings a POSIX shell with grep.
+            $sh = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'usr\bin\sh.exe'
+            $listed = {
+                param([string[]]$Lines)
+                $dump = Join-Path $TestDrive 'accessibility.txt'
+                [IO.File]::WriteAllText($dump, ($Lines -join "`n") + "`n")
+                & $sh -c "PATH=/usr/bin:`$PATH; cat '$($dump -replace '\\', '/')' | $(Format-ServiceListedFilter $kestrel)"
+                $LASTEXITCODE -eq 0
+            }
+            $block = { param($Crashed) 'User state[', '     attributes:{id=0, touchExplorationEnabled=false}', '     Bound services:{}',
+                '     Enabled services:{}', '     Binding services:{}', "     Crashed services:{$Crashed}", "     shortcut key:{$kestrel}" }
+
+            & $listed (& $block '') | Should -BeExactly $false
+            & $listed (& $block "{$kestrel}") | Should -BeExactly $true
         }
 
         It 'deletes the names of -Delete that were not there, and leaves a list without Kestrel as it is' {

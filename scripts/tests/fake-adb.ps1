@@ -21,8 +21,10 @@
 #               set, so a change of order alone is none) drops every component that the set no longer holds from the
 #               crashed set, and from the binding set from API 34 on; it unbinds such a component, and clears the
 #               shortcut and button targets of one that requests the button; and it binds each listed component that is
-#               in none of the sets, while one that never binds stays binding. 'dumpsys accessibility' and 'dumpsys
-#               activity services <component>' show the state.
+#               in none of the sets, while one that never binds stays binding. With 'unbindsLate', the unbind and the
+#               clearing of the targets come only at the next 'dumpsys accessibility' ('pendingUnbind'), as Android
+#               unbinds a moment after the write. 'dumpsys accessibility' and 'dumpsys activity services <component>'
+#               show the state.
 #   failures    how many of the next settings commands fail, as a busy device fails them: 'Bad arguments' and no marker
 #   calls       every settings command that it received and did not refuse, in order, without the check
 #   refused     every settings command that the check kept from running, in order
@@ -64,9 +66,10 @@ $packages = [ordered]@{}
 if ($state.packages) { foreach ($property in $state.packages.PSObject.Properties) { $packages[$property.Name] = [string]$property.Value } }
 $accounts = [int]$state.accounts
 $accessibility = [ordered]@{}
-foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds', 'requestsButton') {
+foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds', 'requestsButton', 'pendingUnbind') {
     $accessibility[$set] = [string[]]@(@($state.accessibility.$set) | Where-Object { $_ })
 }
+$accessibility['unbindsLate'] = [bool]$state.accessibility.unbindsLate
 $keepsTiles = [bool]$state.keepsTiles
 $failures = [int]$state.failures
 $calls = @(@($state.calls) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
@@ -82,16 +85,23 @@ function Save-State {
 
 function Get-EnabledServices { @("$($settings['enabled_accessibility_services'])" -split ':' | Where-Object { $_ }) }
 
-# What the accessibility manager's settings observer does after a write of enabled_accessibility_services.
-function Update-Accessibility([string[]]$Before) {
-    $enabled = @(Get-EnabledServices)
-    if ((@($Before | Sort-Object -Unique -CaseSensitive) -join ':') -ceq (@($enabled | Sort-Object -Unique -CaseSensitive) -join ':')) { return }
-    $sets = if ($sdk -ge 34) { 'bound', 'binding', 'crashed' } else { 'bound', 'crashed' }
-    foreach ($component in @($accessibility.bound | Where-Object { $enabled -cnotcontains $_ -and $accessibility.requestsButton -ccontains $_ })) {
+# Unbinds the components, and clears the shortcut and button targets of each one that requests the button.
+function Complete-Unbind([string[]]$Components) {
+    foreach ($component in @($Components | Where-Object { $accessibility.requestsButton -ccontains $_ })) {
         foreach ($target in 'accessibility_shortcut_target_service', 'accessibility_button_targets', 'accessibility_qs_targets', 'accessibility_gesture_targets') {
             if ($settings.Contains($target)) { $settings[$target] = @($settings[$target] -split ':' | Where-Object { $_ -and $_ -cne $component }) -join ':' }
         }
     }
+    $accessibility['bound'] = [string[]]@($accessibility.bound | Where-Object { $Components -cnotcontains $_ })
+}
+
+# What the accessibility manager's settings observer does after a write of enabled_accessibility_services.
+function Update-Accessibility([string[]]$Before) {
+    $enabled = @(Get-EnabledServices)
+    if ((@($Before | Sort-Object -Unique -CaseSensitive) -join ':') -ceq (@($enabled | Sort-Object -Unique -CaseSensitive) -join ':')) { return }
+    $sets = if ($sdk -ge 34) { 'binding', 'crashed' } else { @('crashed') }
+    $leaving = @($accessibility.bound | Where-Object { $enabled -cnotcontains $_ })
+    if ($accessibility.unbindsLate) { $accessibility['pendingUnbind'] = [string[]](@($accessibility.pendingUnbind) + $leaving) } else { Complete-Unbind $leaving }
     foreach ($set in $sets) {
         $accessibility[$set] = [string[]]@($accessibility[$set] | Where-Object { $enabled -ccontains $_ })
     }
@@ -187,6 +197,8 @@ if ($deviceCommand -match '^getprop (\S+)$') {
     $numbers = if ($accounts -gt 0) { 1..$accounts } else { @() }
     $lines = @('Accounts: ' + $accounts) + @($numbers | ForEach-Object { "  Account {name=account$_@example.com, type=com.google}" })
 } elseif ($deviceCommand -eq 'dumpsys accessibility') {
+    Complete-Unbind $accessibility.pendingUnbind
+    $accessibility['pendingUnbind'] = [string[]]@()
     $labels = @($accessibility.bound | ForEach-Object { "Service[label=$(($_ -split '[/.]')[-1]), feedbackType[FEEDBACK_GENERIC]]" }) -join ', '
     $lines = @('ACCESSIBILITY MANAGER (dumpsys accessibility)', 'currentUserId=0', 'User state[',
         '     attributes:{id=0, touchExplorationEnabled=false}', "     Bound services:{$labels}",
