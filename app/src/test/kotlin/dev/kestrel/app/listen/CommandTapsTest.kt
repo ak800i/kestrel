@@ -22,10 +22,7 @@ class CommandTapsTest {
         return step.state to taps.stepped(event, state, step)
     }
 
-    private fun assist(state: State, vararg tapped: Long): Pair<State, CommandWaitEnd?> {
-        taps.assisting(tapped.toList())
-        return step(state, Event.Assist)
-    }
+    private fun assist(state: State, vararg tapped: Long): Pair<State, CommandWaitEnd?> = step(state, Event.Assist(tapped.toList()))
 
     @Test
     fun theWaitThatATapOpenedEndsWithItsTap() {
@@ -52,13 +49,24 @@ class CommandTapsTest {
     fun anOlderWaitThatEndsAfterTheTapDoesNotEndTheTap() {
         val (voice, _) = step(idle, Event.Heard("Kestrel", named = true))
         assertEquals(Work.AWAITING_TASK, voice.work)
-        taps.assisting(listOf(1))
 
         val (ended, older) = step(voice, Event.WaitEnded(voice.wait))
         assertNull(older)
-        val (asked, _) = step(ended, Event.Assist)
+        val (asked, _) = assist(ended, 1)
 
         assertEquals(CommandWaitEnd(listOf(1), null), step(asked, Event.WaitEnded(asked.wait)).second)
+    }
+
+    // Review M5 of Task 8: an Assist that never reached the Orchestrator (tap 1's), or one that no tap asked for, gives no
+    // later tap another tap's end, because each Assist carries its own taps.
+    @Test
+    fun aDroppedOrExtraAssistGivesNoLaterTapAnotherTapsEnd() {
+        val (extra, none) = assist(idle)
+        assertNull(none)
+        val (ended, _) = step(extra, Event.WaitEnded(extra.wait))
+        val (asked, _) = assist(ended, 2)
+
+        assertEquals(CommandWaitEnd(listOf(2), null), step(asked, Event.WaitEnded(asked.wait)).second)
     }
 
     @Test

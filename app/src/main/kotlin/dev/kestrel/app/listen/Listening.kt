@@ -601,7 +601,7 @@ class Listening internal constructor(
         val tap = tapNumbers.incrementAndGet()
         scope.launch(thread) {
             if (session != null) {
-                assisting(listOf(tap))
+                send(Event.Assist(listOf(tap)))
             } else {
                 commandTaps.awaitSession(tap)
                 // Acts only while Kestrel is off; otherwise a start is on its way, and its session asks.
@@ -609,12 +609,6 @@ class Listening internal constructor(
             }
         }
         return tap
-    }
-
-    // On [thread]: the only way that an Event.Assist reaches the Orchestrator, so that [commandTaps] knows its taps.
-    private fun assisting(taps: List<Long>) {
-        commandTaps.assisting(taps)
-        send(Event.Assist)
     }
 
     /**
@@ -926,7 +920,7 @@ class Listening internal constructor(
                 // After followSafely, which starts the microphone, so that a native crash there comes before Listening is
                 // stored.
                 remember(state.value.mode)
-                commandTaps.opened().takeIf { it.isNotEmpty() }?.let(::assisting)
+                commandTaps.opened().takeIf { it.isNotEmpty() }?.let { send(Event.Assist(it)) }
                 // Last, so that a failure here costs only the call state (section 8.7).
                 startCalls()
             }

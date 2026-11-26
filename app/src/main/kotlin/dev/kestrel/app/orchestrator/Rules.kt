@@ -300,9 +300,10 @@ sealed interface Event {
     /**
      * The assistant gesture or an earbud's assistant button (section 8.6): Kestrel listens, if it was paused, and waits
      * for a task, as after "Kestrel" on its own. Listening turns Kestrel on first and sends it once a voice session is
-     * open, so the Rules ignore it while Kestrel is off.
+     * open, so the Rules ignore it while Kestrel is off. [taps] are the numbers of the assistant taps that asked for it
+     * (`Listening.assist`), which the end of the listening that it brings carries; the Rules ignore them (plan 7F).
      */
-    data object Assist : Event
+    data class Assist(val taps: List<Long>) : Event
 
     /**
      * The owner's Stop that did not come by voice: typed, on the conversation screen or on the goal notification (plan 7F).
@@ -691,7 +692,7 @@ object Rules {
             else -> Step(state)
         }
         is Event.CallState -> call(state, event.state)
-        Event.Assist -> assist(state)
+        is Event.Assist -> assist(state)
         Event.StopSpeaking -> Step(state, listOfNotNull(Effect.StopSaying.takeIf { state.speaking }))
         is Event.Options -> Step(
             state.copy(onWakeUp = event.onWakeUp, pauseAfterSilence = event.pauseAfterSilence, callCommands = event.callCommands),
@@ -993,7 +994,7 @@ object Rules {
         is Event.SpeechEnded ->
             speechEnded(state, event.spoken).let { ended -> if (state.speeches == 1 && state.asking) ended.then { waitForAnswer(it) } else ended }
         // A countdown ignores the assistant gesture, as it ignores Kestrel's other requests.
-        Event.Assist -> if (state.counting) Step(state) else keepOrLeave(state, event)
+        is Event.Assist -> if (state.counting) Step(state) else keepOrLeave(state, event)
         // The screen that "lock screen" turned off is what the command did; its end still comes.
         is Event.Screen -> if (!event.on && !locksScreen(state.running)) leaveFor(state, event) else keepOrLeave(state, event)
         // The call that "call X" placed becomes active: the command goes on in the mode In call, and its end still counts.

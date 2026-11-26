@@ -401,7 +401,7 @@ class RulesTest {
         assertEquals(Mode.PAUSED, pausing.state.mode)
         assertEquals(Effect.CancelCommand, pausing.effects.first())
 
-        val assisted = Rules.next(runningCommand, Event.Assist)
+        val assisted = Rules.next(runningCommand, Event.Assist(emptyList()))
         assertEquals(Effect.CancelCommand, assisted.effects.first())
         assertEquals(Work.AWAITING_TASK, assisted.state.work)
     }
@@ -469,7 +469,7 @@ class RulesTest {
             assertEquals(said, counting, step.state)
         }
         assertEquals(listOf(Effect.HoldCommand(1, hold = false)), Rules.next(counting, Event.NothingHeard).effects)
-        assertEquals(Step(counting), Rules.next(counting, Event.Assist))
+        assertEquals(Step(counting), Rules.next(counting, Event.Assist(emptyList())))
         // "Cancel", "stop" and "no", with or without the name, cancel it.
         for (said in listOf(
             "Cancel.", "Stop", "No.", "No, no.", "Kestrel, no.", "Stop that.", "Cancel it, Kestrel.", "Hey Kestrel, no.",
@@ -630,7 +630,7 @@ class RulesTest {
             Event.ChannelShows("Got it."), Event.ChannelAsks(4, "Shall I?", QuestionKind.YES_NO), Event.ChannelHandsOver("Pay yourself."),
             Event.MicBusy(true), Event.MicBusy(false), Event.Screen(on = true),
             Event.Screen(on = false), Event.WaitEnded(1), Event.SettingsUnavailable, Event.SettingsFailed, Event.NothingHeard,
-            Event.CallState(CallState.IDLE), Event.CallState(CallState.RINGING), Event.CallState(CallState.ACTIVE), Event.Assist,
+            Event.CallState(CallState.IDLE), Event.CallState(CallState.RINGING), Event.CallState(CallState.ACTIVE), Event.Assist(emptyList()),
             Event.Options(WakeUpMode.STAY_OFF, pauseAfterSilence = true, callCommands = true), Event.Silent(1),
             Event.CommandAsks(1, "Which one?"), Event.CommandSays(1, "Calling."), Event.CommandCounts(1, counting = true),
             Event.AnswerWaitEnded(1), Event.CommandEnded(2, CommandResult(Outcome.DONE)), Event.ScreenWanted(1),
@@ -1181,27 +1181,27 @@ class RulesTest {
             Effect.WaitForTask(),
             Effect.Say(Reply.Yes),
         )
-        val step = Rules.next(paused, Event.Assist)
+        val step = Rules.next(paused, Event.Assist(emptyList()))
         assertEquals(expected, step.effects)
         assertEquals(Mode.LISTENING, step.state.mode)
         assertEquals(Work.AWAITING_TASK, step.state.work)
         // While Kestrel listens, it only asks.
-        assertEquals(expected.drop(1), Rules.next(listening, Event.Assist).effects)
+        assertEquals(expected.drop(1), Rules.next(listening, Event.Assist(emptyList())).effects)
         // Listening turns Kestrel on first and sends the Assist once the session is open, so one that comes while
         // Kestrel is off was queued behind a turn-off, and changes nothing.
-        assertEquals(Step(State()), Rules.next(State(), Event.Assist))
+        assertEquals(Step(State()), Rules.next(State(), Event.Assist(emptyList())))
         // Section 8.5: on the lock screen Kestrel does not record, so it only starts listening and asks nothing.
         val locked = paused.copy(screenOn = false)
         assertEquals(
             Step(locked.copy(mode = Mode.LISTENING), listOf(Effect.Show(Feedback.ModeChanged(Mode.LISTENING)))),
-            Rules.next(locked, Event.Assist),
+            Rules.next(locked, Event.Assist(emptyList())),
         )
         assertEquals(
             Step(
                 locked.copy(mode = Mode.LISTENING, speeches = 1),
                 listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.LISTENING))),
             ),
-            Rules.next(locked.copy(speeches = 1), Event.Assist),
+            Rules.next(locked.copy(speeches = 1), Event.Assist(emptyList())),
         )
     }
 
@@ -1210,17 +1210,17 @@ class RulesTest {
         // As after an interruption with "Kestrel": Kestrel stops speaking and waits for the task.
         assertEquals(
             listOf(Effect.StopSaying, Effect.Show(Feedback.AwaitingTask), Effect.WaitForTask()),
-            Rules.next(listening.copy(speeches = 1), Event.Assist).effects,
+            Rules.next(listening.copy(speeches = 1), Event.Assist(emptyList())).effects,
         )
         val running = goal(GoalPhase.ACTING, paused).copy(speeches = 1)
-        assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Assist))
+        assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Assist(emptyList())))
         val silent = running.copy(speeches = 0)
-        assertEquals(Step(silent), Rules.next(silent, Event.Assist))
+        assertEquals(Step(silent), Rules.next(silent, Event.Assist(emptyList())))
     }
 
     @Test
     fun theAssistantGestureWhilePausedOverKestrelsVoiceListensStopsAndWaitsForATask() {
-        val step = Rules.next(paused.copy(speeches = 1), Event.Assist)
+        val step = Rules.next(paused.copy(speeches = 1), Event.Assist(emptyList()))
 
         assertEquals(
             listOf(
@@ -1239,7 +1239,7 @@ class RulesTest {
     fun theAssistantGestureChangesNothingDuringACall() {
         val ringing = Rules.next(listening, Event.CallState(CallState.RINGING)).state
 
-        assertEquals(Step(ringing), Rules.next(ringing, Event.Assist))
+        assertEquals(Step(ringing), Rules.next(ringing, Event.Assist(emptyList())))
     }
 
     @Test
@@ -1271,7 +1271,7 @@ class RulesTest {
         assertEquals(Mode.OFF, Rules.next(used, Event.Screen(on = true)).state.mode)
         // The assistant gesture on the lock screen asks the owner to speak after the unlock, so that unlock keeps Kestrel
         // on.
-        val gestured = Rules.next(stayOff.copy(mode = Mode.PAUSED, screenOn = false, screenSeen = true), Event.Assist).state
+        val gestured = Rules.next(stayOff.copy(mode = Mode.PAUSED, screenOn = false, screenSeen = true), Event.Assist(emptyList())).state
         assertEquals(Mode.LISTENING, Rules.next(gestured, Event.Screen(on = true)).state.mode)
     }
 
@@ -1569,7 +1569,7 @@ class RulesTest {
     fun theAssistantGestureAndLateAnswersCountAPausedGoalAsAWorkingOne() {
         val paused = goal(GoalPhase.PAUSED).copy(speeches = 1)
 
-        assertEquals(Step(paused, listOf(Effect.StopSaying)), Rules.next(paused, Event.Assist))
+        assertEquals(Step(paused, listOf(Effect.StopSaying)), Rules.next(paused, Event.Assist(emptyList())))
         assertFalse(Rules.next(paused.copy(questionEnded = true), Event.MicBusy(busy = false)).state.questionEnded)
     }
 
@@ -1831,8 +1831,8 @@ class RulesTest {
 
         val waits = listOf(
             Rules.next(speaking, Event.Spotted(Keyword.KESTREL)),
-            Rules.next(speaking, Event.Assist),
-            Rules.next(asked, Event.Assist),
+            Rules.next(speaking, Event.Assist(emptyList())),
+            Rules.next(asked, Event.Assist(emptyList())),
             heard(asked, "Kestrel", named = true),
         )
         for (wait in waits) {
