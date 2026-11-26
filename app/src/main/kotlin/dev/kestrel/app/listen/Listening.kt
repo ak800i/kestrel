@@ -52,7 +52,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 
 /** Starts and stops ListeningService. Any thread may call it. */
 internal interface ServiceControl {
@@ -438,20 +437,16 @@ class Listening internal constructor(
     // turn: a question's end stops only its own speech (Effect.StopQuestion; plan 7F).
     private val questionSpeeches = ConcurrentHashMap<Int, Deferred<Spoke>>()
 
-    // How many times the Orchestrator stopped Kestrel's speech; the voice channel drops the spoken outputs that waited for
-    // their turn across a stop (decision 10 of sub-project 7).
-    private val stopsOfSpeech = AtomicLong()
-
     /** The voice channel's way to the Orchestrator (design 11 of sub-project 7). Any thread may use it. */
     internal val voicePath: VoicePath = object : VoicePath {
         override val ready: StateFlow<Boolean> get() = sessionOpen
 
-        override suspend fun say(text: String, final: Boolean, question: Int?) {
+        override suspend fun say(text: String, asked: Long, final: Boolean, question: Int?) {
             val reply = replyNumbers.incrementAndGet()
             val ended = CompletableDeferred<Unit>()
             replies[reply] = ended
             try {
-                send(Event.ChannelSays(reply, text, final, question))
+                send(Event.ChannelSays(reply, text, final, question, asked))
                 ended.await()
             } finally {
                 replies.remove(reply)
@@ -469,7 +464,7 @@ class Listening internal constructor(
 
         override fun stopSpeaking() = send(Event.StopSpeaking)
 
-        override val speechStops: Long get() = stopsOfSpeech.get()
+        override val speechStops: Long get() = state.value.speechStops
     }
 
     /**
@@ -1072,10 +1067,7 @@ class Listening internal constructor(
     private fun performUnguarded(effect: Effect) {
         when (effect) {
             is Effect.Say -> say(effect.reply)
-            Effect.StopSaying -> {
-                stopsOfSpeech.incrementAndGet()
-                session?.stopSpeaking()
-            }
+            Effect.StopSaying -> session?.stopSpeaking()
             // The conversation takes the screen's turn itself before a goal acts (design 7.1 of sub-project 7).
             is Effect.Converse -> {
                 if (effect.intent is InputIntent.Command) timeline.reacted("task")

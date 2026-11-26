@@ -29,6 +29,9 @@ class RulesTest {
     // or none.
     private fun goal(phase: GoalPhase?, state: State = listening): State = state.copy(conversation = VoiceView(open = true, goal = phase))
 
+    // The state after one more stop of Kestrel's speech (plan 7F).
+    private fun State.stopped(): State = copy(speechStops = speechStops + 1)
+
     private val acting = goal(GoalPhase.ACTING)
 
     // The voice asked the conversation's question number 4 of [kind], and has spoken it; a goal that acted asks now.
@@ -718,11 +721,11 @@ class RulesTest {
 
         // "Kestrel" while a goal works only ends the speech; the goal goes on.
         val running = acting.copy(speeches = 1)
-        assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Spotted(Keyword.KESTREL)))
+        assertEquals(Step(running.stopped(), listOf(Effect.StopSaying)), Rules.next(running, Event.Spotted(Keyword.KESTREL)))
 
         // No wait starts while the screen is off.
         val dark = listening.copy(speeches = 1, screenOn = false)
-        assertEquals(Step(dark, listOf(Effect.StopSaying)), Rules.next(dark, Event.Spotted(Keyword.KESTREL)))
+        assertEquals(Step(dark.stopped(), listOf(Effect.StopSaying)), Rules.next(dark, Event.Spotted(Keyword.KESTREL)))
     }
 
     @Test
@@ -869,7 +872,7 @@ class RulesTest {
         val speaking = listening.copy(speeches = 1)
 
         assertEquals(
-            Step(speaking, listOf(Effect.Show(Feedback.Heard("Kestrel, stop.")), Effect.StopSaying)),
+            Step(speaking.stopped(), listOf(Effect.Show(Feedback.Heard("Kestrel, stop.")), Effect.StopSaying)),
             Rules.next(speaking, Event.Heard("Kestrel, stop.", named = true)),
         )
         assertEquals(
@@ -1198,7 +1201,7 @@ class RulesTest {
         )
         assertEquals(
             Step(
-                locked.copy(mode = Mode.LISTENING, speeches = 1),
+                locked.copy(mode = Mode.LISTENING, speeches = 1).stopped(),
                 listOf(Effect.StopSaying, Effect.Show(Feedback.ModeChanged(Mode.LISTENING))),
             ),
             Rules.next(locked.copy(speeches = 1), Event.Assist),
@@ -1213,7 +1216,7 @@ class RulesTest {
             Rules.next(listening.copy(speeches = 1), Event.Assist).effects,
         )
         val running = goal(GoalPhase.ACTING, paused).copy(speeches = 1)
-        assertEquals(Step(running, listOf(Effect.StopSaying)), Rules.next(running, Event.Assist))
+        assertEquals(Step(running.stopped(), listOf(Effect.StopSaying)), Rules.next(running, Event.Assist))
         val silent = running.copy(speeches = 0)
         assertEquals(Step(silent), Rules.next(silent, Event.Assist))
     }
@@ -1404,6 +1407,25 @@ class RulesTest {
         assertEquals(listOf(Effect.StopQuestion(5)), Rules.next(later, Event.ChannelWithdraws(5)).effects)
     }
 
+    // Plan 7F: every stop of Kestrel's speech counts, and the owner's Stop also while Kestrel does not speak; the voice
+    // channel's words that came before a later stop are dropped, and the channel goes on at once.
+    @Test
+    fun aChannelsWordsThatCameBeforeAStopAreNotSpoken() {
+        val came = listening.speechStops
+        val stopped = Rules.next(listening, Event.StopSpeaking).state
+        assertEquals(came + 1, stopped.speechStops)
+
+        assertEquals(Step(stopped, listOf(Effect.EndReply(3))), Rules.next(stopped, Event.ChannelSays(3, "Done.", asked = came)))
+        assertEquals(
+            Effect.Say(Reply.Channel(3, "Done.")),
+            Rules.next(stopped, Event.ChannelSays(3, "Done.", asked = stopped.speechStops)).effects.last(),
+        )
+        // A step that stops Kestrel's speech counts too.
+        val speaking = Rules.next(stopped, Event.ChannelSays(4, "Sent.", asked = stopped.speechStops)).state
+        assertEquals(stopped.speechStops + 1, Rules.next(speaking, Event.StopSpeaking).state.speechStops)
+        assertEquals(stopped.speechStops + 1, Rules.next(speaking, Event.Spotted(Keyword.STOP)).state.speechStops)
+    }
+
     // The voice's answer names the question that the voice read it for, so that an answer that comes after that question
     // ended never answers a newer one (whole-plan review of plan 7D, M1).
     @Test
@@ -1551,7 +1573,7 @@ class RulesTest {
     fun theAssistantGestureAndLateAnswersCountAPausedGoalAsAWorkingOne() {
         val paused = goal(GoalPhase.PAUSED).copy(speeches = 1)
 
-        assertEquals(Step(paused, listOf(Effect.StopSaying)), Rules.next(paused, Event.Assist))
+        assertEquals(Step(paused.stopped(), listOf(Effect.StopSaying)), Rules.next(paused, Event.Assist))
         assertFalse(Rules.next(paused.copy(questionEnded = true), Event.MicBusy(busy = false)).state.questionEnded)
     }
 
@@ -1966,7 +1988,8 @@ class RulesTest {
         val said = Rules.next(open, Event.ChannelSays(5, "Done.", final = true)).state
 
         assertEquals(listOf(Effect.StopSaying), Rules.next(said, Event.StopSpeaking).effects)
-        assertEquals(Step(open), Rules.next(open, Event.StopSpeaking))
+        // It counts also while Kestrel does not speak, so that words that came before it are not spoken.
+        assertEquals(Step(open.stopped()), Rules.next(open, Event.StopSpeaking))
     }
 
     @Test

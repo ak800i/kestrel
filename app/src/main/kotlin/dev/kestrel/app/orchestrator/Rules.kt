@@ -83,7 +83,9 @@ data class VoiceQuestion(val number: Int, val kind: QuestionKind)
  * turns off once the goal has ended and its final reply has been spoken. [followUpMillis] is the follow-up window's length
  * from the Conversations page, and [followUp] the number of the latest window, so that the end of an older one changes
  * nothing; [finalReply]: the number of the final reply that Kestrel speaks now, whose end opens the window once Kestrel
- * has spoken all of it (design 6.6 of sub-project 7).
+ * has spoken all of it (design 6.6 of sub-project 7). [speechStops] counts the stops of Kestrel's speech: each step that
+ * stops it, and each of the owner's Stops that did not come by voice ([Event.StopSpeaking]), also while Kestrel does not
+ * speak; a channel's words that came before a later stop are never spoken ([Event.ChannelSays.asked]; plan 7F).
  */
 data class State(
     val mode: Mode = Mode.OFF,
@@ -117,6 +119,7 @@ data class State(
     val followUpMillis: Long = ConversationSettings().followUpMillis,
     val followUp: Int = 0,
     val finalReply: Int? = null,
+    val speechStops: Long = 0,
 ) {
     val speaking: Boolean get() = speeches > 0
 
@@ -150,7 +153,7 @@ data class State(
             "asking=$asking, counting=$counting, lastCommand=${lastCommand?.javaClass?.simpleName}, " +
             "lastHeard=${lastHeard?.length}, spottedStop=$spottedStop, questionEnded=$questionEnded, conversation=$conversation, " +
             "voiceQuestion=$voiceQuestion, voiceAnswers=$voiceAnswers, answered=$answered, offAfterGoal=$offAfterGoal, " +
-            "followUpMillis=$followUpMillis, followUp=$followUp, finalReply=$finalReply)"
+            "followUpMillis=$followUpMillis, followUp=$followUp, finalReply=$finalReply, speechStops=$speechStops)"
 
     /** Whether a call rings or is active (section 8.7). */
     val inCall: Boolean get() = mode == Mode.RINGING || mode == Mode.IN_CALL
@@ -341,10 +344,17 @@ sealed interface Event {
      * the channel learns when it has been spoken, or that it was only shown ([Effect.EndReply]). [final]: it is a command's
      * or a local request's final reply, whose end opens the follow-up window (design 6.6). [question]: the words are the
      * spoken copy of the conversation's question with this number, as a typed question's with "Speak replies to typed
-     * commands" on, so that the question's end also ends them ([ChannelWithdraws]; plan 7F).
+     * commands" on, so that the question's end also ends them ([ChannelWithdraws]; plan 7F). [asked]: [State.speechStops]
+     * when the words came to the voice channel; after a later stop they are not spoken (plan 7F).
      */
-    data class ChannelSays(val reply: Int, val text: String, val final: Boolean = false, val question: Int? = null) : Event {
-        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final, question=$question)"
+    data class ChannelSays(
+        val reply: Int,
+        val text: String,
+        val final: Boolean = false,
+        val question: Int? = null,
+        val asked: Long = 0,
+    ) : Event {
+        override fun toString() = "ChannelSays($reply, ${text.length} characters, final=$final, question=$question, asked=$asked)"
     }
 
     /** The follow-up window's length from the Conversations page (design 6.6 and 13 of sub-project 7); 0 is off. */
@@ -598,7 +608,16 @@ data class Step(val state: State, val effects: List<Effect> = emptyList())
 /** Every transition of the Orchestrator, in one place (design spec, section 7.3). */
 object Rules {
     fun next(state: State, event: Event): Step =
-        silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event)))))
+        countStops(event, silenceTimer(state, event, endLateAnswers(endFollowUp(state, withoutFollowUp(state, react(state, event))))))
+
+    // Plan 7F: every step that stops Kestrel's speech, and every one of the owner's Stops that did not come by voice, also
+    // while Kestrel does not speak, counts once in State.speechStops.
+    private fun countStops(event: Event, step: Step): Step =
+        if (event == Event.StopSpeaking || Effect.StopSaying in step.effects) {
+            step.copy(state = step.state.copy(speechStops = step.state.speechStops + 1))
+        } else {
+            step
+        }
 
     private val STOP_WORDS = setOf("stop", "cancel")
 
@@ -1232,6 +1251,8 @@ object Rules {
     // channel goes on at once.
     private fun channelSays(state: State, event: Event.ChannelSays): Step {
         val finalReply = event.reply.takeIf { event.final }
+        // Words that came before a later stop are dropped, as the voice channel drops those that wait for their turn.
+        if (event.asked < state.speechStops) return Step(state, listOf(Effect.EndReply(event.reply)))
         val shown = Effect.Show(Feedback.ConversationText(event.text, finalReply = finalReply))
         if (state.mode == Mode.OFF) return Step(state, listOfNotNull(shown, Effect.EndReply(event.reply), finalReply?.let { Effect.NoFollowUp(it) }))
         return say(state, Reply.Channel(event.reply, event.text, event.question), shown, finalReply = finalReply)

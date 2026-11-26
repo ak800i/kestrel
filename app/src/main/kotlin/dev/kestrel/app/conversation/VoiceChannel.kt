@@ -58,7 +58,7 @@ internal class VoiceChannel(
             // sub-project 7), in their turn among the spoken outputs, and a stop drops them as it drops the others.
             is ChannelOutput.Said -> said(output)
             // A spoken final reply's end opens the follow-up window (design 6.6 of sub-project 7).
-            is ChannelOutput.Report -> inTurn { voice.say(output.text, final = true) }
+            is ChannelOutput.Report -> inTurn { came -> voice.say(output.text, came.session, final = true) }
             is ChannelOutput.Shown -> voice.show(output.text)
         }
     }
@@ -68,8 +68,12 @@ internal class VoiceChannel(
     // own voice stops a cancelled reply itself.
     private suspend fun said(output: ChannelOutput.Said) {
         try {
-            inTurn { ownCame ->
-                if (output.ownVoice) offVoice.speak(output.text, ownCame) else voice.say(output.text, question = output.question)
+            inTurn { came ->
+                if (output.ownVoice) {
+                    offVoice.speak(output.text, came.own)
+                } else {
+                    voice.say(output.text, came.session, question = output.question)
+                }
             }
         } catch (e: CancellationException) {
             output.question?.let(voice::withdraw)
@@ -77,13 +81,16 @@ internal class VoiceChannel(
         }
     }
 
-    // The owner's Stop that did not come by voice counts once, in Kestrel's own voice (OffVoice.stops, plan 7F): the
-    // words carry the count that held when they came, so that its own voice drops them after any later Stop, also one
-    // that comes between this check and its start.
-    private suspend fun inTurn(speak: suspend (ownCame: Long) -> Unit) {
-        val came = voice.speechStops
-        val ownCame = offVoice.stops
-        speaking.withLock { if (voice.speechStops == came && offVoice.stops == ownCame) speak(ownCame) }
+    // The counts of the stops of both voices when words came: the voice session's ([VoicePath.speechStops]) and Kestrel's
+    // own voice's ([OffVoice.stops]).
+    private class Came(val session: Long, val own: Long)
+
+    // One rule for both voices (plan 7F): each owns the count of its stops, and the words carry the counts that held when
+    // they came. Here the words that waited for their turn across a stop of either voice are dropped; the voice that
+    // speaks them drops them too after a stop that comes between this check and its start.
+    private suspend fun inTurn(speak: suspend (Came) -> Unit) {
+        val came = Came(voice.speechStops, offVoice.stops)
+        speaking.withLock { if (voice.speechStops == came.session && offVoice.stops == came.own) speak(came) }
     }
 
     /**

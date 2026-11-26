@@ -254,7 +254,7 @@ class ListeningTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
 
-        val said = async { listening.voicePath.say("Done.") }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops) }
         runCurrent()
         assertEquals(listOf("Done."), session.said)
         assertEquals("Done.", shown.last())
@@ -265,10 +265,34 @@ class ListeningTest {
 
         listening.send(Event.TurnOff)
         runCurrent()
-        val shownOnly = async { listening.voicePath.say("Later.") }
+        val shownOnly = async { listening.voicePath.say("Later.", listening.voicePath.speechStops) }
         runCurrent()
         assertTrue(shownOnly.isCompleted)
         assertEquals("Later.", shown.last())
+    }
+
+    // Plan 7F: words carry the count of stops that held when they came to the voice channel; a Stop after that, also
+    // while Kestrel does not speak, keeps them unspoken, and words that came after it are spoken.
+    @Test
+    fun wordsThatCameBeforeAStopAreNotSpoken() = runTest {
+        val listening = listeningWithSession()
+        val session = sessions.opened.single()
+        val came = listening.voicePath.speechStops
+
+        listening.voicePath.stopSpeaking()
+        runCurrent()
+        val dropped = async { listening.voicePath.say("Done.", came) }
+        runCurrent()
+
+        assertTrue(dropped.isCompleted)
+        assertEquals(emptyList<String>(), session.said)
+        assertFalse("Done." in shown)
+        val said = async { listening.voicePath.say("Sent.", listening.voicePath.speechStops) }
+        runCurrent()
+        assertEquals(listOf("Sent."), session.said)
+        session.replies.single().complete(Spoke.FINISHED)
+        runCurrent()
+        assertTrue(said.isCompleted)
     }
 
     // Plan 7F: the owner's typed answer, with Kestrel on, ends the question; the question's withdrawal stops its spoken
@@ -278,8 +302,8 @@ class ListeningTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
 
-        val copy = async { listening.voicePath.say("Which one?", question = 5) }
-        val later = async { listening.voicePath.say("Done.") }
+        val copy = async { listening.voicePath.say("Which one?", listening.voicePath.speechStops, question = 5) }
+        val later = async { listening.voicePath.say("Done.", listening.voicePath.speechStops) }
         runCurrent()
         listening.voicePath.ask(6, "Shall I send it?", QuestionKind.CONFIRM, voice = true)
         runCurrent()
@@ -309,7 +333,7 @@ class ListeningTest {
         listening.send(Event.ConversationChanged(VoiceView(open = true)))
         listening.send(Event.FollowUpLength(3_000))
 
-        val said = async { listening.voicePath.say("Done.", final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
         runCurrent()
         session.replies.single().complete(Spoke.FINISHED)
         runCurrent()
@@ -334,7 +358,7 @@ class ListeningTest {
 
         // As when another app takes the audio focus (section 14.6): the owner did not hear the reply.
         for (spoke in listOf(Spoke.INTERRUPTED, Spoke.REFUSED)) {
-            val said = async { listening.voicePath.say("Done.", final = true) }
+            val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
             runCurrent()
             session.replies.last().complete(spoke)
             runCurrent()
@@ -353,7 +377,7 @@ class ListeningTest {
         runCurrent()
 
         // The service has not reported the foreground yet, so no session is open.
-        val said = async { listening.voicePath.say("Done.", final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
         runCurrent()
         assertTrue(said.isCompleted)
         assertEquals(Work.IDLE, listening.state.value.work)
@@ -370,7 +394,7 @@ class ListeningTest {
 
         // "Microphone blocked" stays: it ends the window at once (re-check of Task 4, N1), the countdown stops, and the
         // window's end releases nothing.
-        val said = async { listening.voicePath.say("Done.", final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -387,7 +411,7 @@ class ListeningTest {
         listening.send(Event.MicBusy(false))
 
         // A question that ends the window stays kept until the voice channel lets it go.
-        val again = async { listening.voicePath.say("Sent.", final = true) }
+        val again = async { listening.voicePath.say("Sent.", listening.voicePath.speechStops, final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -1188,7 +1212,7 @@ class ListeningTest {
         runCurrent()
         assertEquals(listOf("open settings"), log.filter { it == "open settings" })
 
-        val said = async { listening.voicePath.say("Done.", final = true) }
+        val said = async { listening.voicePath.say("Done.", listening.voicePath.speechStops, final = true) }
         runCurrent()
         session.replies.last().complete(Spoke.FINISHED)
         runCurrent()
@@ -2734,7 +2758,7 @@ class ListeningTest {
     fun eachOfTwoOverlappingRepliesEndsOnce() = runTest {
         val listening = listeningWithSession()
         val session = sessions.opened.single()
-        listening.converse = { launch { listening.voicePath.say("Opened.") } }
+        listening.converse = { launch { listening.voicePath.say("Opened.", listening.voicePath.speechStops) } }
         listening.send(Event.Heard("Kestrel", named = true))
         runCurrent()
         // A transcript that arrives while "Yes?" still plays goes to the conversation, whose reply queues behind "Yes?".

@@ -253,8 +253,7 @@ class VoiceChannelTest {
     }
 
     // Plan 7F: the owner's Stop on the screen or on the notification is the same stop as a spoken one: the voice session's
-    // speech stops, Kestrel's own voice stops, and the words that wait are dropped. While Kestrel is off, the Orchestrator
-    // speaks nothing and so stops nothing, and only the channel's own count of stops drops the waiting words.
+    // speech stops, Kestrel's own voice stops, and the words that wait are dropped; the stop counts in both voices.
     @Test
     fun aStopStopsKestrelsSpeechAndDropsItsWaitingWords() = runTest {
         val channel = channel()
@@ -271,8 +270,7 @@ class VoiceChannelTest {
 
         assertEquals(listOf("One."), offSpoken)
         assertEquals(1, offStops)
-        assertEquals(1, voice.stopRequests)
-        assertEquals(0L, voice.speechStops)
+        assertEquals(1L, voice.speechStops)
     }
 
     // Plan 7F: the count of the owner's Stops for Kestrel's own voice is that voice's own; the channel hands it the count
@@ -286,6 +284,19 @@ class VoiceChannelTest {
 
         assertEquals(listOf("One.", "Two."), offSpoken)
         assertEquals(listOf(0L, 1L), offAsked)
+    }
+
+    // Plan 7F: the same rule for the voice session: the channel hands the Orchestrator the count of its stops that held
+    // when the words came, and the Rules drop the words after a later stop.
+    @Test
+    fun theVoiceSessionGetsTheStopCountThatHeldWhenTheWordsCame() = runTest {
+        val channel = channel()
+        channel.show(ChannelOutput.Said("One."))
+        channel.stopSpeech()
+        channel.show(ChannelOutput.Report(3, "Two."))
+
+        assertEquals(listOf("One.", "Two."), voice.said)
+        assertEquals(listOf(0L, 1L), voice.askedCounts)
     }
 
     // Plan 7F: the owner's typed answer, with Kestrel on, cancels the typed question's spoken copy, and the channel
@@ -371,11 +382,13 @@ class VoiceChannelTest {
         }
 
         val questions = mutableListOf<Int?>()
+        val askedCounts = mutableListOf<Long>()
 
-        override suspend fun say(text: String, final: Boolean, question: Int?) {
+        override suspend fun say(text: String, asked: Long, final: Boolean, question: Int?) {
             said += text
             finals += final
             questions += question
+            askedCounts += asked
             if (holds) CompletableDeferred<Unit>().also(ends::addLast).await()
         }
 
@@ -395,14 +408,9 @@ class VoiceChannelTest {
             withdrawn += question
         }
 
-        // As Listening: the Orchestrator's StopSaying for the owner's Stop that did not come by voice, which the Rules emit
-        // only while Kestrel speaks.
-        var stopRequests = 0
-
-        override fun stopSpeaking() {
-            stopRequests++
-            if (ends.isNotEmpty()) stop()
-        }
+        // As Listening with the Rules: the owner's Stop that did not come by voice counts also while Kestrel does not
+        // speak, and ends the speech that plays.
+        override fun stopSpeaking() = stop()
     }
 
     private class FakeSupport : OwnerScreen, OtherAudio, HandOverSignals, PermissionDialog {
