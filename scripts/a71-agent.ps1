@@ -346,9 +346,10 @@ function Invoke-Hook([string]$Command, [hashtable]$With = @{}) { Invoke-DeviceHo
 
 function Invoke-Device([string]$Device, [string]$Command) { Invoke-SettingsCommand -Serial $Device -Command $Command }
 
-# A stop of the whole sitting, which no item or step catches, so that the sitting goes straight to its restores: the
-# owner's q, or a restart of kestrel-api37 that failed or after which the owner's data there differed (AGENTS.md: then
-# no further command on the device). Test-SittingStop tells it from any other error.
+# A stop of the whole sitting, which no item or step catches, so that the sitting runs no further item or step and goes
+# straight to its end, whose finally block still runs the restores registered by then, puts back "Stay awake" and, in
+# sitting 2, closes the live sessions: the owner's q, or a restart of kestrel-api37 that failed, that left its window
+# state unknown, or after which the owner's data there differed. Test-SittingStop tells it from any other error.
 function New-SittingStop([string]$Message) {
     $stop = [System.Exception]::new($Message)
     $stop.Data['KestrelSittingStop'] = $true
@@ -921,25 +922,31 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
 # Restarts kestrel-api37 with its window ($Window) or without one, through Restart-KestrelEmulator, which closes it only
 # after its console named kestrel-api37 and brings Android back from its Quick Boot snapshot. The owner's data on it (the
 # Google accounts and Kestrel's profiles, AGENTS.md) is read just before and compared just after, so that only the
-# restart is checked, not the owner's item between two restarts. A failed restart or a difference stops the sitting
-# (New-SittingStop). After a difference, AGENTS.md allows no further command on the device, also not the restart that
-# would take the window away again, so the stop names the commands with which the owner does that himself once he has
-# looked at his data.
+# restart is checked, not the owner's item between two restarts. Every failure stops the sitting (New-SittingStop): a
+# failed restart, an error while the data or the window type is read, because the emulator's window state is then
+# unknown, and a difference in the data. After a difference the sitting does not restart kestrel-api37 again, so that
+# the owner sees it as the difference left it; the restores at the sitting's end still run on it (none touches the
+# Google accounts or Kestrel's profiles), and the stop names the commands with which the owner takes the window away
+# himself once he has looked at his data.
 function Switch-EmulatorWindow([string]$StepName, [bool]$Window) {
     $how = if ($Window) { 'with its window' } else { 'without a window' }
-    $before = Get-OwnerDataState $EmulatorSerial
-    $problem = Restart-KestrelEmulator -Serial $EmulatorSerial -Window $Window
-    if ($problem) { throw (New-SittingStop "kestrel-api37 could not be restarted $how`: $problem") }
-    $changes = @(Compare-OwnerData -Serial $EmulatorSerial -Before $before -During "the sitting's restart of kestrel-api37 $how")
+    try {
+        $before = Get-OwnerDataState $EmulatorSerial
+        $problem = Restart-KestrelEmulator -Serial $EmulatorSerial -Window $Window
+        if ($problem) { throw (New-SittingStop "kestrel-api37 could not be restarted $how`: $problem") }
+        $changes = @(Compare-OwnerData -Serial $EmulatorSerial -Before $before -During "the sitting's restart of kestrel-api37 $how")
+    } catch {
+        if (Test-SittingStop $_) { throw }
+        throw (New-SittingStop "kestrel-api37 could not be restarted $how, so its window state is unknown: $($_.Exception.Message)")
+    }
     if ($changes) {
         $after = if ($Window) {
             " kestrel-api37 keeps its window. Once you have checked your data there, close it with & '$adb' -s $EmulatorSerial emu kill and start it without a window with scripts\start-emulator.ps1."
         } else { '' }
-        throw (New-SittingStop "The owner's data on kestrel-api37 changed in its restart $how, so the sitting sends no further command to it: $($changes -join ' ')$after")
+        throw (New-SittingStop "The owner's data on kestrel-api37 changed in its restart $how, so the sitting stops and does not restart it again; the restores at its end still run there, and none of them touches the Google accounts or Kestrel's profiles: $($changes -join ' ')$after")
     }
     Add-Result $StepName "kestrel-api37 restarted $how; the owner's data there as before"
 }
-
 # Runs $Body, an item of the owner's in kestrel-api37's window. scripts\start-emulator.ps1 starts kestrel-api37 without
 # a window, because the window links its clipboard to this computer's (README), so when its console answers 'headless'
 # the sitting restarts it with its window first, and without one again afterwards, also when $Body fails or the owner

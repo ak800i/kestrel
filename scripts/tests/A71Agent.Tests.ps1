@@ -1139,7 +1139,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         $results | Should -Contain 'owner: Item 3: failed: Play did not open'
     }
 
-    It 'stops the sitting with the commands for the owner, and sends nothing more to kestrel-api37, when his data differs after the restart with the window' {
+    It 'stops the sitting with the commands for the owner, and does not restart kestrel-api37 again, when his data differs after the restart with the window' {
         Mock Get-EmulatorWindowType { 'headless' }
         Mock Get-OwnerDataState { 'state' }
         Mock Compare-OwnerData { 'emulator-5554: 0 Google accounts, not 1' }
@@ -1151,10 +1151,33 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
         try { Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { Request-OwnerItem 'item' } } } catch { $caught = $_ }
 
         Test-SittingStop $caught | Should -BeTrue
-        $caught.Exception.Message | Should -Match "^The owner's data on kestrel-api37 changed in its restart with its window, so the sitting sends no further command to it: emulator-5554: 0 Google accounts, not 1 "
+        $caught.Exception.Message | Should -Match "^The owner's data on kestrel-api37 changed in its restart with its window, so the sitting stops and does not restart it again; the restores at its end still run there, and none of them touches the Google accounts or Kestrel's profiles: emulator-5554: 0 Google accounts, not 1 "
         $caught.Exception.Message | Should -Match "close it with & 'adb\.exe' -s emulator-5554 emu kill and start it without a window with scripts\\start-emulator\.ps1\.$"
         Should -Invoke Restart-KestrelEmulator -Times 1 -Exactly
         Should -Invoke Request-OwnerItem -Times 0 -Exactly
+    }
+
+    It 'stops the sitting when the owner''s data or the window type cannot be read in the restart back after an item that succeeded, because the window state is then unknown' {
+        Mock Get-EmulatorWindowType { 'headless' }
+        Mock Compare-OwnerData { }
+        $reads = @{ Count = 0 }
+        Mock Get-OwnerDataState { $reads.Count++; if ($reads.Count -gt 1) { throw 'Kestrel did not answer' }; 'state' }
+        Mock Restart-KestrelEmulator { }
+
+        $caught = $null
+        try { Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { 'go' } } } catch { $caught = $_ }
+
+        Test-SittingStop $caught | Should -BeTrue
+        $caught.Exception.Message | Should -Be 'kestrel-api37 could not be restarted without a window, so its window state is unknown: Kestrel did not answer'
+        @($results | Where-Object { $_ -like '*Item 3: failed*' }) | Should -BeNullOrEmpty
+
+        # The same for an error inside the restart, such as the console's answer to avd windowtype.
+        Mock Get-OwnerDataState { 'state' }
+        Mock Restart-KestrelEmulator { if (-not $Window) { throw "Not an answer of the emulator's console to 'avd windowtype': ''" } }
+        $caught = $null
+        try { Invoke-OwnerItem 'Item 3' { Invoke-EmulatorWindowItem owner { 'go' } } } catch { $caught = $_ }
+        Test-SittingStop $caught | Should -BeTrue
+        $caught.Exception.Message | Should -Match '^kestrel-api37 could not be restarted without a window, so its window state is unknown: Not an answer'
     }
 
     It 'turns kestrel-api37''s host microphone on only for its speech checks, and puts back the state that it started with, also when they fail' {
