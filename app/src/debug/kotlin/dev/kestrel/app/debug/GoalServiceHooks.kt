@@ -92,22 +92,19 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         if (action !in notice.actions) throw HookError("the goal notification has no ${action.name.lowercase()} now")
         val goal = notice.goal ?: throw HookError("the goal notification names no goal")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
-        // The press is the hooks', so a button that gives the conversation an input has its number claimed before the press:
-        // the receiver uses the claim up as the button's broadcast arrives, and a press that never happened takes it back
-        // (ButtonClaims; plan 7G). Open gives no input.
-        val claims = ButtonClaims.current()
-        val armed = action.intent?.let { claims.arm(action, goal) }
+        // The press is the hooks', so a button that gives the conversation an input has its number claimed at the moment that
+        // the press goes to SystemUI, and the claim stays whatever the press answers afterwards: the receiver uses it up as
+        // the button's broadcast arrives, and an unused one expires (ButtonClaims; plan 7G). Open gives no input.
+        val dispatching = action.intent?.let { ButtonClaims.current().pressing(action, goal) }
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
         // is as the hook found it (AGENTS.md's limits on the A71).
         val seen = ShadeSeen()
         var shadeClosed = false
-        var pressed = false
         var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            val tapped = tapInShade(session, notice, action, seen)
+            val tapped = tapInShade(session, notice, action, seen, dispatching)
             expanded = tapped.expanded
-            pressed = tapped is NoticeButtons.Tapped.Pressed
             when (tapped) {
                 is NoticeButtons.Tapped.Pressed -> null
                 is NoticeButtons.Tapped.Refused -> tapped.reason
@@ -118,7 +115,6 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
         } finally {
-            if (!pressed) armed?.let(claims::disarm)
             shadeClosed = withContext(NonCancellable) { closeShade(session, seen) }
         }
         if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
@@ -141,8 +137,14 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         return false
     }
 
-    // Null once the button with [key] was pressed, else why not.
-    private suspend fun pressInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, key: String): String? {
+    // Null once the button with [key] was pressed, else why not. [dispatching] runs right before the press goes to SystemUI.
+    private suspend fun pressInShade(
+        session: ScreenSession,
+        notice: GoalNotice,
+        action: GoalAction,
+        key: String,
+        dispatching: (() -> Unit)?,
+    ): String? {
         // By the button's key, which the press checks again in every snapshot that it acts on: a row that a new notification
         // moved, or another app's button, is never pressed in its place (AGENTS.md's limits on the A71). Once only, so that a
         // Continue is never sent twice.
@@ -151,6 +153,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             expected = { element -> buttons.isButton(element, action.label) },
             policy = PressPolicy.ONCE,
             guard = { snapshot -> buttons.button(snapshot, notice.title, action.label) == key },
+            dispatching = dispatching,
         )
         return (pressed as? ActionResult.Failed)?.reason
     }
@@ -174,12 +177,16 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val button = NoticeIntents.intentOf(posted, id, action.label) ?: return "send=none"
         val alarms = context.getSystemService(AlarmManager::class.java)
         if (!alarms.canScheduleExactAlarms()) throw HookError("Kestrel may not set an exact alarm")
-        // The press is the hooks', and its broadcast may reach a new process, so its claim is saved before the alarm is set
-        // (ButtonClaims; plan 7G), and taken back when the alarm is not.
+        // The press is the hooks', and its broadcast may reach a new process, so its claim is armed in the claims' file before
+        // the alarm is set, valid from the alarm's own trigger time, the first moment at which AlarmManager may send it
+        // (ButtonClaims; plan 7G), and taken back when AlarmManager does not take the alarm. setExact as plan 7E's Step 8a set
+        // it, so that the broadcast reaches Kestrel as the owner's tap does, without the exemptions of an alarm that is
+        // allowed while idle; an alarm that Doze defers beyond the claim's life comes unclaimed, and counts as the owner's.
         val claims = ButtonClaims.current()
-        val armed = action.intent?.let { claims.armSaved(action, goal, SEND_LATER_MILLIS) }
+        val due = SystemClock.elapsedRealtime() + SEND_LATER_MILLIS
+        val armed = action.intent?.let { claims.arm(action, goal, fromMillis = due) }
         try {
-            alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + SEND_LATER_MILLIS, button)
+            alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, due, button)
         } catch (error: Exception) {
             armed?.let(claims::disarm)
             throw error
@@ -194,7 +201,13 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
     // that Android put it in, are expanded: the search asks for those expansions, one in each snapshot, the group's first,
     // and presses the button once a snapshot shows it ([NoticeButtons.findAndPress]). Each snapshot tells [seen] whether
     // the open shade shows tiles that Kestrel knows.
-    private suspend fun tapInShade(session: ScreenSession, notice: GoalNotice, action: GoalAction, seen: ShadeSeen): NoticeButtons.Tapped =
+    private suspend fun tapInShade(
+        session: ScreenSession,
+        notice: GoalNotice,
+        action: GoalAction,
+        seen: ShadeSeen,
+        dispatching: (() -> Unit)?,
+    ): NoticeButtons.Tapped =
         buttons.findAndPress(
             notice.title,
             action.label,
@@ -204,7 +217,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
                 session.snapshots.current().snapshot.also { if (buttons.showsTiles(it)) seen.tilesKnown = true }
             },
             expand = { session.actions.expand(it) },
-            press = { key -> pressInShade(session, notice, action, key) },
+            press = { key -> pressInShade(session, notice, action, key, dispatching) },
         )
 
     /**

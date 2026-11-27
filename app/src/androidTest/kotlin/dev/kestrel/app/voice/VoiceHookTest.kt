@@ -109,7 +109,7 @@ class VoiceHookTest {
             // The tag's options go with the input that its transcript gives the conversation, so the test records each input.
             val take = listening.inputs ?: error("The tag did not set Listening.inputs")
             val handed = CopyOnWriteArrayList<OwnerInput>()
-            listening.inputs = { heard, input -> take(heard, input).also { handed += it } }
+            listening.inputs = { heard, heardBy, input -> take(heard, heardBy, input).also { handed += it } }
             try {
                 assertEquals(
                     HookReply(HookReply.FAILED, "error: the tag $tag is in use; give each transcript a new tag"),

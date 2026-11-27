@@ -91,7 +91,8 @@ internal class CommandTags {
     private data class Request(val command: Int, val owners: Boolean)
 
     // The numbers of the hooks' own acts, which they claimed before each act reached Kestrel: their inputs, tagged or not,
-    // their presses of a card and their presses of the goal notification's buttons. Every other act is the owner's (plan
+    // the inputs that a session made of their clips (voice-clip), their presses of a card and their presses of the goal
+    // notification's buttons. Every other act is the owner's (plan
     // 7G). They stay claimed after the step that started their work, because a local request's switch names its input again
     // later.
     private val claimed = LinkedHashSet<Long>()
@@ -257,10 +258,13 @@ internal class CommandTags {
     /**
      * The input that Listening made of [heard] for the conversation, with the options of its tag, if it has one; the
      * conversation's step that starts work for the input then gives its tag the command's number. Every input of a hook's
-     * transcript, tagged or not, is the hooks', and a tag goes to the transcript's last input.
+     * transcript, tagged or not, is the hooks', and a tag goes to the transcript's last input. So is every input that a
+     * session heard through the hooks' clip microphone ([clip]; voice-clip), the spotter's stop too: Kestrel hears only
+     * the clips through it, never the room (plan 7G).
      */
     @Synchronized
-    fun input(heard: Event.Heard?, input: OwnerInput): OwnerInput {
+    fun input(heard: Event.Heard?, input: OwnerInput, clip: Boolean = false): OwnerInput {
+        if (clip) claimAct(input.id)
         val left = heard?.let { hookConversing[it] } ?: return input
         claimAct(input.id)
         if (left > 1) {

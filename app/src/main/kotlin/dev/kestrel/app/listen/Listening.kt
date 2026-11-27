@@ -436,12 +436,13 @@ class Listening internal constructor(
     internal val currentOptions: StateFlow<ListeningOptions> = chosenOptions.asStateFlow()
 
     /**
-     * The debug hooks' seam for each spoken input (plan 4D): it gets the transcript that gave the input, or null, and the
-     * input, and returns the input to send, with the options that a debug hook passed with the transcript, such as
-     * `model` and `live`. Null, and so the input as it is, outside the debug hooks, which alone set it.
+     * The debug hooks' seam for each spoken input (plan 4D): it gets the transcript that gave the input, or null, the
+     * microphone of the voice session that heard it (plan 7G), and the input, and returns the input to send, with the
+     * options that a debug hook passed with the transcript, such as `model` and `live`. Null, and so the input as it is,
+     * outside the debug hooks, which alone set it.
      */
     @Volatile
-    internal var inputs: ((Event.Heard?, OwnerInput) -> OwnerInput)? = null
+    internal var inputs: ((Event.Heard?, Microphone?, OwnerInput) -> OwnerInput)? = null
 
     // Only [thread] uses it: the follow-up window's countdown on the bar (design 6.6 of sub-project 7).
     private var followUpTicker: Job? = null
@@ -910,7 +911,7 @@ class Listening internal constructor(
                 if (serviceState != ServiceState.FOREGROUND || session != null) return@withLock
                 val events = Listener()
                 val opened = try {
-                    sessions.open(microphones(), events)
+                    sessions.open(microphones().also { events.microphone = it }, events)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ModelsNotReadyException) {
@@ -1130,7 +1131,7 @@ class Listening internal constructor(
             is Effect.Converse -> {
                 if (effect.intent is InputIntent.Command) timeline.reacted("task")
                 val input = OwnerInput(InputIds.next(), InputChannel.VOICE, effect.intent, clock())
-                converse(inputs?.invoke(effect.heard, input) ?: input)
+                converse(inputs?.invoke(effect.heard, listener?.microphone, input) ?: input)
             }
             is Effect.EndReply -> replies[effect.reply]?.complete(Unit)
             // Cancelling a reply ends it alone, as VoicePlayer.speak says; it ends as a stopped one.
@@ -1542,6 +1543,10 @@ class Listening internal constructor(
         // transcriptionFailed.
         @Volatile
         var active = true
+
+        // The microphone that the session records with, set on [thread] before the session opens: the debug hooks' seam
+        // [inputs] gets it with each spoken input.
+        var microphone: Microphone? = null
 
         override fun send(event: Event) {
             if (active) {

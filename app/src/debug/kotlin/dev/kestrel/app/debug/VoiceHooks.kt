@@ -353,7 +353,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
         fun install(graph: AppGraph) {
             val listening = graph.listening
             if (listening.steps != null) return
-            listening.inputs = tags::input
+            // Every input that a session heard through a clip microphone is the hooks' act (plan 7G).
+            listening.inputs = { heard, heardBy, input -> tags.input(heard, input, clip = heardBy is ClipMicrophone) }
             graph.goalEnvironment.evidences = RoundEvidences()
             graph.goalEnvironment.witnesses = { options -> DebugTaskWitness.open(options) }
             listening.steps = tags::onStep

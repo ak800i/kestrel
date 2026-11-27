@@ -55,9 +55,10 @@ class CommandTagsTest {
         return step
     }
 
-    // The inputs that Listening makes of [step]'s Converse effects for the conversation, as Listening makes them.
-    private fun inputsOf(step: Step): List<OwnerInput> = step.effects.filterIsInstance<Effect.Converse>().map { converse ->
-        tags.input(converse.heard, OwnerInput(InputIds.next(), InputChannel.VOICE, converse.intent, 0))
+    // The inputs that Listening makes of [step]'s Converse effects for the conversation, as Listening makes them, from a
+    // session that heard them through the hooks' clip microphone when [clip].
+    private fun inputsOf(step: Step, clip: Boolean = false): List<OwnerInput> = step.effects.filterIsInstance<Effect.Converse>().map { converse ->
+        tags.input(converse.heard, OwnerInput(InputIds.next(), InputChannel.VOICE, converse.intent, 0), clip)
     }
 
     private fun send(text: String, tag: String? = null) {
@@ -483,7 +484,7 @@ class CommandTagsTest {
         val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
         val goal = NoticeGoal(checkNotNull(marked.id), 1)
         val held = GoalNotice(NoticeKind.HELD, "Continue the goal?", null, null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE), goal)
-        val buttons = ButtonClaims(folder.root.resolve(ButtonClaims.FILE), tags::claim, clock = { 0L })
+        val buttons = ButtonClaims(folder.root.resolve(ButtonClaims.FILE), tags::claim, clock = { 0L }, boot = 1)
         val number = buttons.take(GoalAction.CONTINUE, goal)
         val notification = checkNotNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, held, InputChannel.VOICE, number, 0))
         val screen = OwnerInput(InputIds.next(), InputChannel.TEXT, InputIntent.Continue, 0)
@@ -573,5 +574,28 @@ class CommandTagsTest {
         tags.onConversationStep(ConversationEvent.Input(command), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(6, 2, command, "open the maps."))))
         assertEquals(emptyList<ConversationId>(), gone)
         assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, VoiceHooks.readOf(tagged.text, named = true), task = 6), tags.tagged("stop-first"))
+    }
+
+    // Re-check of round 11, Minor 4: a session that listens through the hooks' clip microphone hears only their clips
+    // (voice-clip), so every input that it makes is theirs, a command and a stop of a transcript and the spotter's stop,
+    // which has no transcript, and none takes the mark; the same words from the owner's microphone are his.
+    @Test
+    fun everyInputOfASessionThatHearsTheClipMicrophoneIsTheHooks() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"), command = 5)
+        fun give(inputs: List<OwnerInput>) = inputs.forEach { tags.onConversationStep(ConversationEvent.Input(it), marked, MachineStep(marked, emptyList())) }
+        step(Event.Toggle)
+        state = state.copy(conversation = VoiceView(open = true, ownRequest = true))
+        val clips = inputsOf(step(Event.Heard("Stop. Kestrel, open Viber.", named = true)), clip = true)
+        assertEquals(listOf(InputIntent.Stop, InputIntent.Command("open Viber.")), clips.map { it.intent })
+        val spotted = tags.input(null, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Stop, 0), clip = true)
+        give(clips + spotted)
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        state = state.copy(conversation = VoiceView(open = true, ownRequest = true))
+        val his = inputsOf(step(Event.Heard("Stop. Kestrel, open Viber.", named = true)))
+        give(his + tags.input(null, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Stop, 0)))
+        assertEquals(List(3) { marked.id }, gone)
     }
 }
