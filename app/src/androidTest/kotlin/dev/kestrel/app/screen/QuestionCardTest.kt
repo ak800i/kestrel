@@ -1,6 +1,7 @@
 package dev.kestrel.app.screen
 
 import android.graphics.Rect
+import android.os.Looper
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
@@ -36,6 +37,21 @@ class QuestionCardTest {
 
     private fun question(key: Int, text: String, buttons: List<String> = listOf("Confirm", "Cancel")) = CardQuestion(key, text, buttons)
 
+    // The card's stamp, which it takes on the main thread at the tap (plan 7F): the clock then. An answer whose stamp is
+    // no earlier than the clock just before the tap was sent proves that the stamp was taken at the tap, not when the
+    // question was asked.
+    private val atTap: () -> Long = {
+        check(Looper.getMainLooper().isCurrentThread) { "The card stamped its tap off the main thread" }
+        SystemClock.uptimeMillis()
+    }
+
+    // The stamp of answer [end], which must be from the tap that was sent at [before] or later.
+    private fun stampAfter(before: Long, end: CardEnd<Long>): Long {
+        val stamp = (end as? CardEnd.Answered<Long>)?.stamp ?: throw AssertionError("The card gave no answer: $end")
+        assertTrue("The answer's stamp $stamp is from before the tap at $before", stamp >= before)
+        return stamp
+    }
+
     private suspend fun awaitButton(label: String): Rect = withTimeout(5_000) {
         var found = screen.overlayButton(label)
         while (found == null) {
@@ -53,7 +69,7 @@ class QuestionCardTest {
     fun aTapInTheCardsFirst600MillisecondsDoesNothing() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val asked = SystemClock.uptimeMillis()
-        val answer = async { session.ask(question(1, "Delete the test draft?"), { STAMP }) }
+        val answer = async { session.ask(question(1, "Delete the test draft?"), atTap) }
         val confirm = awaitButton("Confirm")
 
         tap(confirm)
@@ -66,18 +82,20 @@ class QuestionCardTest {
         assertTrue("A tap within the card's first 600 ms answered it", answer.isActive)
 
         delay(CARD_ARMING_MILLIS)
+        val before = SystemClock.uptimeMillis()
         tap(confirm)
-        assertEquals(CardEnd.Tapped(0, STAMP), withTimeout(5_000) { answer.await() })
+        val end = withTimeout(5_000) { answer.await() }
+        assertEquals(CardEnd.Tapped(0, stampAfter(before, end)), end)
     }
 
     @Test
     fun aNewCardComesNoSoonerThan600MillisecondsAfterThePreviousOneClosed() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val first = async { session.ask(question(1, "Send a test message?"), { STAMP }) }
+        val first = async { session.ask(question(1, "Send a test message?"), atTap) }
         awaitButton("Confirm")
 
         val replaced = SystemClock.uptimeMillis()
-        val second = async { session.ask(question(2, "Delete the test draft?"), { STAMP }) }
+        val second = async { session.ask(question(2, "Delete the test draft?"), atTap) }
         assertEquals(CardEnd.Withdrawn, withTimeout(5_000) { first.await() })
         withTimeout(5_000) { while (!screen.overlayShows("Delete the test draft?")) delay(20) }
         val after = SystemClock.uptimeMillis() - replaced
@@ -89,12 +107,12 @@ class QuestionCardTest {
     @Test
     fun aQuestionAskedDuringAnotherOnesArmingDelayReplacesIt() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val first = async { session.ask(question(1, "Send a test message?"), { STAMP }) }
+        val first = async { session.ask(question(1, "Send a test message?"), atTap) }
         awaitButton("Confirm")
         // The second question waits out the arming delay after the first card closed; the third comes during that wait.
-        val second = async { session.ask(question(2, "Delete the test draft?"), { STAMP }) }
+        val second = async { session.ask(question(2, "Delete the test draft?"), atTap) }
         assertEquals(CardEnd.Withdrawn, withTimeout(5_000) { first.await() })
-        val third = async { session.ask(question(3, "Call the test number?"), { STAMP }) }
+        val third = async { session.ask(question(3, "Call the test number?"), atTap) }
         try {
             assertEquals("The waiting question was not replaced", CardEnd.Withdrawn, withTimeout(5_000) { second.await() })
             withTimeout(5_000) { while (!screen.overlayShows("Call the test number?")) delay(20) }
@@ -111,7 +129,7 @@ class QuestionCardTest {
         screen.open("ViewsActivity", "Views fixture")
         val send = screen.awaitElement { it.viewId == "$FIXTURES:id/send_button" }
         val field = screen.awaitElement { it.viewId == "$FIXTURES:id/message_field" }
-        val answer = async { session.ask(question(1, "Delete the test draft?"), { STAMP }) }
+        val answer = async { session.ask(question(1, "Delete the test draft?"), atTap) }
         try {
             awaitButton("Confirm")
             assertTrue(session.cardShowing)
@@ -133,7 +151,7 @@ class QuestionCardTest {
     @Test
     fun theKeypadGivesTheNumberThatTheOwnerTyped() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.ask(CardQuestion(4, "Which number should I use?", listOf("Cancel"), NumberPad("Delete digit", "OK", "Move", highest = 20)), { STAMP }) }
+        val answer = async { session.ask(CardQuestion(4, "Which number should I use?", listOf("Cancel"), NumberPad("Delete digit", "OK", "Move", highest = 20)), atTap) }
         val one = awaitButton("1")
         delay(CARD_ARMING_MILLIS)
 
@@ -160,6 +178,8 @@ class QuestionCardTest {
         // Review L2: the card arms again where it moved to, so that a tap aimed at what was there answers nothing. The clock
         // is read once the tap has landed, from before the Move tap, so the moved card was showing for less than that; a
         // slow emulator that finds the moved card or lands the tap too late cannot check it.
+        // The answer comes from this tap or the next one, so its stamp is no earlier than this tap.
+        val before = SystemClock.uptimeMillis()
         tap(top)
         val early = SystemClock.uptimeMillis() - moved < CARD_ARMING_MILLIS
         delay(SETTLE_MILLIS / 5)
@@ -167,25 +187,25 @@ class QuestionCardTest {
         delay(CARD_ARMING_MILLIS)
         if (!answer.isCompleted) tap(top)
 
-        assertEquals(CardEnd.Number(12, STAMP), withTimeout(5_000) { answer.await() })
+        val end = withTimeout(5_000) { answer.await() }
+        assertEquals(CardEnd.Number(12, stampAfter(before, end)), end)
     }
 
     @Test
     fun aCardsButtonGivesItsOwnNumber() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.ask(question(5, "Which chat?", listOf("Ana", "Mila", "Marko", "Jovana", "Cancel")), { STAMP }) }
+        val answer = async { session.ask(question(5, "Which chat?", listOf("Ana", "Mila", "Marko", "Jovana", "Cancel")), atTap) }
         val marko = awaitButton("Marko")
 
         delay(CARD_ARMING_MILLIS)
+        val before = SystemClock.uptimeMillis()
         tap(marko)
 
-        assertEquals(CardEnd.Tapped(2, STAMP), withTimeout(5_000) { answer.await() })
+        val end = withTimeout(5_000) { answer.await() }
+        assertEquals(CardEnd.Tapped(2, stampAfter(before, end)), end)
     }
 
     private companion object {
-        // What the card stamps each answer with at the tap (plan 7F), which the answer carries back.
-        const val STAMP = 7L
-
         /** How long the test waits for the card to settle after a tap that changes nothing, or a move. */
         const val SETTLE_MILLIS = 500L
     }

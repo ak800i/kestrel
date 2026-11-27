@@ -25,10 +25,13 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
 
     // Raised on the main thread at each SCREEN_OFF, before its report.
     @Volatile
-    override var offs: Long = 0
-        private set
+    private var offs = 0L
 
-    override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
+    // The number of the newest reading that the source gave, raised on the main thread with each one (next()).
+    @Volatile
+    private var seq = 0L
+
+    override fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit) {
         val screen = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 when (intent.action) {
@@ -38,7 +41,7 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
                         offs++
                     }
                 }
-                report(current())
+                report(next())
                 if (intent.action == Intent.ACTION_SCREEN_ON) cameOn()
             }
         }
@@ -65,10 +68,16 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
     }
 
-    override fun status(): ScreenStatus = ScreenStatus(current(), offs)
+    override fun status(): ScreenStatus = ScreenStatus(current(), offs, seq)
 
-    override fun read(reading: (ScreenReading) -> Unit) {
-        if (main.looper.isCurrentThread) reading(current()) else main.post { reading(current()) }
+    override fun read(reading: (ScreenStatus) -> Unit) {
+        if (main.looper.isCurrentThread) reading(next()) else main.post { reading(next()) }
+    }
+
+    // A new reading of the source: on the main thread only, so that the numbers follow the readings' order.
+    private fun next(): ScreenStatus {
+        seq++
+        return ScreenStatus(current(), offs, seq)
     }
 
     private fun current(): ScreenReading {

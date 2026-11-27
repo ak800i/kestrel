@@ -40,7 +40,7 @@ class CardPresserTest {
     // The second re-check's N2-M1 and the third's N3-N2: the press goes through the desk's one entry for taps, and the
     // hook's answer names what the desk did with it: a Continue that the desk holds for the owner's unlock is HELD, which
     // acts at the unlock, one that the screen being off dropped is SCREEN_OFF, and a card that was no longer the overlay's
-    // is WITHDRAWN.
+    // is WITHDRAWN; one on the lock screen that the desk does not hold, because it cannot follow the screen, is UNFOLLOWED.
     @Test
     fun theHooksAnswerForAContinueNamesWhatTheDeskDidWithIt() {
         val handOver = OwnerCard.handOver(-1, "Sign in yourself, then tap Continue.")
@@ -50,11 +50,16 @@ class CardPresserTest {
         assertEquals(CardPress.HELD, presser.press(-1, null, CardChoice.Continue))
         overlay.end = TapEnd.DROPPED_BY_SCREEN_OFF
         assertEquals(CardPress.SCREEN_OFF, presser.press(-1, null, CardChoice.Continue))
+        overlay.end = TapEnd.REFUSED_UNFOLLOWED
+        assertEquals(CardPress.UNFOLLOWED, presser.press(-1, null, CardChoice.Continue))
         overlay.end = TapEnd.WITHDRAWN
         assertEquals(CardPress.WITHDRAWN, presser.press(-1, null, CardChoice.Continue))
         overlay.end = TapEnd.ANSWERED
         assertEquals(CardPress.PRESSED, presser.press(-1, null, CardChoice.Cancel))
-        assertEquals(listOf(CardChoice.Continue, CardChoice.Continue, CardChoice.Continue, CardChoice.Cancel), overlay.answers)
+        assertEquals(
+            listOf(CardChoice.Continue, CardChoice.Continue, CardChoice.Continue, CardChoice.Continue, CardChoice.Cancel),
+            overlay.answers,
+        )
     }
 
     private class FakeOverlay : OverlayCards {

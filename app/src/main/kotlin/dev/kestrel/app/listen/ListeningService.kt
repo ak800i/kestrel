@@ -62,8 +62,8 @@ class ListeningService : Service() {
         )
         // The reading at once, before the voice session opens, and so before the microphone's first frame; then every
         // change.
-        screenWatch = (application as KestrelApplication).graph.phoneSignals.watchScreen { reading ->
-            listening.send(Event.Screen(reading.unlocked))
+        screenWatch = (application as KestrelApplication).graph.phoneSignals.watchScreen { status ->
+            listening.send(Event.Screen(status.reading.unlocked))
         }
         scope.launch {
             listening.state.map { it.mode }.distinctUntilChanged().collect { mode ->

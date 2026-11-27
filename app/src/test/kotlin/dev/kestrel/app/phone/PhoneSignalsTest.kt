@@ -23,8 +23,8 @@ class PhoneSignalsTest {
         val conversation = mutableListOf<ScreenReading>()
         screens.now = ScreenReading.UNLOCKED
 
-        val first = phone.watchScreen { listening += it }
-        val second = phone.watchScreen { conversation += it }
+        val first = phone.watchScreen { listening += it.reading }
+        val second = phone.watchScreen { conversation += it.reading }
         assertEquals(1, screens.starts)
         assertEquals(listOf(ScreenReading.UNLOCKED), listening)
         assertEquals(listOf(ScreenReading.UNLOCKED), conversation)
@@ -101,7 +101,7 @@ class PhoneSignalsTest {
 
         screens.failure = null
         val seen = mutableListOf<ScreenReading>()
-        val watch = phone.watchScreen { seen += it }
+        val watch = phone.watchScreen { seen += it.reading }
         screens.change(ScreenReading.UNLOCKED)
         watch.stop()
 
@@ -116,11 +116,11 @@ class PhoneSignalsTest {
         val conversation = mutableListOf<ScreenReading>()
         val stopped = mutableListOf<ScreenReading>()
         screens.now = ScreenReading.UNLOCKED
-        phone.watchScreen { listening += it }
+        phone.watchScreen { listening += it.reading }
 
         screens.queued = true
-        phone.watchScreen { conversation += it }
-        phone.watchScreen { stopped += it }.stop()
+        phone.watchScreen { conversation += it.reading }
+        phone.watchScreen { stopped += it.reading }.stop()
         // The screen goes off while the source's thread has yet to come to the new watches' readings.
         screens.change(ScreenReading.OFF)
         assertEquals(emptyList<ScreenReading>(), conversation)
@@ -176,12 +176,12 @@ class PhoneSignalsTest {
         runCurrent()
         // Each reading carries the count of screen-offs of its moment.
         val expected = listOf(
-            ScreenStatus(ScreenReading.LOCKED, 0),
-            ScreenStatus(ScreenReading.UNLOCKED, 0),
-            ScreenStatus(ScreenReading.OFF, 1),
+            ScreenStatus(ScreenReading.LOCKED, offs = 0, seq = 1),
+            ScreenStatus(ScreenReading.UNLOCKED, offs = 0, seq = 2),
+            ScreenStatus(ScreenReading.OFF, offs = 1, seq = 3),
         )
         assertEquals(expected, seen)
-        assertEquals(ScreenStatus(ScreenReading.OFF, 1), phone.screenStatus())
+        assertEquals(ScreenStatus(ScreenReading.OFF, offs = 1, seq = 3), phone.screenStatus())
 
         collecting.cancel()
         runCurrent()
@@ -190,9 +190,10 @@ class PhoneSignalsTest {
 
     private class FakeScreens : ScreenSource {
         var now = ScreenReading.OFF
-        override var offs = 0L
+        private var offs = 0L
+        private var seq = 0L
 
-        override fun status(): ScreenStatus = ScreenStatus(now, offs)
+        override fun status(): ScreenStatus = ScreenStatus(now, offs, seq)
         var starts = 0
         var stops = 0
         var failure: Exception? = null
@@ -200,10 +201,10 @@ class PhoneSignalsTest {
         // The source's one thread runs every reading and report at once, or, while queued, in order at runQueued.
         var queued = false
         private val thread = ArrayDeque<() -> Unit>()
-        private var report: ((ScreenReading) -> Unit)? = null
+        private var report: ((ScreenStatus) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
-        override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
+        override fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit) {
             failure?.let { throw it }
             starts++
             this.report = report
@@ -216,13 +217,19 @@ class PhoneSignalsTest {
             cameOn = null
         }
 
-        override fun read(reading: (ScreenReading) -> Unit) = onThread { reading(now) }
+        override fun read(reading: (ScreenStatus) -> Unit) = onThread { reading(next()) }
+
+        // A new reading of the source, numbered on its thread.
+        private fun next(): ScreenStatus {
+            seq++
+            return ScreenStatus(now, offs, seq)
+        }
 
         fun change(reading: ScreenReading) {
             now = reading
             if (reading == ScreenReading.OFF) offs++
             val report = checkNotNull(report) { "Nothing watches the screen" }
-            onThread { report(reading) }
+            onThread { report(next()) }
         }
 
         fun comeOn() {

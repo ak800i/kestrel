@@ -1,5 +1,7 @@
 package dev.kestrel.app.screen
 
+import android.os.Looper
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.model.ScreenElement
 import dev.kestrel.screen.model.WindowSummary
@@ -15,6 +17,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,6 +28,21 @@ class GridBarAndCardTest {
     val screen = ScreenServiceRule()
 
     private val session get() = screen.session
+
+    // The card's stamp, which it takes on the main thread at the tap (plan 7F): the clock then. An answer whose stamp is
+    // no earlier than the clock just before the tap was sent proves that the stamp was taken at the tap, not when the
+    // question was asked.
+    private val atTap: () -> Long = {
+        check(Looper.getMainLooper().isCurrentThread) { "The card stamped its tap off the main thread" }
+        SystemClock.uptimeMillis()
+    }
+
+    // The stamp of answer [end], which must be from the tap that was sent at [before] or later.
+    private fun stampAfter(before: Long, end: CardEnd<Long>): Long {
+        val stamp = (end as? CardEnd.Answered<Long>)?.stamp ?: throw AssertionError("The card gave no answer: $end")
+        assertTrue("The answer's stamp $stamp is from before the tap at $before", stamp >= before)
+        return stamp
+    }
 
     private suspend fun eventually(timeoutMillis: Long = 5_000, check: suspend () -> Boolean) = withTimeout(timeoutMillis) {
         while (!check()) delay(100)
@@ -61,15 +79,15 @@ class GridBarAndCardTest {
     }
 
     @Test
-    fun theCardGivesConfirmWhenTheOwnerTapsIt() = runBlocking { answerWith("Confirm", expected = CardEnd.Tapped(CONFIRM, STAMP)) }
+    fun theCardGivesConfirmWhenTheOwnerTapsIt() = runBlocking { answerWith("Confirm", expected = CONFIRM) }
 
     @Test
-    fun theCardGivesCancelWhenTheOwnerTapsIt() = runBlocking { answerWith("Cancel", expected = CardEnd.Tapped(CANCEL, STAMP)) }
+    fun theCardGivesCancelWhenTheOwnerTapsIt() = runBlocking { answerWith("Cancel", expected = CANCEL) }
 
     @Test
     fun cancellingTheQuestionRemovesTheCard() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.ask(confirmation(1, "Delete the draft?"), { STAMP }) }
+        val answer = async { session.ask(confirmation(1, "Delete the draft?"), atTap) }
         eventually { screen.showsWindow(CARD_TITLE) }
 
         answer.cancel()
@@ -80,10 +98,10 @@ class GridBarAndCardTest {
     @Test
     fun aNewQuestionWithdrawsTheOldOne() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val first = async { session.ask(confirmation(1, "Send a test message?"), { STAMP }) }
+        val first = async { session.ask(confirmation(1, "Send a test message?"), atTap) }
         eventually { screen.overlayButton("Confirm") != null }
 
-        val second = async { session.ask(confirmation(2, "Delete the draft?"), { STAMP }) }
+        val second = async { session.ask(confirmation(2, "Delete the draft?"), atTap) }
 
         assertEquals(CardEnd.Withdrawn, withTimeout(5_000) { first.await() })
         // Only the second card is left, so the tap reaches its Confirm button.
@@ -91,15 +109,17 @@ class GridBarAndCardTest {
         // A card ignores taps for its first 600 ms (design D32 item 21 of sub-project 5).
         delay(ARMED_MILLIS)
         val confirm = screen.overlayButton("Confirm")!!
+        val before = SystemClock.uptimeMillis()
         screen.shell("input tap ${confirm.centerX()} ${confirm.centerY()}")
-        assertEquals(CardEnd.Tapped(CONFIRM, STAMP), withTimeout(5_000) { second.await() })
+        val end = withTimeout(5_000) { second.await() }
+        assertEquals(CardEnd.Tapped(CONFIRM, stampAfter(before, end)), end)
         eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     @Test
     fun closingTheSessionWithdrawsTheQuestion() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.ask(confirmation(1, "Send a test message?"), { STAMP }) }
+        val answer = async { session.ask(confirmation(1, "Send a test message?"), atTap) }
         eventually { screen.overlayButton("Confirm") != null }
 
         // As the service does when it disconnects. The rule's next start closes this session again.
@@ -112,7 +132,7 @@ class GridBarAndCardTest {
     @Test
     fun snapshotsLeaveTheCardOut() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
-        val answer = async { session.ask(confirmation(1, "Send a test message?"), { STAMP }) }
+        val answer = async { session.ask(confirmation(1, "Send a test message?"), atTap) }
         try {
             eventually { screen.overlayButton("Confirm") != null }
 
@@ -127,10 +147,10 @@ class GridBarAndCardTest {
         }
     }
 
-    private suspend fun CoroutineScope.answerWith(button: String, expected: CardEnd<Long>) {
+    private suspend fun CoroutineScope.answerWith(button: String, expected: Int) {
         screen.open("ViewsActivity", "Views fixture")
         // The question contains both buttons' labels, so the tests also check that the rule finds the buttons.
-        val answer = async { session.ask(confirmation(1, "Confirm or cancel a test message?"), { STAMP }) }
+        val answer = async { session.ask(confirmation(1, "Confirm or cancel a test message?"), atTap) }
         val bounds = withTimeout(5_000) {
             var found = screen.overlayButton(button)
             while (found == null) {
@@ -141,16 +161,15 @@ class GridBarAndCardTest {
         }
 
         delay(ARMED_MILLIS)
+        val before = SystemClock.uptimeMillis()
         screen.shell("input tap ${bounds.centerX()} ${bounds.centerY()}")
 
-        assertEquals(expected, withTimeout(5_000) { answer.await() })
+        val end = withTimeout(5_000) { answer.await() }
+        assertEquals(CardEnd.Tapped(expected, stampAfter(before, end)), end)
         eventually { !screen.showsWindow(CARD_TITLE) }
     }
 
     private companion object {
-        // What the card stamps each answer with at the tap (plan 7F), which the answer carries back.
-        const val STAMP = 7L
-
         /** A little more than the 600 ms in which a card ignores taps. */
         const val ARMED_MILLIS = CARD_ARMING_MILLIS + 100
 

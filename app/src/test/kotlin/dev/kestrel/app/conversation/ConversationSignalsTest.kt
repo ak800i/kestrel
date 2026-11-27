@@ -176,15 +176,15 @@ class ConversationSignalsTest {
 
     private class FakeScreens : ScreenSource {
         var now = true
-        override val offs = 0L
+        private var seq = 0L
 
-        override fun status(): ScreenStatus = ScreenStatus(readingOf(now), offs)
+        override fun status(): ScreenStatus = ScreenStatus(readingOf(now), offs = 0, seq = seq)
         var starts = 0
         var stops = 0
-        private var report: ((ScreenReading) -> Unit)? = null
+        private var report: ((ScreenStatus) -> Unit)? = null
         private var cameOn: (() -> Unit)? = null
 
-        override fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit) {
+        override fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit) {
             starts++
             this.report = report
             this.cameOn = cameOn
@@ -196,11 +196,16 @@ class ConversationSignalsTest {
             cameOn = null
         }
 
-        override fun read(reading: (ScreenReading) -> Unit) = reading(readingOf(now))
+        override fun read(reading: (ScreenStatus) -> Unit) = reading(next())
 
         fun change(on: Boolean) {
             now = on
-            report?.invoke(readingOf(on))
+            report?.invoke(next())
+        }
+
+        private fun next(): ScreenStatus {
+            seq++
+            return status()
         }
 
         fun comeOn() {

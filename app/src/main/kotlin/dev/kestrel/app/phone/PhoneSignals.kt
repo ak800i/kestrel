@@ -30,11 +30,12 @@ internal enum class ScreenReading {
 }
 
 /**
- * A [reading] of the screen source with its count of screen-offs ([offs]) at that reading (plan 7F's second re-check):
- * a card's tap stamped with the count at the tap belongs to the lock of that count, so that a screen-off after it is
- * seen even when it came before the reading that the tap's wait gets first.
+ * A [reading] of the screen source, with its count of screen-offs ([offs]) and the number of the source's newest reading
+ * ([seq]) at that moment (plan 7F's re-checks). The source raises [seq] with each reading that it gives, on its own
+ * thread, so a question card's tap, stamped with the status of its moment, can tell the readings that came after it from
+ * those that it had already seen, and is judged only by the former; a higher count means that the screen went off since.
  */
-internal data class ScreenStatus(val reading: ScreenReading, val offs: Long)
+internal data class ScreenStatus(val reading: ScreenReading, val offs: Long, val seq: Long)
 
 /**
  * Android's screen and lock (design spec, section 8.5). Any thread may call it. Every report, every [start]'s cameOn and
@@ -43,31 +44,26 @@ internal data class ScreenStatus(val reading: ScreenReading, val offs: Long)
  */
 internal interface ScreenSource {
     /**
-     * Starts to report every change of the [ScreenReading] to [report]; and each time the screen comes on, locked or
-     * not, to [cameOn], after [report].
+     * Starts to report every change to [report], each as the [ScreenStatus] of its moment, with the reading's number; and
+     * each time the screen comes on, locked or not, to [cameOn], after [report].
      */
-    fun start(report: (ScreenReading) -> Unit, cameOn: () -> Unit)
+    fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit)
 
     /** Stops the reports. */
     fun stop()
 
     /**
-     * How many times the screen has gone off while the source reported; it rises on the source's thread before the
-     * report of the screen-off. Any thread may read it.
-     */
-    val offs: Long
-
-    /**
-     * The reading and the count of screen-offs now, as the next report would give them. On the source's thread it is in
-     * order with the reports, so a question card's tap is judged by the screen of its own moment (plan 7F).
+     * The reading now, with the count of screen-offs and the number of the newest reading that the source gave. On the
+     * source's thread it is in order with the reports, so a question card's tap is judged by the screen of its own moment
+     * and by the readings that come after it (plan 7F). Any thread may call it.
      */
     fun status(): ScreenStatus
 
     /**
-     * Gives [reading] the [ScreenReading], read on the source's thread: at once when the caller is on it, otherwise
-     * after the reports that are already on their way there.
+     * Gives [reading] the [ScreenStatus] as a new reading of the source, read on the source's thread: at once when the
+     * caller is on it, otherwise after the reports that are already on their way there.
      */
-    fun read(reading: (ScreenReading) -> Unit)
+    fun read(reading: (ScreenStatus) -> Unit)
 }
 
 /**
@@ -84,7 +80,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
     // One object per watch, so that the same listener given twice is watched twice and stopped once each.
     private class Watcher<T>(val listener: (T) -> Unit)
 
-    private class ScreenWatcher(val listener: (ScreenReading) -> Unit, val cameOn: () -> Unit)
+    private class ScreenWatcher(val listener: (ScreenStatus) -> Unit, val cameOn: () -> Unit)
 
     private val lock = Any()
     private val screenWatchers = mutableListOf<ScreenWatcher>()
@@ -96,7 +92,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
      * otherwise a moment later; a watch that stops before it gets none. Throws what [ScreenSource.start] throws, and then
      * holds no watch. [listener] comes last, so that a trailing lambda is the reading's.
      */
-    fun watchScreen(cameOn: () -> Unit = {}, listener: (ScreenReading) -> Unit): PhoneWatch {
+    fun watchScreen(cameOn: () -> Unit = {}, listener: (ScreenStatus) -> Unit): PhoneWatch {
         val watcher = ScreenWatcher(listener, cameOn)
         synchronized(lock) {
             screenWatchers += watcher
@@ -109,7 +105,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
                 }
             }
         }
-        screens.read { reading -> if (synchronized(lock) { watcher in screenWatchers }) listener(reading) }
+        screens.read { status -> if (synchronized(lock) { watcher in screenWatchers }) listener(status) }
         return once {
             synchronized(lock) { if (screenWatchers.remove(watcher) && screenWatchers.isEmpty()) screens.stop() }
         }
@@ -146,16 +142,15 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
 
     /**
      * The [ScreenStatus] while the flow is collected: the reading first, then every change ([watchScreen]), each with
-     * the count of screen-offs of its moment. A question card's Continue counts only on [ScreenReading.UNLOCKED] within
-     * the lock that it was tapped in (plan 7F). The flow fails with what [watchScreen] throws.
+     * its count of screen-offs and its number. A question card's Continue counts only on [ScreenReading.UNLOCKED] after
+     * its tap, within the lock that it was tapped in (plan 7F). The flow fails with what [watchScreen] throws.
      */
     fun screenStates(): Flow<ScreenStatus> = callbackFlow {
-        // On the source's thread, so that each reading carries the count of the same moment.
-        val watch = watchScreen { reading -> trySend(ScreenStatus(reading, screens.offs)) }
+        val watch = watchScreen { status -> trySend(status) }
         awaitClose { watch.stop() }
     }
 
-    /** The screen source's reading and count of screen-offs now ([ScreenSource.status]), which stamps a card's tap. */
+    /** The screen source's status now ([ScreenSource.status]), which stamps a card's tap. */
     fun screenStatus(): ScreenStatus = screens.status()
 
     /**
@@ -176,8 +171,8 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
         }
     }
 
-    private fun screenChanged(reading: ScreenReading) {
-        synchronized(lock) { screenWatchers.toList() }.forEach { it.listener(reading) }
+    private fun screenChanged(status: ScreenStatus) {
+        synchronized(lock) { screenWatchers.toList() }.forEach { it.listener(status) }
     }
 
     private fun screenCameOn() {

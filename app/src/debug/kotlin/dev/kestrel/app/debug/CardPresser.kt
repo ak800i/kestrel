@@ -10,10 +10,21 @@ import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
  * What the debug hook's press of the overlay's card found (Task 13a). [PRESSED] answered the question; [HELD] is a
  * Continue on the lock screen, which the card desk holds as the owner's tap and which answers by itself once the phone
  * is unlocked within that lock. The rest answered nothing and leave the question open: the guard's refusals,
- * [SCREEN_OFF] (the screen was off at the press, so a Continue counts for nothing) and [WITHDRAWN] (the card was no
- * longer the overlay's when the press came).
+ * [SCREEN_OFF] (the screen was off at the press, so a Continue counts for nothing), [UNFOLLOWED] (a Continue on the lock
+ * screen while the card desk cannot follow the screen source, which it does not hold, so the press must come again after
+ * the unlock) and [WITHDRAWN] (the card was no longer the overlay's when the press came).
  */
-internal enum class CardPress { PRESSED, HELD, NOT_ON_OVERLAY, OTHER_CARD, NO_BUTTON, NOT_ARMED, SCREEN_OFF, WITHDRAWN }
+internal enum class CardPress {
+    PRESSED,
+    HELD,
+    NOT_ON_OVERLAY,
+    OTHER_CARD,
+    NO_BUTTON,
+    NOT_ARMED,
+    SCREEN_OFF,
+    UNFOLLOWED,
+    WITHDRAWN,
+}
 
 /**
  * Presses a button of the card over the app as the owner's tap, for agent-answer `--es channel card`, which may not tap
@@ -36,6 +47,7 @@ internal class CardPresser(private val overlay: OverlayCards) {
                 TapEnd.ANSWERED -> CardPress.PRESSED
                 TapEnd.HELD -> CardPress.HELD
                 TapEnd.DROPPED_BY_SCREEN_OFF -> CardPress.SCREEN_OFF
+                TapEnd.REFUSED_UNFOLLOWED -> CardPress.UNFOLLOWED
                 TapEnd.WITHDRAWN -> CardPress.WITHDRAWN
             }
         }

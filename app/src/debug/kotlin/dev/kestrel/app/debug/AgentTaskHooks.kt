@@ -141,6 +141,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
                 throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
             CardPress.NOT_ARMED -> throw HookError("the card does not take taps yet; answer again in a second")
             CardPress.SCREEN_OFF -> throw HookError("the screen was off at the press, so Continue did not count")
+            CardPress.UNFOLLOWED -> throw HookError(
+                "the screen cannot be followed, so a Continue on the lock screen does not wait; unlock and answer again",
+            )
             CardPress.WITHDRAWN -> throw HookError("the question ended or another answer came first; read agent-state again")
         }
         return "answered tag=$tag asking=$kind channel=card"

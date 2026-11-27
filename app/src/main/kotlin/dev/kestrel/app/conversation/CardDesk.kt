@@ -30,10 +30,11 @@ internal data class CardTap(val choice: CardChoice, val act: Long)
 /**
  * What became of a tap on the card at once (plan 7F): it [ANSWERED] its question; it was [HELD] for the owner's unlock
  * (a Continue on the lock screen, which answers by itself once the phone is unlocked within that lock); it was
- * [DROPPED_BY_SCREEN_OFF], because the screen was off at the tap; or it was [WITHDRAWN], because the card was no longer
- * the overlay's when it came.
+ * [DROPPED_BY_SCREEN_OFF], because the screen was off at the tap; it was [REFUSED_UNFOLLOWED], a Continue on the lock
+ * screen while the desk cannot follow the screen source, which is never held, so the owner taps again after his unlock;
+ * or it was [WITHDRAWN], because the card was no longer the overlay's when it came.
  */
-internal enum class TapEnd { ANSWERED, HELD, DROPPED_BY_SCREEN_OFF, WITHDRAWN }
+internal enum class TapEnd { ANSWERED, HELD, DROPPED_BY_SCREEN_OFF, REFUSED_UNFOLLOWED, WITHDRAWN }
 
 /** The card of each question, whichever channel asks it (design 10.3 of sub-project 7). */
 internal interface OwnerCards {
@@ -66,20 +67,22 @@ internal interface SharedCards : OwnerCards {
  * the card until the screen has come to the front, or for [replyOpenMillis] when it does not come.
  *
  * Every tap reaches the desk through one entry ([tapped]), the owner's on the overlay and the debug hook's press alike,
- * with the screen source's status at the tap ([ScreenTap.status]: its reading and count of screen-offs, taken on the
- * main thread in order with the source's reports). A Continue counts only on an unlocked phone (plan 7E's rule for
- * Continue): tapped on an unlocked phone it answers at once, and tapped with the screen off it counts for nothing. One
- * tapped on the lock screen keeps its tap's number and waits for the owner's unlock within the lock that it was tapped
- * in, while its question still waits for a Continue: [notice] tells him to unlock the phone ([UNLOCK_TO_CONTINUE]), the
- * card shows again, and the tap answers once the source reads the phone as unlocked within the same count; the desk
- * follows the source ([OwnerScreen.screens]) for as long as a card waits, and shows a card only once it has a reading,
- * so the source counts every screen-off after a tap. A screen-off after the tap drops it, another of the card's choices
- * (Cancel or Stop) answers in its place and drops it, the end of its question drops it, and a newer Continue on the same
- * question replaces it with its own number; each question holds its own, and it lives in Kestrel's process only. Unlike
- * the goal notification's Continue, it cannot ask Android for the unlock, because an overlay cannot. When the source
- * cannot be followed, the desk reports it ([report]), shows the card all the same and tries again every
- * [FOLLOW_RETRY_MILLIS] while a card waits; a held Continue then waits for the next reading, and the owner's Continue
- * after his unlock answers by its own status at once (decision 27).
+ * with the screen source's status at the tap ([ScreenTap.status]: its reading, its count of screen-offs and the number
+ * of the source's newest reading, taken on the main thread in order with the source's reports). A Continue counts only
+ * on an unlocked phone (plan 7E's rule for Continue): tapped on an unlocked phone it answers at once, and tapped with the
+ * screen off it counts for nothing. One tapped on the lock screen keeps its tap's number and waits for the owner's unlock
+ * within the lock that it was tapped in, while its question still waits for a Continue: [notice] tells him to unlock the
+ * phone ([UNLOCK_TO_CONTINUE]), the card shows again, and the tap answers on the first reading after it, by number, that
+ * is unlocked within the same count; readings from before the tap never decide it. The desk follows the source
+ * ([OwnerScreen.screens]) for as long as a card waits, and shows a card only once it has a reading, so the source counts
+ * every screen-off after a tap. A screen-off after the tap drops it, another of the card's choices (Cancel or Stop)
+ * answers in its place and drops it, the end of its question drops it, a failure to follow the source drops it, and a
+ * newer Continue on the same question replaces it with its own number; each question holds its own, and it lives in
+ * Kestrel's process only. Unlike the goal notification's Continue, it cannot ask Android for the unlock, because an
+ * overlay cannot. When the source cannot be followed, the desk reports it ([report]), shows the card all the same and
+ * tries again every [FOLLOW_RETRY_MILLIS] while a card waits; meanwhile a Continue that is not on an unlocked phone by
+ * its own status is never held: the card shows again, [notice] tells the owner to unlock the phone, and he taps again
+ * after his unlock, which answers by its own status at once (decision 27).
  *
  * A tap that answers takes its number among the owner's inputs ([inputIds]) when it has come back from the card, before
  * any caller runs, and every caller that it answers gets that one number (plan 7F). A card that got no answer, because
@@ -155,8 +158,8 @@ internal class CardDesk(
                         throw e
                     } catch (e: Exception) {
                         report("Following the screen for the question card", e)
-                        following.value = Following.Failed
                     }
+                    unfollowed()
                     delay(FOLLOW_RETRY_MILLIS)
                 }
             }
@@ -169,6 +172,13 @@ internal class CardDesk(
                 .distinctUntilChanged()
                 .collectLatest { presenting -> if (presenting != null) present(presenting.shown) }
         }
+    }
+
+    // The source is no longer followed: no held Continue may wait across a time whose screen-offs the desk cannot see.
+    private fun unfollowed() = synchronized(lock) {
+        following.value = Following.Failed
+        for (wait in heldContinues.values) wait.cancel()
+        heldContinues.clear()
     }
 
     /** The conversation screen came to the front, or left it. */
@@ -258,13 +268,13 @@ internal class CardDesk(
     }
 
     // The owner's Continue on question [key], judged by the screen at the tap ([at]): on an unlocked phone it answers at
-    // once, and with the screen off it counts for nothing and the card shows again. On the lock screen it is held, while
-    // its question still waits for a Continue: the card shows again, the bar says to unlock the phone, and the tap
-    // answers once the source reads the phone as unlocked within the tap's count of screen-offs; a higher count (a
-    // screen-off since the tap) drops it. A newer Continue on the same question replaces it; another choice or the end of
-    // its question drops it (publish).
+    // once, and with the screen off it counts for nothing and the card shows again. On the lock screen it is held while
+    // the desk follows the source and its question still waits for a Continue: the card shows again, the bar says to
+    // unlock the phone, and the tap waits for the readings after it (hold). While the source is not followed it is not
+    // held: the card shows again with the same words, and the owner taps again after his unlock (decision 27). A newer
+    // Continue on the same question replaces a held one; another choice or the end of its question drops it (publish).
     private fun continueTapped(key: Int, tap: CardTap, at: ScreenStatus): TapEnd {
-        synchronized(lock) {
+        val end = synchronized(lock) {
             when {
                 !takesContinue(key) || at.reading == ScreenReading.UNLOCKED -> {
                     deliver(key, tap)
@@ -274,26 +284,36 @@ internal class CardDesk(
                     showAgain()
                     return TapEnd.DROPPED_BY_SCREEN_OFF
                 }
-                else -> hold(key, tap, at.offs)
+                following.value is Following.Read -> {
+                    hold(key, tap, at)
+                    TapEnd.HELD
+                }
+                else -> {
+                    heldContinues.remove(key)?.cancel()
+                    showAgain()
+                    TapEnd.REFUSED_UNFOLLOWED
+                }
             }
         }
         notice(UNLOCK_TO_CONTINUE)
-        return TapEnd.HELD
+        return end
     }
 
-    // Under the lock: holds the Continue of question [key] that was tapped on the lock screen of count [offs].
-    private fun hold(key: Int, tap: CardTap, offs: Long) {
+    // Under the lock, while the desk follows the source: holds the Continue of question [key] that was tapped on the lock
+    // screen at [at]. Only the source's readings numbered after the tap's decide it, so a reading from before the tap
+    // (a report on its way, or the desk's newest when the lock screen came back without a screen-off) never answers or
+    // drops it: the lock screen of the tap's count goes on holding it, an unlocked reading of that count answers it, and
+    // a higher count (a screen-off since the tap) drops it. A failure to follow the source drops it (unfollowed).
+    private fun hold(key: Int, tap: CardTap, at: ScreenStatus) {
         heldContinues.remove(key)?.cancel()
         val wait = scope.launch(start = CoroutineStart.LAZY) {
             val self = coroutineContext.job
-            // A reading of an older count has not seen the tap's moment yet, and the lock screen of its own count goes on
-            // holding it; any other reading ends the wait.
             val end = following.filterIsInstance<Following.Read>().map { it.status }
-                .first { now -> now.offs > offs || (now.offs == offs && now.reading != ScreenReading.LOCKED) }
+                .first { now -> now.seq > at.seq && (now.offs != at.offs || now.reading != ScreenReading.LOCKED) }
             synchronized(lock) {
                 if (heldContinues[key] !== self) return@launch
                 heldContinues.remove(key)
-                if (end.offs == offs && end.reading == ScreenReading.UNLOCKED) deliver(key, tap)
+                if (end.offs == at.offs && end.reading == ScreenReading.UNLOCKED) deliver(key, tap)
             }
         }
         heldContinues[key] = wait
@@ -331,7 +351,8 @@ internal class CardDesk(
         const val REPLY_OPEN_MILLIS = 5_000L
 
         /**
-         * A Continue tapped on the card on the lock screen, which waits for the unlock (plan 7E's rule for Continue).
+         * A Continue tapped on the card on the lock screen, which waits for the unlock, or, while the screen source cannot
+         * be followed, is tapped again after it (plan 7E's rule for Continue; decision 27).
          */
         const val UNLOCK_TO_CONTINUE = "Unlock the phone to continue."
 

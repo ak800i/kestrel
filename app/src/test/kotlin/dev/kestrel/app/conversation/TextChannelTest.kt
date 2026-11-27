@@ -284,7 +284,7 @@ class TextChannelTest {
             }
         }
 
-        override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0))
+        override val screens = MutableStateFlow(ScreenStatus(ScreenReading.UNLOCKED, offs = 0, seq = 0))
 
         override fun screenStatus(): ScreenStatus = screens.value
 
