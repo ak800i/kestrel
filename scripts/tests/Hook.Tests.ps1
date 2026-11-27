@@ -120,6 +120,81 @@ Describe 'hook.ps1' {
         $digits | Should -BeLike '*-Boost -1 is negative*'
     }
 
+    It 'accepts the hooks of the conversations and their options, and reaches the argument checks' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        # -Boost -1 ends each call at the argument checks, before the device check, which would start adb's server.
+        $calls = @(
+            @('conversation-state'),
+            @('conversation-control', '-Do', 'limits', '-Limits', '50/5/10'),
+            @('conversation-control', '-Do', 'delete-typed'),
+            @('voice-restore'),
+            @('conversation-type', '-Text', 'Find the number of Ana Test.', '-Tag', 't1', '-Live', '-Model', 'gpt-6-luna', '-Marker', 'maple heron'),
+            @('goal-service-state'),
+            @('goal-control', '-Do', 'tap', '-Action', 'stop'),
+            @('goal-control', '-Do', 'send-later', '-Action', 'cancel'),
+            @('goal-control', '-Do', 'refuse-off'),
+            @('goal-control', '-Do', 'stop-typed'),
+            @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'),
+            @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'),
+            @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card')
+        )
+        foreach ($call in $calls) {
+            $output = (& pwsh -NoProfile -File $hook -Serial no-such-device @call -Boost -1 2>&1) -join "`n"
+
+            $output | Should -Not -BeLike '*Cannot validate argument*'
+            $output | Should -Not -BeLike '*A parameter cannot be found*'
+            $output | Should -BeLike '*-Boost -1 is negative*'
+        }
+    }
+
+    It 'refuses a value of the conversation hooks outside its list before it reaches a device' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $do = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-control -Do restart 2>&1) -join "`n"
+        $doExit = $LASTEXITCODE
+        $limits = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-control -Do limits -Limits 50/5 2>&1) -join "`n"
+        $limitsExit = $LASTEXITCODE
+        $channel = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-answer -Tag t1 -Answer yes -Channel screen 2>&1) -join "`n"
+        $channelExit = $LASTEXITCODE
+
+        $doExit | Should -Not -Be 0
+        $do | Should -BeLike "*Cannot validate argument on parameter 'Do'*"
+        $limitsExit | Should -Not -Be 0
+        $limits | Should -BeLike "*Cannot validate argument on parameter 'Limits'*"
+        $channelExit | Should -Not -Be 0
+        $channel | Should -BeLike "*Cannot validate argument on parameter 'Channel'*"
+    }
+
+    It 'refuses a -Do of the other hook, -Limits without -Do limits, -Action without -Do tap or send-later, -HandOver without a stand-in round, conversation-type''s options without -Tag, conversation-type without -Text, and -Do or -Channel with a command that takes neither' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        $control = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-control -Do touch 2>&1) -join "`n"
+        $goal = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control 2>&1) -join "`n"
+        $limits = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-control -Do expire -Limits 50/5/10 2>&1) -join "`n"
+        $action = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control -Do touch -Action stop 2>&1) -join "`n"
+        $tap = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control -Do send-later 2>&1) -join "`n"
+        $handOver = (& pwsh -NoProfile -File $hook -Serial no-such-device voice-task -Clear -HandOver 2>&1) -join "`n"
+        $options = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-type -Text 'Find the number of Ana Test.' -Model gpt-6-luna 2>&1) -join "`n"
+        $typed = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-type -Tag t1 2>&1) -join "`n"
+        $doElsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device state -Do new 2>&1) -join "`n"
+        $channelElsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Tag t1 -Channel card 2>&1) -join "`n"
+
+        $control | Should -BeLike '*conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.*'
+        $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed.*'
+        $limits | Should -BeLike '*-Limits needs conversation-control -Do limits.*'
+        $action | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
+        $tap | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
+        $handOver | Should -BeLike '*-HandOver needs voice-task -Seconds and -Reply.*'
+        $options | Should -BeLike '*conversation-type takes -Model, -Live and -Marker only with -Tag.*'
+        $typed | Should -BeLike '*conversation-type needs -Text with the words to type.*'
+        $doElsewhere | Should -BeLike '*-Do needs conversation-control or goal-control.*'
+        $channelElsewhere | Should -BeLike '*-Channel needs agent-answer.*'
+    }
+
     It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the argument checks' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'

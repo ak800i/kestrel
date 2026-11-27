@@ -39,7 +39,8 @@
 #   voice-state [-Number n]                 the Orchestrator's mode, work, speaking, microphone, recognition, screen and
 #                                           "mic busy", the latest instant command's number, kind and outcome, whether
 #                                           the voice session is open, and whether Kestrel's next start uses the clip
-#                                           microphone (clips=on); never text. With -Number, the number, kind and
+#                                           microphone (clips=on), and whether the follow-up window is open
+#                                           (followUp=open|closed, plan 7D); never text. With -Number, the number, kind and
 #                                           outcome of that command, if it is one of Kestrel's newest 16 (outcome=none
 #                                           before it started, unknown when it is older), and latest= the latest
 #                                           command's number
@@ -149,10 +150,12 @@
 #                                           to 10) and -Threshold (0.01 to 0.5); a change counts for every keyword
 #                                           spotter that loads afterwards, also the spotter of the hook voice-echo,
 #                                           until the hook sets it again or Kestrel's process ends
-#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then answer with
+#   voice-task -Seconds n -Reply 'text' [-HandOver]
+#                                           makes each goal's round take n seconds, at most 120, and then answer with
 #                                           the reply, whole and of any length, which Kestrel says as the goal's final
 #                                           words, unless the owner stopped the goal, until voice-task -Clear or the end
-#                                           of Kestrel's process
+#                                           of Kestrel's process; with -HandOver (plan 7F) the round first hands the owner
+#                                           a payment step, whose card waits for its Cancel or Continue
 #   voice-task -Clear                       each goal's round runs on the phone again
 #   voice-echo -Text 'text' [-Voice piper|kokoro]
 #                                           starts playing the text in Kestrel's voice while the real microphone feeds the
@@ -243,19 +246,30 @@
 #                                           reply and in what the task said with say; with -Marker also markerSaid=1
 #                                           when a say text held it, and markerInData=1 when a data tool's result held
 #                                           the marker that voice -Marker gave the task (none when it gave none)
-#   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category]
+#   agent-answer -Tag k -Answer yes|no|confirm|cancel|continue|<number>|text:<words> [-Confirming category] [-Channel voice|text|card]
 #                                           answers the open question of that task as the owner's voice would, and ends its
 #                                           hand-over with continue or cancel; refused when that task asks nothing. With
 #                                           -Confirming (agent-state's confirming), it is refused unless the open question
 #                                           is a confirmation of that category; without it, a confirmation takes only no
-#                                           and cancel
+#                                           and cancel; with -Channel text (plan 7F), as the owner's tap on the button of the
+#                                           text channel's card that the answer names, or as words typed on Kestrel's
+#                                           screen, which refuses a confirmation, a hand-over and a pick; with -Channel
+#                                           card (plan 7F's Task 13a), as the owner's tap on the button of the card over
+#                                           the app that the answer names, through the card desk, once the card takes taps:
+#                                           answered ... channel=card, or held ... channel=card until=unlock for a Continue
+#                                           pressed on the lock screen, which answers by itself at the unlock within that
+#                                           lock; an error leaves the question open
 #   agent-script -File name.json | -Clear   installs plan 5A's scripted model from files/agent-scripts/name.json in
 #                                           Kestrel's files folder (:tools:eval copies it there), or removes it
 #   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over, the
 #                                           category of the open confirmation, and the question's source (question=yes-no,
-#                                           free, pick-number, screenshot, limit or none), which tells look_closer's
+#                                           free, pick-number, screenshot, limit, switch, delete-history, continue-goal or
+#                                           none), which tells look_closer's
 #                                           screenshot question from the model's own free question, and a round's
-#                                           "Continue?" at a limit (limit) from another yes-or-no question
+#                                           "Continue?" at a limit (limit), the switch to a past conversation (switch) and
+#                                           "Delete the history?" (delete-history) from another yes-or-no question; and
+#                                           (plan 7D) the goal's checklist in counts (checklist=<done>/<total>|none) and
+#                                           whether a conversation is open (conversation=open|closed)
 #   agent-cache [-Field anthropicMarks|responsesExplicit|chatCopilotMarks -On true|false]
 #                                           the agent's cache fields, after storing the one given
 #   agent-touch-source [-Rule NONE|FIELD|CREDITS] [-Branch A|B]
@@ -292,6 +306,48 @@
 #   network-allowlist                       the hosts that Kestrel's network gateway may reach: hosts=<a,b> (the provider
 #                                           profiles' hosts and local servers) and modelHosts=<c,d> (the model download's
 #                                           hosts and patterns), or none; :tools:eval's egress check reads it
+# sub-project 7: conversation hooks (plans 7D to 7F; design 14.4 of sub-project 7). No answer holds words:
+#   conversation-state                      the open conversation: open=yes|no, continued=, commands=<n>,
+#                                           goal=<phase>|none, request=running|none (Kestrel's own request: a switch,
+#                                           remember, forget, "save that as" or delete history), quiet=off|held|running,
+#                                           quietLeft=<seconds>|none, replyChannel=, testMode= and typed=yes|no, whether
+#                                           the work there is the hooks' own (below): the open conversation, or while
+#                                           none is open, the request that runs
+#   conversation-control -Do new|expire|expire-typed|limits|limits-check|restore-check|delete-typed [-Limits replies/minutes/credits]
+#                                           new starts a new conversation, as "Kestrel, new conversation" does; expire
+#                                           ends the quiet time at once while its clock runs; expire-typed does so only
+#                                           when the open conversation is one of the hooks' own at that moment, as
+#                                           Kestrel checks it, and else answers expire=not-typed and changes nothing;
+#                                           limits sets a round's limits
+#                                           to -Limits, or without it to the Conversations page's smallest, and answers
+#                                           the stored ones as was=; limits-check answers the stored limits
+#                                           (limits=<r>/<m>/<c>) and changes nothing; restore-check answers what the restore at the
+#                                           process's start found (restored=nothing, open, closed, goal-held, goal-ended
+#                                           or pending); delete-typed deletes the closed conversations that the work of a
+#                                           hook's input opened (any input that a hook gives, tagged or not), also before a
+#                                           restart, unless an input of the owner's with his words or his choice reached
+#                                           them since, and never another, and answers deleted=<n> open=<n> failed=<n>
+#   voice-restore                           how long ago the restore at the process's start turned Kestrel on
+#                                           (restoredAgo=<seconds>|none) and the guard against a crash loop (guard=<seconds>),
+#                                           within which a crash keeps Kestrel off (plan 7G)
+#   conversation-type -Text 'words' [-Tag k [-Model id] [-Live] [-Marker 'words']]
+#                                           types the words as the owner does on Kestrel's conversation screen; -Tag,
+#                                           -Model, -Live and -Marker as for voice -Send heard, the last three only with
+#                                           -Tag; answers typed read=<kind>, with tag=<tag> for a tag
+#   goal-service-state                      the goal service: whether it runs, its notification and its types, its starts
+#                                           and refusals in this process, an armed refusal, and the newest audio-focus
+#                                           request with the counts of requests and answers
+#   goal-control -Do tap|send-later -Action stop|open|continue|cancel | -Do touch|speak|focus|refuse|refuse-off|stop-typed
+#                                           tap presses that button of the goal notification in the shade, as the owner's
+#                                           finger, and says which rows it had to expand; send-later hands that button's
+#                                           own PendingIntent to AlarmManager, which sends it 5 s later (send=scheduled, or
+#                                           send=none); touch gives the conversation the owner's touch, as the touch watcher
+#                                           reports it; speak and focus ask Android for the audio focus with and without
+#                                           the speech's types; refuse makes the goal service's next start in this process
+#                                           fail as Android's refusal does, once, and refuse-off takes an armed refusal back;
+#                                           stop-typed stops only the hooks' own work, the goal or Kestrel's own request of
+#                                           their conversation, or their request while none is open, as Kestrel checks
+#                                           their mark (stop=sent), and leaves the owner's (stop=none)
 # -Number picks an element by the number that the numbers overlay shows on it.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
@@ -312,6 +368,8 @@ param(
         'agent-live', 'agent-approvals',
         # sub-project 6B: evaluation hook names
         'network-allowlist',
+        # sub-project 7: conversation hook names
+        'conversation-state', 'conversation-control', 'conversation-type', 'goal-service-state', 'goal-control', 'voice-restore',
         'clipboard')][string]$Command,
     [string]$Key,
     [int]$Number,
@@ -388,7 +446,13 @@ param(
     [ValidateSet('list_sms', 'list_calls', 'find_media', 'list_notifications')][string]$Tool,
     # sub-project 5C: live parameters
     [string]$Revoke,
-    [switch]$Restore
+    [switch]$Restore,
+    # sub-project 7: conversation parameters
+    [ValidateSet('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later', 'stop-typed')]
+    [string]$Do,
+    [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
+    [ValidateSet('voice', 'text', 'card')][string]$Channel,
+    [switch]$HandOver
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -399,6 +463,27 @@ if ($PSBoundParameters.ContainsKey('Threshold') -and $Threshold -lt 0) {
 if ($Command -eq 'voice-expect' -and -not $Tag) { throw 'voice-expect needs -Tag; give each expectation a new tag.' }
 if ($Template -and -not $Tag) { throw 'screen-has -Template needs -Tag; give the transcript a new tag.' }
 if ($Has -and -not $Key) { throw 'agent-memory -Has needs -Key; give the key to look for.' }
+# -Do names the action of conversation-control or of goal-control; each takes only its own.
+if ($Command -eq 'conversation-control' -and $Do -notin @('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed')) {
+    throw 'conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.'
+}
+if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later', 'stop-typed')) {
+    throw 'goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed.'
+}
+if ($Limits -and -not ($Command -eq 'conversation-control' -and $Do -eq 'limits')) { throw '-Limits needs conversation-control -Do limits.' }
+# The goal notification's button that tap presses and send-later sends.
+if ($Command -eq 'goal-control' -and (($Do -in @('tap', 'send-later')) -ne [bool]$Action)) {
+    throw 'goal-control needs -Action with -Do tap or send-later, and only with them.'
+}
+if ($Command -eq 'conversation-type' -and -not $Text) { throw 'conversation-type needs -Text with the words to type.' }
+# Only a tag carries conversation-type's options to the typed input, so the hook refuses them without one.
+if ($Command -eq 'conversation-type' -and -not $Tag -and ($Model -or $Live -or $PSBoundParameters.ContainsKey('Marker'))) {
+    throw 'conversation-type takes -Model, -Live and -Marker only with -Tag.'
+}
+# The stand-in round's payment step is an option of the stand-in round that voice-task sets.
+if ($HandOver -and -not ($Command -eq 'voice-task' -and $Seconds -gt 0 -and $Reply)) { throw '-HandOver needs voice-task -Seconds and -Reply.' }
+if ($Do -and $Command -notin @('conversation-control', 'goal-control')) { throw '-Do needs conversation-control or goal-control.' }
+if ($Channel -and $Command -ne 'agent-answer') { throw '-Channel needs agent-answer.' }
 if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { $_ }).Count -ne 1) {
     throw 'clipboard needs exactly one of -Save, -Restore and -Clear.'
 }
@@ -508,6 +593,11 @@ if ($Has) { $extras += '--ez has true' }
 if ($Tool) { $extras += "--es tool $($Tool.ToLowerInvariant())" }
 # sub-project 5C: live extras
 if ($Revoke) { $extras += "--es revoke $(ConvertTo-ShellText $Revoke)" }
+# sub-project 7: conversation extras; ValidateSet accepts any letter case, and the hooks only lower case.
+if ($Do) { $extras += "--es do $($Do.ToLowerInvariant())" }
+if ($Limits) { $extras += "--es limits $Limits" }
+if ($Channel) { $extras += "--es channel $($Channel.ToLowerInvariant())" }
+if ($HandOver) { $extras += '--ez handover true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
