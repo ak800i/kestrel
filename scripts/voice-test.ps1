@@ -27,8 +27,9 @@
 # as well, and the run fails when it ran there; it changes nothing that the script must put back.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
-# On kestrel-api37 it first checks that the emulator has not degraded (Assert-EmulatorHealthy in
-# scripts\lib\DeviceGuard.ps1), and stops before it changes anything, with the advice to cold-boot it, when it has.
+# On kestrel-api37 it first checks the emulator's health (Assert-EmulatorHealthy in scripts\lib\DeviceGuard.ps1), and
+# stops before it changes anything, with the advice to cold-boot it when it has degraded, or to wait for the job that
+# runs there when it stays busy.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
 param([Parameter(Mandatory = $true)][string]$Serial)
 $ErrorActionPreference = 'Stop'

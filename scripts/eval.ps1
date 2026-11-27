@@ -1,9 +1,10 @@
 # Runs :tools:eval, the agent's task suite on the PC (design spec, section 16.5), with this script's own arguments, and
 # ends with the tool's exit code: 0 when every run passed or was skipped with a reason, 1 when a run failed, 2 for a
 # refusal before any run (a device, the live gate, a missing configuration, or a build of the tool that failed), 3
-# when the owner's open conversation with Kestrel stopped the runs (owner-busy), and 4, this script's own, when
-# kestrel-api37 has degraded (Get-EmulatorHealthRefusal in scripts\lib\DeviceGuard.ps1): the tool did not run, and the
-# emulator must be cold-booted with scripts\cold-boot.ps1 before a run again.
+# when the owner's open conversation with Kestrel stopped the runs (owner-busy), and two of this script's own, for which
+# the tool did not run (Get-EmulatorHealthRefusal in scripts\lib\DeviceGuard.ps1): 4 when kestrel-api37 has degraded,
+# and the emulator must be cold-booted with scripts\cold-boot.ps1 before a run again, and 5 when it stayed busy, because
+# another job runs on it, which a run must wait for and a cold boot would end.
 # It rebuilds the tool's installed copy (tools\eval\build\install\eval) with scripts\gradle.ps1 :tools:eval:installDist
 # only when a file of tools\eval (outside its build folder), of build-logic (outside its build output), or
 # gradle\libs.versions.toml or settings.gradle.kts is newer than the stamp tools\eval\build\eval-built.stamp, which it
@@ -92,9 +93,9 @@ function Invoke-Java([string]$Java, [string[]]$Arguments, [string]$Directory) {
 
 # Builds the tool when it is out of date and runs it in the repository's folder with the arguments. Returns its exit
 # code, or 2 when the build failed or threw, as for any refusal before a run. When the arguments name a device, it first
-# checks it (Assert-TestDevice), whose failure is a refusal too, and on kestrel-api37 that the emulator has not degraded
-# (Get-EmulatorHealthRefusal), which ends with 4, so that a caller such as scripts\a71-agent.ps1 can tell the cold boot
-# that it needs from a refusal.
+# checks it (Assert-TestDevice), whose failure is a refusal too, and on kestrel-api37 that the emulator is healthy
+# (Get-EmulatorHealthRefusal), whose refusal ends with 4 for a degraded emulator and 5 for a busy one, so that a caller
+# such as scripts\a71-agent.ps1 can tell the cold boot or the wait that it needs from a refusal.
 function Invoke-EvalScript([string]$Root, [string[]]$Arguments) {
     try {
         if (-not (Update-EvalTool $Root)) {
@@ -117,8 +118,8 @@ function Invoke-EvalScript([string]$Root, [string[]]$Arguments) {
         }
         $refusal = Get-EmulatorHealthRefusal -Serial $device
         if ($refusal) {
-            Write-Warning "scripts\eval.ps1 did not run :tools:eval: $refusal"
-            return 4
+            Write-Warning "scripts\eval.ps1 did not run :tools:eval: $($refusal.Message)"
+            return $(if ($refusal.Kind -eq 'Busy') { 5 } else { 4 })
         }
     }
     $library = Join-Path $Root 'tools\eval\build\install\eval\lib\*'

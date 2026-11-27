@@ -449,17 +449,23 @@ Describe 'Get-OwnerDataChange' {
 Describe 'The health of kestrel-api37' {
     BeforeAll {
         # An answer of Format-EmulatorHealthCommand's command, as kestrel-api37 gave it on 2026-11-27 (healthy: 57 ticks
-        # of the sensors HAL in 10.03 s), with the HAL's CPU ticks and the busy ticks of all of Android (of the 4000
-        # ticks of its 4 CPUs between the samples; 48 are 1.2 %) of the test.
-        function New-HealthAnswer([long]$SecondTicks = 5566, [long]$BusyTicks = 48, [string]$SecondPid = '487', [switch]$NoSecondCpu) {
+        # of the sensors HAL in 10.03 s), with the HAL's CPU ticks of the test. Between the two 'cpu' lines of
+        # /proc/stat, the 4 CPUs pass 4000 ticks: the test's ticks of user, iowait, irq, softirq and steal, and the rest
+        # in idle (48 ticks of user are 1.2 %).
+        function New-HealthAnswer([long]$SecondTicks = 5566, [long]$BusyTicks = 48, [long]$IowaitTicks = 0, [long]$IrqTicks = 0,
+            [long]$SoftirqTicks = 0, [long]$StealTicks = 0, [string]$SecondPid = '487', [string]$FirstCpu = 'cpu 1000 100 2000 400000 50 0 20 0 0 0',
+            [string]$SecondCpu) {
+            $idle = 400000 + 4000 - $BusyTicks - $IowaitTicks - $IrqTicks - $SoftirqTicks - $StealTicks
+            if (-not $PSBoundParameters.ContainsKey('SecondCpu')) {
+                $SecondCpu = "cpu $(1000 + $BusyTicks) 100 2000 $idle $(50 + $IowaitTicks) $IrqTicks $(20 + $SoftirqTicks) $StealTicks 0 0"
+            }
             @('pid=487', 'ticks=100', 'cpus=4'
                 'first=1221.23 3836.58 487 (android.hardwar) S 1 487 0 0 -1 4194560 842 0 18 0 70 5439 0 0 20 0 5 0 938 11156234240 1358'
-                'firstcpu=cpu 1000 100 2000 400000 50 0 20 0 0 0'
+                "firstcpu=$FirstCpu"
                 "second=1231.26 3875.04 $SecondPid (android.hardwar) S 1 487 0 0 -1 4194560 842 0 18 0 0 $SecondTicks 0 0 20 0 5 0 938 11156234240 1358"
-                if (-not $NoSecondCpu) { "secondcpu=cpu $(1000 + $BusyTicks) 100 2000 $(400000 + 4000 - $BusyTicks) 50 0 20 0 0 0" })
+                if ($SecondCpu) { "secondcpu=$SecondCpu" })
         }
         Mock Get-Adb { $fakeAdb }
-        Mock Start-Sleep {}
         Mock Write-Host {}
     }
 
@@ -468,6 +474,10 @@ Describe 'The health of kestrel-api37' {
         Set-FakeDevice
         $KestrelTestDevices.Clear()
         Assert-TestDevice -Serial emulator-5554
+        # A clock that only the pauses and the readings move; a reading that a test answers takes 10 s, as on the device.
+        $clock = [pscustomobject]@{ Now = [datetime]::new(2026, 11, 27, 18, 0, 0) }
+        Mock Get-Date { $clock.Now }
+        Mock Start-Sleep { $clock.Now = $clock.Now.AddSeconds($Seconds) }
     }
 
     AfterAll {
@@ -483,6 +493,13 @@ Describe 'The health of kestrel-api37' {
         [math]::Round($reading.Seconds, 2) | Should -Be 10.03
     }
 
+    It 'counts the time of all of Android from the 8 times of /proc/stat: <Name>' -ForEach @(
+        @{ Name = 'iowait counts as idle'; Answer = @{ BusyTicks = 48; IowaitTicks = 1000 }; Busy = 0.048 }
+        @{ Name = 'irq, softirq and steal count as busy'; Answer = @{ BusyTicks = 0; IrqTicks = 100; SoftirqTicks = 100; StealTicks = 300 }; Busy = 0.5 }
+    ) {
+        (ConvertFrom-EmulatorHealthAnswer (New-HealthAnswer @Answer)).BusyCpus | Should -Be $Busy
+    }
+
     It 'lets a healthy kestrel-api37 start, and says how healthy it is' {
         Mock Invoke-SettingsCommand { New-HealthAnswer }
 
@@ -493,17 +510,46 @@ Describe 'The health of kestrel-api37' {
         }
     }
 
-    It 'refuses a degraded kestrel-api37 with each measure above its limit and the advice to cold-boot: <Name>' -ForEach @(
+    It 'refuses a degraded kestrel-api37 at once, with the advice to cold-boot, when the sensors HAL is above its limit: <Name>' -ForEach @(
         @{ Name = 'the sensors HAL'; Ticks = 5509 + 476; Busy = 200
             Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL (android.hardware.sensors-service.multihal) used 47.5 % of one CPU over 10.0 s, above the limit of 30 %. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.' }
-        @{ Name = 'all of Android, as during a suite'; Ticks = 5566; Busy = 2416
-            Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: Android used 2.42 of its 4 CPUs (60.4 %) over 10.0 s, above the limit of 1 CPU. Cold-boot it with *' }
-        @{ Name = 'both'; Ticks = 5509 + 900; Busy = 1600
+        @{ Name = 'the sensors HAL and all of Android'; Ticks = 5509 + 900; Busy = 1600
             Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL * above the limit of 30 %; Android used 1.60 of its 4 CPUs * above the limit of 1 CPU. Cold-boot it with *' }
     ) {
         Mock Invoke-SettingsCommand { New-HealthAnswer -SecondTicks $Ticks -BusyTicks $Busy }
 
         { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage $Message
+
+        Should -Invoke Invoke-SettingsCommand -Times 1 -Exactly
+    }
+
+    It 'reads a busy kestrel-api37 again for 2 minutes, and then refuses it as busy, with the advice to wait and without a cold boot' {
+        Mock Invoke-SettingsCommand { $clock.Now = $clock.Now.AddSeconds(10); New-HealthAnswer -BusyTicks 2416 }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage ('Refusing to start on emulator-5554: kestrel-api37 is busy: ' +
+            'Android used 2.42 of its 4 CPUs (60.4 %) over 10.0 s, above the limit of 1 CPU, and stayed above it for 2 minutes. Something runs on ' +
+            'kestrel-api37, such as another test run, an install or an evaluation task: wait for the running job to end, or check what runs ' +
+            '(adb -s emulator-5554 shell top -b -n 1), and then run this again.')
+
+        # Readings end at 10, 40, 70 and 100 s; a pause and a reading more (20 s + 15 s) could end after 120 s.
+        Should -Invoke Invoke-SettingsCommand -Times 4 -Exactly
+        Should -Invoke Start-Sleep -Times 3 -Exactly -ParameterFilter { $Seconds -eq 20 }
+    }
+
+    It 'lets kestrel-api37 start when it was busy only for a moment, as at an install''s end' {
+        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@(2416, 48))
+        Mock Invoke-SettingsCommand { $clock.Now = $clock.Now.AddSeconds(10); New-HealthAnswer -BusyTicks $answers.Dequeue() }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
+
+        Should -Invoke Invoke-SettingsCommand -Times 2 -Exactly
+    }
+
+    It 'refuses a busy kestrel-api37 as degraded, with the advice to cold-boot, when the sensors HAL climbs above its limit while it waits' {
+        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@(5566, (5509 + 476)))
+        Mock Invoke-SettingsCommand { $clock.Now = $clock.Now.AddSeconds(10); New-HealthAnswer -SecondTicks $answers.Dequeue() -BusyTicks 2416 }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL * Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.'
     }
 
     It 'lets kestrel-api37 start at the limits' {
@@ -519,12 +565,16 @@ Describe 'The health of kestrel-api37' {
             Message = '*no process ID of android.hardware.sensors-service.multihal*' }
         @{ Name = 'a HAL that started again'; Answer = 'restarted'; Message = '*no second sample of android.hardware.sensors-service.multihal under the process ID 487*' }
         @{ Name = 'no CPU times of all of Android'; Answer = 'nocpu'; Message = '*no secondcpu sample of /proc/stat*' }
+        @{ Name = 'a cpu line with fewer than 8 times'; Answer = 'shortcpu'; Message = '*no firstcpu sample of /proc/stat*' }
+        @{ Name = 'no CPU time between the samples'; Answer = 'samecpu'; Message = '*no CPU time between the two samples of /proc/stat*' }
         @{ Name = 'no answer'; Answer = 'throws'; Message = '*Could not run*' }
     ) {
         Mock Invoke-SettingsCommand {
             switch ($Answer) {
                 'restarted' { New-HealthAnswer -SecondPid '912' }
-                'nocpu' { New-HealthAnswer -NoSecondCpu }
+                'nocpu' { New-HealthAnswer -SecondCpu '' }
+                'shortcpu' { New-HealthAnswer -FirstCpu 'cpu 1 2 3 4' }
+                'samecpu' { New-HealthAnswer -SecondCpu 'cpu 1000 100 2000 400000 50 0 20 0 0 0' }
                 'throws' { throw "Could not run 'p=...' on emulator-5554." }
                 default { $Answer }
             }
@@ -532,6 +582,7 @@ Describe 'The health of kestrel-api37' {
 
         { Assert-EmulatorHealthy -Serial emulator-5554 } |
             Should -Throw -ExpectedMessage "Refusing to start on emulator-5554: the health of kestrel-api37 could not be read ($Message). Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again."
+        Should -Invoke Invoke-SettingsCommand -Times 1 -Exactly
     }
 
     It 'reads nothing on the A71' {
@@ -626,24 +677,26 @@ Describe 'Wait-EmulatorHealthy' {
         $start = $clock.Now
         Mock Get-Date { $clock.Now }
         Mock Start-Sleep { $clock.Now = $clock.Now.AddSeconds($Seconds) }
-        $degraded = 'kestrel-api37 has degraded: Android used 1.20 of its 4 CPUs (30.0 %) over 10.0 s, above the limit of 1 CPU'
+        $degraded = [pscustomobject]@{ Kind = 'Degraded'; Text = 'kestrel-api37 has degraded: the sensors HAL (android.hardware.sensors-service.multihal) used 47.5 % of one CPU over 10.0 s, above the limit of 30 %' }
+        $busy = [pscustomobject]@{ Kind = 'Busy'; Text = 'kestrel-api37 is busy: Android used 1.20 of its 4 CPUs (30.0 %) over 10.0 s, above the limit of 1 CPU' }
+        Mock Write-Host {}
     }
 
-    It 'reads the health until it passes, with a pause of 30 s before each reading after the first' {
-        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@($degraded, $null))
+    It 'reads the health until it passes, with a pause of 30 s before each reading after the first, whatever the problem' {
+        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@($busy, $degraded, $null))
         Mock Get-EmulatorHealthProblem { $clock.Now = $clock.Now.AddSeconds(10); $answers.Dequeue() }
 
         { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
 
-        Should -Invoke Get-EmulatorHealthProblem -Times 2 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
-        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
+        Should -Invoke Get-EmulatorHealthProblem -Times 3 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+        Should -Invoke Start-Sleep -Times 2 -Exactly -ParameterFilter { $Seconds -eq 30 }
     }
 
     It 'throws with the last problem when the emulator has not passed, and starts no reading that could end after 5 minutes' {
-        Mock Get-EmulatorHealthProblem { $clock.Now = $clock.Now.AddSeconds(10); $degraded }
+        Mock Get-EmulatorHealthProblem { $clock.Now = $clock.Now.AddSeconds(10); $busy }
 
         { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage ("kestrel-api37 (emulator-5554) was cold-booted, but it did not pass the gates' health check within 5 minutes: " +
-            "$degraded. Look for what loads the emulator *")
+            "$($busy.Text). Look for what loads the emulator *")
 
         # Readings end at 10, 50, ... 290 s; after the eighth, a pause and a reading (30 s + 15 s) could end after 300 s.
         Should -Invoke Get-EmulatorHealthProblem -Times 8 -Exactly

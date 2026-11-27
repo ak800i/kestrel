@@ -458,10 +458,13 @@ function Compare-OwnerData([string]$Serial, $Before, [string]$During) {
 #     after a cold boot and minutes after a suite; 86 to 99 % in the boot's first minute, 12 % at 72 s and under 1 %
 #     from about 100 s on; 60 % (2.4 CPUs) during a suite of the :app device tests. The limit,
 #     $EmulatorBusyCpusLimit = 1 CPU, is about 18 times the use at rest and twice the boot's tail at 72 s, so a gate
-#     starts on an emulator that has settled, and well below a running suite's 2.4 CPUs, so a gate refuses an emulator
-#     that something still keeps busy. The load averages are no measure: the averages over 5 and 15 minutes still hold
-#     the cold boot (whose 1-minute average reaches 16) or the last suite for minutes after they end, so they refuse a
-#     healthy emulator after a boot or pass a busy one whose load has only just begun.
+#     starts on an emulator that has settled, and well below a running suite's 2.4 CPUs, so a gate does not start on
+#     an emulator that something still keeps busy. The load averages are no measure: the averages over 5 and 15
+#     minutes still hold the cold boot (whose 1-minute average reaches 16) or the last suite for minutes after they
+#     end, so they refuse a healthy emulator after a boot or pass a busy one whose load has only just begun.
+# The two measures have two jobs: the HAL's limit finds the degradation, which a cold boot cures, and the CPU use of all
+# of Android finds an emulator on which something runs now, whose refusal must not advise a cold boot that would end
+# that job (Get-EmulatorHealthProblem's kinds, and $EmulatorBusySeconds below).
 # The host's process list cannot tell the sensors HAL from the rest of the emulator, because one qemu process runs all
 # of Android, so the reading comes from Android's /proc.
 $EmulatorSensorsProcess = 'android.hardware.sensors-service.multihal'
@@ -524,17 +527,24 @@ function ConvertFrom-EmulatorHealthAnswer([string[]]$Lines) {
     }
 }
 
-# Returns a message for each measure of a reading (ConvertFrom-EmulatorHealthAnswer) that is above its limit; nothing
-# for a healthy emulator.
+# Returns a problem for each measure of a reading (ConvertFrom-EmulatorHealthAnswer) that is above its limit, with its
+# kind: Degraded for the sensors HAL, whose climb is the known degradation that only a cold boot cures, and Busy for the
+# CPU use of all of Android, which shows that something runs on the emulator now. Nothing for a healthy emulator.
 function Get-EmulatorHealthProblems($Reading) {
     $invariant = [Globalization.CultureInfo]::InvariantCulture
     if ($Reading.SensorsCpuPercent -gt $EmulatorSensorsCpuLimit) {
-        "the sensors HAL ($EmulatorSensorsProcess) used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
-        "$($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of $EmulatorSensorsCpuLimit %"
+        [pscustomobject]@{
+            Kind = 'Degraded'
+            Text = "the sensors HAL ($EmulatorSensorsProcess) used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
+                "$($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of $EmulatorSensorsCpuLimit %"
+        }
     }
     if ($Reading.BusyCpus -gt $EmulatorBusyCpusLimit) {
-        "Android used $(Format-EmulatorBusy $Reading) over $($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of " +
-        "$EmulatorBusyCpusLimit CPU"
+        [pscustomobject]@{
+            Kind = 'Busy'
+            Text = "Android used $(Format-EmulatorBusy $Reading) over $($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of " +
+                "$EmulatorBusyCpusLimit CPU"
+        }
     }
 }
 
@@ -558,59 +568,97 @@ function Read-EmulatorHealth([string]$Serial) {
     ConvertFrom-EmulatorHealthAnswer @(Invoke-SettingsCommand -Serial $Serial -Command (Format-EmulatorHealthCommand))
 }
 
-# Reads the measures once on kestrel-api37 and returns why it is not healthy (one measure or more above its limit, or
-# measures that cannot be read, because a degraded emulator also answers badly), or nothing when it is healthy; then it
-# writes the reading. Assert-TestDevice must have accepted the serial.
+# Reads the measures once on kestrel-api37 and returns why it is not healthy, as a Kind and a Text: Degraded when the
+# sensors HAL is above its limit, whatever else is, or when the measures cannot be read, because a degraded emulator
+# also answers badly; Busy when only the CPU use of all of Android is above its limit. Returns nothing when it is
+# healthy, and then writes the reading. Assert-TestDevice must have accepted the serial.
 function Get-EmulatorHealthProblem([string]$Serial) {
     try {
         $reading = Read-EmulatorHealth -Serial $Serial
     } catch {
-        return "the health of kestrel-api37 could not be read ($($_.Exception.Message))"
+        return [pscustomobject]@{ Kind = 'Degraded'; Text = "the health of kestrel-api37 could not be read ($($_.Exception.Message))" }
     }
     $problems = @(Get-EmulatorHealthProblems $reading)
-    if ($problems.Count -gt 0) { return "kestrel-api37 has degraded: $($problems -join '; ')" }
-    Write-Host "kestrel-api37 ($Serial) is healthy: $(Format-EmulatorHealth $reading)."
+    if ($problems.Count -eq 0) {
+        Write-Host "kestrel-api37 ($Serial) is healthy: $(Format-EmulatorHealth $reading)."
+        return
+    }
+    $texts = ($problems | ForEach-Object Text) -join '; '
+    if (@($problems | Where-Object Kind -EQ 'Degraded').Count -gt 0) {
+        return [pscustomobject]@{ Kind = 'Degraded'; Text = "kestrel-api37 has degraded: $texts" }
+    }
+    [pscustomobject]@{ Kind = 'Busy'; Text = "kestrel-api37 is busy: $texts" }
 }
 
-# The refusal of a gate on a device that Assert-TestDevice accepted, with the advice to cold-boot: on kestrel-api37, when
-# Get-EmulatorHealthProblem finds a problem; nothing for a healthy kestrel-api37, and nothing on the A71, where it reads
-# nothing. scripts\eval.ps1 ends with an exit code of its own for it.
+# A reading takes $EmulatorHealthSampleSeconds on the device; $EmulatorHealthReadSeconds allows for adb around it.
+$EmulatorHealthReadSeconds = $EmulatorHealthSampleSeconds + 5
+
+# Reads the health of kestrel-api37 (Get-EmulatorHealthProblem) until a reading passes or finds a problem whose kind is
+# not in $RetryKinds, with a pause of $PauseSeconds before each reading after the first, all within $Seconds from the
+# start of the first reading: it starts no pause after which the next reading could end later. Returns the last
+# problem, or nothing when a reading passed.
+function Read-EmulatorHealthWithin([string]$Serial, [int]$Seconds, [int]$PauseSeconds, [string[]]$RetryKinds) {
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ($true) {
+        $problem = Get-EmulatorHealthProblem -Serial $Serial
+        if (-not $problem -or $problem.Kind -notin $RetryKinds) { return $problem }
+        if ((Get-Date).AddSeconds($PauseSeconds + $EmulatorHealthReadSeconds) -gt $deadline) { return $problem }
+        Write-Host "kestrel-api37 ($Serial) is not ready yet ($($problem.Text)); reading it again in $PauseSeconds s."
+        Start-Sleep -Seconds $PauseSeconds
+    }
+}
+
+# A gate reads a busy kestrel-api37 again, after each pause of $EmulatorBusyPauseSeconds, for $EmulatorBusySeconds. That
+# outlasts the short loads that end by themselves: a cold boot's tail (12 % at 72 s, under 1 % from about 100 s on), an
+# install's tail and the end of the previous task of an evaluation sitting. A job that still keeps Android above its
+# limit after that, such as another agent's suite (60 % of the 4 CPUs for its whole length), is running, and the gate
+# refuses with the advice to wait for it or to look at what runs. It never advises a cold boot then, which would end that
+# job: a busy emulator counts as degraded only when the sensors HAL is above its limit too, because that climb is the
+# one sign of the known degradation, and the HAL stays within its healthy range during a suite (5 % in
+# debug-emu-load-report.md).
+$EmulatorBusySeconds = 120
+$EmulatorBusyPauseSeconds = 20
+
+# The refusal of a gate on a device that Assert-TestDevice accepted: on kestrel-api37, when Get-EmulatorHealthProblem
+# finds a problem that stays (a Busy one after $EmulatorBusySeconds of readings), its Kind and its Message; nothing for a
+# healthy kestrel-api37, and nothing on the A71, where it reads nothing. A Degraded refusal advises a cold boot, and a
+# Busy one advises waiting for the job that runs. scripts\eval.ps1 ends with an exit code of its own for each kind.
 function Get-EmulatorHealthRefusal([string]$Serial) {
     if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { return }
-    $problem = Get-EmulatorHealthProblem -Serial $Serial
-    if ($problem) { "Refusing to start on ${Serial}: $problem. Cold-boot it with scripts\cold-boot.ps1 -Serial $Serial, and then run this again." }
+    $problem = Read-EmulatorHealthWithin -Serial $Serial -Seconds $EmulatorBusySeconds -PauseSeconds $EmulatorBusyPauseSeconds -RetryKinds 'Busy'
+    if (-not $problem) { return }
+    $message = if ($problem.Kind -eq 'Busy') {
+        "Refusing to start on ${Serial}: $($problem.Text), and stayed above it for $($EmulatorBusySeconds / 60) minutes. " +
+        'Something runs on kestrel-api37, such as another test run, an install or an evaluation task: wait for the running ' +
+        "job to end, or check what runs (adb -s $Serial shell top -b -n 1), and then run this again."
+    } else {
+        "Refusing to start on ${Serial}: $($problem.Text). Cold-boot it with scripts\cold-boot.ps1 -Serial $Serial, and then run this again."
+    }
+    [pscustomobject]@{ Kind = $problem.Kind; Message = $message }
 }
 
 # Every gate (scripts\connected-test.ps1, voice-test.ps1, command-test.ps1 and listen-check.ps1) calls this before it
-# starts on a device that Assert-TestDevice accepted, and throws Get-EmulatorHealthRefusal's refusal.
+# starts on a device that Assert-TestDevice accepted, and throws the message of Get-EmulatorHealthRefusal's refusal.
 function Assert-EmulatorHealthy([string]$Serial) {
     $refusal = Get-EmulatorHealthRefusal -Serial $Serial
-    if ($refusal) { throw $refusal }
+    if ($refusal) { throw $refusal.Message }
 }
 
 # The cold boot of kestrel-api37 ------------------------------------------------------------------------------------
 
 # Android stays busy for the first minute or two after a cold boot (86 to 99 % of its CPUs in the first minute, 12 % at
 # 72 s, under 1 % from about 100 s on), so the cold boot reads the health right after the boot and again after each
-# pause of $ColdBootHealthPauseSeconds, until a reading passes, all within $ColdBootHealthSeconds from the start of the
-# first reading: it starts no pause after which the next reading could end later. A reading takes
-# $EmulatorHealthSampleSeconds on the device; $ColdBootHealthReadSeconds allows for adb around it.
+# pause of $ColdBootHealthPauseSeconds, until a reading passes, within $ColdBootHealthSeconds (Read-EmulatorHealthWithin).
 $ColdBootHealthSeconds = 300
 $ColdBootHealthPauseSeconds = 30
-$ColdBootHealthReadSeconds = $EmulatorHealthSampleSeconds + 5
 
-# Waits until kestrel-api37 passes the gates' health check (Get-EmulatorHealthProblem), and throws with the last
-# problem when it has not passed within $ColdBootHealthSeconds.
+# Waits until kestrel-api37 passes the gates' health check, whatever its problem, and throws with the last problem when
+# it has not passed within $ColdBootHealthSeconds.
 function Wait-EmulatorHealthy([string]$Serial) {
-    $deadline = (Get-Date).AddSeconds($ColdBootHealthSeconds)
-    while ($true) {
-        $problem = Get-EmulatorHealthProblem -Serial $Serial
-        if (-not $problem) { return }
-        if ((Get-Date).AddSeconds($ColdBootHealthPauseSeconds + $ColdBootHealthReadSeconds) -gt $deadline) { break }
-        Start-Sleep -Seconds $ColdBootHealthPauseSeconds
-    }
+    $problem = Read-EmulatorHealthWithin -Serial $Serial -Seconds $ColdBootHealthSeconds -PauseSeconds $ColdBootHealthPauseSeconds -RetryKinds 'Degraded', 'Busy'
+    if (-not $problem) { return }
     throw ("kestrel-api37 ($Serial) was cold-booted, but it did not pass the gates' health check within " +
-        "$($ColdBootHealthSeconds / 60) minutes: $problem. Look for what loads the emulator " +
+        "$($ColdBootHealthSeconds / 60) minutes: $($problem.Text). Look for what loads the emulator " +
         'or this computer, such as a Gradle build, and run scripts\cold-boot.ps1 again.')
 }
 # Cold-boots kestrel-api37 on $Serial, without a window, and checks the owner's data around the boot; README asks for it

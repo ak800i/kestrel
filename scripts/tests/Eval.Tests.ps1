@@ -143,7 +143,7 @@ Describe 'scripts\eval.ps1' {
         Invoke-EvalScript $root @('list') 3>$null | Should -Be 2
     }
 
-    It 'refuses with exit code 2 when the device that --device names fails its check, and with 4 when kestrel-api37 has degraded, without running the tool' {
+    It 'refuses with exit code 2 when the device that --device names fails its check, with 4 when kestrel-api37 has degraded and with 5 when it is busy, without running the tool' {
         Mock Invoke-Java { 0 }
         Mock Assert-TestDevice { throw 'Refusing to use emulator-5556.' }
         Mock Get-EmulatorHealthRefusal {}
@@ -152,10 +152,12 @@ Describe 'scripts\eval.ps1' {
         Should -Invoke Get-EmulatorHealthRefusal -Times 0 -Exactly
 
         Mock Assert-TestDevice {}
-        Mock Get-EmulatorHealthRefusal { 'Refusing to start on emulator-5554: kestrel-api37 has degraded: x. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.' }
+        Mock Get-EmulatorHealthRefusal { [pscustomobject]@{ Kind = 'Degraded'; Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: x. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.' } }
         Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5554') 3>$null | Should -Be 4
+        Mock Get-EmulatorHealthRefusal { [pscustomobject]@{ Kind = 'Busy'; Message = 'Refusing to start on emulator-5554: kestrel-api37 is busy: x.' } }
+        Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5554') 3>$null | Should -Be 5
 
-        Should -Invoke Get-EmulatorHealthRefusal -Times 1 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+        Should -Invoke Get-EmulatorHealthRefusal -Times 2 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
         Should -Invoke Invoke-Java -Times 0 -Exactly
     }
 

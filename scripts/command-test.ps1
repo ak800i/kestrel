@@ -17,8 +17,9 @@
 # Ctrl+C, it ends with exit code 1. Each command at the end runs only if the serial still names the emulator that the
 # script accepted at the start; if one cannot run, the script warns with the command that does it by hand and ends with
 # exit code 1.
-# It first checks that the emulator has not degraded (Assert-EmulatorHealthy in scripts\lib\DeviceGuard.ps1), and stops
-# before it reads or changes anything else, with the advice to cold-boot it, when it has.
+# It first checks the emulator's health (Assert-EmulatorHealthy in scripts\lib\DeviceGuard.ps1), and stops before it
+# reads or changes anything else, with the advice to cold-boot it when it has degraded, or to wait for the job that runs
+# there when it stays busy.
 # Example: scripts\command-test.ps1 -Serial emulator-5554
 #          scripts\command-test.ps1 -Serial emulator-5554 -Class TouchCommandsTest,GestureCommandsTest#swipeUpOnANumber
 param(

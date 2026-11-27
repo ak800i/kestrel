@@ -83,8 +83,9 @@
 # Android says clearly that the PIN pad shows, never again after a typing that did not unlock the phone, and never
 # prints it. A phone that starts again but stays locked fails the reboot check with the reason, skips the role check, which
 # needs Kestrel running, and still gets its settings back through adb. It never waits for an Enter.
-# On kestrel-api37 it first checks that the emulator has not degraded (Assert-EmulatorHealthy in
-# scripts\lib\DeviceGuard.ps1), and stops before any check, with the advice to cold-boot it, when it has.
+# On kestrel-api37 it first checks the emulator's health (Assert-EmulatorHealthy in scripts\lib\DeviceGuard.ps1), and
+# stops before any check, with the advice to cold-boot it when it has degraded, or to wait for the job that runs there
+# when it stays busy.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3

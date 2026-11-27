@@ -241,6 +241,15 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Test-SittingStop $stop | Should -BeTrue
         $stop.Exception.Message | Should -BeExactly ('kestrel-api37 has degraded, so scripts\eval.ps1 did not run inject-01 there. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, ' +
             'and then call sitting 2 again with -Step prepare,injection and the steps after it, which runs the tasks of injection again.')
+        # Exit code 5 is a kestrel-api37 that stayed busy with another job: the sitting stops with the advice to wait for
+        # it, never to cold-boot.
+        Mock Invoke-EvalTool { 5 }
+        $stop = $null
+        try { Invoke-Eval injection $EmulatorSerial 'inject-01' 1 @{} } catch { $stop = $_ }
+        Test-SittingStop $stop | Should -BeTrue
+        $stop.Exception.Message | Should -BeExactly ('kestrel-api37 is busy with another job, such as another test run, an install or an evaluation task, so scripts\eval.ps1 did not run inject-01 there. ' +
+            'Wait for that job to end, or check what runs (adb -s emulator-5554 shell top -b -n 1), and then call sitting 2 again with -Step prepare,injection and the steps after it, which runs the tasks of injection again.')
+        $stop.Exception.Message | Should -Not -BeLike '*cold-boot*'
     }
 }
 
