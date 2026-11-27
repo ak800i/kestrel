@@ -107,45 +107,55 @@ Describe 'hook.ps1' {
         $output | Should -BeLike '*agent-memory -Has needs -Key; give the key to look for.*'
     }
 
-    It 'accepts network-allowlist and agent-task -Digits, and reaches the argument checks' {
+    It 'accepts network-allowlist and agent-task -Digits, passes every argument check and prints the broadcast' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
+        $receiver = 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.'
 
-        $allowlist = (& pwsh -NoProfile -File $hook -Serial no-such-device network-allowlist -Boost -1 2>&1) -join "`n"
-        $digits = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Result -Tag t1 -Digits 2025550143 -Boost -1 2>&1) -join "`n"
+        # -PrintCall stops after the argument checks, before the device check, which would start adb's server.
+        $allowlist = (& pwsh -NoProfile -File $hook -Serial no-such-device network-allowlist -PrintCall 2>&1) -join "`n"
+        $allowlistExit = $LASTEXITCODE
+        $digits = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Result -Tag t1 -Digits 2025550143 -PrintCall 2>&1) -join "`n"
+        $digitsExit = $LASTEXITCODE
 
-        $allowlist | Should -Not -BeLike "*Cannot validate argument on parameter 'Command'*"
-        $allowlist | Should -BeLike '*-Boost -1 is negative*'
-        $digits | Should -Not -BeLike '*A parameter cannot be found*'
-        $digits | Should -BeLike '*-Boost -1 is negative*'
+        $allowlistExit | Should -Be 0
+        $allowlist | Should -BeExactly "${receiver}NETWORK_ALLOWLIST"
+        $digitsExit | Should -Be 0
+        $digits | Should -BeExactly "${receiver}AGENT_TASK --ez result true --es tag 't1' --es digits '2025550143'"
     }
 
-    It 'accepts the hooks of the conversations and their options, and reaches the argument checks' {
+    It 'accepts the hooks of the conversations and their options, passes every argument check and prints the broadcast' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
+        $receiver = 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.'
 
-        # -Boost -1 ends each call at the argument checks, before the device check, which would start adb's server.
+        # -PrintCall stops after the argument checks, before the device check, which would start adb's server, so a check
+        # that wrongly refuses a valid call fails the test.
         $calls = @(
-            @('conversation-state'),
-            @('conversation-control', '-Do', 'limits', '-Limits', '50/5/10'),
-            @('conversation-control', '-Do', 'delete-typed'),
-            @('voice-restore'),
-            @('conversation-type', '-Text', 'Find the number of Ana Test.', '-Tag', 't1', '-Live', '-Model', 'gpt-6-luna', '-Marker', 'maple heron'),
-            @('goal-service-state'),
-            @('goal-control', '-Do', 'tap', '-Action', 'stop'),
-            @('goal-control', '-Do', 'send-later', '-Action', 'cancel'),
-            @('goal-control', '-Do', 'refuse-off'),
-            @('goal-control', '-Do', 'stop-typed'),
-            @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'),
-            @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'),
-            @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card')
+            @{ Call = @('conversation-state'); Sent = 'CONVERSATION_STATE' },
+            @{ Call = @('conversation-control', '-Do', 'limits', '-Limits', '50/5/10'); Sent = 'CONVERSATION_CONTROL --es do limits --es limits 50/5/10' },
+            @{ Call = @('conversation-control', '-Do', 'delete-typed'); Sent = 'CONVERSATION_CONTROL --es do delete-typed' },
+            @{ Call = @('voice-restore'); Sent = 'VOICE_RESTORE' },
+            @{
+                Call = @('conversation-type', '-Text', 'Find the number of Ana Test.', '-Tag', 't1', '-Live', '-Model', 'gpt-6-luna', '-Marker', 'maple heron')
+                Sent = "CONVERSATION_TYPE --es text 'Find the number of Ana Test.' --es model 'gpt-6-luna' --es tag 't1' --ez live true --es marker 'maple heron'"
+            },
+            @{ Call = @('goal-service-state'); Sent = 'GOAL_SERVICE_STATE' },
+            @{ Call = @('goal-control', '-Do', 'tap', '-Action', 'stop'); Sent = "GOAL_CONTROL --es action 'stop' --es do tap" },
+            @{ Call = @('goal-control', '-Do', 'send-later', '-Action', 'cancel'); Sent = "GOAL_CONTROL --es action 'cancel' --es do send-later" },
+            @{ Call = @('goal-control', '-Do', 'refuse-off'); Sent = 'GOAL_CONTROL --es do refuse-off' },
+            @{ Call = @('goal-control', '-Do', 'stop-typed'); Sent = 'GOAL_CONTROL --es do stop-typed' },
+            @{ Call = @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'); Sent = "VOICE_TASK --ei seconds 5 --es reply 'stand-in' --ez handover true" },
+            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'); Sent = "AGENT_ANSWER --es tag 't1' --es answer 'yes' --es channel text" },
+            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card'); Sent = "AGENT_ANSWER --es tag 't1' --es answer 'confirm' --es channel card" }
         )
-        foreach ($call in $calls) {
-            $output = (& pwsh -NoProfile -File $hook -Serial no-such-device @call -Boost -1 2>&1) -join "`n"
+        foreach ($case in $calls) {
+            $call = $case.Call
+            $output = (& pwsh -NoProfile -File $hook -Serial no-such-device @call -PrintCall 2>&1) -join "`n"
+            $exit = $LASTEXITCODE
 
-            $output | Should -Not -BeLike '*Cannot validate argument*'
-            $output | Should -Not -BeLike '*A parameter cannot be found*'
-            $output | Should -BeLike '*-Boost -1 is negative*'
+            $exit | Should -Be 0 -Because ($call -join ' ')
+            $output | Should -BeExactly "$receiver$($case.Sent)"
         }
     }
 
@@ -195,17 +205,16 @@ Describe 'hook.ps1' {
         $channelElsewhere | Should -BeLike '*-Channel needs agent-answer.*'
     }
 
-    It 'accepts agent-live, which opens and closes the live session of sitting 2, and reaches the argument checks' {
+    It 'accepts agent-live, which opens and closes the live session of sitting 2, passes every argument check and prints the broadcast' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
 
-        # A refused argument ends the hook before its device check, which would start adb's server under this pipe
-        # and hang where no server runs yet, as on CI.
-        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-live -On false -Boost -1 2>&1) -join "`n"
+        # -PrintCall ends the hook before its device check, which would start adb's server under this pipe and hang where
+        # no server runs yet, as on CI.
+        $output = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-live -On false -PrintCall 2>&1) -join "`n"
         $exit = $LASTEXITCODE
 
-        $exit | Should -Not -Be 0
-        $output | Should -Not -BeLike "*Cannot validate argument on parameter 'Command'*"
-        $output | Should -BeLike '*-Boost -1 is negative*'
+        $exit | Should -Be 0
+        $output | Should -BeExactly 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_LIVE --ez on false'
     }
 }

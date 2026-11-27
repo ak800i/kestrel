@@ -325,8 +325,9 @@
 #                                           process's start found (restored=nothing, open, closed, goal-held, goal-ended
 #                                           or pending); delete-typed deletes the closed conversations that the work of a
 #                                           hook's input opened (any input that a hook gives, tagged or not), also before a
-#                                           restart, unless an input of the owner's with his words or his choice reached
-#                                           them since, and never another, and answers deleted=<n> open=<n> failed=<n>
+#                                           restart, unless an act of the owner's with his words or his choice (his input,
+#                                           or his tap on a card) reached them since, and never another, and answers
+#                                           deleted=<n> open=<n> failed=<n>
 #   voice-restore                           how long ago the restore at the process's start turned Kestrel on
 #                                           (restoredAgo=<seconds>|none) and the guard against a crash loop (guard=<seconds>),
 #                                           within which a crash keeps Kestrel off (plan 7G)
@@ -349,6 +350,9 @@
 #                                           their conversation, or their request while none is open, as Kestrel checks
 #                                           their mark (stop=sent), and leaves the owner's (stop=none)
 # -Number picks an element by the number that the numbers overlay shows on it.
+# -PrintCall checks the arguments as every call does, then prints the broadcast that the hook would send and stops before
+# it looks for the device, so a test can see that a valid call passes every argument check; the checks that need the
+# device (clipboard -Clear on kestrel-api37, provider-delete) do not run.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
 # Windows PowerShell 5.1 drops double quotes from the arguments of other programs, which would change the text that
 # 'type' types, so the script needs PowerShell 7.3 or newer.
@@ -452,7 +456,8 @@ param(
     [string]$Do,
     [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
     [ValidateSet('voice', 'text', 'card')][string]$Channel,
-    [switch]$HandOver
+    [switch]$HandOver,
+    [switch]$PrintCall
 )
 $ErrorActionPreference = 'Stop'
 # -1 marks a -Boost or -Threshold that was not given, so a negative value that was given would be dropped without a word.
@@ -490,27 +495,9 @@ if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { 
 # Emptying the clipboard would lose the owner's clip, so -Clear runs only on the emulator, which the hook checks too.
 $clipboardClearRefused = "clipboard -Clear was refused on ${Serial}: only the emulator kestrel-api37 may empty the clipboard."
 if ($Command -eq 'clipboard' -and $Clear -and $Serial -notlike 'emulator-*') { throw $clipboardClearRefused }
-. "$PSScriptRoot\lib\Kestrel.ps1"
-. "$PSScriptRoot\lib\DeviceGuard.ps1"
-Use-KestrelToolchain
-Assert-TestDevice -Serial $Serial
-if ($Command -eq 'clipboard' -and $Clear -and $KestrelTestDevices[$Serial].Property -ne 'ro.boot.qemu.avd_name') { throw $clipboardClearRefused }
-# kestrel-api37 keeps Kestrel's Copilot profile, so provider-delete never runs there.
-Assert-OwnerDataCommand -Serial $Serial -Command $Command
 
 # The device's shell reads the command line, so every text value is quoted for it.
 function ConvertTo-ShellText([string]$Value) { "'" + $Value.Replace("'", "'\''") + "'" }
-
-# Runs adb and reads its output as UTF-8, because screen text can be in any language.
-function Invoke-Adb {
-    $consoleEncoding = [Console]::OutputEncoding
-    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-    try {
-        (& (Get-Adb) -s $Serial @args) -join "`n"
-    } finally {
-        [Console]::OutputEncoding = $consoleEncoding
-    }
-}
 
 $extras = @()
 if ($Key) { $extras += "--es key $(ConvertTo-ShellText $Key)" }
@@ -600,7 +587,31 @@ if ($Channel) { $extras += "--es channel $($Channel.ToLowerInvariant())" }
 if ($HandOver) { $extras += '--ez handover true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
-$broadcast = "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction $($extras -join ' ')"
+$broadcast = (@("am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction") + $extras) -join ' '
+if ($PrintCall) {
+    $broadcast
+    return
+}
+
+. "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
+Use-KestrelToolchain
+Assert-TestDevice -Serial $Serial
+if ($Command -eq 'clipboard' -and $Clear -and $KestrelTestDevices[$Serial].Property -ne 'ro.boot.qemu.avd_name') { throw $clipboardClearRefused }
+# kestrel-api37 keeps Kestrel's Copilot profile, so provider-delete never runs there.
+Assert-OwnerDataCommand -Serial $Serial -Command $Command
+
+# Runs adb and reads its output as UTF-8, because screen text can be in any language.
+function Invoke-Adb {
+    $consoleEncoding = [Console]::OutputEncoding
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    try {
+        (& (Get-Adb) -s $Serial @args) -join "`n"
+    } finally {
+        [Console]::OutputEncoding = $consoleEncoding
+    }
+}
+
 $output = Invoke-Adb shell $broadcast
 
 $match = [regex]::Match($output, '(?s)Broadcast completed: result=(-?\d+)(?:, data="(.*)")?\s*$')
