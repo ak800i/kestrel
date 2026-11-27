@@ -40,9 +40,11 @@ class RunCommand(private val environment: Environment, private val command: Comm
             return 0
         }
         val script = if (command.live) null else ScriptInstaller.resource(dryRun!!.script)
+        // Every script that the runs install: the task's, then those after the restarts of the task that runs.
+        val scripts = if (command.live) emptyList() else listOf(dryRun!!.script) + executed.dryRun?.restarts.orEmpty()
         val runs = if (command.dryRun) 1 else command.runs
         return session.guarded {
-            session.prepare(listOf(executed), command.live)
+            session.prepare(listOf(executed), command.live, scripts)
             val failures = session.runner(RunOptions(command.live, command.model, command.name), writer).runAll(executed, script, runs)
             if (failures > 0) 1 else 0
         }

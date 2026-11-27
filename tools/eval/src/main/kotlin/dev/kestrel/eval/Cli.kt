@@ -15,6 +15,7 @@ import dev.kestrel.eval.config.Redactions
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.run.LineWriter
+import dev.kestrel.eval.run.OwnerBusy
 import dev.kestrel.eval.run.Stopping
 
 /**
@@ -23,7 +24,9 @@ import dev.kestrel.eval.run.Stopping
  * gate, a missing configuration, a command line that it does not take), which starts no run and writes no run line. A
  * command that Ctrl+C ends ([Stopping]) prints no error: it ends with 1 when run lines were written (the shutdown hook
  * writes `reason=stopped` for the runs that did not end), and with 2 when none was. On a real Ctrl+C the JVM is already
- * shutting down, so the process ends with the JVM's own exit code instead. An error that came after the first one, such
+ * shutting down, so the process ends with the JVM's own exit code instead. A command that the owner's open conversation
+ * stops ([OwnerBusy]) prints `STOPPED:` with the reason `owner-busy` and ends with 1; the runs that it did not run have
+ * `result=skipped reason=owner-busy`, which a resumed suite runs. An error that came after the first one, such
  * as a change of kestrel-api37's accounts after a failed command, is printed after it, and makes a refusal an error (1).
  */
 class Cli(private val environment: Environment) {
@@ -58,6 +61,10 @@ class Cli(private val environment: Environment) {
         } catch (e: Stopping) {
             errors(e, redactions)
             if (writer?.lines.isNullOrEmpty()) EXIT_REFUSED else EXIT_FAILED
+        } catch (e: OwnerBusy) {
+            out.println("STOPPED: ${redactions.forConsole(e.message.orEmpty())}")
+            errors(e, redactions)
+            EXIT_FAILED
         } catch (e: Refusal) {
             out.println("REFUSED: ${redactions.forConsole(e.message.orEmpty())}")
             errors(e, redactions)

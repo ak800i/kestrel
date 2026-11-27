@@ -7,7 +7,7 @@ import kotlin.time.Duration
  * adb cannot stretch it; and a device bounded by it ([Device.until]) gives each command only the time that is [left].
  */
 class Deadline(private val clock: Clock, within: Duration) {
-    private val end = clock.elapsed() + within
+    private var end = clock.elapsed() + within
 
     /** The time until the deadline, zero once it has passed. */
     val left: Duration get() = (end - clock.elapsed()).coerceAtLeast(Duration.ZERO)
@@ -17,6 +17,14 @@ class Deadline(private val clock: Clock, within: Duration) {
 
     /** The earlier of this deadline and [other], for a read that must end by both, as a wait's limit and its stall rule. */
     fun earlier(other: Deadline): Deadline = if (other.end < end) other else this
+
+    /**
+     * Moves the deadline to [within] from now when that is later, for a wait that learns how long it must wait, as the wait
+     * for the owner's conversation learns its quiet time; a device bounded by it gives its commands the new time.
+     */
+    fun extend(within: Duration) {
+        end = maxOf(end, clock.elapsed() + within)
+    }
 }
 
 /**

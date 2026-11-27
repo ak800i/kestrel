@@ -48,6 +48,14 @@ class PreflightTest {
         )
 
         run.adb.hook("CONVERSATION_STATE") { FakeAdb.NO_CONVERSATION }
+        // Plan 7G's stop of the hooks' own goal only, with which a run's restore leaves the owner's goal alone.
+        run.adb.hookFails("GOAL_CONTROL", "add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later")
+        assertEquals(
+            "Kestrel on emulator-5554 answers no goal-control do=stop-typed, as a build from before plan 7G of sub-project 7 does; install the current debug build with scripts\\install.ps1.",
+            assertThrows(Refusal::class.java) { preflight().prepare(needsTestApp = false) }.message,
+        )
+
+        run.adb.hook("GOAL_CONTROL") { "stop=none" }
         run.adb.hookFails("CONVERSATION_CONTROL", "add --es do with one of new, expire, limits or restore-check")
         assertEquals(
             "Kestrel on emulator-5554 answers no conversation-control do=delete-typed, as a build from before plan 7F of sub-project 7 does; install the current debug build with scripts\\install.ps1.",

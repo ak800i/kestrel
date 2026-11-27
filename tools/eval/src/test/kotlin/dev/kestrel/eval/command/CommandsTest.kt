@@ -57,6 +57,24 @@ class CommandsTest {
         assertEquals(3, fake.adb.hookCalls("CONVERSATION_CONTROL").count { it["do"] == "delete-typed" })
     }
 
+    // A script that Kestrel's scripted model refuses stops the suite before any run, with the file and Kestrel's reason
+    // (plan 7G).
+    @Test
+    fun aScriptThatKestrelRefusesStopsTheSuiteBeforeAnyRun() {
+        fake.adb.hookWith("AGENT_SCRIPT") { extras ->
+            if (extras["check"] == "true") 1 to "error: the script is refused (InvalidScript): Reply 1 of the script has keys that the scripted model does not know: require."
+            else -1 to "script=installed replies=2"
+        }
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", "stand-in-hotspot,stand-in-firefox"))
+
+        assertTrue(fake.output.contains("REFUSED: Kestrel's scripted model does not take the script "))
+        assertTrue(fake.output.contains("(error: the script is refused (InvalidScript): Reply 1 of the script has keys that the scripted model does not know: require.)"))
+        assertTrue(runLines().isEmpty())
+        assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
+        assertTrue(fake.adb.hookCalls("AGENT_SCRIPT").none { it["check"] == null && it["clear"] == null })
+    }
+
     @Test
     fun aTaskWithoutAFormWithoutAModelIsSkippedWithItsReason() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "emulator-5554", "--task", "waze-home", "--dry-run"))

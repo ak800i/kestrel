@@ -29,7 +29,7 @@ class RehearseCommand(private val environment: Environment, private val command:
         if (unknown.isNotEmpty()) throw Refusal("${kind.label} rehearses no task ${unknown.joinToString()}.")
         val chosen = command.tasks?.let { names -> tasks.filter { it.name in names } } ?: tasks
         return session.guarded {
-            session.prepare(chosen, live = false)
+            session.prepare(chosen, live = false, scripts = emptyList())
             var failed = 0
             for (task in chosen) {
                 val (result, reason) = rehearse(session, task)

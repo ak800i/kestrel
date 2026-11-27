@@ -32,7 +32,7 @@ import kotlin.time.Duration.Companion.seconds
  * with each run's detail line ([dev.kestrel.eval.run.RunDetail]), one for each run line, and `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures on
  * kestrel-api37 (once without a model, 5 times live, by default). With [resume], a suite goes on in the folder of one
  * that stopped ([Resume]), and only while the Kestrel install that ran it is still the device's: it keeps the tasks
- * whose runs all have a line that is not `reason=stopped`, runs the rest of the last task that was cut short (all of it,
+ * whose runs all have a line that ended (not `reason=stopped` nor `reason=owner-busy`), runs the rest of the last task that was cut short (all of it,
  * and names the kept tasks, when HEAD differs from the folder's commit in paths that change no run of Kestrel), then
  * every other task whole after its earlier lines were dropped, and stops when a task's runs name another model than the
  * folder's, whose lines it takes out again; its report is of the whole folder. With [recordBaseline], it runs only HEAD's Kestrel ([checkBaselineBuild]).
@@ -128,7 +128,8 @@ class SeriesCommand(
             return finish(0)
         }
         return session.guarded {
-            session.prepare(todo.map { byName.getValue(it.first) }, live)
+            val prepared = todo.map { byName.getValue(it.first) }
+            session.prepare(prepared, live, if (live) emptyList() else prepared.flatMap { it.dryRun!!.scripts })
             // The owner's kept set for the evaluation, given and kept before a live series (2026-11-24).
             val permissions = if (live) EvalPermissions.grant(session.device, environment.clock) else null
             val build = KestrelBuild.installed(session.device)?.let { KestrelBuild.withState(it, session.hooks.state()) }

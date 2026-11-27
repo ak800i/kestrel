@@ -27,7 +27,7 @@ class TaskBench(kind: DeviceKind = DeviceKind.EMULATOR, config: LocalConfig = Lo
     val memory = mutableSetOf<String>()
 
     init {
-        adb.hook("AGENT_SCRIPT") { extras -> if (extras["clear"] == "true") "script=none" else "script=installed replies=3" }
+        adb.hook("AGENT_SCRIPT") { extras -> if (extras["clear"] == "true") "script=none" else if (extras["check"] == "true") "script=valid replies=3" else "script=installed replies=3" }
         adb.hook("VOICE") { "sent" }
         adb.hook("AGENT_STATE") { "phase=running asking=none work=running-task handOver=none confirming=none" }
         adb.hook("AGENT_TASK") { extras ->

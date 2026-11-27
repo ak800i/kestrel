@@ -41,6 +41,7 @@ import dev.kestrel.conversation.model.ConversationSnapshot
 import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
+import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.LineKind
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.PhoneSignal
@@ -153,6 +154,12 @@ class ConversationEngine(
          * gets whether it did (plan 7G).
          */
         class EndQuietTimeIf(val open: (ConversationId) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
+
+        /**
+         * The "stop" [input], only when a goal is open and [open] holds for its conversation's id at this step of the loop;
+         * [done] gets whether it was given (plan 7G).
+         */
+        class StopGoalIf(val input: OwnerInput, val open: (ConversationId) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
 
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
@@ -364,6 +371,19 @@ class ConversationEngine(
     }
 
     /**
+     * The hook `goal-control do=stop-typed` (plan 7G): gives the conversation [input], a "stop", but only while a goal is
+     * open and [open] holds for its conversation's id. The loop checks both between the machine's steps, as
+     * [endQuietTimeIf] does, so the goal of a conversation that the owner opened or continued is never stopped. Returns
+     * whether the input was given. Waits for [restore].
+     */
+    suspend fun stopGoalIf(input: OwnerInput, open: (ConversationId) -> Boolean): Boolean {
+        require(input.intent == InputIntent.Stop) { "Only a stop is given this way" }
+        val done = CompletableDeferred<Boolean>()
+        inbox.send(Message.StopGoalIf(input, open, done))
+        return done.await()
+    }
+
+    /**
      * The settings page's "Delete history" after the page's own question (design 9.7 of sub-project 7; plan 7D): deletes
      * what a yes to "delete history" deletes and closes the open conversation, with no reply on a channel. While a goal is
      * open or one of Kestrel's own requests runs, it leaves everything alone, as "delete history" by voice does. Waits for
@@ -457,6 +477,7 @@ class ConversationEngine(
                 is Message.Reopened -> reopened(message)
                 is Message.DeletePast -> deletion(message)
                 is Message.EndQuietTimeIf -> endQuietTimeIf(message)
+                is Message.StopGoalIf -> stopGoalIf(message)
                 is Message.DeleteHistory -> deleteHistory(message.done)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
             }
@@ -690,6 +711,16 @@ class ConversationEngine(
         message.done.complete(true)
     }
 
+    private fun stopGoalIf(message: Message.StopGoalIf) {
+        val id = state.id
+        if (id == null || state.goal == null || !message.open(id)) {
+            message.done.complete(false)
+            return
+        }
+        process(ConversationEvent.Input(message.input))
+        message.done.complete(true)
+    }
+
     // Design 9.5 of sub-project 7: the open conversation is never a past one, nor is the one that a running switch opens.
     // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after;
     // while the settings page's "Delete history" runs, the deletion waits with the other writes ([send]).
@@ -805,6 +836,7 @@ class ConversationEngine(
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
                 is Message.DeletePast -> message.done.complete(PastDeletion.FAILED)
                 is Message.EndQuietTimeIf -> message.done.complete(false)
+                is Message.StopGoalIf -> message.done.complete(false)
                 else -> Unit
             }
         } catch (e: CancellationException) {

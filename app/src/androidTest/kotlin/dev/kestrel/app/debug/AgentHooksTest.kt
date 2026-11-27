@@ -72,6 +72,10 @@ class AgentHooksTest {
         val folder = File(context.filesDir, AgentTaskHooks.SCRIPTS).apply { mkdirs() }
         val file = File(folder, "hooks-test.json").apply { writeText("""[{"tool": "fail", "arguments": {"reason": "I stop here."}}]""") }
         try {
+            // A check reads the script by the scripted model's rules and installs nothing (plan 7G).
+            graph.roundModels.modelOverride = null
+            assertEquals("script=valid replies=1", answer(hook("AGENT_SCRIPT --es file hooks-test.json --ez check true")))
+            assertNull(graph.roundModels.modelOverride)
             assertEquals("script=installed replies=1", answer(hook("AGENT_SCRIPT --es file hooks-test.json")))
             assertNotNull(graph.roundModels.modelOverride)
             assertTrue(hook("AGENT_SCRIPT --es file ../hooks-test.json").contains("result=1, data=\"error: add --es file"))

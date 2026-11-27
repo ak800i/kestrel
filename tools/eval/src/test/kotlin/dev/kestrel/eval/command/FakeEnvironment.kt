@@ -60,7 +60,7 @@ class FakeEnvironment {
         adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
         adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
         adb.hook("AGENT_LIVE") { extras -> extras["on"]?.let { live = if (it == "true") "on" else "off" }; "live=$live" }
-        adb.hook("AGENT_SCRIPT") { extras -> if (extras["clear"] == "true") "script=none" else "script=installed replies=2" }
+        adb.hook("AGENT_SCRIPT") { extras -> if (extras["clear"] == "true") "script=none" else if (extras["check"] == "true") "script=valid replies=2" else "script=installed replies=2" }
         adb.hook("VOICE") { "sent" }
         adb.hook("AGENT_STATE") { "phase=running asking=none work=running-task handOver=none confirming=none" }
         adb.hook("AGENT_TASK") { extras -> if (extras["marker"] != null) "state=done marker=1" else end }

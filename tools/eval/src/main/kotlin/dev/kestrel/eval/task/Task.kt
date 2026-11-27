@@ -13,7 +13,10 @@ enum class TaskKind { D3, SUITE, STAND_IN, INJECTION }
  * are the scripts that the scripted model gets after each [Turn.Restart], in their order, because it ends with Kestrel's
  * process (design 15.3 of sub-project 7).
  */
-data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList())
+data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList()) {
+    /** Every script that a run of the task installs: [script], then [restarts]. */
+    val scripts: List<String> get() = listOf(script) + restarts
+}
 
 /** How a rehearsal makes a task's end state without Kestrel (design D7 of sub-project 6). */
 sealed interface Rehearsal {

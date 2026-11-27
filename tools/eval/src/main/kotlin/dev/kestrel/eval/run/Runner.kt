@@ -25,15 +25,15 @@ class RestoreFailed(message: String) : Exception(message)
 
 /**
  * One run of a task, and the runs of a task (design D5 of sub-project 6), in task-check.ps1's order: the call state, the
- * device rule, the setup and then a conversation of the run's own (whose failure fails only this run, `reason=setup`), the
- * scripted model of a run without a model, the task's turns ([TurnRunner]; design 14.4 of sub-project 7), the checks, and
- * the end however the run ends: the run's restores (the stop of a command whose end the run did not read, the stop of a
- * goal that the run left open, the scripted model removed, the run's conversations deleted, and the setup's restores, in
- * that order), the call state again, the credits and the line. The stops and the removal are restores, so that the
- * shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel
- * listens, before each run. [conversations] is the series' guard, which learns each command that a run gives Kestrel, so
- * that the series' cleanup ends only what the runs opened. Once the shutdown hook began ([Restores.stopping]), no run and
- * no command starts: the runner throws [Stopping].
+ * device rule, the setup, then a conversation of the run's own and the scripted model of a run without a model (a failure
+ * of any of them fails only this run, `reason=setup`), the task's turns ([TurnRunner]; design 14.4 of sub-project 7), the
+ * checks, and the end however the run ends: the run's restores (the stop of the run's command and of a goal that the run
+ * left open, which only the hooks' own goal gets, the scripted model removed, the run's conversations deleted, and the
+ * setup's restores, in that order), the call state again, the credits and the line. The stops and the removal are
+ * restores, so that the shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening]
+ * waits until Kestrel listens, before each run. [conversations] is the series' guard, which learns each command that a run
+ * gives Kestrel, so that the series' cleanup ends only what the runs opened. Once the shutdown hook began
+ * ([Restores.stopping]), no run and no command starts: the runner throws [Stopping].
  */
 class Runner(
     private val device: Device,
@@ -64,28 +64,34 @@ class Runner(
      * the run's detail line with it (with what the run under way knew and what its restores put back), so
      * that an error or Ctrl+C never leaves a run out of the results: the run that was under way with its own credits (after
      * its stop, which runs first: `unknown` for a live task without credits, or when they cannot be read), the runs that
-     * never started with 0.00, as task-check.ps1's `Close-TaskRun` wrote them. A resumed suite runs only the runs from
-     * [first] on, whose earlier runs have their lines in its folder.
+     * never started with 0.00, as task-check.ps1's `Close-TaskRun` wrote them. When the owner's open conversation stops the
+     * series ([OwnerBusy]), the runs without a line did not run: `result=skipped reason=owner-busy`, no failure of the task.
+     * A resumed suite runs only the runs from [first] on, whose earlier runs have their lines in its folder.
      */
     fun runAll(task: Task, script: String?, runs: Int, first: Int = 1): Int {
         require(options.live || script != null) { "A run without a model needs the scripted model's script." }
         val count = task.runsAtMost?.let { minOf(it, runs) } ?: runs
         if (count < runs) console.warn("Task ${task.name} is a known gap of v1, for ${task.gap}: it runs once.")
         val mark = restores.mark()
+        var busy = false
         restores.push("the lines of ${task.name}'s runs that did not end", "None: the results lack these runs.") {
             val running = current
             for (number in first..count) {
                 if (writer.wrote(task.name, number)) continue
                 // The run under way keeps what it knew, and what its restores, which ran first, put back.
                 val under = running?.takeIf { it.first == number }?.second
-                val spent = under?.let {
-                    try {
-                        credits(it)
-                    } catch (e: Exception) {
-                        "unknown"
+                val line = if (busy) {
+                    RunLine(task.name, number, RunResult.SKIPPED, null, CheckResult.SKIPPED, Reason.OWNER_BUSY)
+                } else {
+                    val spent = under?.let {
+                        try {
+                            credits(it)
+                        } catch (e: Exception) {
+                            "unknown"
+                        }
                     }
+                    RunLine(task.name, number, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED, spent)
                 }
-                val line = RunLine(task.name, number, RunResult.FAIL, null, CheckResult.SKIPPED, Reason.STOPPED, spent)
                 writer.writeOnce(task.name, number, line, under?.detail(task.name, number) ?: RunDetail.empty(task.name, number))
             }
         }
@@ -98,6 +104,9 @@ class Runner(
                 val marker = markers.next(used).also { used.add(it) }
                 if (run(task, script, number, marker).result == RunResult.FAIL) failures++
             }
+        } catch (e: OwnerBusy) {
+            busy = true
+            throw e
         } finally {
             restores.report(restores.runDownTo(mark))
         }
@@ -123,7 +132,12 @@ class Runner(
         val end = close(task, number, state, mark)
         val call = state.call || end.after
         if (end.after) console.warn("Task ${task.name}, run $number: a call showed after the run; :tools:eval ended it with the end-call key.")
-        val judged = verdict ?: Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
+        // A run that the owner's open conversation kept from running did not run, and fails nothing.
+        val judged = verdict ?: if (error is OwnerBusy) {
+            Verdict(RunResult.SKIPPED, CheckResult.SKIPPED, Reason.OWNER_BUSY)
+        } else {
+            Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
+        }
         val reason = if (call) Reason.CALL else judged.reason
         val line = RunLine(
             task.name, number, if (call) RunResult.FAIL else judged.result, state.answer, judged.check,
@@ -146,12 +160,14 @@ class Runner(
         }
         if (device.kind !in task.devices) return Verdict(RunResult.SKIPPED, CheckResult.SKIPPED, Reason.UNTESTABLE)
         // The task's setup decides first whether the device can run it, so that an untestable run gives Kestrel nothing,
-        // not even a read of its conversation; the run's conversation is the setup's last step.
-        for (step in task.setup + NewConversation(conversations)) {
+        // not even a read of its conversation; the run's conversation is the setup's next step, and the scripted model of a
+        // run without a model its last, whose failure fails the run as any step's does.
+        val scripted = if (options.live) null else ScriptedModelSetup(scripts, task, script!!)
+        for (step in task.setup + NewConversation(conversations) + listOfNotNull(scripted)) {
             val result = try {
                 step.apply(scope)
             } catch (e: Exception) {
-                if (e is DeviceChanged || e is Stopping) throw e
+                if (e is DeviceChanged || e is Stopping || e is OwnerBusy) throw e
                 console.warn("Task ${task.name}, run $number: the setup failed (${e.message ?: e.javaClass.simpleName}); the run fails, and the next run goes on.")
                 return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.SETUP)
             }
@@ -161,16 +177,18 @@ class Runner(
             }
         }
         // The steps that hold state in Kestrel's process, which a restart of Kestrel applies again (plan 7G).
-        val renewed = task.setup.filterIsInstance<ProcessSetup>().toMutableList<ProcessSetup>()
-        if (!options.live) renewed += ScriptedModelSetup(scripts, task, script!!).also { it.apply(scope) }
-        // Design 6.4 of sub-project 7: a goal that the run left open, held or not, would take the next run's command.
-        restores.push("the goal of ${task.name}, run $number, ended", "Say 'Kestrel, stop'.") {
-            if (!conversations.stopGoal { quietly { hooks.voiceHeard("stop", tags()) } }) {
-                console.warn("Task ${task.name}, run $number: Kestrel's goal could not be stopped; say 'Kestrel, stop'.")
+        val renewed = task.setup.filterIsInstance<ProcessSetup>() + listOfNotNull(scripted)
+        // Design 6.4 of sub-project 7: a command that still runs, or a goal that the run left open, held or not, would take
+        // the next run's command. Both end through the one rule of the guard, which stops only the hooks' own goal.
+        restores.push("the command and the goal of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
+            state.current?.let { registered(it.tag, it.sent) }
+            when (conversations.stopGoal()) {
+                GoalStop.ENDED -> Unit
+                GoalStop.OWNERS -> console.warn(
+                    "Task ${task.name}, run $number: the goal that is open is in the owner's conversation, which the evaluation never stops; say 'Kestrel, stop' to end it.",
+                )
+                GoalStop.OPEN -> console.warn("Task ${task.name}, run $number: Kestrel's goal could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
             }
-        }
-        restores.push("the command of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
-            state.current?.let { stop(task, number, it.tag, it.sent) }
         }
         stopIfStopping()
         if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations, restarter, renewed).run() == TurnsEnd.UNDELIVERED) {
@@ -215,29 +233,13 @@ class Runner(
     }
 
     /**
-     * Stops the command of [tag] as the owner's "stop" would, only while it runs: a plain "stop" with no command would be an
-     * instant command. Once its words were [sent], Kestrel may register the command late, after Ctrl+C, so a tag that
-     * Kestrel does not know yet is read once a second for up to 10 s.
+     * Waits while Kestrel may still register the command of [tag]: once its words were [sent], Kestrel may register it
+     * late, after Ctrl+C, so a tag that Kestrel does not know yet is read once a second for up to [EXISTS] by the clock,
+     * and the goal's stop that follows finds the command's goal open.
      */
-    private fun stop(task: Task, number: Int, tag: String, sent: Boolean) {
-        if (!running(tag, sent)) return
-        quietly { hooks.voiceHeard("stop", tags()) }
-        if (clock.waitUntil(STOP, REREAD) { quietly { hooks.until(it).agentTask(tag) }?.get("state") == "done" }) return
-        console.warn("Task ${task.name}, run $number: the task could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
-    }
-
-    /**
-     * Whether the command of [tag] runs: its state read once, or, once its words were [sent], read once a second for up to
-     * [EXISTS] by the clock while Kestrel does not answer with one.
-     */
-    private fun running(tag: String, sent: Boolean): Boolean {
-        if (!sent) return quietly { hooks.agentTask(tag) }?.get("state") == "running"
-        var state: String? = null
-        clock.waitUntil(EXISTS, REREAD) { deadline ->
-            state = quietly { hooks.until(deadline).agentTask(tag) }?.get("state")
-            state != null
-        }
-        return state == "running"
+    private fun registered(tag: String, sent: Boolean) {
+        if (!sent) return
+        clock.waitUntil(EXISTS, REREAD) { deadline -> quietly { hooks.until(deadline).agentTask(tag) }?.get("state") != null }
     }
 
     /**
@@ -263,7 +265,6 @@ class Runner(
         val POLL = 2.seconds
         val QUIET = 3.seconds
         val STALL = 30.seconds
-        private val STOP = 15.seconds
 
         /** How long a command whose words were sent may take to show in agent-task, and the pause between its reads. */
         internal val EXISTS = 10.seconds

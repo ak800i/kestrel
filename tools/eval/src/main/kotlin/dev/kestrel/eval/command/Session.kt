@@ -19,6 +19,8 @@ import dev.kestrel.eval.run.PrintConsole
 import dev.kestrel.eval.run.Restores
 import dev.kestrel.eval.run.RunOptions
 import dev.kestrel.eval.run.Runner
+import dev.kestrel.eval.run.ScriptCheck
+import dev.kestrel.eval.run.ScriptInstaller
 import dev.kestrel.eval.task.Task
 import java.nio.file.Path
 
@@ -40,10 +42,14 @@ class Session(private val environment: Environment, serial: String) {
     private val conversations = ConversationGuard(hooks, environment.clock)
     val preflight = Preflight(device, hooks, restores, environment.clock, Installer(environment.root, environment.processes), conversations)
 
-    /** Before the first run: a live session left on goes off without `--live`, the preflight, and with `--live` the live gate. */
-    fun prepare(tasks: List<Task>, live: Boolean) {
+    /**
+     * Before the first run: a live session left on goes off without `--live`, the preflight, the check of [scripts], the
+     * scripts that the runs without a model install ([ScriptCheck]), and with `--live` the live gate.
+     */
+    fun prepare(tasks: List<Task>, live: Boolean, scripts: List<String>) {
         if (!live) LiveSession(hooks, console, device.serial).ensureOff()
         preflight.prepare(needsTestApp = tasks.any { it.needsTestApp })
+        ScriptCheck(ScriptInstaller(device, hooks, work), device.serial).check(scripts)
         if (live) LiveGate(hooks, restores, device.serial).open()
     }
 

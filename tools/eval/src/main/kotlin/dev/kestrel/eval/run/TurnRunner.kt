@@ -248,7 +248,7 @@ internal class TurnRunner(
         block()
         null
     } catch (e: Exception) {
-        if (e is DeviceChanged || e is Stopping) throw e
+        if (e is DeviceChanged || e is Stopping || e is OwnerBusy) throw e
         state.stepFailed = true
         console.warn("Task ${task.name}, run $number: turn ${index + 1}, $what, failed (${e.message ?: e.javaClass.simpleName}); the run fails, and the next run goes on.")
         TurnsEnd.CUT

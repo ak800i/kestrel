@@ -6,13 +6,23 @@ enum class RunResult(val wire: String) { PASS("pass"), FAIL("fail"), SKIPPED("sk
 
 enum class CheckResult(val wire: String) { PASS("pass"), FAIL("fail"), SKIPPED("skipped") }
 
-/** Why a run ended as it did, as task-check.ps1 named it. */
-enum class Reason(val wire: String) {
+/**
+ * Why a run ended as it did, as task-check.ps1 named it. A run of a reason that is not [ended] was cut off by an
+ * interruption of the command, Ctrl+C or an error ([STOPPED]) or the owner's open conversation ([OWNER_BUSY]), so a resumed
+ * suite runs it again.
+ */
+enum class Reason(val wire: String, val ended: Boolean = true) {
     OK("ok"), TIMEOUT("timeout"), CHECK("check"), END("end"), UNTESTABLE("untestable"), LIMIT("limit"), CONFIRM("confirm"),
-    CALL("call"), STOPPED("stopped"), SETUP("setup"), STALLED("stalled"),
+    CALL("call"), STOPPED("stopped", ended = false), SETUP("setup"), STALLED("stalled"),
 
     /** The task ended CANCELLED after the run's own answer ended it, such as a "cancel" to a hand-over (plan 6B-basefix T1). */
     ASKED("asked"),
+
+    /**
+     * The run did not run, `result=skipped`, because the owner's conversation with Kestrel stayed open past its quiet time
+     * and the series stopped ([OwnerBusy]; plan 7G): it is no failure of the task.
+     */
+    OWNER_BUSY("owner-busy", ended = false),
 }
 
 /**

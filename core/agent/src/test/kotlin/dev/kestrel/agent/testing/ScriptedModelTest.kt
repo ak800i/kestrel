@@ -55,8 +55,9 @@ class ScriptedModelTest {
     // names the reply and the key and never a text.
     @Test
     fun aScriptWithAMalformedRequiresOrRefusesOrAnUnknownKeyIsRefusedWhenItIsRead() {
-        fun refusal(reply: String): String =
-            assertThrows(IllegalArgumentException::class.java) { ScriptedModel.fromJson("""{"replies": [{"tool": "wait"}, $reply]}""") }.message!!
+        fun refused(reply: String): InvalidScript =
+            assertThrows(InvalidScript::class.java) { ScriptedModel.fromJson("""{"replies": [{"tool": "wait"}, $reply]}""") }
+        fun refusal(reply: String): String = refused(reply).message!!
 
         assertEquals(
             "Reply 2 of the script has a \"requires\" that is not a list of texts.",
@@ -68,5 +69,9 @@ class ScriptedModelTest {
             "Reply 2 of the script has keys that the scripted model does not know: require.",
             refusal("""{"tool": "wait", "require": ["This conversation so far:"]}"""),
         )
+        // The reply's number and the keys, for a hook that names them (plan 7G's check of a series' scripts).
+        val unknown = refused("""{"tool": "wait", "require": ["secret"], "credit": 1}""")
+        assertEquals(2, unknown.reply)
+        assertEquals(listOf("credit", "require"), unknown.keys)
     }
 }

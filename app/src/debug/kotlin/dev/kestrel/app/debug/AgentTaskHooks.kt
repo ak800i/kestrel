@@ -8,7 +8,6 @@ import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
 import dev.kestrel.agent.port.DataResult
 import dev.kestrel.agent.port.MediaKinds
-import dev.kestrel.agent.testing.ScriptedModel
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.agent.RoundEvidences
@@ -29,13 +28,10 @@ import dev.kestrel.screen.model.ScreenSnapshot
 import dev.kestrel.screen.model.ScreenTree
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.io.File
 import java.time.LocalDate
@@ -148,7 +144,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         }
         return "answered tag=$tag asking=$kind channel=card"
     }
-    // agent-script --es file <name> | --ez clear true
+    // agent-script --es file <name> [--ez check true] | --ez clear true
+    // With check, the script is read by the scripted model's rules and not installed (plan 7G).
     suspend fun script(intent: Intent): String {
         if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
             graph.roundModels.modelOverride = null
@@ -159,12 +156,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         val text = withContext(Dispatchers.IO) {
             File(File(context.filesDir, SCRIPTS), name).takeIf { it.isFile }?.readText()
         } ?: throw HookError("files/$SCRIPTS has no script $name")
-        val replies = try {
-            Json.parseToJsonElement(text).jsonArray.map { it.jsonObject }
-        } catch (e: IllegalArgumentException) {
-            throw HookError("the script is not a JSON array of replies")
-        }
-        val model = ScriptedModel(replies)
+        val model = AgentScripts.model(text)
+        if (intent.getBooleanExtra(EXTRA_CHECK, false)) return "script=valid replies=${model.left}"
         graph.roundModels.modelOverride = model
         return "script=installed replies=${model.left}"
     }
@@ -417,6 +410,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         private const val EXTRA_CONFIRMING = "confirming"
         private const val EXTRA_CHANNEL = "channel"
         private const val EXTRA_CLEAR = "clear"
+        private const val EXTRA_CHECK = "check"
         private const val EXTRA_FILE = "file"
         private const val EXTRA_FIELD = "field"
         private const val EXTRA_ON = "on"

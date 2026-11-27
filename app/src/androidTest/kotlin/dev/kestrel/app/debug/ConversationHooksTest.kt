@@ -12,6 +12,7 @@ import dev.kestrel.app.conversation.TypedTests
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.conversation.machine.QuietClock
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputChannel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -96,6 +97,25 @@ class ConversationHooksTest {
             check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
             assertTrue(hook("CONVERSATION_CONTROL", "do" to "delete-typed").startsWith("deleted="))
             assertTrue(runBlocking { TypedTests.graph.conversationStore.list() }.none { it.id == id })
+        } finally {
+            TypedTests.finish()
+        }
+    }
+
+    // Plan 7G: stop-typed stops the goal of the hooks' own conversation, which carries their mark, and then has none to stop.
+    @Test
+    fun stopTypedStopsTheGoalOfTheHooksOwnConversation() {
+        TypedTests.prepare(ScriptedModel(listOf(call("ask_user", null, null, null, "question" to "Which one?"), call("fail", null, null, null, "reason" to "I stop here."))))
+        try {
+            val tag = "stop-${System.currentTimeMillis()}"
+            assertEquals("typed read=command tag=$tag", hook("CONVERSATION_TYPE", "text" to TypedTests.marked("open the settings"), "tag" to tag))
+            check(VoiceTests.waitUntil(30_000) { conversations.view.value.goal == GoalPhase.ASKING }) { "The goal did not ask" }
+            conversations.view.value.id?.let(TypedTests::own)
+            assertTrue(hook("CONVERSATION_STATE").endsWith(" typed=yes"))
+
+            assertEquals("stop=sent", hook("GOAL_CONTROL", "do" to "stop-typed"))
+            check(VoiceTests.waitUntil(10_000) { conversations.view.value.goal == null }) { "The goal did not stop" }
+            assertEquals("stop=none", hook("GOAL_CONTROL", "do" to "stop-typed"))
         } finally {
             TypedTests.finish()
         }

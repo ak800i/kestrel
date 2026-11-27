@@ -46,10 +46,11 @@ data class RunEntry(val text: String, val line: RunLine, val detail: String? = n
 
 /**
  * A task's part of runs.txt: its line "<task> on <device>, <n> runs" ([header]) and the run lines after it. [done] counts
- * its runs from the first on that have a line that is not `reason=stopped`, up to the first run without one.
+ * its runs from the first on that have a line of a reason that ended ([Reason.ended]: not `reason=stopped` nor
+ * `reason=owner-busy`), up to the first run without one.
  */
 data class TaskBlock(val task: String, val count: Int, val header: String, val runs: List<RunEntry>) {
-    private fun ended(run: Int) = runs.any { it.line.run == run && it.line.reason != Reason.STOPPED }
+    private fun ended(run: Int) = runs.any { it.line.run == run && it.line.reason.ended }
 
     val done: Int = (1..count).takeWhile { ended(it) }.size
     val complete: Boolean get() = done == count
@@ -58,7 +59,7 @@ data class TaskBlock(val task: String, val count: Int, val header: String, val r
     val cutShort: Boolean get() = done in 1 until count && (done + 1..count).none { ended(it) }
 
     /** The block with only the first line that ended of each of its runs 1 to [done]. */
-    fun kept(): TaskBlock = copy(runs = (1..done).map { run -> runs.first { it.line.run == run && it.line.reason != Reason.STOPPED } })
+    fun kept(): TaskBlock = copy(runs = (1..done).map { run -> runs.first { it.line.run == run && it.line.reason.ended } })
 }
 
 /** What a resume does: it keeps the lines of [kept], and runs each task of [runs] from its run on, in that order. */

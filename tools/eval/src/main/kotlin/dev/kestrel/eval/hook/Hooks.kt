@@ -44,6 +44,13 @@ class Hooks(private val client: HookClient) {
     /** agent-script -File: installs the scripted model from Kestrel's files/agent-scripts/[file]. */
     fun agentScript(file: String): HookAnswer = act("agent-script", Extra.Text("file", file))
 
+    /**
+     * agent-script --es file [file] --ez check true (plan 7G): reads the script by the scripted model's rules without
+     * installing it, `script=valid replies=<n>`; a script that the model refuses is a [HookError] that names its kind, the
+     * reply's number and the keys, never a text. A read, asked again when its answer is lost.
+     */
+    fun agentScriptCheck(file: String): HookAnswer = read("agent-script", Extra.Text("file", file), Extra.Flag("check", true))
+
     /** agent-script -Clear: removes the scripted model. */
     fun agentScriptClear(): HookAnswer = act("agent-script", Extra.Flag("clear", true))
 
@@ -143,6 +150,13 @@ class Hooks(private val client: HookClient) {
      * reports it (design D13 of sub-project 7), and answers `touch=sent`.
      */
     fun goalControl(action: String): HookAnswer = act("goal-control", Extra.Text("do", action))
+
+    /**
+     * goal-control --es do stop-typed (plan 7G): the owner's "stop" for the goal of the hooks' own conversation only, which
+     * Kestrel checks on the conversation's loop at the moment that it takes the stop; answers `stop=sent`, or `stop=none`
+     * when no goal is open in a conversation that carries the hooks' mark. It acts once.
+     */
+    fun stopTyped(): HookAnswer = act("goal-control", Extra.Text("do", "stop-typed"))
 
     /**
      * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the

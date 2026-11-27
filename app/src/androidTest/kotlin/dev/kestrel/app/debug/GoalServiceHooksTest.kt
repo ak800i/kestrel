@@ -79,8 +79,10 @@ class GoalServiceHooksTest {
         assertEquals("refuse=disarmed", hook("GOAL_CONTROL", "do" to "refuse-off"))
         assertEquals("refuse=none", hook("GOAL_CONTROL", "do" to "refuse-off"))
         assertTrue(hook("GOAL_SERVICE_STATE").contains(" refusals=$refusals refuse=none "))
-        assertEquals("error: add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later", hook("GOAL_CONTROL", "do" to "other"))
+        assertEquals("error: add --es do with one of tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed", hook("GOAL_CONTROL", "do" to "other"))
         assertEquals("error: add --es action with one of stop, open, continue or cancel", hook("GOAL_CONTROL", "do" to "tap"))
+        // The goal's conversation is the owner's, without the hooks' mark, so stop-typed gives it no stop (plan 7G).
+        assertEquals("stop=none", hook("GOAL_CONTROL", "do" to "stop-typed"))
         model.release()
     }
 

@@ -3,7 +3,9 @@ package dev.kestrel.eval.run
 import dev.kestrel.eval.device.Clock
 import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
+import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Setup
@@ -22,10 +24,11 @@ import kotlin.time.Duration.Companion.seconds
  * conversations among the owner's past conversations ([deleteRun]). One guard serves a whole series: it knows the commands
  * that the series' runs gave Kestrel ([gave]), so that the series' cleanup ([deleteLeft]) ends only what they opened.
  *
- * One rule holds for every close (plan 7G): the evaluation ends only a conversation that carries the hooks' mark, which
- * every round of a wait reads (conversation-state's `typed=`) and which Kestrel checks again on the conversation's loop
- * when it ends the quiet time (conversation-control do=expire-typed). A conversation without the mark is the owner's, also
- * one that he continued with his words or opened himself during a wait, and the evaluation never ends it.
+ * One rule holds for every close and every stop (plan 7G): the evaluation ends only a conversation, and stops only a goal,
+ * that carries the hooks' mark, which every round of a wait reads (conversation-state's `typed=`) and which Kestrel checks
+ * again on the conversation's loop when it ends the quiet time (conversation-control do=expire-typed) or takes the stop
+ * (goal-control do=stop-typed). A conversation without the mark is the owner's, also one that he continued with his words
+ * or opened himself during a wait, and the evaluation never ends it nor stops its goal.
  */
 class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     // The tags of the commands that the series' runs gave Kestrel; the shutdown hook's thread reads them too.
@@ -39,10 +42,13 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     /**
      * Leaves no conversation open, before a run's first command ([NewConversation]) and between its turns (the end of the
      * quiet time): the hooks' own conversation is closed through Kestrel's check of their mark ([expire]) once its quiet
-     * clock runs, while the owner's, which has no mark, is waited for until its own quiet time has closed it, and is never
-     * ended. The guard reads the conversation once a second for at most [within] by the clock, however slow adb is
-     * ([waitUntil]). A goal that is open is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation
-     * that stays open. A read whose answer is lost is read again a second later.
+     * clock runs, within [within]. The owner's, which has no mark, is never ended: the guard waits until its own quiet time
+     * closes it, for as long as Kestrel first reports that the quiet time has left (`quietLeft=`) and [OWNER_MARGIN] more,
+     * or [within] when Kestrel reports no time, as while his goal is open. When his conversation is still open then, the
+     * owner is busy with Kestrel, and the series stops ([OwnerBusy]) rather than failing runs that he keeps from running.
+     * The guard reads the conversation once a second, measured by the clock however slow adb is ([waitUntil]). A goal open
+     * in the hooks' conversation is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation of
+     * theirs that stays open. A read whose answer is lost is read again a second later.
      */
     fun close(within: Duration = CLOSE) = closing(within, Wait.NONE_OPEN)
 
@@ -54,9 +60,11 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      */
     private fun closeOwn(within: Duration) = closing(within, Wait.NONE_OF_THEIRS)
 
-    // The wait of [close] and [closeOwn], one round a second for at most [within] by the clock.
+    // The wait of [close] and [closeOwn], one round a second by the clock: for at most [within], or for the owner's quiet
+    // time as Kestrel first reports it.
     private fun closing(within: Duration, wait: Wait) {
         var owners = false
+        var learned = false
         val closed = clock.waitUntil(within, POLL) { deadline ->
             val hooks = hooks.until(deadline)
             val state = quietly { hooks.conversationState() } ?: return@waitUntil false
@@ -64,26 +72,26 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
             val theirs = state["typed"] == "yes"
             if (!theirs && wait == Wait.NONE_OF_THEIRS) return@waitUntil true
             owners = !theirs
-            if (goalOpen(state)) {
-                throw SetupFailed(
-                    if (theirs) {
-                        "Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first."
-                    } else {
-                        "The owner's conversation has a goal open (${state["goal"]}), which the evaluation never ends."
-                    },
-                )
+            if (!theirs) {
+                val left = state["quietLeft"]?.toLongOrNull()
+                if (left != null && !learned) {
+                    learned = true
+                    deadline.extend(left.seconds + OWNER_MARGIN)
+                }
+                return@waitUntil false
             }
-            if (theirs && state["quiet"] == "running") expire(hooks)
+            if (goalOpen(state)) throw SetupFailed("Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first.")
+            if (state["quiet"] == "running") expire(hooks)
             false
         }
         if (closed) return
-        throw SetupFailed(
-            if (owners) {
-                "The owner's conversation did not close by itself within ${within.inWholeSeconds} s; the evaluation never ends it."
-            } else {
-                "Kestrel's conversation did not close within ${within.inWholeSeconds} s."
-            },
-        )
+        if (owners) {
+            throw OwnerBusy(
+                "The owner's conversation with Kestrel stayed open past its quiet time, and the evaluation never ends it (owner-busy); " +
+                    "the series stops, and --resume runs the rest once he is done.",
+            )
+        }
+        throw SetupFailed("Kestrel's conversation did not close within ${within.inWholeSeconds} s.")
     }
 
     /**
@@ -129,17 +137,43 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     }
 
     /**
-     * Ends the goal that is open, held or not, with [stop], the owner's "stop" (design 6.4), and waits up to [STOP] by the
-     * clock for its end. Returns whether no goal is open then; without a goal it does nothing, and when Kestrel does not
-     * answer it returns false.
+     * Ends the goal that is open in the hooks' own conversation, held or not, as the owner's "stop" ends it (design 6.4),
+     * and waits up to [STOP] by the clock for its end. Every round reads the open conversation's mark, and the stop goes
+     * through goal-control do=stop-typed, which Kestrel checks again on the conversation's loop, so the goal of a
+     * conversation that the owner opened, or continued with his words, is never stopped: the wait then ends with
+     * [GoalStop.OWNERS]. A stop is given once; one that Kestrel refused because no goal of the hooks' was open at that
+     * moment is sent again on a later round while one is, and one whose answer was lost counts as given, because a second
+     * one could reach a goal that the first is ending.
      */
-    fun stopGoal(stop: () -> Unit): Boolean {
-        val state = quietly { hooks.conversationState() } ?: return false
-        if (!goalOpen(state)) return true
-        stop()
-        return clock.waitUntil(STOP, POLL) { deadline ->
-            quietly { hooks.until(deadline).conversationState() }?.let { !goalOpen(it) } ?: false
+    fun stopGoal(): GoalStop {
+        var given = false
+        var end = GoalStop.OPEN
+        clock.waitUntil(STOP, POLL) { deadline ->
+            val hooks = hooks.until(deadline)
+            val state = quietly { hooks.conversationState() } ?: return@waitUntil false
+            end = when {
+                !goalOpen(state) -> GoalStop.ENDED
+                state["typed"] != "yes" -> GoalStop.OWNERS
+                else -> {
+                    if (!given) given = stopTyped(hooks)
+                    GoalStop.OPEN
+                }
+            }
+            end != GoalStop.OPEN
         }
+        return end
+    }
+
+    // Whether a stop of the hooks' goal was given: Kestrel answered that it took it, or the answer was lost. One that Kestrel
+    // did not get or refused is sent again on the next round.
+    private fun stopTyped(hooks: Hooks): Boolean = try {
+        hooks.stopTyped()["stop"] == "sent"
+    } catch (e: HookLost) {
+        true
+    } catch (e: HookSilent) {
+        false
+    } catch (e: HookError) {
+        false
     }
 
     // The end of the quiet time of the hooks' own conversation only: Kestrel checks their mark on the conversation's loop,
@@ -162,8 +196,30 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
         val CLOSE = 60.seconds
         val CLEANUP = 5.minutes
         val STOP = 15.seconds
+
+        /** How long after the end of the owner's quiet time, as Kestrel reports it, the wait for his conversation goes on. */
+        val OWNER_MARGIN = 30.seconds
         private val POLL = 1.seconds
     }
+}
+
+/**
+ * The owner's conversation with Kestrel stayed open past its quiet time before a run or between its turns: he is busy with
+ * Kestrel, whose conversation the evaluation never ends, so the series stops. The runs that it did not run are written as
+ * not run (`result=skipped reason=owner-busy`), which a resumed suite runs again, as it does after Ctrl+C.
+ */
+class OwnerBusy(message: String) : Exception(message)
+
+/** How [ConversationGuard.stopGoal] ended. */
+enum class GoalStop {
+    /** No goal is open: none was, or the goal of the hooks' own conversation ended. */
+    ENDED,
+
+    /** The open goal is in a conversation without the hooks' mark, the owner's, which the evaluation never stops. */
+    OWNERS,
+
+    /** The goal of the hooks' own conversation did not end within [ConversationGuard.STOP], or Kestrel did not answer. */
+    OPEN,
 }
 
 /**

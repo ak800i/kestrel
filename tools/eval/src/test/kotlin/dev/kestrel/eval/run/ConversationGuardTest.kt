@@ -17,13 +17,17 @@ class ConversationGuardTest {
     private var open = true
     private var quiet = "held"
     private var goal = "none"
+    private var left = "none"
 
-    // Whether the open conversation carries the hooks' mark (typed=), which Kestrel checks again at expire-typed.
+    // Whether the open conversation carries the hooks' mark (typed=), which Kestrel checks again at expire-typed and stop-typed.
     private var typed = true
+
+    // Whether a stop that Kestrel takes ends the goal.
+    private var stopEnds = true
 
     init {
         run.adb.hook("CONVERSATION_STATE") {
-            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on " +
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=$quiet quietLeft=$left replyChannel=voice testMode=on " +
                 "typed=${if (open && typed) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
@@ -31,6 +35,14 @@ class ConversationGuardTest {
                 "delete-typed" -> if (open && typed) "deleted=0 open=1 failed=0" else "deleted=1 open=0 failed=0"
                 "expire-typed" -> if (open && typed) expire() else "expire=not-typed"
                 else -> expire()
+            }
+        }
+        run.adb.hook("GOAL_CONTROL") { extras ->
+            if (extras["do"] == "stop-typed" && open && typed && goal != "none") {
+                if (stopEnds) goal = "none"
+                "stop=sent"
+            } else {
+                "stop=none"
             }
         }
     }
@@ -65,11 +77,14 @@ class ConversationGuardTest {
     }
 
     // One rule for every close (plan 7G): before a run, the owner's open conversation, which has no mark, is never ended; the
-    // run waits until its own quiet time has closed it, and fails its setup when it stays open or holds the owner's goal.
+    // run waits until its own quiet time has closed it, for the quiet time that Kestrel first reports and a margin, or for
+    // the close's own 60 s while Kestrel reports none, as while his goal is open. When it is still open then, the owner is
+    // busy with Kestrel, and the series stops (OwnerBusy) rather than failing his runs.
     @Test
-    fun aRunWaitsForTheOwnersConversationToCloseByItselfAndNeverEndsIt() {
+    fun aRunWaitsForTheOwnersConversationToCloseByItselfForItsQuietTimeAndThenTheSeriesStops() {
         typed = false
         quiet = "running"
+        left = "90"
         var sleeps = 0
         // The owner's quiet time closes his conversation after five rounds.
         run.clock.onSleep = { if (++sleeps == 5) open = false }
@@ -79,16 +94,22 @@ class ConversationGuardTest {
         assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
         open = true
         run.clock.onSleep = {}
-        assertEquals(
-            "The owner's conversation did not close by itself within 60 s; the evaluation never ends it.",
-            assertThrows(SetupFailed::class.java) { guard.close() }.message,
-        )
+        // The owner keeps talking, so each read reports 90 s again; the wait ends 90 s and the margin after the first.
+        val busy = timed {
+            assertEquals(
+                "The owner's conversation with Kestrel stayed open past its quiet time, and the evaluation never ends it (owner-busy); " +
+                    "the series stops, and --resume runs the rest once he is done.",
+                assertThrows(OwnerBusy::class.java) { guard.close() }.message,
+            )
+        }
+        assertTrue("$busy", busy > 90.seconds + ConversationGuard.OWNER_MARGIN - 2.seconds && busy <= 90.seconds + ConversationGuard.OWNER_MARGIN)
+
         goal = "acting"
-        assertEquals(
-            "The owner's conversation has a goal open (acting), which the evaluation never ends.",
-            assertThrows(SetupFailed::class.java) { guard.close() }.message,
-        )
+        quiet = "held"
+        left = "none"
+        assertEquals(59.seconds, timed { assertThrows(OwnerBusy::class.java) { guard.close() } })
         assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
+        assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
         assertTrue(open)
     }
 
@@ -154,19 +175,48 @@ class ConversationGuardTest {
         assertEquals("Kestrel could not delete 1 of the hooks' own conversations.", assertThrows(IllegalStateException::class.java) { guard.deleteLeft() }.message)
     }
 
+    // One rule for every stop (plan 7G): only the goal of the hooks' own conversation gets a stop, through stop-typed, which
+    // Kestrel checks again on its loop; a goal of the owner's conversation never does, also when the owner's words reach
+    // the hooks' conversation between the guard's read and its stop.
     @Test
-    fun stopGoalStopsAGoalThatIsOpenAndDoesNothingWithoutOne() {
-        var stops = 0
-        assertTrue(guard.stopGoal { stops++ })
-        assertEquals(0, stops)
+    fun stopGoalStopsOnlyTheGoalOfTheHooksOwnConversation() {
+        assertEquals(GoalStop.ENDED, guard.stopGoal())
+        assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
 
         goal = "paused-at-limit"
-        assertTrue(guard.stopGoal { stops++; goal = "none" })
-        assertEquals(1, stops)
+        assertEquals(GoalStop.ENDED, guard.stopGoal())
+        assertEquals(listOf(mapOf("do" to "stop-typed")), run.adb.hookCalls("GOAL_CONTROL"))
 
+        // The owner's conversation: its goal goes on, and no stop is sent.
+        goal = "acting"
+        typed = false
+        assertEquals(GoalStop.OWNERS, guard.stopGoal())
+        assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").size)
+        assertEquals("acting", goal)
+
+        // The owner speaks right after a read that still shows the mark: Kestrel refuses the stop, and the next read leaves
+        // his goal alone.
+        typed = true
+        run.adb.hook("CONVERSATION_STATE") {
+            val shown = typed
+            typed = false
+            "open=yes continued=no commands=1 goal=$goal quiet=held quietLeft=none replyChannel=voice testMode=on typed=${if (shown) "yes" else "no"}"
+        }
+        assertEquals(GoalStop.OWNERS, guard.stopGoal())
+        assertEquals("acting", goal)
+        assertEquals(2, run.adb.hookCalls("GOAL_CONTROL").size)
+    }
+
+    // A stop that Kestrel took is not sent again; a goal that it does not end leaves the wait at its 15 s.
+    @Test
+    fun aGoalThatTheStopDoesNotEndIsStillOpenAfterTheWaitWithOneStop() {
         goal = "interrupted"
-        assertFalse(guard.stopGoal { stops++ })
-        assertEquals(2, stops)
+        stopEnds = false
+
+        assertEquals(GoalStop.OPEN, guard.stopGoal())
+
+        assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").size)
+        assertEquals("interrupted", goal)
     }
 
     // The series' cleanup ends only what the series' runs opened: nothing at all when no run gave Kestrel a command, as when
@@ -261,9 +311,11 @@ class ConversationGuardTest {
 
         run.adb.slow(run.clock, 7.seconds)
         goal = "interrupted"
-        var stopped = run.clock.time
-        assertFalse(guard.stopGoal { stopped = run.clock.time })
-        assertEquals(15.seconds, run.clock.time - stopped)
+        stopEnds = false
+        val start = run.clock.time
+        assertEquals(GoalStop.OPEN, guard.stopGoal())
+        // A read and the stop take 7 s each; then a pause of a second no longer fits before the 15 s.
+        assertEquals(14.seconds, run.clock.time - start)
     }
 
     private fun timed(wait: () -> Unit): kotlin.time.Duration {

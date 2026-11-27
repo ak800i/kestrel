@@ -2,6 +2,7 @@ package dev.kestrel.eval.command
 
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.egress.PcapBuilder
 import dev.kestrel.eval.egress.PcapdroidKeys
 import dev.kestrel.eval.egress.fakePcapdroid
@@ -82,6 +83,35 @@ class ResumeTest {
         val ended = runLines().size
         assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--resume", folder.toString()))
         assertEquals(ended, runLines().size)
+    }
+
+    // Plan 7G: the owner's conversation, open past its quiet time before a run, stops the suite (owner-busy); the runs that
+    // it kept from running are written as not run, no failure, the next task never begins, and a resume runs them once he
+    // is done.
+    @Test
+    fun theOwnersOpenConversationStopsTheSuiteAndAResumeRunsWhatItKeptFromRunning() {
+        var owners = true
+        fake.adb.hook("CONVERSATION_STATE") {
+            if (owners) "open=yes continued=no commands=1 goal=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=no" else FakeAdb.NO_CONVERSATION
+        }
+
+        assertEquals(Cli.EXIT_FAILED, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", pair.joinToString(",")))
+
+        assertTrue(fake.output.contains("STOPPED: The owner's conversation with Kestrel stayed open past its quiet time"))
+        assertEquals(listOf("task=stand-in-hotspot run=1 result=skipped", "task=stand-in-hotspot run=2 result=skipped"), runLines().map { it.substringBefore(" end=") })
+        assertTrue(runLines().all { it.endsWith(" reason=owner-busy") })
+        assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
+        assertTrue(fake.adb.hookCalls("CONVERSATION_CONTROL").none { it["do"]!!.startsWith("expire") })
+
+        owners = false
+        val before = runLines().size
+        val folder = fake.root.resolve("eval-results").resolve("kestrel-api37-20261123-120000")
+        assertEquals(Cli.EXIT_PASSED, fake.cli("suite", "--device", "emulator-5554", "--resume", folder.toString()))
+        assertEquals(
+            listOf("task=stand-in-hotspot run=1", "task=stand-in-hotspot run=2", "task=stand-in-firefox run=1", "task=stand-in-firefox run=2"),
+            runLines().drop(before).map { it.substringBefore(" result") },
+        )
+        assertEquals(listOf(2, 2), Report.read(folder.resolve("report.json")).tasks.map { it.passes })
     }
 
     @Test

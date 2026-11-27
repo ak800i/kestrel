@@ -1486,6 +1486,30 @@ class ConversationEngineTest {
         assertEquals(listOf(open, open), seen)
     }
 
+    // Plan 7G's hook stop-typed: a "stop" reaches only an open goal whose conversation the check accepts, checked on the
+    // loop; without a goal, or when the check refuses, the goal goes on.
+    @Test
+    fun aStopReachesOnlyAnOpenGoalWhoseConversationTheCheckAccepts() = scope.runTest {
+        val engine = engine(environment(ScriptedModel.call("ask_user", null, null, null, "question" to "Which one?"), fail))
+        engine.restore()
+        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        assertEquals(GoalPhase.ASKING, engine.view.value.goal)
+        val open = engine.view.value.id!!
+        val seen = mutableListOf<ConversationId>()
+
+        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; false })
+        runCurrent()
+        assertEquals(GoalPhase.ASKING, engine.view.value.goal)
+        assertTrue(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; true })
+        runCurrent()
+        assertNull(engine.view.value.goal)
+        assertEquals(EndReason.CANCELLED, engine.view.value.records.single().end)
+        assertEquals(listOf(open, open), seen)
+        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
+    }
+
     // Design 9.5 of sub-project 7: a past conversation is deleted, or all of them, and never the open one.
     @Test
     fun aPastConversationIsDeletedFromTheListButTheOpenOneIsNot() = scope.runTest {

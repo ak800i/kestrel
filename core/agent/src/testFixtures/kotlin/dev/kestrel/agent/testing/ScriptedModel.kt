@@ -52,8 +52,8 @@ import kotlinx.serialization.json.put
  * checks what reached the model (plan 7G; design 15.3 of sub-project 7). A reply whose request does not match fails the
  * task with [MISMATCH], which names no text. When the script is used up, the model fails the task with [USED_UP].
  * The model refuses a script with a key that it does not know, or with a `requires` or `refuses` that is not a list of
- * texts, when it is made (an [IllegalArgumentException] that names the reply and the key, never a text), so that a typo
- * stops a dry run before it starts rather than letting its check pass without checking. toString prints only counts.
+ * texts, when it is made (an [InvalidScript] that names the reply and the key, never a text), so that a typo stops a dry
+ * run before it starts rather than letting its check pass without checking. toString prints only counts.
  */
 class ScriptedModel(
     replies: List<JsonObject>,
@@ -99,10 +99,14 @@ class ScriptedModel(
     // reply's check pass without checking anything.
     private fun validate(index: Int, reply: JsonObject) {
         val unknown = reply.keys - KEYS
-        require(unknown.isEmpty()) { "Reply ${index + 1} of the script has keys that the scripted model does not know: ${unknown.sorted().joinToString()}." }
+        if (unknown.isNotEmpty()) {
+            throw InvalidScript(index + 1, unknown.sorted(), "Reply ${index + 1} of the script has keys that the scripted model does not know: ${unknown.sorted().joinToString()}.")
+        }
         for (key in TEXT_LISTS) {
             val value = reply[key] ?: continue
-            require(value is JsonArray && value.all { it is JsonPrimitive && it.isString }) { "Reply ${index + 1} of the script has a \"$key\" that is not a list of texts." }
+            if (value !is JsonArray || !value.all { it is JsonPrimitive && it.isString }) {
+                throw InvalidScript(index + 1, listOf(key), "Reply ${index + 1} of the script has a \"$key\" that is not a list of texts.")
+            }
         }
     }
 
@@ -223,3 +227,10 @@ class ScriptedModel(
         private fun unescape(text: String): String = text.replace("\\\"", "\"").replace("\\\\", "\\")
     }
 }
+
+/**
+ * A script that the scripted model refuses (plan 7G): reply number [reply], counted from 1, has [keys] in a form that the
+ * model does not read. Its message names only the reply's number and the keys, never a text of the script, so that a hook
+ * may pass it on.
+ */
+class InvalidScript(val reply: Int, val keys: List<String>, message: String) : IllegalArgumentException(message)

@@ -76,6 +76,40 @@ class RunnerTest {
         run.adb.hook("AGENT_STATE") { "phase=running asking=none work=running-task handOver=none confirming=none" }
     }
 
+    /**
+     * Kestrel's conversation for a run whose command goes on until the run stops it: the command opens the hooks' own
+     * conversation, whose goal acts until goal-control do=stop-typed stops it, which runs [stopped]; expire-typed then
+     * closes it, and delete-typed deletes it.
+     */
+    private fun goalUntilStopped(stopped: () -> Unit = {}) {
+        var open = false
+        var goal = "none"
+        run.adb.hook("VOICE") { extras ->
+            if (extras["text"].orEmpty().startsWith("Kestrel, ")) {
+                open = true
+                goal = "acting"
+            }
+            "sent"
+        }
+        run.adb.hook("CONVERSATION_STATE") {
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=${if (goal == "none") "running" else "held"} quietLeft=none " +
+                "replyChannel=voice testMode=on typed=${if (open) "yes" else "no"}"
+        }
+        run.adb.hook("GOAL_CONTROL") { extras ->
+            if (extras["do"] == "stop-typed" && open && goal != "none") {
+                goal = "none"
+                stopped()
+                "stop=sent"
+            } else {
+                "stop=none"
+            }
+        }
+        run.adb.hook("CONVERSATION_CONTROL") { extras ->
+            if (extras["do"] == "expire-typed" && open && goal == "none") open = false
+            if (extras["do"] == "delete-typed") "deleted=1 open=0 failed=0" else "expire=sent"
+        }
+    }
+
     // Design 14.1 and 6.4 of sub-project 7: the run's command opens a conversation of its own, a goal that the run left
     // held is stopped, so that the next run's command does not resume it, and the run's conversation is closed and deleted
     // after it (plan 7F's delete-typed, which covers every input that a hook gives).
@@ -98,14 +132,19 @@ class RunnerTest {
             }
         }
         run.adb.hook("VOICE") { extras ->
-            when (extras["text"]) {
-                "Kestrel, turn on hotspot" -> {
-                    open = true
-                    goal = "paused-at-limit"
-                }
-                "stop" -> goal = "none"
+            if (extras["text"] == "Kestrel, turn on hotspot") {
+                open = true
+                goal = "paused-at-limit"
             }
             "sent"
+        }
+        run.adb.hook("GOAL_CONTROL") { extras ->
+            if (extras["do"] == "stop-typed" && open && goal != "none") {
+                goal = "none"
+                "stop=sent"
+            } else {
+                "stop=none"
+            }
         }
 
         val line = runner().run(task(), "[]", 1, "maple heron")
@@ -115,9 +154,39 @@ class RunnerTest {
             listOf(mapOf("do" to "expire-typed"), mapOf("do" to "expire-typed"), mapOf("do" to "delete-typed")),
             run.adb.hookCalls("CONVERSATION_CONTROL"),
         )
-        assertEquals(listOf("Kestrel, turn on hotspot", "stop"), run.adb.hookCalls("VOICE").map { it["text"] })
+        assertEquals(listOf("Kestrel, turn on hotspot"), run.adb.hookCalls("VOICE").map { it["text"] })
+        assertEquals(listOf(mapOf("do" to "stop-typed")), run.adb.hookCalls("GOAL_CONTROL"))
         assertEquals("none", goal)
         assertFalse(open)
+    }
+
+    // One rule for every stop (plan 7G): a run's restore stops only the goal of the hooks' own conversation. When the
+    // owner's words reached the run's conversation, it carries no mark, and its goal, his now, goes on; the console says so.
+    @Test
+    fun aRunsRestoreLeavesTheGoalOfAConversationThatTheOwnersWordsReached() {
+        run.adb.hook("AGENT_TASK") { done }
+        var open = false
+        run.adb.hook("CONVERSATION_STATE") {
+            "open=${if (open) "yes" else "no"} continued=no commands=2 goal=${if (open) "acting" else "none"} quiet=held quietLeft=none replyChannel=voice " +
+                "testMode=on typed=no"
+        }
+        // The run's command opens the hooks' conversation, and the owner's words reach it before the run ends, so it has no mark.
+        run.adb.hook("VOICE") { extras ->
+            if (extras["text"] == "Kestrel, turn on hotspot") open = true
+            "sent"
+        }
+
+        val line = runner().run(task(), "[]", 1, "maple heron")
+
+        assertEquals(Reason.OK, line.reason)
+        assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").none { it["do"]!!.startsWith("expire") })
+        assertTrue(open)
+        assertTrue(
+            run.console.warnings.contains(
+                "Task stand-in-hotspot, run 1: the goal that is open is in the owner's conversation, which the evaluation never stops; say 'Kestrel, stop' to end it.",
+            ),
+        )
     }
 
     // The task's setup decides whether the device can run it before the run's conversation is closed, so that a run that
@@ -430,7 +499,7 @@ class RunnerTest {
     @Test
     fun aTaskThatRunsTenMinutesIsStoppedAndTimesOut() {
         var stopped = false
-        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        goalUntilStopped { stopped = true }
         run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=40 workMs=600000 credits=0.00" else "state=running" }
 
         val line = runner().run(task(), "[]", 1, "maple heron")
@@ -493,6 +562,45 @@ class RunnerTest {
         assertTrue(run.console.warnings.single().startsWith("Task stand-in-hotspot, run 1: the setup failed ("))
     }
 
+    // Plan 7G: the scripted model's install is the setup's last step, so a script that Kestrel refuses fails only its run
+    // (reason=setup), after its restores, and the next run goes on.
+    @Test
+    fun aScriptThatKestrelRefusesFailsOnlyItsRunAsAFailedSetup() {
+        run.adb.hook("AGENT_TASK") { done }
+        var installs = 0
+        run.adb.hookWith("AGENT_SCRIPT") { extras ->
+            when {
+                extras["clear"] == "true" -> -1 to "script=none"
+                ++installs == 1 -> 1 to "error: the script is refused (InvalidScript): Reply 2 of the script has keys that the scripted model does not know: require."
+                else -> -1 to "script=installed replies=2"
+            }
+        }
+
+        val failures = runner().runAll(task(), "[]", 2)
+
+        assertEquals(1, failures)
+        assertEquals(listOf("1 fail setup", "2 pass ok"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
+        assertEquals(listOf("Kestrel, turn on hotspot"), run.adb.hookCalls("VOICE").map { it["text"] })
+        assertTrue(run.console.warnings.single().startsWith("Task stand-in-hotspot, run 1: the setup failed (error: the script is refused (InvalidScript): Reply 2"))
+    }
+
+    // Plan 7G: the owner's conversation, open past its quiet time before a run, stops the runs (OwnerBusy). The run under way
+    // and the runs after it did not run: no failure of the task, and no input or close reached his conversation.
+    @Test
+    fun theOwnersOpenConversationStopsTheRunsWhichDidNotRun() {
+        run.adb.hook("CONVERSATION_STATE") { "open=yes continued=no commands=1 goal=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=no" }
+        val start = run.clock.time
+
+        assertThrows(OwnerBusy::class.java) { runner().runAll(task(), "[]", 3) }
+
+        assertEquals(listOf("1 skipped owner-busy", "2 skipped owner-busy", "3 skipped owner-busy"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
+        assertTrue(run.clock.time - start >= 10.seconds + ConversationGuard.OWNER_MARGIN - 2.seconds)
+        assertTrue(run.adb.hookCalls("VOICE").isEmpty())
+        assertTrue(run.adb.hookCalls("AGENT_SCRIPT").isEmpty())
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").none { it["do"]!!.startsWith("expire") })
+        assertTrue(run.console.warnings.none { it.contains("the setup failed") })
+    }
+
     @Test
     fun aStopDuringTheSetupIsNoSetupFailureAndEndsTheRunsWithoutATask() {
         run.adb.hook("AGENT_TASK") { done }
@@ -544,7 +652,7 @@ class RunnerTest {
     @Test
     fun aLiveRunWhoseEndWasNotReadHasTheStoppedTasksCreditsOrUnknownNeverZero() {
         var stopped = false
-        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        goalUntilStopped { stopped = true }
         run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=12 workMs=600000 credits=3.25" else "state=running" }
 
         val line = runner(live = true).run(task(), null, 1, "maple heron")
@@ -561,7 +669,7 @@ class RunnerTest {
     @Test
     fun ctrlCDuringALiveRunStopsItsTaskAndWritesItsLineOnceWithItsCredits() {
         var stopped = false
-        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        goalUntilStopped { stopped = true }
         run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=2 workMs=4000" else "state=running" }
         val atHook = mutableListOf<String>()
         var interrupted = false
@@ -585,7 +693,7 @@ class RunnerTest {
             atHook,
         )
         assertEquals(1, writer.lines.size)
-        assertEquals(1, run.adb.hookCalls("VOICE").count { it["text"] == "stop" })
+        assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").count { it["do"] == "stop-typed" })
     }
 
     @Test
@@ -602,11 +710,23 @@ class RunnerTest {
             "Broadcasting: Intent { act=dev.kestrel.hook.AGENT_TASK }\nBroadcast completed: result=$answer"
         }
         var interrupted = false
-        // The shutdown hook runs the restores while the transcript is on its way to Kestrel.
-        run.adb.hook("VOICE") { extras ->
-            if (extras["text"] == "stop") {
+        // Kestrel shows the command's goal in the hooks' own conversation once it registered the tag.
+        run.adb.hook("CONVERSATION_STATE") {
+            val goal = if (interrupted && reads > 2 && !stopped) "acting" else "none"
+            "open=${if (interrupted) "yes" else "no"} continued=no commands=1 goal=$goal quiet=held quietLeft=none replyChannel=voice testMode=on " +
+                "typed=${if (interrupted) "yes" else "no"}"
+        }
+        run.adb.hook("GOAL_CONTROL") { extras ->
+            if (extras["do"] == "stop-typed" && interrupted && reads > 2 && !stopped) {
                 stopped = true
-            } else if (!interrupted) {
+                "stop=sent"
+            } else {
+                "stop=none"
+            }
+        }
+        // The shutdown hook runs the restores while the transcript is on its way to Kestrel.
+        run.adb.hook("VOICE") {
+            if (!interrupted) {
                 interrupted = true
                 run.restores.report(run.restores.runAll())
             }
@@ -616,7 +736,7 @@ class RunnerTest {
         runner().runAll(task(), "[]", 1)
 
         assertTrue(stopped)
-        assertEquals(1, run.adb.hookCalls("VOICE").count { it["text"] == "stop" })
+        assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").count { it["do"] == "stop-typed" })
         assertEquals(listOf("1 fail stopped"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
     }
 
@@ -643,7 +763,7 @@ class RunnerTest {
     @Test
     fun ctrlCDuringARunWithoutAModelRemovesTheScriptedModel() {
         var stopped = false
-        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        goalUntilStopped { stopped = true }
         run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=2 workMs=4000 credits=0.00" else "state=running" }
         var cleared = false
         var interrupted = false
@@ -664,7 +784,7 @@ class RunnerTest {
     @Test
     fun ctrlCDuringARunWritesItsLineAndItsDetailLineTogetherWithWhatItsRestoresPutBack() {
         var stopped = false
-        run.adb.hook("VOICE") { extras -> if (extras["text"] == "stop") stopped = true; "sent" }
+        goalUntilStopped { stopped = true }
         run.adb.hook("AGENT_TASK") { if (stopped) "state=done end=STOPPED steps=2 workMs=4000 credits=0.00" else "state=running" }
         val setup = object : Setup {
             override fun apply(scope: RunScope): SetupResult {

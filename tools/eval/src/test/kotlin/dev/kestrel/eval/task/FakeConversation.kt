@@ -13,7 +13,7 @@ import kotlin.time.Duration
  * confirmation, a hand-over and a pick, which only the card over the app answers (`channel=card`, plan 7F's Task 13a).
  * conversation-state counts the open conversation's commands (a "continue" adds none) and says whether a hook's input
  * opened it (`typed=`), conversation-control do=expire closes it while no goal is open, do=expire-typed does so only for
- * one that a hook's input opened (plan 7G), do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
+ * one that a hook's input opened (plan 7G), goal-control do=stop-typed stops the goal only of such a conversation, do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
  * outlive a restart, as plan 7F keeps them in a file ([deleted]), never one that a switch moved into, and
  * voice-state's followUp= is open from the end of a spoken command until the next input, unless [windows] is false. The
  * hook crash answers `crashing` and ends the process: `pidof` then gives a new process, the command that ran is lost with
@@ -121,7 +121,16 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         adb.on("^pidof dev\\.kestrel") { "$pid" }
         adb.on("^dumpsys activity services dev\\.kestrel/\\.app\\.KestrelAccessibilityService$") { "    app=ProcessRecord{1b2c $pid:dev.kestrel/u0a234}" }
         adb.hook("GOAL_CONTROL") { extras ->
-            if (extras["do"] == "touch" && waiting == Until.TOUCHED) waiting = Until.NOTHING
+            when (extras["do"]) {
+                "touch" -> if (waiting == Until.TOUCHED) waiting = Until.NOTHING
+                // Plan 7G: only a goal of the hooks' own conversation, as Kestrel checks their mark when it takes the stop.
+                "stop-typed" -> return@hook if (open && goal != "none" && conversation in own) {
+                    stop()
+                    "stop=sent"
+                } else {
+                    "stop=none"
+                }
+            }
             "${extras["do"]}=sent"
         }
     }
