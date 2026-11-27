@@ -59,11 +59,11 @@ class ConversationSignalsTest {
         assertEquals(listOf(PhoneSignal.LOCKED, PhoneSignal.UNLOCKED, PhoneSignal.LOCKED), signals)
     }
 
-    // The sixth re-check's N6-M1: a keyguard that catches up 1.5 s after USER_PRESENT, while the screen source looks
-    // every 250 ms. The conversation hears the unlock once and no lock in between, so its goal goes on as after any
-    // unlock and is never paused by the keyguard's lag.
+    // The seventh re-check: a keyguard that reports the unlock 1.5 s after USER_PRESENT, while the screen source looks
+    // every 250 ms. The screen was read as locked, so the conversation hears one change, the unlock when the keyguard
+    // reports it, and no lock after it: its goal is never paused by the keyguard's lag.
     @Test
-    fun aKeyguardThatIsLateAfterTheUnlockSendsTheUnlockOnceAndNoLock() = runTest {
+    fun aKeyguardThatIsLateAfterTheUnlockSendsOneUnlockAndNoLock() = runTest {
         val screen = ReadingScreens()
         follow(screen)
         views.value = open
@@ -71,6 +71,7 @@ class ConversationSignalsTest {
         assertEquals(listOf(PhoneSignal.LOCKED), signals)
 
         screen.heard(ScreenReadings.Broadcast.USER_PRESENT)
+        runCurrent()
         while (screen.readings.settling()) {
             screen.clock += ScreenReadings.KEYGUARD_POLL_MILLIS
             if (screen.clock >= 1_500) screen.keyguardLocked = false
@@ -222,7 +223,7 @@ class ConversationSignalsTest {
             checkNotNull(report)(readings.heard(broadcast))
         }
 
-        // One of the source's looks while the keyguard settles: a changed reading is reported with a new number.
+        // One of the source's looks while the keyguard may still change: a changed reading is reported with a new number.
         fun look() {
             if (readings.stale()) checkNotNull(report)(readings.next())
         }

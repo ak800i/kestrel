@@ -12,12 +12,13 @@ import android.os.SystemClock
 
 /**
  * Android's screen and lock (design spec, section 8.5): the broadcasts SCREEN_OFF, SCREEN_ON and USER_PRESENT, and the
- * screen's and the keyguard's state when the source reads, which [ScreenReadings] turns into the source's readings, so
- * that each reading is correct at the moment it is read (plan 7F's fourth re-check). The source's thread is the main
- * thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
- * When a look at the screen, at a tap's stamp or while the keyguard settles after USER_PRESENT, finds another reading
- * than the newest that the source gave, as when the lock screen came back without a screen-off (Lockdown) or the keyguard
- * caught up with the unlock late, the source reports it as a new reading. [keyguardCaughtUp] hears how long after
+ * screen's and the keyguard's state when the source reads, which [ScreenReadings] turns into the source's readings: only
+ * Android's own state decides a reading, and the broadcasts only make the source read again (plan 7F's seventh
+ * re-check). The source's thread is the main thread: the receiver runs there, and so does every reading, so that the
+ * readings are numbered in order. When a look at the screen, at a tap's stamp or while the keyguard may still change
+ * after SCREEN_ON or USER_PRESENT, finds another reading than the newest that the source gave, as when the lock screen
+ * came back without a screen-off (Lockdown) or the keyguard reported the unlock late, the source reports it as a new
+ * reading. [keyguardCaughtUp] hears how long after
  * USER_PRESENT the keyguard read unlocked, which the app graph logs (Task 14 measures it).
  */
 internal class AndroidScreenSource(
@@ -33,7 +34,7 @@ internal class AndroidScreenSource(
         caughtUp = keyguardCaughtUp,
     )
 
-    // While the keyguard settles after USER_PRESENT, the source looks again at each poll.
+    // While the keyguard may still change after SCREEN_ON or USER_PRESENT, the source looks again at each poll.
     private val settle = object : Runnable {
         override fun run() {
             confirm()
@@ -55,14 +56,9 @@ internal class AndroidScreenSource(
                     else -> ScreenReadings.Broadcast.SCREEN_ON
                 }
                 report(readings.heard(broadcast))
-                when (broadcast) {
-                    ScreenReadings.Broadcast.SCREEN_ON -> cameOn()
-                    ScreenReadings.Broadcast.USER_PRESENT -> {
-                        main.removeCallbacks(settle)
-                        if (readings.settling()) main.postDelayed(settle, ScreenReadings.KEYGUARD_POLL_MILLIS)
-                    }
-                    ScreenReadings.Broadcast.SCREEN_OFF -> main.removeCallbacks(settle)
-                }
+                main.removeCallbacks(settle)
+                if (readings.settling()) main.postDelayed(settle, ScreenReadings.KEYGUARD_POLL_MILLIS)
+                if (broadcast == ScreenReadings.Broadcast.SCREEN_ON) cameOn()
             }
         }
         val filter = IntentFilter().apply {
