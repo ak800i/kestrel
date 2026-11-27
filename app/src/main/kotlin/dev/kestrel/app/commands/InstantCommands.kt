@@ -18,12 +18,17 @@ import kotlinx.coroutines.withContext
  * The executor of the instant commands (design spec, section 9.5). It asks the text part, then the phone part, then the
  * screen part; when none takes a command, it runs the transcript once more as a bare label through the screen part, and
  * a result that acted then names that bare label as the command that acted, for "again". Without Kestrel's
- * accessibility service, only the volume, mute, silence and media commands run.
+ * accessibility service, only the volume, mute, silence and media commands run. [session] is the screen session, or null
+ * while the service is off.
  */
-internal class InstantCommands(private val environment: CommandEnvironment) : CommandRunner {
-    private val text = textCommands(environment)
-    private val phone = phoneCommands(environment)
-    private val screen = screenCommands(environment)
+internal class InstantCommands(
+    private val session: () -> ScreenSession?,
+    private val text: CommandPart,
+    private val phone: CommandPart,
+    private val screen: CommandPart,
+) : CommandRunner {
+    constructor(environment: CommandEnvironment) :
+        this(environment.screen, textCommands(environment), phoneCommands(environment), screenCommands(environment))
 
     // A command's waits for a quiet screen share one budget (design spec, sections 9.2 and 9.3), so that a screen that
     // never goes quiet costs the command 3 s in all, not 3 s at each wait.
@@ -33,7 +38,7 @@ internal class InstantCommands(private val environment: CommandEnvironment) : Co
     override fun privateInput(): Boolean = text.privateInput() || phone.privateInput() || screen.privateInput()
 
     private suspend fun execute(command: Command, heard: String, conversation: CommandConversation): CommandResult {
-        val session = environment.screen()
+        val session = session()
         if (session == null && !withoutScreen(command)) {
             return if (command is Command.Bare) CommandResult(Outcome.IGNORED) else CommandResult(Outcome.FAILED, say = CommandTexts.SERVICE_OFF)
         }

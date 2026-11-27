@@ -69,24 +69,27 @@ class ScreenChangeTracker(private val clock: () -> Long) {
 
     /**
      * Waits until the screen has had no change for [quietMillis], counted from [since] at the earliest, and
-     * returns true. Returns false when the context's [QuietBudget], or a budget of this wait's own outside a command, runs
-     * out first; the time that the wait took comes off that budget. [since] must come from [now], because only this
+     * returns true. A wait after an action, which passes [since], never ends before `since + quietMillis`, whatever its
+     * budget has left, so that the app has time to react. Beyond that floor, the wait goes on only until the context's
+     * [QuietBudget] (or a budget of this wait's own, outside a command) has run out, counted from the wait's start, and
+     * then returns false. Only a wait that ends without quiet takes from the budget: the time that it waited beyond its
+     * floor. A wait that ends because the screen went quiet costs nothing. [since] must come from [now], because only this
      * tracker's clock fits its times.
      */
     suspend fun awaitQuiet(quietMillis: Long, since: Long = Long.MIN_VALUE): Boolean {
         val budget = currentCoroutineContext()[QuietBudget] ?: QuietBudget()
         val started = clock()
-        val deadline = started + budget.remainingMillis
-        try {
-            while (true) {
-                val now = clock()
-                val quietFor = now - maxOf(lastChangeAt, since)
-                if (quietFor >= quietMillis) return true
-                if (now >= deadline) return false
-                delay(minOf(quietMillis - quietFor, deadline - now))
+        val floor = if (since == Long.MIN_VALUE) started else maxOf(started, since + quietMillis)
+        val deadline = maxOf(floor, started + budget.remainingMillis)
+        while (true) {
+            val now = clock()
+            val quietFor = now - maxOf(lastChangeAt, since)
+            if (quietFor >= quietMillis) return true
+            if (now >= deadline) {
+                budget.spend(now - floor)
+                return false
             }
-        } finally {
-            budget.spend(clock() - started)
+            delay(minOf(quietMillis - quietFor, deadline - now))
         }
     }
 

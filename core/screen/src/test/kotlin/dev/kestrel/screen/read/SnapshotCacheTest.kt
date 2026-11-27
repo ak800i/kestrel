@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -113,8 +114,30 @@ class SnapshotCacheTest {
         }
         ticking.cancel()
 
+        // The first wait spends the budget, the settle wait still lasts its own quiet time, and the builds take theirs.
         assertEquals(3, builds)
-        assertEquals(QuietBudget.MILLIS + builds * BUILD_MILLIS, testScheduler.currentTime)
+        assertEquals(QuietBudget.MILLIS + ScreenChangeTracker.ACTION_QUIET_MILLIS + builds * BUILD_MILLIS, testScheduler.currentTime)
+    }
+
+    @Test
+    fun withASpentBudgetTheSnapshotAfterAnActionStillShowsTheAppsReaction() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        var builds = 0
+        val cache = SnapshotCache(tracker) { ++builds }
+        assertEquals(1, cache.current())
+
+        val after = withContext(QuietBudget(0)) {
+            // The app reacts to the action 100 ms after it.
+            launch {
+                delay(100)
+                tracker.onScreenChanged()
+            }
+            tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
+            cache.current()
+        }
+
+        // Not the snapshot from before the action, which a settle wait of 0 ms would have handed out from the cache.
+        assertEquals(2, after)
     }
 
     @Test

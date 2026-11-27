@@ -71,8 +71,9 @@ class ScreenChangeTrackerTest {
         }
         changes.cancel()
 
+        // The first wait spends the budget; each wait after an action then still lasts its own quiet time.
         assertEquals(listOf(false, false, false, false), quiet)
-        assertEquals(QuietBudget.MILLIS, testScheduler.currentTime)
+        assertEquals(QuietBudget.MILLIS + 2 * ScreenChangeTracker.ACTION_QUIET_MILLIS, testScheduler.currentTime)
     }
 
     @Test
@@ -96,7 +97,52 @@ class ScreenChangeTrackerTest {
         }
         changes.join()
 
-        assertEquals(QuietBudget.MILLIS - 600, budget.remainingMillis)
+        // Waits that end because the screen went quiet cost nothing.
+        assertEquals(QuietBudget.MILLIS, budget.remainingMillis)
+    }
+
+    @Test
+    fun aCommandWhoseScreenSettlesAfterEachActionNeverSpendsItsBudget() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val budget = QuietBudget()
+
+        withContext(budget) {
+            repeat(10) {
+                // Each action makes the app change its screen every 50 ms for 300 ms, as an animation does.
+                val animation = launch {
+                    repeat(7) {
+                        tracker.onScreenChanged()
+                        delay(50)
+                    }
+                }
+                val acted = tracker.now()
+                assertTrue(tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = acted))
+                assertEquals(acted + 300 + ScreenChangeTracker.ACTION_QUIET_MILLIS, testScheduler.currentTime)
+                animation.join()
+            }
+        }
+
+        assertEquals(QuietBudget.MILLIS, budget.remainingMillis)
+    }
+
+    @Test
+    fun aWaitAfterAnActionLastsItsQuietTimeAlsoWhenTheBudgetIsSpent() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val changes = launch {
+            while (true) {
+                tracker.onScreenChanged()
+                delay(110)
+            }
+        }
+
+        withContext(QuietBudget(0)) {
+            assertFalse(tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now()))
+            assertEquals(ScreenChangeTracker.ACTION_QUIET_MILLIS, testScheduler.currentTime)
+            // A wait for a snapshot has no floor, so it ends at once.
+            assertFalse(tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS))
+            assertEquals(ScreenChangeTracker.ACTION_QUIET_MILLIS, testScheduler.currentTime)
+        }
+        changes.cancel()
     }
 
     @Test

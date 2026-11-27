@@ -112,7 +112,7 @@ internal class AppGoalEnvironment(
         val round = evidences?.start(start.command, witness)
         val data = witness.watch(AndroidDataPort(context, agentSettings.agentFree::isAgentFree))
         val ports = AgentPorts(
-            AppScreenPort(session, context.packageManager, showBadges, hideBadges, backstop::acted),
+            AppScreenPort.create(session, context.packageManager, showBadges, hideBadges, backstop::acted),
             eyes(),
             data,
             GoalOwner(start.owner, watcher, witness),
@@ -156,7 +156,7 @@ internal class AppGoalEnvironment(
         val taskId = newId(start.command)
         val log = LogTaskLog(taskId, appendLog, report)
         val data = AndroidDataPort(context, agentSettings.agentFree::isAgentFree)
-        val screen = AppScreenPort(session, context.packageManager, showBadges, hideBadges) {}
+        val screen = AppScreenPort.create(session, context.packageManager, showBadges, hideBadges) {}
         val ports = AgentPorts(screen, NoEyes, data, start.owner, model, apps, memory, log, AndroidAgentClock, start.goal, start.history)
         return RoundSetup.Ready(ports, agentSettings, taskId, emptySet(), emptyFlow(), offersRoutines = false) {}
     }

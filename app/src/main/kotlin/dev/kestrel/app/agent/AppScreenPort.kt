@@ -18,7 +18,6 @@ import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.PressPolicy
 import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ScreenSnapshot
-import dev.kestrel.screen.read.withQuietBudget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -34,7 +33,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * confirmation card shows, the port waits until it has gone before it reads or acts (D8). The numbers of look_closer go
  * through [showBadges] and [hideBadges], which plan 5C sets.
  */
-internal class AppScreenPort(
+internal class AppScreenPort private constructor(
     private val session: () -> ScreenSession?,
     private val packageManager: PackageManager,
     private val showBadges: suspend (ScreenSession, List<Badge>) -> Unit,
@@ -51,10 +50,7 @@ internal class AppScreenPort(
         val screen = session() ?: return ActionOutcome(done = false, reason = AgentTexts.NO_SERVICE)
         afterCard(screen)
         val result = try {
-            // An action is the agent's command: its waits for a quiet screen share one budget (design spec, section 9.3).
-            // The observation after it, snapshot(), waits with a budget of its own, so that the step is judged on a
-            // screen that had its own time to settle.
-            withQuietBudget { perform(screen, action) }
+            perform(screen, action)
         } finally {
             acted()
         }
@@ -123,6 +119,15 @@ internal class AppScreenPort(
         const val POLL_MILLIS = 100L
         const val CARD_MILLIS = 2_000L
         private val OFF_SCREEN = ActionResult.Failed("The point is outside the screen.")
+
+        /** The agent's screen, whose actions each have one quiet budget ([QuietBudgetPort]). */
+        fun create(
+            session: () -> ScreenSession?,
+            packageManager: PackageManager,
+            showBadges: suspend (ScreenSession, List<Badge>) -> Unit,
+            hideBadges: suspend (ScreenSession) -> Unit,
+            acted: () -> Unit,
+        ): ScreenPort = QuietBudgetPort(AppScreenPort(session, packageManager, showBadges, hideBadges, acted))
 
         fun policy(press: Press): PressPolicy = when (press) {
             Press.ONCE -> PressPolicy.ONCE
