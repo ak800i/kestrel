@@ -17,7 +17,13 @@ package dev.kestrel.app.phone
  * USER_PRESENT tells [caughtUp] how long after USER_PRESENT it came.
  *
  * The count of screen-offs rises when a look sees the screen off, or a SCREEN_OFF broadcast comes, after the source last
- * saw the screen on: a screen-off that the source saw counts once, whichever of the two saw it first.
+ * saw the screen on. One screen-off counts once when no look sees the screen on between the look that counted it and its
+ * broadcast; otherwise its late broadcast counts it again, which can only drop a held Continue (the owner's next tap
+ * answers). A screen-off shorter than one look, during the looks after SCREEN_ON or USER_PRESENT and followed by the
+ * owner's unlock before its broadcast arrives, is counted only after the unlocked reading, so a Continue held across it
+ * can answer at that unlock, on a phone that the owner has unlocked. Android gives no way to tie a broadcast to the look
+ * that saw the same screen-off, and it can merge fast screen-offs into one broadcast, so a rule that skipped broadcasts
+ * would move the error to the unsafe side.
  *
  * Every call runs on the source's one thread ([onSourceThread]), which numbers the readings in the order of its looks and
  * broadcasts, and refuses to run elsewhere: a status read on another thread could not be in order with the reports.

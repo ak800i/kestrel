@@ -91,6 +91,20 @@ class ScreenReadingsTest {
         assertEquals(ScreenStatus(ScreenReading.OFF, offs = 2, seq = 4), readings.heard(Broadcast.SCREEN_OFF))
     }
 
+    // The eighth re-check's N8-M1: a look sees the screen off, a tap's stamp then sees it on again, and the off's own
+    // SCREEN_OFF broadcast comes after that: Android ties no broadcast to a look, so the late broadcast counts the same
+    // screen-off again. That can only drop a Continue held in the gap (the safe side), and the owner's next tap answers.
+    @Test
+    fun aLateScreenOffBroadcastAfterALookSawTheScreenOnCountsTheOffAgain() {
+        readings.heard(Broadcast.SCREEN_ON)
+        interactive = false
+        assertEquals(ScreenStatus(ScreenReading.OFF, offs = 1, seq = 1), readings.status())
+
+        interactive = true
+        assertEquals(ScreenStatus(ScreenReading.LOCKED, offs = 1, seq = 1), readings.status())
+        assertEquals(ScreenStatus(ScreenReading.LOCKED, offs = 2, seq = 2), readings.heard(Broadcast.SCREEN_OFF))
+    }
+
     // The fifth re-check's N5-M1: a status read off the source's thread could not be in order with its reports, so the
     // source refuses it.
     @Test
