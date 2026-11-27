@@ -8,41 +8,45 @@ import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 
 /**
- * Android's screen and lock (design spec, section 8.5), as ListeningService read them until plan 7D: Kestrel counts the
- * phone as unlocked after USER_PRESENT until the screen goes off, because KeyguardManager can learn of the unlock a moment
- * later, and a SCREEN_ON that Kestrel handles after USER_PRESENT must not report the old lock. The source's thread is the
- * main thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
+ * Android's screen and lock (design spec, section 8.5): the broadcasts SCREEN_OFF, SCREEN_ON and USER_PRESENT, and the
+ * screen's and the keyguard's state when the source reads, which [ScreenReadings] turns into the source's readings, so
+ * that each reading is correct at the moment it is read (plan 7F's fourth re-check). The source's thread is the main
+ * thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
+ * When a look at the screen, at a tap's stamp or at the end of USER_PRESENT's bridge, finds another reading than the
+ * newest that the source gave, as when the lock screen came back without a screen-off (Lockdown), the source reports
+ * it as a new reading.
  */
 internal class AndroidScreenSource(private val context: Context) : ScreenSource {
     private val main = Handler(Looper.getMainLooper())
-
-    // The owner unlocked the phone since the screen last went off (USER_PRESENT).
-    @Volatile
-    private var unlocked = false
+    private val readings = ScreenReadings(
+        interactive = { context.getSystemService(PowerManager::class.java).isInteractive },
+        keyguardLocked = { context.getSystemService(KeyguardManager::class.java).isKeyguardLocked },
+        clock = SystemClock::uptimeMillis,
+    )
     private var receiver: BroadcastReceiver? = null
 
-    // Raised on the main thread at each SCREEN_OFF, before its report.
+    // Where the readings go while the source runs: set under this object's lock, read on the main thread.
     @Volatile
-    private var offs = 0L
-
-    // The number of the newest reading that the source gave, raised on the main thread with each one (next()).
-    @Volatile
-    private var seq = 0L
+    private var report: ((ScreenStatus) -> Unit)? = null
 
     override fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit) {
         val screen = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                when (intent.action) {
-                    Intent.ACTION_USER_PRESENT -> unlocked = true
-                    Intent.ACTION_SCREEN_OFF -> {
-                        unlocked = false
-                        offs++
-                    }
+                val broadcast = when (intent.action) {
+                    Intent.ACTION_USER_PRESENT -> ScreenReadings.Broadcast.USER_PRESENT
+                    Intent.ACTION_SCREEN_OFF -> ScreenReadings.Broadcast.SCREEN_OFF
+                    else -> ScreenReadings.Broadcast.SCREEN_ON
                 }
-                report(next())
-                if (intent.action == Intent.ACTION_SCREEN_ON) cameOn()
+                report(readings.heard(broadcast))
+                when (broadcast) {
+                    ScreenReadings.Broadcast.SCREEN_ON -> cameOn()
+                    // The keyguard has caught up with the unlock by the end of the bridge, or the lock screen shows.
+                    ScreenReadings.Broadcast.USER_PRESENT -> main.postDelayed(::confirm, ScreenReadings.UNLOCK_LAG_MILLIS)
+                    ScreenReadings.Broadcast.SCREEN_OFF -> Unit
+                }
             }
         }
         val filter = IntentFilter().apply {
@@ -52,7 +56,8 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
         synchronized(this) {
             receiver?.let(context::unregisterReceiver)
-            unlocked = false
+            readings.restarted()
+            this.report = report
             // SCREEN_ON and SCREEN_OFF come from the system, but USER_PRESENT comes from SystemUI, and Android gives another
             // app's broadcasts only to an exported receiver. All three are protected broadcasts, which other apps cannot
             // send.
@@ -65,29 +70,21 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         synchronized(this) {
             receiver?.let(context::unregisterReceiver)
             receiver = null
+            report = null
         }
     }
 
-    override fun status(): ScreenStatus = ScreenStatus(current(), offs, seq)
+    // The tap's stamp reads the screen now; a reading that differs from the newest given is reported after it.
+    override fun status(): ScreenStatus = readings.status().also { main.post(::confirm) }
 
     override fun read(reading: (ScreenStatus) -> Unit) {
-        if (main.looper.isCurrentThread) reading(next()) else main.post { reading(next()) }
+        if (main.looper.isCurrentThread) reading(readings.next()) else main.post { reading(readings.next()) }
     }
 
-    // A new reading of the source: on the main thread only, so that the numbers follow the readings' order.
-    private fun next(): ScreenStatus {
-        seq++
-        return ScreenStatus(current(), offs, seq)
-    }
-
-    private fun current(): ScreenReading {
-        val interactive = context.getSystemService(PowerManager::class.java).isInteractive
-        val locked = context.getSystemService(KeyguardManager::class.java).isKeyguardLocked
-        return when {
-            !interactive -> ScreenReading.OFF
-            unlocked || !locked -> ScreenReading.UNLOCKED
-            else -> ScreenReading.LOCKED
-        }
+    // On the main thread: reports the screen as it reads now when that differs from the newest reading given.
+    private fun confirm() {
+        val report = report ?: return
+        if (readings.stale()) report(readings.next())
     }
 
     override fun toString(): String = "AndroidScreenSource(watching=${receiver != null})"
