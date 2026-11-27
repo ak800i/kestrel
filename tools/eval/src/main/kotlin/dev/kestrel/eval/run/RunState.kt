@@ -6,10 +6,13 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A command that the run gave Kestrel (design 14.4 of sub-project 7): its [tag], the end that its turn expects
- * ([expected], null for any end), whether its words went to Kestrel ([sent]), and its end once the run read it ([answer]).
- * toString prints no words.
+ * ([expected], null for any end), whether its words went to Kestrel ([sent]), its end once the run read it ([answer]), and
+ * its questions with the run's answers ([record]). toString prints no words.
  */
 class SentCommand(val tag: String, val expected: String?) {
+    /** The command's questions as the run met them, and its answers that reached Kestrel (T1); its end closes them. */
+    val record = AskedRecord()
+
     @Volatile
     var sent = false
 
@@ -34,9 +37,6 @@ internal class RunState(private val putBack: PutBack) {
     var refused: String? = null
     val declined = mutableSetOf<String>()
 
-    // The commands' questions as the run met them, and its answers that reached Kestrel (T1).
-    val record = AskedRecord()
-
     // agent-task's answer with the run's marker, read once after the end for the newest command, for the detail line.
     @Volatile
     var markers: HookAnswer? = null
@@ -50,11 +50,14 @@ internal class RunState(private val putBack: PutBack) {
     /** The run's answer: its commands' ends as one ([Outcomes]), or null while a command's end is not read. */
     val answer: HookAnswer? get() = Outcomes.merge(commands)
 
-    /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
-    val asked: List<Asked> get() = record.asked
+    /** The run's answers that reached Kestrel, and the questions that it left open on purpose, command by command. */
+    val asked: List<Asked> get() = commands.flatMap { it.record.asked }
 
-    /** The kinds of the questions and hand-overs whose answer by the run ended a command, each once. */
-    fun cancelled(): List<String> = record.cancelled()
+    /**
+     * The kinds of the questions and hand-overs whose answer by the run ended the command whose end the run's answer
+     * carries ([Outcomes.deciding]), each once: an answer that ended an earlier command does not explain the run's end.
+     */
+    fun cancelled(): List<String> = Outcomes.deciding(commands)?.record?.cancelled().orEmpty()
 
     /** The run's detail line, from what it met and what its restores put back so far. */
     fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored, putBack.leftChanged)

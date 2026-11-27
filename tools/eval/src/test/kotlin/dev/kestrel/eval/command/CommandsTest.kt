@@ -53,6 +53,8 @@ class CommandsTest {
         assertTrue(line.endsWith("\ttask\ttask=stand-in-hotspot run=1 result=pass end=FINISHED check=pass steps=3 workMs=9000 credits=0.00 model=scripted in=0 out=0 cacheRead=0 cacheWrite=0 reason=ok"))
         assertTrue(fake.adb.commands.contains("am start -W -S -n dev.kestrel.testapp/.StandInActivity --es screen 'hotspot'"))
         assertEquals("off", fake.live)
+        // The preflight's, the run's and the series' cleanup's: the cleanup knows that the run gave Kestrel a command.
+        assertEquals(3, fake.adb.hookCalls("CONVERSATION_CONTROL").count { it["do"] == "delete-typed" })
     }
 
     @Test

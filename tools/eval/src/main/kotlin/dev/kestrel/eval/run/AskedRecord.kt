@@ -1,11 +1,11 @@
 package dev.kestrel.eval.run
 
 /**
- * The run's record of the task's questions and hand-overs (plan 6B-basefix T1), in their order, as the runner's reads of
- * agent-state met them. A question lasts from the read that first sees it open until a read sees it closed, or until an
- * answer to it reaches Kestrel, which closes it: so two questions of the same kind, one after the other, are two
- * entries, while an answer sent again to a question that is still open, after Kestrel refused the first, is one. A
- * question that opens and closes between two reads is not seen.
+ * A command's record of its questions and hand-overs (plan 6B-basefix T1; one per command since plan 7G), in their order,
+ * as the runner's reads of agent-state met them. A question lasts from the read that first sees it open until a read sees
+ * it closed, or until an answer to it reaches Kestrel, which closes it: so two questions of the same kind, one after the
+ * other, are two entries, while an answer sent again to a question that is still open, after Kestrel refused the first,
+ * is one. A question that opens and closes between two reads is not seen.
  *
  * An answer whose hook reply was lost may have reached Kestrel or not, so the next read decides: it reached Kestrel when
  * that read finds the question closed or the task ended, and it did not when the same question is still open, which the
@@ -56,14 +56,14 @@ class AskedRecord {
         keptOpen = true
     }
 
-    /** The task ended, so an answer whose hook reply was lost had reached Kestrel. */
+    /** The command ended, so an answer whose hook reply was lost had reached Kestrel. */
     @Synchronized
     fun ended() {
         lost?.let(::close)
         lost = null
     }
 
-    /** The kinds of the questions and hand-overs whose answer by the run ended the task, each once. */
+    /** The kinds of the questions and hand-overs whose answer by the run ended the command, each once. */
     @Synchronized
     fun cancelled(): List<String> = entries.filter { it.endsTask }.map { it.kind }.distinct()
 

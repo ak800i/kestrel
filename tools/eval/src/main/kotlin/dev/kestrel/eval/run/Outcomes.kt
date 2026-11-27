@@ -15,15 +15,23 @@ object Outcomes {
     private val SUMS = listOf("steps", "workMs", "confirmed", "unconfirmed", "shareItems", "beforeTestMode", "in", "out", "cacheRead", "cacheWrite", "ownerTouches", "signals")
 
     fun merge(commands: List<SentCommand>): HookAnswer? {
-        if (commands.any { it.open }) return null
-        val ended = commands.mapNotNull { command -> command.answer?.let { command to it } }
-        if (ended.size <= 1) return ended.singleOrNull()?.second
-        val unexpected = ended.dropLast(1).firstOrNull { (command, answer) -> command.expected != null && answer["end"] != command.expected }
-        val end = (unexpected ?: ended.last()).second["end"] ?: "none"
-        val answers = ended.map { it.second }
+        val deciding = deciding(commands) ?: return null
+        val answers = commands.mapNotNull { it.answer }
+        if (answers.size == 1) return answers.single()
+        val end = deciding.answer?.get("end") ?: "none"
         val credits = String.format(Locale.ROOT, "%.2f", answers.sumOf { it["credits"]?.toDoubleOrNull() ?: 0.0 })
         val model = answers.mapNotNull { it["model"] }.lastOrNull { it != "none" } ?: "none"
         val sums = SUMS.joinToString(" ") { field -> "$field=${answers.sumOf { it[field]?.toLongOrNull() ?: 0L }}" }
         return HookAnswer("state=done end=$end credits=$credits model=$model $sums")
+    }
+
+    /**
+     * The command whose end the merged answer carries: the first earlier command whose end its turn did not expect, else
+     * the last; null while a command's end is not read, or without a command.
+     */
+    fun deciding(commands: List<SentCommand>): SentCommand? {
+        if (commands.any { it.open }) return null
+        val ended = commands.filter { it.answer != null }
+        return ended.dropLast(1).firstOrNull { it.expected != null && it.answer?.get("end") != it.expected } ?: ended.lastOrNull()
     }
 }

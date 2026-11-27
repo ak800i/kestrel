@@ -37,9 +37,13 @@ class RunnerTest {
     private val done = "state=done end=FINISHED steps=3 workMs=9000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 " +
         "model=scripted in=10 out=2 cacheRead=0 cacheWrite=0"
 
-    private fun runner(live: Boolean = false, restores: Restores = run.restores) = Runner(
+    private fun runner(
+        live: Boolean = false,
+        restores: Restores = run.restores,
+        conversations: ConversationGuard = ConversationGuard(run.hooks, run.clock),
+    ) = Runner(
         run.device, run.hooks, restores, run.clock, run.console, run.scope.config, run.scope.work, writer, RunOptions(live),
-        { listening() }, Markers(Random(1)), { "t${++tagNumber}" },
+        { listening() }, conversations, Markers(Random(1)), { "t${++tagNumber}" },
     )
 
     private fun task(
@@ -606,6 +610,98 @@ class RunnerTest {
         questions.add("$open asking=free question=free")
         polls = 0
         assertEquals(Reason.END, runner().run(task(), "[]", 4, "willow walnut").reason)
+    }
+
+    // Each command has its own record of questions (design 14.4 of sub-project 7): the "Which number should I use?" that the
+    // run left open when the first command ended does not hide the same question of the second command.
+    @Test
+    fun aQuestionLeftOpenWhenACommandEndedDoesNotHideTheSameQuestionOfTheNextCommand() {
+        val polls = mutableMapOf<String, Int>()
+        run.adb.hook("AGENT_TASK") { extras ->
+            when {
+                extras["marker"] != null -> "state=done marker=1"
+                polls.merge(extras.getValue("tag"), 1, Int::plus)!! < 3 -> "state=running"
+                else -> done
+            }
+        }
+        run.adb.hook("AGENT_STATE") { "phase=running work=running-task handOver=none confirming=none asking=pick-number question=pick-number" }
+        val twice = task().copy(turns = listOf(Turn.Say(Request("look closer")), Turn.Say(Request("look closer again"))))
+
+        assertEquals(Reason.OK, runner().run(twice, "[]", 1, "maple heron").reason)
+
+        assertTrue(run.console.lines.toString(), run.console.lines.any { it.startsWith("detail task=stand-in-hotspot run=1 asked=pick-number:none,pick-number:none ") })
+    }
+
+    // Only the answers to the questions of the command whose end the run's line carries explain that end: the run's cancel
+    // that ended the first command, as its turn expected, does not make the second command's own CANCELLED `reason=asked`.
+    @Test
+    fun theRunsCancelOfAnEarlierCommandDoesNotExplainTheLastCommandsOwnCancelledEnd() {
+        val cancelled = "state=done end=CANCELLED steps=1 workMs=1000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 " +
+            "model=scripted in=1 out=1 cacheRead=0 cacheWrite=0"
+        val polls = mutableMapOf<String, Int>()
+        run.adb.hook("AGENT_STATE") { extras ->
+            val asking = if (extras["tag"] == "t1" && run.adb.hookCalls("AGENT_ANSWER").isEmpty()) "free" else "none"
+            "phase=running work=running-task handOver=none confirming=none asking=$asking question=$asking"
+        }
+        run.adb.hook("AGENT_TASK") { extras ->
+            val tag = extras.getValue("tag")
+            when {
+                extras["marker"] != null -> "state=done marker=1"
+                tag == "t1" -> if (run.adb.hookCalls("AGENT_ANSWER").isEmpty()) "state=running" else cancelled
+                polls.merge(tag, 1, Int::plus)!! < 3 -> "state=running"
+                else -> cancelled
+            }
+        }
+        val conversation = task().copy(turns = listOf(Turn.Say(Request("ask me something"), ends = "CANCELLED"), Turn.Say(Request("turn on hotspot"))))
+
+        val line = runner().run(conversation, "[]", 1, "maple heron")
+
+        assertEquals(listOf("cancel"), run.adb.hookCalls("AGENT_ANSWER").map { it["answer"] })
+        assertEquals(Reason.END, line.reason)
+        assertTrue(line.text(), " asked=" !in line.text())
+        assertTrue(run.console.lines.toString(), run.console.lines.any { it.startsWith("detail task=stand-in-hotspot run=1 asked=free:cancel ") })
+    }
+
+    // The series' cleanup ends only the conversation that a run of the series opened: after an untestable run it sends
+    // nothing, and after a run whose conversation a long final reply kept open past the run's 60 s, it closes that one.
+    @Test
+    fun theSeriesCleanupEndsOnlyTheConversationThatARunOfTheSeriesOpened() {
+        run.adb.hook("AGENT_TASK") { done }
+        val series = ConversationGuard(run.hooks, run.clock)
+        val untestable = object : Setup {
+            override fun apply(scope: RunScope) = SetupResult.Untestable("the test says so")
+        }
+
+        assertEquals(Reason.UNTESTABLE, runner(conversations = series).run(task(setup = listOf(untestable)), "[]", 1, "maple heron").reason)
+        series.deleteLeft()
+
+        assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("am ") })
+        var open = false
+        var quiet = "off"
+        run.adb.hook("CONVERSATION_STATE") {
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on"
+        }
+        run.adb.hook("CONVERSATION_CONTROL") { extras ->
+            if (extras["do"] == "expire") {
+                if (quiet == "running") open = false
+                "expire=sent"
+            } else {
+                if (open) "deleted=0 open=1 failed=0" else "deleted=1 open=0 failed=0"
+            }
+        }
+        run.adb.hook("VOICE") { extras ->
+            if (extras["text"] == "Kestrel, turn on hotspot") {
+                open = true
+                quiet = "held"
+            }
+            "sent"
+        }
+        assertEquals(Reason.OK, runner(conversations = series).run(task(), "[]", 2, "cedar otter").reason)
+        assertTrue(open)
+        quiet = "running"
+        series.deleteLeft()
+        assertFalse(open)
+        assertEquals(listOf("delete-typed", "delete-typed", "expire", "delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
     }
 
     @Test

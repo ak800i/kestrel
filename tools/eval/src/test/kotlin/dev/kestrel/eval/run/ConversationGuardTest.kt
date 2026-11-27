@@ -74,6 +74,7 @@ class ConversationGuardTest {
         open = true
         quiet = "held"
         guard.deleteRun { warnings += it }
+        guard.gave("t1")
         assertEquals(
             listOf("Kestrel's conversation did not close within 60 s. It stays among the hooks' own conversations, which the next run or the series' cleanup deletes."),
             warnings,
@@ -102,6 +103,23 @@ class ConversationGuardTest {
         assertEquals(2, stops)
     }
 
+    // The series' cleanup ends only what the series' runs opened: nothing at all when no run gave Kestrel a command, as when
+    // every run was untestable, and not an open conversation that is not one of the hooks' own, which is the owner's.
+    @Test
+    fun theSeriesCleanupEndsOnlyAConversationThatTheSeriesRunsOpened() {
+        quiet = "running"
+
+        guard.deleteLeft()
+
+        assertEquals(emptyList<String>(), run.adb.commands)
+        guard.gave("t1")
+        run.adb.hook("CONVERSATION_CONTROL") { "deleted=2 open=0 failed=0" }
+        guard.deleteLeft()
+        assertEquals(listOf(mapOf("do" to "delete-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
+        assertTrue(run.adb.hookCalls("CONVERSATION_STATE").isEmpty())
+        assertTrue(open)
+    }
+
     // The waits measure the clock, so a slow adb cannot stretch them: on a device whose every command takes 7 s, or that
     // never answers, close ends at its 60 s, the series' cleanup at its 300 s and stopGoal's wait at its 15 s.
     @Test
@@ -113,7 +131,7 @@ class ConversationGuardTest {
             goal = "none"
 
             assertEquals(60.seconds, timed { assertThrows(SetupFailed::class.java) { guard.close() } })
-            assertEquals(5.minutes, timed { assertThrows(SetupFailed::class.java) { guard.deleteLeft() } })
+            assertEquals(5.minutes, timed { assertThrows(SetupFailed::class.java) { guard.close(ConversationGuard.CLEANUP) } })
         }
 
         run.adb.slow(run.clock, 7.seconds)

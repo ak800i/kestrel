@@ -29,8 +29,10 @@ class RestoreFailed(message: String) : Exception(message)
  * the end however the run ends: the run's restores (the stop of a command whose end the run did not read, the stop of a
  * goal that the run left open, the scripted model removed, the run's conversations deleted, and the setup's restores, in
  * that order), the call state again, the credits and the line. The stops and the removal are restores, so that the
- * shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel listens, before each run. Once the
- * shutdown hook began ([Restores.stopping]), no run and no command starts: the runner throws [Stopping].
+ * shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel
+ * listens, before each run. [conversations] is the series' guard, which learns each command that a run gives Kestrel, so
+ * that the series' cleanup ends only what the runs opened. Once the shutdown hook began ([Restores.stopping]), no run and
+ * no command starts: the runner throws [Stopping].
  */
 class Runner(
     private val device: Device,
@@ -43,12 +45,12 @@ class Runner(
     private val writer: LineWriter,
     private val options: RunOptions,
     private val listening: () -> Unit,
+    private val conversations: ConversationGuard,
     private val markers: Markers = Markers(),
     private val tags: () -> String = { "t" + UUID.randomUUID().toString().replace("-", "").take(12) },
 ) {
     private val calls = CallGuard(device, console, clock)
     private val scripts = ScriptInstaller(device, hooks, work)
-    private val conversations = ConversationGuard(hooks, clock)
 
     // The run that is under way, which the bottom restore of runAll reads for its credits when Ctrl+C ends it.
     @Volatile
@@ -170,7 +172,7 @@ class Runner(
             state.current?.let { stop(task, number, it.tag, it.sent) }
         }
         stopIfStopping()
-        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping).run() == TurnsEnd.UNDELIVERED) {
+        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations).run() == TurnsEnd.UNDELIVERED) {
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
         }
         val answer = state.answer

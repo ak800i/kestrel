@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.run.ConversationGuard
 import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.Markers
 import dev.kestrel.eval.run.RunLine
@@ -52,7 +53,7 @@ class TaskBench(kind: DeviceKind = DeviceKind.EMULATOR, config: LocalConfig = Lo
     fun run(task: Task): RunLine {
         val runner = Runner(
             run.device, run.hooks, run.restores, run.clock, run.console, run.scope.config, run.scope.work, LineWriter(run.console, null),
-            RunOptions(live), {}, Markers(),
+            RunOptions(live), {}, ConversationGuard(run.hooks, run.clock), Markers(),
         )
         return runner.run(task, if (live) null else ScriptInstaller.resource(task.dryRun!!.script), 1, "maple heron")
     }

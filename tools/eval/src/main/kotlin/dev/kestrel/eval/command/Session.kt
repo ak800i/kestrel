@@ -9,6 +9,7 @@ import dev.kestrel.eval.hook.HookClient
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.AccountGuard
 import dev.kestrel.eval.run.Console
+import dev.kestrel.eval.run.ConversationGuard
 import dev.kestrel.eval.run.Installer
 import dev.kestrel.eval.run.LineWriter
 import dev.kestrel.eval.run.LiveGate
@@ -34,7 +35,10 @@ class Session(private val environment: Environment, serial: String) {
     val device: Device = environment.adb(serial).let { adb -> Device(adb, DeviceGuard(environment.clock).accept(adb), environment.clock) }
     val hooks = Hooks(HookClient(device))
     val work: Path = environment.root.resolve("build").resolve("eval").resolve(serial)
-    val preflight = Preflight(device, hooks, restores, environment.clock, Installer(environment.root, environment.processes))
+
+    // The series' guard of Kestrel's conversation: its runs tell it their commands, and the preflight's cleanup reads them.
+    private val conversations = ConversationGuard(hooks, environment.clock)
+    val preflight = Preflight(device, hooks, restores, environment.clock, Installer(environment.root, environment.processes), conversations)
 
     /** Before the first run: a live session left on goes off without `--live`, the preflight, and with `--live` the live gate. */
     fun prepare(tasks: List<Task>, live: Boolean) {
@@ -44,7 +48,7 @@ class Session(private val environment: Environment, serial: String) {
     }
 
     fun runner(options: RunOptions, writer: LineWriter): Runner =
-        Runner(device, hooks, restores, environment.clock, console, config, work, writer, options, preflight::waitListening)
+        Runner(device, hooks, restores, environment.clock, console, config, work, writer, options, preflight::waitListening, conversations)
 
     /**
      * Runs [body], then the restores, then on kestrel-api37 the check of its accounts and profile. When the body threw, a

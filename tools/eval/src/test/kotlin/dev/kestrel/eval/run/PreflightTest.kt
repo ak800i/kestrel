@@ -48,7 +48,7 @@ class PreflightTest {
         )
     }
 
-    private fun preflight(of: FakeRun = run) = Preflight(of.device, of.hooks, of.restores, of.clock, installer)
+    private fun preflight(of: FakeRun = run) = Preflight(of.device, of.hooks, of.restores, of.clock, installer, ConversationGuard(of.hooks, of.clock))
 
     @Test
     fun testModeIsTurnedOnWithARestoreAndKestrelIsStartedFirst() {
@@ -99,12 +99,12 @@ class PreflightTest {
             "Success"
         }
 
-        Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer).prepare(needsTestApp = true)
+        Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer, ConversationGuard(a71.hooks, a71.clock)).prepare(needsTestApp = true)
         assertTrue(a71.restores.runAll().isEmpty())
 
         assertTrue(a71.adb.commands.contains("pm uninstall dev.kestrel.testapp"))
         uninstalls = false
-        Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer).prepare(needsTestApp = true)
+        Preflight(a71.device, a71.hooks, a71.restores, a71.clock, installer, ConversationGuard(a71.hooks, a71.clock)).prepare(needsTestApp = true)
         assertEquals(listOf(":testapp removed from the A71"), a71.restores.runAll().map { it.what })
     }
 

@@ -31,6 +31,7 @@ internal class TurnRunner(
     private val options: RunOptions,
     private val tags: () -> String,
     private val stopIfStopping: () -> Unit,
+    private val conversations: ConversationGuard,
 ) {
     private val hooks = scope.hooks
     private val clock = scope.clock
@@ -61,6 +62,8 @@ internal class TurnRunner(
         val command = SentCommand(tags(), expected)
         state.commands.add(command)
         scope.tag = command.tag
+        // Before the words go: a command whose answer is lost may still have opened a conversation of the series' own.
+        conversations.gave(command.tag)
         try {
             command.sent = true
             send(command.tag)
@@ -96,7 +99,7 @@ internal class TurnRunner(
             if (elapsed() < quietUntil) continue
             val asked = quietly { hooks.agentState(command.tag) } ?: continue
             val kind = Answers.kind(asked)
-            state.record.saw(kind)
+            command.record.saw(kind)
             if (kind == null) continue
             if (answer(command, asked, kind)) quietUntil = elapsed() + Runner.QUIET
         }
@@ -107,7 +110,7 @@ internal class TurnRunner(
     // The command's end; one that Kestrel refused before it ran ends the turns, because nothing was tested.
     private fun ended(command: SentCommand, pairs: HookAnswer): TurnsEnd? {
         command.answer = pairs
-        state.record.ended()
+        command.record.ended()
         if (pairs["end"] in Refusals.ENDS) {
             state.refusal = Refusals.kind(hooks, command.tag)
             return TurnsEnd.CUT
@@ -124,7 +127,7 @@ internal class TurnRunner(
         val reply = task.answers.reply(asked)
         if (reply == null) {
             // "Which number should I use?" stays unanswered (the owner's decision P1).
-            if (kind == Answers.PICK_NUMBER) state.record.keepOpen()
+            if (kind == Answers.PICK_NUMBER) command.record.keepOpen()
             return false
         }
         val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
@@ -132,8 +135,8 @@ internal class TurnRunner(
         if (confirming != null && reply == "cancel" && task.kind != TaskKind.INJECTION) state.refused = confirming
         if (confirming != null && reply == "no") state.declined.add(confirming)
         when (deliver { hooks.agentAnswer(command.tag, reply, confirming) }) {
-            Delivery.DELIVERED -> state.record.answered(reply)
-            Delivery.LOST -> state.record.lost(reply)
+            Delivery.DELIVERED -> command.record.answered(reply)
+            Delivery.LOST -> command.record.lost(reply)
             Delivery.REFUSED -> Unit
         }
         return true

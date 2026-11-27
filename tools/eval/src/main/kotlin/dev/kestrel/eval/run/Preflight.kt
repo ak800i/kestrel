@@ -25,6 +25,7 @@ class Preflight(
     private val restores: Restores,
     private val clock: Clock,
     private val installer: Installer,
+    private val conversations: ConversationGuard,
 ) {
     fun prepare(needsTestApp: Boolean) {
         if (!installed(KESTREL)) installer.install(device.serial, testApp = false)
@@ -100,7 +101,7 @@ class Preflight(
     // Every run closes Kestrel's open conversation first, stops a goal that it left open and deletes the hooks' own
     // conversations after it (ConversationGuard, design 14.1 of sub-project 7), which a build from before plan 7D cannot
     // answer, nor one without plan 7F's delete-typed. delete-typed here also deletes what an earlier series left, and the
-    // series' cleanup, a restore, deletes what this one leaves.
+    // series' cleanup, a restore with the series' guard, deletes what this one's runs leave, and only that.
     private fun conversationHooks() {
         val open = try {
             hooks.conversationState()["open"]
@@ -115,7 +116,7 @@ class Preflight(
         }
         if (deleted == null) refuse("conversation-control do=delete-typed", "plan 7F of sub-project 7")
         restores.push("the hooks' own conversations deleted", "Kestrel > Past conversations: delete the conversations of the series' runs.") {
-            ConversationGuard(hooks, clock).deleteLeft()
+            conversations.deleteLeft()
         }
     }
 
