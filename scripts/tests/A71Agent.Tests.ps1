@@ -233,6 +233,14 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Test-SittingStop $stop | Should -BeTrue
         $stop.Exception.Message | Should -BeExactly ('The owner was busy with Kestrel on kestrel-api37, so the runs of hotspot did not run (owner-busy). When he is done with Kestrel, ' +
             'call sitting 2 again with -Step prepare,emulator-runs and the steps after it, which runs the tasks of emulator-runs again.')
+        # Exit code 4 is a kestrel-api37 that has degraded: the tool wrote no run line, and the sitting stops with the
+        # advice to cold-boot it.
+        Mock Invoke-EvalTool { 4 }
+        $stop = $null
+        try { Invoke-Eval injection $EmulatorSerial 'inject-01' 1 @{} } catch { $stop = $_ }
+        Test-SittingStop $stop | Should -BeTrue
+        $stop.Exception.Message | Should -BeExactly ('kestrel-api37 has degraded, so scripts\eval.ps1 did not run inject-01 there. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, ' +
+            'and then call sitting 2 again with -Step prepare,injection and the steps after it, which runs the tasks of injection again.')
     }
 }
 
@@ -577,6 +585,18 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         $stop.Exception.Message | Should -BeLike 'The owner was busy with Kestrel on kestrel-api37, *-Step prepare,emulator-runs *'
         $results | Should -Contain 'emulator-runs: hotspot on kestrel-api37: 0 of 0 runs passed, 1 skipped (owner-busy); the sitting''s AI Credits so far: 150.5'
         (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150.5
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
+    }
+
+    It 'stops the sitting with the advice to cold-boot when kestrel-api37 has degraded, and records no task as failed' {
+        Mock Invoke-EvalTool { 4 }
+        $stop = $null
+
+        try { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null } catch { $stop = $_ }
+
+        Test-SittingStop $stop | Should -BeTrue
+        $stop.Exception.Message | Should -BeLike 'kestrel-api37 has degraded, *scripts\cold-boot.ps1 -Serial emulator-5554*-Step prepare,emulator-runs *'
+        @($results | Where-Object { $_ -like '*failed*' }) | Should -BeNullOrEmpty
         Should -Invoke Invoke-EvalTool -Times 1 -Exactly
     }
 

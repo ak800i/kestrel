@@ -23,7 +23,8 @@
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
 # Credits of the earlier calls and reads their results too, and starts no run when the record lists no earlier call or
 # a results file that it lists is gone. A sitting 2 stops when :tools:eval stops because the owner is busy with Kestrel
-# (owner-busy, its exit code 3), and names the call that runs that step's tasks again. Only the step end enables the emulator's Play Store again, turns Gmail's
+# (owner-busy, its exit code 3), or because kestrel-api37 has degraded (its exit code 4, with the advice to cold-boot it with
+# scripts\cold-boot.ps1), and names the call that runs that step's tasks again. Only the step end enables the emulator's Play Store again, turns Gmail's
 # notifications on there again and removes a test account (one whose address is not gmailAddress) and the apps that
 # sitting 1 installed there, never Gmail; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
 # is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
@@ -350,7 +351,8 @@ function Invoke-Device([string]$Device, [string]$Command) { Invoke-SettingsComma
 # A stop of the whole sitting, which no item or step catches, so that the sitting runs no further item or step and goes
 # straight to its end, whose finally block still runs the restores registered by then, puts back "Stay awake" and, in
 # sitting 2, closes the live sessions: the owner's q, a restart of kestrel-api37 that failed, that left its window state
-# unknown, or after which the owner's data there differed, or the owner-busy stop of :tools:eval (Invoke-Eval).
+# unknown, or after which the owner's data there differed, or the owner-busy stop of :tools:eval and its refusal of a
+# kestrel-api37 that has degraded (Invoke-Eval).
 # Test-SittingStop tells it from any other error.
 function New-SittingStop([string]$Message) {
     $stop = [System.Exception]::new($Message)
@@ -1625,6 +1627,9 @@ function Invoke-EvalTool([string[]]$Arguments) {
 # 7G): the owner's conversation with Kestrel stayed open past its quiet time, which the evaluation never ends, so the tool
 # wrote the runs that it did not run as skipped (owner-busy) and stopped. The sitting stops too (New-SittingStop), rather
 # than wait for him again at each later task, and says how to go on: a later call with -Step runs the step $StepName again.
+# Exit code 4 is a kestrel-api37 that has degraded (Get-EmulatorHealthRefusal): the tool did not run, and every later
+# task there would be refused in the same way, so the sitting stops in the same way, says to cold-boot the emulator with
+# scripts\cold-boot.ps1, and records no task as failed.
 function Invoke-Eval([string]$StepName, [string]$Device, [string]$Task, [int]$Runs, [hashtable]$With) {
     $arguments = @('run', '--device', $Device, '--task', $Task, '--runs', "$Runs", '--results', $resultsFile, $(if ($DryRun) { '--dry-run' } else { '--live' }))
     if ($With.Model) { $arguments += @('--model', $With.Model) }
@@ -1634,6 +1639,9 @@ function Invoke-Eval([string]$StepName, [string]$Device, [string]$Task, [int]$Ru
     if ($code -eq 2) { throw "scripts\eval.ps1 refused to run $Task on $(Get-DeviceName $Device)." }
     if ($code -eq 3) {
         throw (New-SittingStop "The owner was busy with Kestrel on $(Get-DeviceName $Device), so the runs of $Task did not run (owner-busy). When he is done with Kestrel, call sitting 2 again with -Step prepare,$StepName and the steps after it, which runs the tasks of $StepName again.")
+    }
+    if ($code -eq 4) {
+        throw (New-SittingStop "kestrel-api37 has degraded, so scripts\eval.ps1 did not run $Task there. Cold-boot it with scripts\cold-boot.ps1 -Serial $Device, and then call sitting 2 again with -Step prepare,$StepName and the steps after it, which runs the tasks of $StepName again.")
     }
     if (-not @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | Where-Object { ConvertFrom-TaskLine $_ })) {
         throw "scripts\eval.ps1 wrote no run line for $Task on $(Get-DeviceName $Device)."

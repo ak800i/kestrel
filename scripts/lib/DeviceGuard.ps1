@@ -536,48 +536,84 @@ function Read-EmulatorHealth([string]$Serial) {
     ConvertFrom-EmulatorHealthAnswer @(Invoke-SettingsCommand -Serial $Serial -Command (Format-EmulatorHealthCommand))
 }
 
-# Every gate (scripts\connected-test.ps1, voice-test.ps1, command-test.ps1, listen-check.ps1 and eval.ps1) calls this
-# before it starts on a device that Assert-TestDevice accepted. On kestrel-api37 it reads the measures and throws, with
-# the advice to cold-boot, when one is above its limit or when they cannot be read, because a degraded emulator also
-# answers badly; on it, it writes the reading. On the A71 it does nothing.
-function Assert-EmulatorHealthy([string]$Serial) {
-    if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { return }
-    $advice = "Cold-boot it with scripts\cold-boot.ps1 -Serial $Serial, and then run this again."
-    $reading = try {
-        Read-EmulatorHealth -Serial $Serial
+# Reads the measures once on kestrel-api37 and returns why it is not healthy (one measure or more above its limit, or
+# measures that cannot be read, because a degraded emulator also answers badly), or nothing when it is healthy; then it
+# writes the reading. Assert-TestDevice must have accepted the serial.
+function Get-EmulatorHealthProblem([string]$Serial) {
+    try {
+        $reading = Read-EmulatorHealth -Serial $Serial
     } catch {
-        throw "Refusing to start on ${Serial}: the health of kestrel-api37 could not be read ($($_.Exception.Message)). $advice"
+        return "the health of kestrel-api37 could not be read ($($_.Exception.Message))"
     }
     $problems = @(Get-EmulatorHealthProblems $reading)
-    if ($problems.Count -gt 0) {
-        throw "Refusing to start on ${Serial}: kestrel-api37 has degraded: $($problems -join '; '). $advice"
-    }
+    if ($problems.Count -gt 0) { return "kestrel-api37 has degraded: $($problems -join '; ')" }
     Write-Host "kestrel-api37 ($Serial) is healthy: $(Format-EmulatorHealth $reading)."
+}
+
+# The refusal of a gate on a device that Assert-TestDevice accepted, with the advice to cold-boot: on kestrel-api37, when
+# Get-EmulatorHealthProblem finds a problem; nothing for a healthy kestrel-api37, and nothing on the A71, where it reads
+# nothing. scripts\eval.ps1 ends with an exit code of its own for it.
+function Get-EmulatorHealthRefusal([string]$Serial) {
+    if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { return }
+    $problem = Get-EmulatorHealthProblem -Serial $Serial
+    if ($problem) { "Refusing to start on ${Serial}: $problem. Cold-boot it with scripts\cold-boot.ps1 -Serial $Serial, and then run this again." }
+}
+
+# Every gate (scripts\connected-test.ps1, voice-test.ps1, command-test.ps1 and listen-check.ps1) calls this before it
+# starts on a device that Assert-TestDevice accepted, and throws Get-EmulatorHealthRefusal's refusal.
+function Assert-EmulatorHealthy([string]$Serial) {
+    $refusal = Get-EmulatorHealthRefusal -Serial $Serial
+    if ($refusal) { throw $refusal }
 }
 
 # The cold boot of kestrel-api37 ------------------------------------------------------------------------------------
 
+# After a cold boot, the 5-minute load average still holds the boot's load (the 1-minute average reaches 17), so the
+# cold boot reads the health right after the boot and again after each pause of $ColdBootHealthPauseSeconds, at most
+# $ColdBootHealthPauses times: 5 minutes of waiting, plus 10 s for each reading.
+$ColdBootHealthPauseSeconds = 30
+$ColdBootHealthPauses = 10
+
+# Waits until kestrel-api37 passes the gates' health check (Get-EmulatorHealthProblem), and throws with the last
+# problem when it has not passed after the last pause.
+function Wait-EmulatorHealthy([string]$Serial) {
+    foreach ($pause in 0..$ColdBootHealthPauses) {
+        if ($pause -gt 0) { Start-Sleep -Seconds $ColdBootHealthPauseSeconds }
+        $problem = Get-EmulatorHealthProblem -Serial $Serial
+        if (-not $problem) { return }
+    }
+    throw ("kestrel-api37 ($Serial) was cold-booted, but it did not pass the gates' health check within " +
+        "$($ColdBootHealthPauses * $ColdBootHealthPauseSeconds / 60) minutes: $problem. Look for what loads the emulator " +
+        'or this computer, such as a Gradle build, and run scripts\cold-boot.ps1 again.')
+}
+
 # Cold-boots kestrel-api37 on $Serial, without a window, and checks the owner's data around the boot; README asks for it
 # before each long device suite, because only a cold boot brings back an emulator that degraded (see above). In order:
 #   1. Assert-TestDevice, and a refusal of every device other than kestrel-api37;
-#   2. the owner's data before the boot (Get-OwnerDataState), which stops the boot when Kestrel answers in another form,
-#      as an older build does, and warns when Kestrel's profiles cannot be read, after which only the Google accounts
-#      are compared;
+#   2. the owner's data before the boot (Get-OwnerDataState). It refuses to boot when Kestrel's profiles cannot be read,
+#      as well as when Kestrel answers in another form, as an older build does: AGENTS.md asks that the default
+#      profile keeps its kind, its ID and its stored credential through a run on kestrel-api37, and a check after the
+#      boot alone could not tell the owner's profile from one that replaced it. Refusing changes nothing on the device;
 #   3. Restart-KestrelEmulator -ColdBoot without a window, which closes nothing unless the emulator's console answers
 #      exactly kestrel-api37, closes it with 'adb emu kill', starts it from a cold boot with
 #      scripts\start-emulator.ps1 -ColdBoot, and checks that it came back headless under the same serial;
-#   4. the owner's data after the boot, compared with the data before it (Compare-OwnerData).
+#   4. the owner's data after the boot, compared with the data before it (Compare-OwnerData);
+#   5. the wait until the emulator passes the gates' health check (Wait-EmulatorHealthy), so that a gate that starts
+#      after the cold boot accepts it.
 # Throws with the reason when a step fails or the owner's data changed.
 function Invoke-KestrelColdBoot([string]$Serial) {
     Assert-TestDevice -Serial $Serial
     if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { throw "Refusing to cold-boot ${Serial}: only kestrel-api37 is cold-booted." }
     $before = Get-OwnerDataState -Serial $Serial
     if (-not $before.Profiles) {
-        Write-Warning "Could not read Kestrel's profiles on $Serial before the cold boot ($($before.ProfilesUnread)), so only the Google accounts are compared there."
+        throw ("Refusing to cold-boot ${Serial}: Kestrel's profiles could not be read before the boot ($($before.ProfilesUnread)), " +
+            "so the boot could not check that the default profile keeps its ID and its credential (AGENTS.md). Make Kestrel " +
+            'answer scripts\hook.ps1 provider-standin first; for an emulator that does not answer, restart it by hand as README says.')
     }
     $problem = Restart-KestrelEmulator -Serial $Serial -Window $false -ColdBoot
     if ($problem) { throw "The cold boot of kestrel-api37 failed: $problem." }
     $changes = @(Compare-OwnerData -Serial $Serial -Before $before -During 'the cold boot')
     if ($changes.Count -gt 0) { throw ($changes -join ' ') }
+    Wait-EmulatorHealthy -Serial $Serial
     Write-Host "kestrel-api37 ($Serial) was cold-booted; $(Format-OwnerDataState $before $Serial), as before."
 }

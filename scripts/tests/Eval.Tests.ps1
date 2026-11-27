@@ -19,7 +19,7 @@ BeforeAll {
     # The toolchain and the device checks of scripts\lib, which the tests mock.
     function Use-KestrelToolchain { }
     function Assert-TestDevice([string]$Serial) { }
-    function Assert-EmulatorHealthy([string]$Serial) { }
+    function Get-EmulatorHealthRefusal([string]$Serial) { }
 
     # A repository with the tool's sources, its build output, the installed copy and the stamp of its build, every file
     # written at $Time.
@@ -143,29 +143,33 @@ Describe 'scripts\eval.ps1' {
         Invoke-EvalScript $root @('list') 3>$null | Should -Be 2
     }
 
-    It 'checks the device that --device names before the tool runs, and refuses with exit code 2 when the check fails' {
+    It 'refuses with exit code 2 when the device that --device names fails its check, and with 4 when kestrel-api37 has degraded, without running the tool' {
         Mock Invoke-Java { 0 }
+        Mock Assert-TestDevice { throw 'Refusing to use emulator-5556.' }
+        Mock Get-EmulatorHealthRefusal {}
+
+        Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5556') 3>$null | Should -Be 2
+        Should -Invoke Get-EmulatorHealthRefusal -Times 0 -Exactly
+
         Mock Assert-TestDevice {}
-        Mock Assert-EmulatorHealthy { throw 'Refusing to start on emulator-5554: kestrel-api37 has degraded.' }
+        Mock Get-EmulatorHealthRefusal { 'Refusing to start on emulator-5554: kestrel-api37 has degraded: x. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.' }
+        Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5554') 3>$null | Should -Be 4
 
-        Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5554') 3>$null | Should -Be 2
-
-        Should -Invoke Assert-TestDevice -Times 1 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+        Should -Invoke Get-EmulatorHealthRefusal -Times 1 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
         Should -Invoke Invoke-Java -Times 0 -Exactly
     }
 
     It 'runs the tool after the device checks passed, and checks no device when the arguments name none' {
         Mock Invoke-Java { 0 }
-        Mock Assert-EmulatorHealthy {}
+        Mock Get-EmulatorHealthRefusal {}
 
         Invoke-EvalScript (New-Repository $built) @('run', '--task', 'stand-in-hotspot', '--device', 'R58N66RVD7Z') | Should -Be 0
-        Should -Invoke Assert-EmulatorHealthy -Times 1 -Exactly -ParameterFilter { $Serial -eq 'R58N66RVD7Z' }
+        Should -Invoke Get-EmulatorHealthRefusal -Times 1 -Exactly -ParameterFilter { $Serial -eq 'R58N66RVD7Z' }
 
         Invoke-EvalScript (New-Repository $built) @('list') | Should -Be 0
-        Should -Invoke Assert-EmulatorHealthy -Times 1 -Exactly
+        Should -Invoke Get-EmulatorHealthRefusal -Times 1 -Exactly
         Should -Invoke Invoke-Java -Times 2 -Exactly
     }
-
     It 'gives the program every argument as it was, without cmd.exe, and returns its exit code' {
         # A PowerShell like this one stands in for java.exe: it writes the arguments of its own command line, which it
         # splits by the same rules, to a file.

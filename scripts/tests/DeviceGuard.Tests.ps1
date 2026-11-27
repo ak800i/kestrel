@@ -556,9 +556,10 @@ Describe 'Invoke-KestrelColdBoot' {
         Mock Get-OwnerDataState { $steps.Add("Get-OwnerDataState $Serial"); $state }
         Mock Restart-KestrelEmulator { $steps.Add("Restart-KestrelEmulator $Serial window=$Window cold=$ColdBoot") }
         Mock Compare-OwnerData { $steps.Add("Compare-OwnerData $Serial during=$During") }
+        Mock Wait-EmulatorHealthy { $steps.Add("Wait-EmulatorHealthy $Serial") }
     }
 
-    It 'checks the device, reads the owner''s data, cold-boots without a window and compares the owner''s data, in this order' {
+    It 'checks the device, reads the owner''s data, cold-boots without a window, compares the owner''s data and waits for a healthy emulator, in this order' {
         Invoke-KestrelColdBoot -Serial emulator-5554
 
         @($steps) | Should -BeExactly @(
@@ -566,6 +567,7 @@ Describe 'Invoke-KestrelColdBoot' {
             'Get-OwnerDataState emulator-5554'
             'Restart-KestrelEmulator emulator-5554 window=False cold=True'
             'Compare-OwnerData emulator-5554 during=the cold boot'
+            'Wait-EmulatorHealthy emulator-5554'
         )
         Should -Invoke Compare-OwnerData -Times 1 -Exactly -ParameterFilter { $Before -eq $state }
     }
@@ -600,5 +602,42 @@ Describe 'Invoke-KestrelColdBoot' {
 
         { Invoke-KestrelColdBoot -Serial emulator-5554 } |
             Should -Throw -ExpectedMessage 'The number of Google accounts on emulator-5554 changed during the cold boot: 1 before, 0 now.'
+
+        Should -Invoke Wait-EmulatorHealthy -Times 0 -Exactly
+    }
+
+    It 'refuses to boot when Kestrel''s profiles cannot be read before it, because the check after it could not tell the owner''s profile from another' {
+        Mock Get-OwnerDataState { $steps.Add("Get-OwnerDataState $Serial"); [pscustomobject]@{ GoogleAccounts = 1; Profiles = $null; ProfilesUnread = 'scripts\hook.ps1 provider-standin did not end within 60 s' } }
+
+        { Invoke-KestrelColdBoot -Serial emulator-5554 } | Should -Throw -ExpectedMessage ("Refusing to cold-boot emulator-5554: Kestrel's profiles could not be read before the boot " +
+            '(scripts\hook.ps1 provider-standin did not end within 60 s), so the boot could not check that the default profile keeps its ID and its credential (AGENTS.md).*')
+
+        @($steps) | Should -BeExactly @('Assert-TestDevice emulator-5554', 'Get-OwnerDataState emulator-5554')
+    }
+}
+
+Describe 'Wait-EmulatorHealthy' {
+    BeforeEach {
+        Mock Start-Sleep {}
+    }
+
+    It 'reads the health until it passes, with a pause of 30 s before each reading after the first' {
+        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@('kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6', $null))
+        Mock Get-EmulatorHealthProblem { $answers.Dequeue() }
+
+        { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
+
+        Should -Invoke Get-EmulatorHealthProblem -Times 2 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+        Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
+    }
+
+    It 'throws with the last problem when the emulator has not passed after 5 minutes of pauses' {
+        Mock Get-EmulatorHealthProblem { 'kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6' }
+
+        { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage ("kestrel-api37 (emulator-5554) was cold-booted, but it did not pass the gates' health check within 5 minutes: " +
+            'kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6. Look for what loads the emulator *')
+
+        Should -Invoke Get-EmulatorHealthProblem -Times 11 -Exactly
+        Should -Invoke Start-Sleep -Times 10 -Exactly
     }
 }
