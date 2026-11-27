@@ -115,7 +115,7 @@ class ConversationEngineTest {
         onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
         report: (String, Throwable) -> Unit = { _, error -> throw error },
         screen: ScreenTurn = FakeScreenTurn { false },
-        timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
+        timers: TimerSource = TimerSource.REAL,
         engineScope: CoroutineScope = backgroundScope,
     ): ConversationEngine {
         val search = HistorySearch(store, { settings.value.keptDays }, clock)
@@ -123,7 +123,7 @@ class ConversationEngineTest {
         val local = LocalRequests(environment.memory, store, search, goals::saveRoutine, clock) { _, error -> throw error }
         val engine = ConversationEngine(
             engineScope, store, goals, local, mapOf(InputChannel.VOICE to voice, InputChannel.TEXT to text), { PermissionEnd.GRANTED },
-            settings, testMode, kestrelOn, clock, report, onStep = onStep, timerMillis = timerMillis,
+            settings, testMode, kestrelOn, clock, report, onStep = onStep, timers = timers,
         )
         // The phone is unlocked with no call, as plan 7D's PhoneSignals says when it starts. The engine handles the signal
         // right after restore(), so the owner is there: a restored goal asks "Continue the goal?" and final replies are given.
@@ -1212,6 +1212,21 @@ class ConversationEngineTest {
         }
     }
 
+    // Holds every timer of kind [kind], newest last in [held], with the length that the machine gave it; the others run
+    // their own length.
+    private class HoldingSource(private val kind: Timer) : TimerSource {
+        class Held(val millis: Long, val ended: CompletableDeferred<Unit>)
+
+        val held = mutableListOf<Held>()
+
+        override fun start(timer: Timer, millis: Long): TimerEnd {
+            if (timer != kind) return TimerEnd.After(millis)
+            val one = Held(millis, CompletableDeferred())
+            held += one
+            return TimerEnd.Held(one.ended)
+        }
+    }
+
     // A store whose saves wait for [gate], whose switches wait for [reopenGate] and whose deletion waits for [deleting],
     // while they are set; [calls] names each save and deletion once it is done.
     private class GatedStore(private val inner: ConversationStore) : ConversationStore by inner {
@@ -1582,19 +1597,48 @@ class ConversationEngineTest {
         assertEquals(open, engine.view.value.id)
     }
 
-    // Plan 7F's device tests shorten the engine's timers through its seam, which shortens the deadline itself, not only the
-    // wake-up; the machine's lengths stay.
+    // Plan 7G: the device tests hold a timer through the engine's timer source, so that no check races it. A held timer
+    // outlasts its deadline and ends only when its source ends it, through the machine's own path; its source gets the
+    // machine's length.
     @Test
-    fun theTimersTakeTheirLengthsThroughTheSeam() = scope.runTest {
-        val engine = engine(environment(listSms, finish(1)), timerMillis = { _, millis -> millis / 60 })
+    fun aHeldTimerOutlastsItsDeadlineAndEndsWhenItsSourceEndsIt() = scope.runTest {
+        val timers = HoldingSource(Timer.QUIET)
+        val engine = engine(environment(listSms, finish(1)), timers = timers)
         engine.restore()
         engine.submit(typed("Read my latest SMS"))
         runCurrent()
+        val held = timers.held.last()
+        assertEquals(60_000L, held.millis)
+
+        advanceTimeBy(10 * 60_000)
+        runCurrent()
         assertNotNull(engine.view.value.id)
 
-        advanceTimeBy(1_001)
+        held.ended.complete(Unit)
         runCurrent()
+        assertNull(engine.view.value.id)
+    }
 
+    // The end of a held timer that the machine has since started again changes nothing; the newest one ends the time.
+    @Test
+    fun theEndOfAnOlderHeldTimerChangesNothing() = scope.runTest {
+        val timers = HoldingSource(Timer.QUIET)
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)), timers = timers)
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val older = timers.held.last()
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        val newer = timers.held.last()
+        assertNotEquals(older, newer)
+
+        older.ended.complete(Unit)
+        runCurrent()
+        assertNotNull(engine.view.value.id)
+
+        newer.ended.complete(Unit)
+        runCurrent()
         assertNull(engine.view.value.id)
     }
 

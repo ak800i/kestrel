@@ -13,9 +13,12 @@ import dev.kestrel.app.R
 import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.conversation.screen.FIELD_TAG
+import dev.kestrel.app.debug.HeldTimers
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.voice.VoiceTests
 import dev.kestrel.conversation.engine.PastDeletion
+import dev.kestrel.conversation.engine.TimerSource
+import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputIntent
 import kotlinx.coroutines.runBlocking
@@ -37,6 +40,8 @@ internal object TypedTests {
     val marker: String = "7f-" + UUID.randomUUID().toString().take(8)
 
     private val made = mutableSetOf<ConversationId>()
+
+    private var heldTimers: HeldTimers? = null
 
     /**
      * The past conversations as the first [prepare] since the last [finish] found them, after it closed the owner's open
@@ -76,7 +81,9 @@ internal object TypedTests {
             closeConversation()
         } finally {
             graph.roundModels.modelOverride = null
-            graph.conversationTimers = null
+            graph.conversationTimers = TimerSource.REAL
+            heldTimers?.release()
+            heldTimers = null
             try {
                 ownOpened()
             } finally {
@@ -84,6 +91,16 @@ internal object TypedTests {
             }
         }
     }
+
+    /**
+     * Holds every conversation timer of [kinds] that starts from now until the test ends it, or until [finish], which ends
+     * the timers that are still held (plan 7G).
+     */
+    fun holdTimers(vararg kinds: Timer): HeldTimers =
+        HeldTimers(*kinds).also {
+            heldTimers = it
+            graph.conversationTimers = it
+        }
 
     /** Whether the conversation screen is Android's resumed activity, in front. */
     fun screenInFront(screen: ScreenServiceRule): Boolean = RESUMED.containsMatchIn(screen.shell("dumpsys activity activities"))

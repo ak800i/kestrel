@@ -40,12 +40,12 @@ import dev.kestrel.app.conversation.screen.PastConversations
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.conversation.engine.ConversationEngine
 import dev.kestrel.conversation.engine.ConversationView
+import dev.kestrel.conversation.engine.TimerSource
 import dev.kestrel.conversation.goal.GoalRunner
 import dev.kestrel.conversation.local.LocalRequests
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.MachineStep
-import dev.kestrel.conversation.machine.Timer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.OwnerInput
 import dev.kestrel.conversation.model.InputIntent
@@ -600,11 +600,12 @@ class AppGraph(context: Context) {
     internal var buttonActs: ButtonActs = ButtonActs.PLAIN
 
     /**
-     * Device tests only: the conversation's timers' lengths, such as D21's waits shortened by an instrumentation argument
-     * (design 15.2 of sub-project 7; plan 7F). Null, and so the machine's own lengths, outside those tests.
+     * How the conversation's timers end (design 6.2 of sub-project 7): [TimerSource.REAL], each at its own length, in every
+     * build and every run except the device tests, which set the debug `HeldTimers` to hold a timer and end it when they
+     * choose (plan 7G), and put [TimerSource.REAL] back.
      */
     @Volatile
-    internal var conversationTimers: ((Timer, Long) -> Long)? = null
+    internal var conversationTimers: TimerSource = TimerSource.REAL
 
     /**
      * The conversation (design 5 and 5.6 of sub-project 7): it takes the owner's spoken inputs from Listening, runs goals
@@ -638,7 +639,7 @@ class AppGraph(context: Context) {
                 if (event is ConversationEvent.Input && event.input.intent == InputIntent.Stop) voiceChannel.stopSpeech()
                 conversationSteps?.invoke(event, state, step)
             },
-            timerMillis = { timer, millis -> conversationTimers?.invoke(timer, millis) ?: millis },
+            timers = { timer, millis -> conversationTimers.start(timer, millis) },
         ).also(::followConversation)
     }
 

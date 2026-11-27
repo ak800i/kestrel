@@ -83,9 +83,10 @@ import kotlinx.coroutines.launch
  * "delete history" wait until the writer has stored every write queued before them. The machine's timers are deadlines
  * on the clock that counts the phone's sleep ([ConversationClock.sinceBootMillis]): before it handles any message, an
  * input and a signal too, the loop ends every timer whose deadline has passed, and a coroutine's `delay`, which stops
- * while the phone sleeps, only wakes it. Work that the machine waits for gets its end on every path, also when its
- * effect failed. Outputs are shown in order; each is taken by its channels as the engine emits it
- * (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs that wait behind the one that plays (plan
+ * while the phone sleeps, only wakes it; [timers] says how each timer ends, which in release builds is always at its
+ * deadline ([TimerSource.REAL]), and a device test's source may hold a timer until the test ends it. Work that the
+ * machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order; each is taken by
+ * its channels as the engine emits it (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs that wait behind the one that plays (plan
  * 7B's decision 10; plan 7F), and the end of a final reply's `show` is the machine's `ReplyShown`. [view] is what the
  * voice rules, the screen, the goal service and the hooks read. [restore] must run once at process start; inputs wait
  * for it. [report] gets a failure by its class. [kestrelOn] is whether Kestrel is on, from listening's one source
@@ -110,7 +111,7 @@ class ConversationEngine(
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
-    private val timerMillis: (Timer, Long) -> Long = { _, millis -> millis },
+    private val timers: TimerSource = TimerSource.REAL,
 ) {
     private sealed interface Message {
         class Event(val event: ConversationEvent) : Message
@@ -191,8 +192,14 @@ class ConversationEngine(
         class Barrier(val done: CompletableDeferred<Unit>) : Write
     }
 
-    /** Timer [number]'s deadline on the clock that counts sleep, and the coroutine that wakes the loop for it. */
-    private class Deadline(val number: Int, val atMillis: Long, val wake: Job)
+    /** How timer [number] ends, and the coroutine that wakes the loop for it. */
+    private sealed class Deadline(val number: Int, val wake: Job) {
+        /** At [atMillis] on the clock that counts sleep. */
+        class At(number: Int, val atMillis: Long, wake: Job) : Deadline(number, wake)
+
+        /** When the timer source ends it ([TimerEnd.Held]); [wake] waits for that. */
+        class Held(number: Int, wake: Job) : Deadline(number, wake)
+    }
 
     private val inbox = Channel<Message>(Channel.UNLIMITED)
     private val outputs = Channel<Emitted>(Channel.UNLIMITED)
@@ -857,9 +864,16 @@ class ConversationEngine(
 
     private fun startTimer(effect: ConversationEffect.StartTimer) {
         deadlines.remove(effect.timer)?.wake?.cancel()
-        // The device tests' seam shortens the deadline itself: a shorter wake-up alone would end nothing sooner.
-        val at = clock.sinceBootMillis() + timerMillis(effect.timer, effect.millis)
-        deadlines[effect.timer] = Deadline(effect.number, at, wake(effect.timer, effect.number, at))
+        deadlines[effect.timer] = when (val end = timers.start(effect.timer, effect.millis)) {
+            is TimerEnd.After -> {
+                val at = clock.sinceBootMillis() + end.millis
+                Deadline.At(effect.number, at, wake(effect.timer, effect.number, at))
+            }
+            is TimerEnd.Held -> Deadline.Held(effect.number, scope.launch {
+                end.ended.await()
+                inbox.trySend(Message.Wake(effect.timer, effect.number))
+            })
+        }
     }
 
     // Only a wake-up: a coroutine's delay does not count the time that the phone sleeps, so the loop reads the deadline.
@@ -868,21 +882,30 @@ class ConversationEngine(
         inbox.trySend(Message.Wake(timer, number))
     }
 
-    // Every timer whose deadline has passed ends, the earliest first; the end of an older timer changes nothing.
+    // Every timer whose deadline has passed ends, the earliest first; the end of an older timer changes nothing. A held
+    // timer has no deadline.
     private fun expire() {
         while (true) {
             val now = clock.sinceBootMillis()
-            val (timer, deadline) = deadlines.entries.map { it.key to it.value }.filter { it.second.atMillis <= now }.minByOrNull { it.second.atMillis } ?: return
-            deadlines.remove(timer)
-            deadline.wake.cancel()
-            process(ConversationEvent.TimerEnded(timer, deadline.number))
+            val (timer, deadline) = deadlines.entries
+                .mapNotNull { (timer, deadline) -> (deadline as? Deadline.At)?.takeIf { it.atMillis <= now }?.let { timer to it } }
+                .minByOrNull { (_, deadline) -> deadline.atMillis } ?: return
+            endTimer(timer, deadline)
         }
     }
 
-    // A wake-up that came before its deadline, by the clock that counts sleep, waits again.
+    // A held timer ends at its wake-up. A wake-up that came before its deadline, by the clock that counts sleep, waits again.
     private fun woken(message: Message.Wake) {
-        val deadline = deadlines[message.timer]?.takeIf { it.number == message.number } ?: return
-        deadlines[message.timer] = Deadline(deadline.number, deadline.atMillis, wake(message.timer, deadline.number, deadline.atMillis))
+        when (val deadline = deadlines[message.timer]?.takeIf { it.number == message.number } ?: return) {
+            is Deadline.Held -> endTimer(message.timer, deadline)
+            is Deadline.At -> deadlines[message.timer] = Deadline.At(deadline.number, deadline.atMillis, wake(message.timer, deadline.number, deadline.atMillis))
+        }
+    }
+
+    private fun endTimer(timer: Timer, deadline: Deadline) {
+        deadlines.remove(timer)
+        deadline.wake.cancel()
+        process(ConversationEvent.TimerEnded(timer, deadline.number))
     }
 
     // A conversation that closes is stored closed: as it was before this step, with every record that the step ended, or,

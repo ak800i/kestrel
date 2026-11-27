@@ -1,7 +1,6 @@
 package dev.kestrel.app.conversation
 
 import android.graphics.Rect
-import android.os.SystemClock
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -21,6 +20,7 @@ import dev.kestrel.app.agent.AgentTests
 import dev.kestrel.app.agent.HeldModel
 import dev.kestrel.app.conversation.screen.ConversationActivity
 import dev.kestrel.app.conversation.screen.FIELD_TAG
+import dev.kestrel.app.debug.HeldTimers
 import dev.kestrel.app.debug.OwnVoiceWatch
 import dev.kestrel.app.screen.ScreenServiceRule
 import dev.kestrel.app.screen.ScreenServiceRule.Companion.FIXTURES
@@ -46,12 +46,12 @@ import org.junit.runner.RunWith
 
 /**
  * Questions, held goals and typed speech on kestrel-api37 (design 10.3, 10.4, 6.5, 11 and 15.2 of sub-project 7): "Reply…"
- * opens the screen for the typed answer, D21's waits end a question and decline a confirmation (shortened by the
- * instrumentation argument [WAIT_DIVISOR]), a spoken conversation's question shows its card once Kestrel is off, a touch
- * interrupts a typed goal, which the screen's Continue resumes and its Cancel ends, "Continue the goal?" after a lock shows its
- * card and its copy on the screen and its wait leaves the goal held, a hand-over's card continues and cancels the goal on the
- * overlay, and Kestrel's own voice speaks a typed conversation's words when the setting is on and Kestrel is off, and ends a
- * question's spoken copy once the owner has typed its answer.
+ * opens the screen for the typed answer, D21's waits end a question and decline a confirmation (the test's timer source
+ * holds each wait until the test has seen its card, and the test then ends it), a spoken conversation's question shows its
+ * card once Kestrel is off, a touch interrupts a typed goal, which the screen's Continue resumes and its Cancel ends,
+ * "Continue the goal?" after a lock shows its card and its copy on the screen and its wait leaves the goal held, a
+ * hand-over's card continues and cancels the goal on the overlay, and Kestrel's own voice speaks a typed conversation's
+ * words when the setting is on and Kestrel is off, and ends a question's spoken copy once the owner has typed its answer.
  */
 @RunWith(AndroidJUnit4::class)
 class QuestionFlowTest {
@@ -77,9 +77,6 @@ class QuestionFlowTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val listener by lazy { KestrelNotificationListener.component(context).flattenToString() }
 
-    // D21's waits, divided by the instrumentation argument (design 15.2 of sub-project 7).
-    private val divisor = InstrumentationRegistry.getArguments().getString(WAIT_DIVISOR)?.toLongOrNull()?.takeIf { it > 0 } ?: DEFAULT_DIVISOR
-
     @After
     fun stop() {
         try {
@@ -90,8 +87,11 @@ class QuestionFlowTest {
         }
     }
 
-    private fun shortenWaits() {
-        graph.conversationTimers = { timer, millis -> if (timer == Timer.QUESTION) millis / divisor else millis }
+    // D21's wait of the open question, which the test's timer source holds: it must be the wait that D21 gives the question.
+    private fun heldWait(timers: HeldTimers, millis: Long): HeldTimers.HeldTimer {
+        val wait = checkNotNull(timers.newest(Timer.QUESTION)) { "The question has no wait" }
+        assertEquals(millis, wait.millis)
+        return wait
     }
 
     private fun awaitButton(label: String): Rect {
@@ -143,27 +143,32 @@ class QuestionFlowTest {
 
     @Test
     fun aTypedQuestionThatGetsNoAnswerEndsAfterItsWait() {
-        shortenWaits()
+        val timers = TypedTests.holdTimers(Timer.QUESTION)
         val command = typedGoal(ScriptedModel(listOf(ask, fail)), "Set a reminder") { screen.open("ViewsActivity", "Views fixture") }
         awaitButton(TypedTests.text(R.string.card_reply))
-        val shown = SystemClock.elapsedRealtime()
-        val ended = AgentTests.ended(command, timeoutMillis = QUESTION_MILLIS / divisor + 60_000)
-        val waited = SystemClock.elapsedRealtime() - shown
+        val wait = heldWait(timers, QUESTION_MILLIS)
+        assertEquals(QuestionKind.FREE, conversations.view.value.asking)
+
+        wait.end()
+        val ended = AgentTests.ended(command)
 
         assertEquals(EndReason.FAILED_BY_MODEL, ended.report.end)
-        assertTrue("The question ended after $waited ms", waited >= QUESTION_MILLIS / divisor - SLACK_MILLIS)
         assertNull(screen.overlayButton(TypedTests.text(R.string.card_reply)))
     }
 
     @Test
     fun aTypedConfirmationThatGetsNoAnswerIsDeclinedAfterItsWait() {
-        shortenWaits()
+        val timers = TypedTests.holdTimers(Timer.QUESTION)
         AgentTests.clearPresses(screen)
         val command = typedGoal(ScriptedModel(listOf(delete, fail)), "Delete my chat with Ana") {
             screen.open("MessengerActivity", "Ana Petrović", "--es chat ana")
         }
         awaitButton(TypedTests.text(R.string.card_confirm))
-        val ended = AgentTests.ended(command, timeoutMillis = 60_000)
+        val wait = heldWait(timers, CONFIRM_MILLIS)
+        assertEquals(QuestionKind.CONFIRM, conversations.view.value.asking)
+
+        wait.end()
+        val ended = AgentTests.ended(command)
 
         assertEquals(EndReason.DECLINED, ended.report.end)
         assertEquals(emptyList<String>(), AgentTests.presses(screen))
@@ -217,10 +222,11 @@ class QuestionFlowTest {
     }
 
     // Design 6.5, 10.3 and D21: after a lock, a typed goal's "Continue the goal?" shows its card over the app and its copy on
-    // the screen; with no answer its wait ends, and the goal stays held at its next step.
+    // the screen; with no answer its wait ends, and the goal stays held at its next step. The test holds the question's wait
+    // while it looks at the card and the screen, and then ends it.
     @Test
     fun continueTheGoalShowsItsCardAndItsCopyAndTheGoalStaysHeldAfterItsWait() {
-        shortenWaits()
+        val timers = TypedTests.holdTimers(Timer.QUESTION)
         screen.open("ViewsActivity", "Views fixture")
         TypedTests.bringScreen(screen, compose)
         val model = HeldModel(ScriptedModel(listOf(onIt, fail)))
@@ -240,7 +246,10 @@ class QuestionFlowTest {
         TypedTests.bringScreen(screen, compose)
         // While the goal is held the screen's own row says Cancel and Continue; Stop is the card's.
         compose.waitUntil(5_000) { compose.onAllNodesWithText(TypedTests.text(R.string.card_stop)).fetchSemanticsNodes().isNotEmpty() }
-        check(VoiceTests.waitUntil(QUESTION_MILLIS / divisor + 30_000) { conversations.view.value.asking == null }) { "The question did not end after its wait" }
+        assertEquals(QuestionKind.CONTINUE_GOAL, conversations.view.value.asking)
+
+        heldWait(timers, QUESTION_MILLIS).end()
+        check(VoiceTests.waitUntil(10_000) { conversations.view.value.asking == null }) { "The question did not end after its wait" }
 
         compose.waitUntil(5_000) { compose.onAllNodesWithText(TypedTests.text(R.string.card_stop)).fetchSemanticsNodes().isEmpty() }
         assertEquals(GoalPhase.PAUSED, conversations.view.value.goal)
@@ -370,15 +379,11 @@ class QuestionFlowTest {
     }
 
     private companion object {
-        /** The instrumentation argument that divides D21's waits; 60 when it is not given. */
-        const val WAIT_DIVISOR = "kestrelWaitDivisor"
-        const val DEFAULT_DIVISOR = 60L
-
         /** D21's wait for a question card. */
         const val QUESTION_MILLIS = 2L * 60 * 1000
 
-        /** How much earlier than its wait a question may seem to end, because the card shows a moment after the question opens. */
-        const val SLACK_MILLIS = 1_000L
+        /** D21's wait for a confirmation card. */
+        const val CONFIRM_MILLIS = 30L * 1000
 
         /** A little more than the 600 ms in which a card ignores taps. */
         const val ARMED_MILLIS = CARD_ARMING_MILLIS + 100
