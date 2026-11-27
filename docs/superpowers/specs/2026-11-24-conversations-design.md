@@ -194,7 +194,7 @@ class ConversationEngine(
     private val report: (String, Throwable) -> Unit,
     private val machine: ConversationMachine = ConversationMachine { ConversationId.random() },
     private val onStep: (ConversationEvent, ConversationState, MachineStep) -> Unit = { _, _, _ -> },
-    private val timerMillis: (Timer, Long) -> Long = { _, millis -> millis }, // only the device tests shorten D21's waits (15.2)
+    private val timers: TimerSource = TimerSource.REAL, // how each timer ends; only the device tests hold one (6.2, 15.2)
 ) {
     val owner: ConversationOwner                    // the owner as goals and the conversation talk to him; the hooks read it
     val view: StateFlow<ConversationView>
@@ -222,6 +222,13 @@ sealed interface AllPastDeletion {
     data object Idle : AllPastDeletion
     data object Running : AllPastDeletion
     data class Ended(val outcome: PastDeletion) : AllPastDeletion
+}
+
+fun interface TimerSource { fun start(timer: Timer, millis: Long): TimerEnd } // REAL: each timer after its length (6.2)
+
+sealed interface TimerEnd {
+    data class After(val millis: Long) : TimerEnd // a deadline on the clock that counts sleep
+    class Held(val ended: Deferred<Unit>) : TimerEnd // when a device test's source ends it (plan 7G)
 }
 
 /** What the voice rules, the conversation screen, the goal notification and the hooks read. */
@@ -590,7 +597,7 @@ stateDiagram-v2
 
 **When it runs out,** the engine closes the conversation: it stores it as closed, so that its records join the history, and the conversation screen shows a line "Conversation ended at 18:04". Kestrel says nothing. The next command opens a new conversation.
 
-The machine's timers (the quiet time, a held goal's 30 minutes, a hand-over's 3 minutes and a typed question's wait) are deadlines on the clock since the phone started, `ConversationClock.sinceBootMillis()`, which also counts the time that the phone sleeps. A coroutine's `delay` stops while the phone sleeps, so it only wakes the engine. Before the engine handles any message, an input and a phone signal too, it ends every timer whose deadline has passed. `PhoneSignals` sends `SCREEN_ON` whenever the screen comes on, so that the bar and the goal's notification never show a quiet time or a hold that has already ended. So the quiet time and the 30 minutes of a held goal count the time that the phone sleeps. Each timer has a number, as the Orchestrator's timers do, so that an older timer changes nothing. The stored start (`sinceWall`) is a wall-clock time, so that a restart can tell whether the conversation is still open.
+The machine's timers (the quiet time, a held goal's 30 minutes, a hand-over's 3 minutes and a typed question's wait) are deadlines on the clock since the phone started, `ConversationClock.sinceBootMillis()`, which also counts the time that the phone sleeps. A coroutine's `delay` stops while the phone sleeps, so it only wakes the engine. Before the engine handles any message, an input and a phone signal too, it ends every timer whose deadline has passed. `PhoneSignals` sends `SCREEN_ON` whenever the screen comes on, so that the bar and the goal's notification never show a quiet time or a hold that has already ended. So the quiet time and the 30 minutes of a held goal count the time that the phone sleeps. Each timer has a number, as the Orchestrator's timers do, so that an older timer changes nothing. The engine asks its `TimerSource` how each timer that the machine starts ends: `TimerEnd.After(millis)`, a deadline as above, from `TimerSource.REAL`, which every build uses outside the device tests; or `TimerEnd.Held(ended)`, which a device test's source (the debug `HeldTimers`) gives so that it can check what shows while a question waits and then end the wait itself, through the same `TimerEnded` as at a deadline (plan 7G). The stored start (`sinceWall`) is a wall-clock time, so that a restart can tell whether the conversation is still open.
 
 ### 6.3 Events and effects
 
@@ -1321,7 +1328,7 @@ The list of past conversations lives on the conversation screen (section 9.5), n
 
 ### 15.2 Device tests (kestrel-api37, through the scripts)
 
-- `dev.kestrel.app.conversation` (new, through `scripts\connected-test.ps1`), with a scripted model: a typed command leaves Kestrel's screen and acts on a `:testapp` fixture; a second typed command uses the first one's record; the card with Yes, No and "Reply…", and the fresh observation after "Reply…"; the waits of D21, shortened by an instrumentation argument; Stop; a touch that interrupts and Continue that resumes; "New conversation"; the list of past conversations, opening one, its transcript and "Continue this conversation"; `filterTouchesWhenObscured` under an overlay of `:testapp`; the goal service with listening off.
+- `dev.kestrel.app.conversation` (new, through `scripts\connected-test.ps1`), with a scripted model: a typed command leaves Kestrel's screen and acts on a `:testapp` fixture; a second typed command uses the first one's record; the card with Yes, No and "Reply…", and the fresh observation after "Reply…"; the waits of D21, which the tests hold through the engine's timer source and end themselves once they have checked the card; Stop; a touch that interrupts and Continue that resumes; "New conversation"; the list of past conversations, opening one, its transcript and "Continue this conversation"; `filterTouchesWhenObscured` under an overlay of `:testapp`; the goal service with listening off.
 - The restart: a goal is ended by the hook that ends the process; after the restart the conversation is open, the goal is interrupted and asks "Continue the goal?", and yes continues from the checklist with a fresh observation.
 - The store: the Room migration from version 2 to 3 with the real Keystore; "delete history" removes the rows and the index and then erases the key, and an empty database says so; the shards travel encrypted; the purge by the table's times; a store on the real archive rebuilds a lost index, and a restarted one finds its index in step with the table's stamp; the connection that writes deletes securely.
 - The existing `dev.kestrel.app.agent` and `dev.kestrel.app.commands` suites, as 14.3 says.
