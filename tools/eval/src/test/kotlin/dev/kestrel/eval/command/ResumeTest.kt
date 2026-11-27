@@ -7,6 +7,8 @@ import dev.kestrel.eval.egress.PcapBuilder
 import dev.kestrel.eval.egress.PcapdroidKeys
 import dev.kestrel.eval.egress.fakePcapdroid
 import dev.kestrel.eval.report.Baseline
+import dev.kestrel.eval.report.BaselinePart
+import dev.kestrel.eval.report.BaselineTask
 import dev.kestrel.eval.report.EgressSummary
 import dev.kestrel.eval.report.KestrelBuild
 import dev.kestrel.eval.report.Report
@@ -274,6 +276,28 @@ class ResumeTest {
         assertEquals("m1", part.model)
         assertTrue(fake.output.contains("eval\\baseline.json now holds the part of kestrel-api37"))
         assertTrue(fake.output.contains("The egress check of the recorded runs failed (connections=0 failures=0 unknown=1); see egress.txt in $folder."))
+    }
+
+    // Plan 7G: a multi-turn suite records its device's multi-turn part, and leaves the device's part of the suite as it was.
+    @Test
+    fun recordBaselineWithMultiTurnRecordsOnlyTheDevicesMultiTurnPart() {
+        val file = fake.root.resolve("eval").resolve("baseline.json")
+        val suitePart = BaselinePart("b".repeat(40), "m0", mapOf("dark-mode" to BaselineTask(3, 3)))
+        Baseline().with("kestrel-api37", suitePart).write(file)
+        val tasks = Catalogue.multiTurn(DeviceKind.EMULATOR, live = true)
+        val lines = tasks.flatMap { task -> listOf("2026-11-24 10:00:00\tsuite\t${task.name} on kestrel-api37, 3 runs") + (1..3).map { line(task.name, it, "m1") } }
+        val call = SuiteCall("kestrel-api37", live = true, runs = 3, tasks = tasks.map { it.name }, commit = commit, kestrel = build, multiTurn = true)
+        val folder = folder("kestrel-api37-multi-turn-20261124-100000", call, *lines.toTypedArray())
+
+        // The folder's runs were not captured, so its egress check fails; the baseline is recorded all the same.
+        fake.cli("suite", "--device", "emulator-5554", "--live", "--multi-turn", "--record-baseline", "--resume", folder.toString())
+
+        val baseline = Baseline.read(file)
+        assertEquals(mapOf("kestrel-api37" to suitePart), baseline.devices)
+        val part = baseline.multiTurn.getValue("kestrel-api37")
+        assertEquals(tasks.associate { it.name to BaselineTask(3, 3) }, part.tasks)
+        assertEquals("m1", part.model)
+        assertTrue(fake.output.contains("eval\\baseline.json now holds the multi-turn part of kestrel-api37, commit $commit, model m1."))
     }
 
     // Plan 7G: a multi-turn folder goes on only with --multi-turn, and a suite's folder only without it.

@@ -2,6 +2,9 @@ package dev.kestrel.eval.command
 
 import dev.kestrel.eval.Cli
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.egress.PcapBuilder
+import dev.kestrel.eval.egress.PcapdroidKeys
+import dev.kestrel.eval.egress.fakePcapdroid
 import dev.kestrel.eval.report.Baseline
 import dev.kestrel.eval.report.BaselinePart
 import dev.kestrel.eval.report.BaselineTask
@@ -10,6 +13,7 @@ import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.TaskReport
 import dev.kestrel.eval.report.Tokens
 import dev.kestrel.eval.report.Totals
+import dev.kestrel.eval.task.FakeConversation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -175,5 +179,37 @@ class CompareCommandTest {
         Baseline.read(file).withMultiTurn("kestrel-api37", BaselinePart("b".repeat(40), "m1", multiTurn.associateWith { BaselineTask(3, 3) })).write(file)
         assertEquals(Cli.EXIT_PASSED, fake.cli("compare", folder))
         assertTrue(fake.output.contains("compare=kestrel-api37-multi-turn result=pass rate=100.0 baseline=100.0 tasks=2"))
+    }
+
+    // Plan 7G: the live re-runs of a multi-turn folder are of its multi-turn tasks, into a multi-turn folder of their own.
+    @Test
+    fun theReRunsOfAMultiTurnFolderRunItsTasksAsMultiTurnTasks() {
+        val file = fake.root.resolve("eval").resolve("baseline.json")
+        val part = mapOf("followup-settings" to BaselineTask(3, 3), "quiet-time-ends" to BaselineTask(2, 3))
+        Baseline().withMultiTurn("kestrel-api37", BaselinePart("b".repeat(40), "scripted", part)).write(file)
+        val fell = folder("kestrel-api37-multi-turn-20261124-100000", report("kestrel-api37", "scripted", mapOf("quiet-time-ends" to 1), tasks = part.keys.toList()).copy(multiTurn = true))
+        // quiet-time-ends' dark mode and screen timeout, which Kestrel's commands change as their words ask.
+        var night = "no"
+        fake.adb.settings["system/screen_off_timeout"] = "60000"
+        fake.adb.on("^cmd uimode night$") { "Night mode: $night" }
+        fake.adb.on("^cmd uimode night (yes|no)$") {
+            night = it.groupValues[1]
+            ""
+        }
+        FakeConversation(fake.adb).onInput = { input ->
+            if (input.endsWith("turn on dark mode")) night = "yes"
+            if (input.endsWith("set the screen timeout to 2 minutes")) fake.adb.settings["system/screen_off_timeout"] = "120000"
+        }
+        fakePcapdroid(fake.adb) { PcapBuilder().bytes() }
+        PcapdroidKeys(fake.root.resolve("eval").resolve("local").resolve("pcapdroid-keys.json")).put("emulator-5554", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6")
+
+        assertEquals(Cli.EXIT_PASSED, CompareCommand(fake.environment, Command.Compare(listOf(fell), rerun = true, device = "emulator-5554")).execute())
+
+        assertTrue(fake.output.contains("compare=kestrel-api37-multi-turn rerun=quiet-time-ends runs=3"))
+        val again = Report.read(fake.root.resolve("eval-results").resolve("kestrel-api37-multi-turn-20261123-120000").resolve("report.json"))
+        assertTrue(again.multiTurn)
+        assertEquals(listOf(Triple("quiet-time-ends", 3, 3)), again.tasks.map { Triple(it.task, it.passes, it.runs) })
+        // The 6 runs of quiet-time-ends, 4 of them passed, bring the device back to its baseline.
+        assertTrue(fake.output.contains("compare=kestrel-api37-multi-turn result=pass rate=83.3 baseline=83.3 tasks=2"))
     }
 }
