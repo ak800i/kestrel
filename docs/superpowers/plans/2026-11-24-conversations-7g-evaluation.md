@@ -14,11 +14,11 @@
 - The owner's hard rule (AGENTS.md): no workarounds and no smallest-change fixes; clean code, good architecture and modularity, even when that means a larger change. The owner's criterion of 2026-11-24: "best = best code quality. Don't worry about time." A step that would patch a symptom at the nearest line is a fault of the plan: stop and ask the controller.
 - The approved design is `docs\superpowers\specs\2026-11-24-conversations-design.md`, called "the design" below; its decisions D1 to D24 bind this plan, and so do its sections 10.6, 15.2 and R2. This plan is the design's plan 7G (section 16): turns in `Task`, the new answers, the tasks of design 15.3 with their dry-run scripts, `scripts\hook.ps1`'s entries for the new hooks, and their `scripts\test-scripts.ps1` cases. The main spec is `docs\superpowers\specs\2026-11-12-kestrel-design.md` (rewritten by plan 7.0): its sections 5.3, 16.5 and 16.6 say that the multi-turn tasks are not part of the 29 tasks' rates and that their own baseline is recorded once and kept apart.
 - This plan consumes plans 7A (`docs/superpowers/plans/2026-11-24-conversations-7a-agent.md`), 7B (`docs/superpowers/plans/2026-11-24-conversations-7b-core.md`), 7C (`docs/superpowers/plans/2026-11-24-conversations-7c-archive.md`), 7D (`docs/superpowers/plans/2026-11-24-conversations-7d-voice.md`, its "Interfaces for 7E and 7F" and its hooks), 7E (`docs/superpowers/plans/2026-11-24-conversations-7e-goal-service.md`, its "Interfaces for 7F and 7G") and 7F (`docs/superpowers/plans/2026-11-24-conversations-7f-screen.md`, its "Interfaces for 7G", with its Task 13a, which the review of this plan asked for: `agent-answer --es channel card`, which presses the card over the app, and `delete-typed` for the conversations that tagged inputs open, kept across a restart). It builds no second hook, engine or store: it reads Kestrel only through the debug hooks.
-- The rules of AGENTS.md and design D7 of sub-project 6: scripted suite tasks run only on kestrel-api37; a live run calls the owner's Copilot only in the owner's sitting (Task 13); `scripts\a71-agent.ps1`'s sittings and their run lines, which its `ConvertFrom-TaskLine` reads byte for byte, keep working: a task of one command writes exactly the line that it wrote before this plan.
+- The rules of AGENTS.md and design D7 of sub-project 6: scripted suite tasks run only on kestrel-api37; a live run calls the owner's Copilot only in Task 13, through `scripts\eval.ps1 --live` on kestrel-api37 and the A71, as AGENTS.md allows; `scripts\a71-agent.ps1`'s sittings and their run lines, which its `ConvertFrom-TaskLine` reads byte for byte, keep working: a task of one command writes exactly the line that it wrote before this plan.
 - The eval dry suite on kestrel-api37 (`scripts\eval.ps1 suite --device <serial>`) keeps its tasks and its results for them: the multi-turn tasks run apart (`suite --multi-turn`), and the injection series gains only `records-injection`.
 - Never print, log or put into a run line, a detail line, a warning or a hook's answer the owner's words, a reply, a question, a record's text or screen text. The tool's new types print only kinds, numbers, tags and counts; a check's or step's description is its class with its fields, which are fixed words of the plan, never the device's.
 - Run Gradle only through `scripts\gradle.ps1`, one build at a time; when the controller's brief says that agents run in parallel, take `.superpowers\sdd\gradle.lock` in `H:\Code\kestrel` before each Gradle command as the brief says, and do not run `scripts\gradle.ps1 --stop` beside another Gradle user. Otherwise stop Gradle with `scripts\gradle.ps1 --stop` at the end of each task that builds. Install only through `scripts\install.ps1`, run the suite only through `scripts\eval.ps1`, and run `scripts\test-scripts.ps1` after every change of a script.
-- Device steps run only in Tasks 12 and 13, which are the controller's and the owner's. On kestrel-api37 each device command starts with the emulator's check, written without the word throw: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if ("$(& (Get-Adb) -s emulator-5554 emu avd name)" -notmatch '^kestrel-api37\b') { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }`. If the check fails, or no emulator runs, start it with `scripts\start-emulator.ps1`, check the serial that it prints, and use that serial. Never use the AVD `zoran`, the S23+ or the owner's Xiaomi tablet. The A71 (`R58N66RVD7Z`) is used only in Task 13, within AGENTS.md's limits.
+- Device steps run only in Tasks 12 and 13: Task 12 is the controller's, run by a delegated agent with a strict brief, and Task 13 waits until the A71 is on USB. On kestrel-api37 each device command starts with the emulator's exact check, written without the word throw: `. scripts\lib\Kestrel.ps1; Use-KestrelToolchain; if (-not (Test-KestrelAvdAnswer @(& (Get-Adb) -s emulator-5554 emu avd name))) { Write-Error 'emulator-5554 is not kestrel-api37' -ErrorAction Stop }` (`Test-KestrelAvdAnswer` requires the exact name, so an AVD such as `kestrel-api37-old` never passes). kestrel-api37 runs without a window (`scripts\start-emulator.ps1` starts it with `-no-window`, because the window links Android's clipboard to Windows' clipboard; README), and no step of this plan needs the window, so no step starts it with `-Window`. If the check fails, or no emulator runs, start it with `scripts\start-emulator.ps1`, check the serial that it prints, and use that serial. Never use the AVD `zoran`, the S23+ or the owner's Xiaomi tablet. The A71 (`R58N66RVD7Z`) is used only in Task 13, within AGENTS.md's limits.
 - kestrel-api37 holds the owner's own Google account and Kestrel's Copilot profile: no step uninstalls Kestrel there, clears its data, or signs an account in or out; `:tools:eval` checks the accounts and the profile before and after each command (`AccountGuard`), and Tasks 12 and 13 check them too. Since plan 7C, only builds with plan 7C may be installed on kestrel-api37 and on the A71.
 - Nothing before Task 13 calls a provider or runs `--live`. Every JVM test uses fake devices, and Task 12 uses the scripted model.
 - The JVM tests run on CI's Ubuntu too: no JVM test needs Windows, a device, a font or a network, and no test depends on the machine's time zone.
@@ -30,12 +30,12 @@ Code comments name this plan "plan 7G" and the design's sections as "design 15.3
 
 ## Before you start
 
-- This plan starts only after plans 7A to 7F are merged into `sp3`. It was written against `sp3` at `f435c9f6`, where plan 7A had landed, plan 7B up to its Task 7 with its Task 5a (without its Tasks 5b to 5d, the index of past conversations in shards) and plan 7C up to its Task 4b, with plan 7B's Tasks 5b to 5d and 8 to 10, plan 7C from its Task 4c, plan 7D, plan 7E and plan 7F (the draft `.superpowers/sdd/plan-7f.md` of 2026-11-25, with its Task 13a) simulated on top with the plan checker, all without a problem. Its old texts in `app/src/debug/`, `app/src/testDebug/`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `scripts/hook.ps1` and `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt` are the texts that those plans leave; every other old text exists at `f435c9f6` and is changed by none of them. Plan 7F's Task 13a changes none of the old texts that this plan replaces. No task of this plan uses `:core:conversation`'s store or search (`ConversationStore`, `HistorySearch`): it reaches past conversations only through the debug hooks and through the agent's tool `search_conversations`, which they serve inside Kestrel.
-- At the start of Task 1, and again at the starts of Tasks 4, 7 and 10, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7g-evaluation.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:SIMDIR = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7g-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 4 also set `$env:START_TASK = '4'`, for Task 7 `$env:START_TASK = '7'`, and for Task 10 `$env:START_TASK = '10'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that plans 7A to 7F moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the earlier plans left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
-- At the start of Task 1, check that plans 7A to 7F as merged have what this plan consumes: `Select-String -Path app\src\debug\kotlin\dev\kestrel\app\debug\ConversationHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\AgentTaskHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\VoiceHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\GoalServiceHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\AgentHookAnswers.kt, tools\eval\src\main\kotlin\dev\kestrel\eval\run\Runner.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\ResumeNote.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskRequest.kt -Pattern '"CONVERSATION_TYPE" -> type\(intent\)|"restore-check" ->|"text" -> return typedAnswer|checklist=\$checklist conversation=\$conversation|followUp=\$\{|setOf\("GOAL_SERVICE_STATE", "GOAL_CONTROL"\)|QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"|in Refusals.ENDS|RESTART\("a restart of Kestrel"\)|CONVERSATION_HEADER = "This conversation so far:"|"card" -> return cardAnswer\(tag, words, asking\)|tags.ownConversation = \{ HookConversations.own\(it\) \}'`. Expected: 12 matches, the last two from plan 7F's Task 13a. This plan uses plan 7F's Task 13a only through its hooks: `agent-answer --es channel card`, which answers `answered tag=<tag> asking=<kind> channel=card` or refuses with what `CardDesk.press(key, kind, choice)`'s guard found (`CardPress`), and `conversation-control --es do delete-typed`, which answers `deleted=<n> open=<n> failed=<n>` for the conversations that `HookConversations` marked: those that `conversation-type` or a tagged input (`CommandTags.ownConversation`) opened, kept in a debug file across a restart. Otherwise stop and ask the controller.
-- Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :tools:eval:test :core:agent:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'core\agent\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`, then `scripts\test-scripts.ps1` and note the number of Pester tests that passed in PowerShell 7. These are E₀ (`:tools:eval`), G₀ (`:core:agent`), A₀ (`:app` JVM, with `app/src/testDebug`) and P₀ (Pester). Each task gives its counts as "N + k", where N is the count before the task. If a count differs from what a task says, stop and ask the controller.
+- Plans 7A to 7F are built and on `main` at `c6d38be6` (`sp3` at the same commit), with every review fix of plan 7F's whole-plan review and its eight re-checks; this plan starts from there. It was written against `sp3` at `f435c9f6`, with plans 7B to 7F simulated on top, and the amendment of 2026-11-28 (below) rebased it onto `c6d38be6` as built: the plan checker runs clean from Task 1 against `c6d38be6` alone, and every old text that the plan replaces exists once at `c6d38be6` (in `app/src/debug/`, `app/src/testDebug/`, `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, `scripts/hook.ps1`, `scripts/tests/Hook.Tests.ps1`, `tools/eval/`, `core/agent/src/testFixtures/`, `AGENTS.md`, `README.md` and the three documents of Task 11). No task of this plan uses `:core:conversation`'s store or search (`ConversationStore`, `HistorySearch`): it reaches past conversations only through the debug hooks and through the agent's tool `search_conversations`, which they serve inside Kestrel.
+- At the start of Task 1, and again at the starts of Tasks 4, 7 and 10, run the plan checker against the branch's HEAD, in PowerShell 7: `$env:PLANX = 'H:\Code\kestrel-sp3\docs\superpowers\plans\2026-11-24-conversations-7g-evaluation.md'; $env:BASE_REF = (git -C H:\Code\kestrel-sp3 rev-parse HEAD); $env:S3A = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:SIMDIR = 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\no-such-sim'; $env:OUTDIR = 'plan7g-sim'; python 'C:\Users\AleksaLocal\.copilot\session-state\337a39e5-0c45-4e8a-b4a0-4c1d2eef024e\files\plan3x-check.py'`; for Task 4 also set `$env:START_TASK = '4'`, for Task 7 `$env:START_TASK = '7'`, and for Task 10 `$env:START_TASK = '10'`. Expected: an `operations:` line, a `files:` line, a `simulated files written:` line, and no line that starts with `PROBLEM:`. If a `PROBLEM:` line names a text that a commit after `c6d38be6` moved or changed, or a file that one of them created, stop and ask the controller: the controller rebases the plan (it changes the plan's old texts to the texts that the later commits left, keeps each change's meaning, and adjusts a new text that depends on them), runs the checker again until it is clean, and only then gives the task.
+- At the start of Task 1, check that plans 7A to 7F as built have what this plan consumes: `Select-String -Path app\src\debug\kotlin\dev\kestrel\app\debug\ConversationHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\AgentTaskHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\AgentHookAnswers.kt, app\src\debug\kotlin\dev\kestrel\app\debug\VoiceHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\GoalServiceHooks.kt, app\src\debug\kotlin\dev\kestrel\app\debug\HookConversations.kt, app\src\debug\kotlin\dev\kestrel\app\debug\DebugKestrelApplication.kt, app\src\debug\kotlin\dev\kestrel\app\debug\SessionHooks.kt, tools\eval\src\main\kotlin\dev\kestrel\eval\run\Runner.kt, core\agent\src\main\kotlin\dev\kestrel\agent\goal\ResumeNote.kt, core\agent\src\main\kotlin\dev\kestrel\agent\TaskRequest.kt -Pattern '"CONVERSATION_TYPE" -> type\(intent\)|"restore-check" ->|"delete-typed" ->|"text" -> return typedAnswer|"card" -> return cardAnswer\(tag, words, question, asking\)|CardPress.HELD -> return "held tag=|checklist=\$checklist conversation=\$conversation|followUp=\$\{|setOf\("GOAL_SERVICE_STATE", "GOAL_CONTROL"\)|"send-later" -> sendLater|QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"|tags.ownConversation = marks::own|HookConversations.watch\(noBackupFilesDir|EXTRA_HANDOVER, false|in Refusals.ENDS|RESTART\("a restart of Kestrel"\)|CONVERSATION_HEADER = "This conversation so far:"'`. Expected: 17 matches: 3 in `ConversationHooks.kt`, 3 in `AgentTaskHooks.kt` (the card's answer has four arguments since Task 13's review M2, and a Continue pressed on the lock screen answers `held …`), 2 in `AgentHookAnswers.kt`, 1 in `VoiceHooks.kt`, 2 in `GoalServiceHooks.kt`, 1 each in `HookConversations.kt` and `DebugKestrelApplication.kt` (the rule of the hooks' marks runs from the start of every process: plan 7F's whole-plan review's I2 moved it out of `VoiceHooks.kt`), 1 in `SessionHooks.kt` (`voice-task --ez handover true`, plan 7F's Task 14, Step 8a), and 1 each in `Runner.kt`, `ResumeNote.kt` and `TaskRequest.kt`. This plan uses plan 7F's Task 13a only through its hooks: `agent-answer --es channel card`, which presses the card over the app through the debug `CardPresser.press(key, kind, choice)`, whose guard checks the overlay's card under the card desk's lock and then gives the press to the desk's one entry for taps (`CardDesk.tapped`), as the owner's tap; it answers `answered tag=<tag> asking=<kind> channel=card`, `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen (which this plan never presses: a hand-over's card gets cancel), or an error that names what the guard found or what the desk did (`CardPress`: `NOT_ON_OVERLAY`, `OTHER_CARD`, `NO_BUTTON`, `NOT_ARMED`, `SCREEN_OFF`, `UNFOLLOWED`, `WITHDRAWN`), after which the question stays open; and `conversation-control --es do delete-typed`, which answers `deleted=<n> open=<n> failed=<n>` for the conversations that `HookConversations` marked: those that the work of any hook's input opened, tagged or not (`conversation-type`, `voice heard`, agent-answer's answers and `conversation-control do=new`), whose mark goes as soon as an input of the owner's with his words or his choice reaches them, kept by id in `hook-conversations.txt` of Kestrel's `noBackupFilesDir` across a restart. Otherwise stop and ask the controller.
+- Measure the counts before the first change of Task 1, and note them in the task's report: run `scripts\gradle.ps1 :tools:eval:test :core:agent:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'core\agent\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`, then `scripts\test-scripts.ps1` and note the number of Pester tests that passed in PowerShell 7. These are E₀ (`:tools:eval`), G₀ (`:core:agent`), A₀ (`:app` JVM, with `app/src/testDebug`) and P₀ (Pester). At `c6d38be6` they are E₀ = 298, G₀ = 315, A₀ = 863 and P₀ = 554 (Windows PowerShell 5.1: 553 passed and 1 skipped); the suites that this plan does not change are `:core:conversation` 308 (Task 5 runs it), `:core:screen` 101, `:core:privacy` 95, `:core:voice` 179 and `:app`'s device tests 505. Each task gives its counts as "N + k", where N is the count before the task, and the number that it reaches from these. If a count differs from what a task says, stop and ask the controller.
 - Before each task, check that every text that the task replaces exists, and exists once, in its file as the earlier tasks left it; and run `git status --short`. The worktree may hold other agents' uncommitted files. If a text is missing, or a file that the task changes shows changes that are not the task's own, stop and ask the controller.
-- Tasks 1 to 11 use no device. Task 12 is the controller's own steps on kestrel-api37. Task 13 waits for the owner.
+- Tasks 1 to 11 use no device. Task 12 is the controller's steps on kestrel-api37, which a delegated agent runs with a strict brief. Task 13 waits until the A71 is on USB.
 
 ## Not in this plan
 
@@ -48,10 +48,10 @@ Code comments name this plan "plan 7G" and the design's sections as "design 15.3
 These are this plan's readings of the design where it leaves a choice open, or where an earlier plan's settlement has a cleaner form. The controller accepted the first eleven and decision 12 on 2026-11-25, and decided the review's H1 to H4 ("Decisions for the controller" at the end); Task 11 writes them into the main spec, the design and plan 7D.
 
 - **Every run starts in a conversation of its own.** Design 14.1 says that a task of sub-project 6 is a conversation of one command. Runs follow each other within the quiet time, so without a step of its own a run's command would continue the earlier run's conversation, with its records, its owner's words and its allowance (D16). `ConversationGuard` closes the open conversation before a run (it waits for the final reply, then `conversation-control do=expire`), and fails the run's setup when a goal is open; after a run it stops a goal that the run left open, held or not, because a later command would resume a held goal (design 6.4).
-- **Each run deletes the conversations that the hooks' inputs made (H4).** A run on the A71 would otherwise leave its conversations among the owner's past conversations and their search. Plan 7F's `conversation-control do=delete-typed` deletes the closed conversations in which `conversation-type` started a command, never the owner's; plan 7F's Task 13a extends it to the conversations that a tagged input opened, spoken or typed, and keeps its notes in a file across a restart, so the run's last restore closes its conversation and deletes them. A conversation that the run only continued, as after a switch into a past one, is never noted, because it may be the owner's (the re-review's N1). A conversation that a long final reply keeps open past 60 s gives a warning, not a failed restore: it stays noted, and the next run or the series' cleanup, a restore that the preflight pushes and that waits up to 5 minutes, deletes it (N3). The preflight refuses a build without `delete-typed` or `voice-restore` (N4).
-- **A typed command's questions are answered as the owner answers them (H1).** On the text channel's cards a yes-or-no question, a free question, a limit's "Continue?" and the switch are answered through `agent-answer --es channel text`, as plan 7F built it. A confirmation, a hand-over and a pick are answered only on the card over the app (plan 7F's S2 rule), so the run presses that card's button with `agent-answer --es channel card`: plan 7F's Task 13a presses it through its card desk as the owner's tap, only on the card on the overlay whose question number and kind match the question that the hook checked (N2), with the button that the answer names, once it takes taps; never by the screen's coordinates. The scripted Kestrel of the JVM tests refuses those three kinds on the text channel, as the real hook does.
+- **Each run deletes the conversations that the hooks' inputs made (H4).** A run on the A71 would otherwise leave its conversations among the owner's past conversations and their search. Plan 7F's `conversation-control do=delete-typed`, as its Task 13a and its review fixes built it, deletes the closed conversations that the work of any hook's input opened, tagged or not (`conversation-type`, `voice heard`, agent-answer's answers and `conversation-control do=new`), never the owner's: a mark goes as soon as an input of the owner's with his words or his choice reaches the conversation (his wordless Stop, Continue and New conversation keep it), and the marks are kept by id in a debug file across a restart, watched from the start of every process (`DebugKestrelApplication`, `HookConversations.watch`), so the run's last restore closes its conversation and deletes them. A conversation that the run only continued, as after a switch into a past one, is never marked, because it may be the owner's (the re-review's N1). A conversation that a long final reply keeps open past 60 s gives a warning, not a failed restore: it stays marked, and the next run or the series' cleanup, a restore that the preflight pushes and that waits up to 5 minutes, deletes it (N3). The preflight refuses a build without `delete-typed` or `voice-restore` (N4).
+- **A typed command's questions are answered as the owner answers them (H1).** On the text channel's cards a yes-or-no question, a free question, a limit's "Continue?" and the switch are answered through `agent-answer --es channel text`, as plan 7F built it. A confirmation, a hand-over and a pick are answered only on the card over the app (plan 7F's S2 rule), so the run presses that card's button with `agent-answer --es channel card`: plan 7F's debug `CardPresser.press` checks, under the card desk's lock, that the overlay shows the card whose question number and kind match the question that the hook checked (N2), that the card takes the button that the answer names, and that it takes taps, and then gives the press to the desk's one entry for taps (`CardDesk.tapped`), as the owner's tap; never by the screen's coordinates. The run presses only confirm, no, cancel or a number there, never Continue (a hand-over's card gets cancel), so the desk answers at once or refuses, and never holds a press until the unlock (`held … until=unlock`). The scripted Kestrel of the JVM tests refuses those three kinds on the text channel, as the real hook does.
 - **A setup step that holds state in Kestrel's process is made again after a restart (H3).** Such a step is a `ProcessSetup`, whose `renew` the turn runner calls after `Turn.Restart`: the fixtures' self-chat aliases (`SelfChatAliases`) and the scripted model (`ScriptedModelSetup`, with the next restart script). The type system marks them, so a new step of that kind cannot be forgotten by the restart.
-- **A task that ends Kestrel's process first waits out Kestrel's guard against a crash loop (H2).** Plan 7E keeps Kestrel off after a crash less than 120 s after a restore turned it on, and a restart is such a restore, so the next run of `resume-after-death` would leave Kestrel off. Its first step (`CrashGuardPassed`) reads the new debug hook `voice-restore` (how long ago the restore turned Kestrel on, and the guard) and waits until the restore is older than the guard and 5 s more, at most 180 s, never with a fixed wait; `KestrelRestart` refuses to end the process while the guard holds.
+- **A task that ends Kestrel's process first waits out Kestrel's guard against a crash loop (H2).** Kestrel keeps itself off after a crash less than 120 s after a restore turned it on (main spec 8.5), and a restart is such a restore, so the next run of `resume-after-death` would leave Kestrel off. Its first step (`CrashGuardPassed`) reads the new debug hook `voice-restore` (how long ago the restore turned Kestrel on, and the guard) and waits until the restore is older than the guard and 5 s more, at most 180 s, never with a fixed wait; `KestrelRestart` refuses to end the process while the guard holds.
 - **A dry run's own checks (L2).** `records-injection`'s script reaches its harmful call only when the second request holds the records block with fixture 7's instruction; a check that only a run without a model makes (`DryRun.checks`: `EndedOtherThan("FAILED_BY_MODEL")`) shows that it did, while the live run is judged by the injection rule alone.
 - **The test limits need no seam.** Plan 7D's decision 2 left a debug-only seam for limits below the Conversations page's bounds to this plan. `limit-continue` needs none: with the page's smallest limits (`conversation-control do=limits`: 50 replies, 5 minutes and 10 AI Credits, as design 15.3 names the hook) a scripted reply that costs 10 AI Credits reaches the round's credit limit, so the question, a second round of the same size (one more such reply), the pause at silence and "continue" are all real. No production code gets a field that only tests set.
 - **"Yes" to "Continue the goal?" after a restart is "Kestrel, continue".** After Kestrel's process ended, the tag of the goal's command is gone with the process, so no tag can address the question. Design 6.4 makes Continue resume an interrupted goal in a new round, exactly as a yes does, and its input carries a tag that names the resumed round's command, so `resume-after-death` says "Kestrel, continue". The `continue-goal` answer of a task whose goal is held while the run follows it stays "no", the owner's decision P1.
@@ -88,7 +88,7 @@ All `:tools:eval` paths above are below `tools/eval/src/main/kotlin/dev/kestrel/
 
 ### Task 1: Every run in a conversation of its own
 
-Design 14.1 of sub-project 7 makes a task of sub-project 6 a conversation of one command. A run therefore starts with no conversation open: `ConversationGuard.close()` waits until the open conversation's final reply has ended and its quiet clock runs, ends the quiet time with `conversation-control do=expire`, and waits until the conversation is closed; a goal that is open then is no run's own, so the run's setup fails. After a run, a restore stops a goal that the run left open, held or not, as the owner's "stop" does (design 6.4), because a later command would resume a held goal, and the run's last restore closes its conversation and deletes the hooks' own conversations: plan 7F's `conversation-control do=delete-typed` deletes the closed conversations that a hook's input opened, which plan 7F's Task 13a extends from `conversation-type` to every tagged input, spoken or typed, and keeps across a restart, so that no run leaves a test conversation among the owner's past conversations and their search, and none of the owner's goes. A conversation that a long final reply keeps open past 60 s only gives a warning, because delete-typed keeps it noted: the next run's restore deletes it, or the series' cleanup, a restore that the preflight pushes, which waits up to 5 minutes and fails only then. The preflight refuses a build without the conversation's hooks or without `delete-typed`. The preflight refuses a build without the conversation's hooks. The runner's `quietly` moves to a file of its own, because the guard needs it too.
+Design 14.1 of sub-project 7 makes a task of sub-project 6 a conversation of one command. A run therefore starts with no conversation open: `ConversationGuard.close()` waits until the open conversation's final reply has ended and its quiet clock runs, ends the quiet time with `conversation-control do=expire`, and waits until the conversation is closed; a goal that is open then is no run's own, so the run's setup fails. After a run, a restore stops a goal that the run left open, held or not, as the owner's "stop" does (design 6.4), because a later command would resume a held goal, and the run's last restore closes its conversation and deletes the hooks' own conversations: plan 7F's `conversation-control do=delete-typed` deletes the closed conversations that the work of a hook's input opened, every input that a hook gives, tagged or not (plan 7F's Task 13a and its review fixes), keeps their marks across a restart, and drops a mark once an input of the owner's with his words or his choice reaches the conversation, so that no run leaves a test conversation among the owner's past conversations and their search, and none of the owner's goes. A conversation that a long final reply keeps open past 60 s only gives a warning, because delete-typed keeps it marked: the next run's restore deletes it, or the series' cleanup, a restore that the preflight pushes, which waits up to 5 minutes and fails only then. The preflight refuses a build without the conversation's hooks or without `delete-typed`. The runner's `quietly` moves to a file of its own, because the guard needs it too.
 
 **Files:**
 - Create: `tools/eval/src/main/kotlin/dev/kestrel/eval/run/ConversationGuard.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Quietly.kt`
@@ -96,10 +96,10 @@ Design 14.1 of sub-project 7 makes a task of sub-project 6 a conversation of one
 - Test: create `tools/eval/src/test/kotlin/dev/kestrel/eval/run/ConversationGuardTest.kt`; modify `tools/eval/src/test/kotlin/dev/kestrel/eval/run/RunnerTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/run/PreflightTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/device/FakeAdb.kt`
 
 **Interfaces:**
-- Consumes: plan 7D's hooks `conversation-state` (`open=yes|no continued=yes|no commands=<n> goal=<phase>|none quiet=off|held|running quietLeft=<seconds>|none replyChannel=voice|text testMode=on|off`) and `conversation-control --es do expire` (`expire=sent`); plan 7F's `conversation-control --es do delete-typed` (`deleted=<n> open=<n> failed=<n>`), which plan 7F's Task 13a extends to the conversations of tagged transcripts; `Setup`, `SetupResult`, `SetupFailed`, `RunScope` (package `dev.kestrel.eval.task`).
+- Consumes: plan 7D's hooks `conversation-state` (`open=yes|no continued=yes|no commands=<n> goal=<phase>|none quiet=off|held|running quietLeft=<seconds>|none replyChannel=voice|text testMode=on|off`) and `conversation-control --es do expire` (`expire=sent`); plan 7F's `conversation-control --es do delete-typed` (`deleted=<n> open=<n> failed=<n>`), which deletes the conversations that any hook's input opened, tagged or not (plan 7F's Task 13a and `f23bd193`), and whose unknown `--es do` a build from before plan 7F refuses with `add --es do with one of new, expire, limits or restore-check` (at `c6d38be6`: `… limits, restore-check or delete-typed`); `Setup`, `SetupResult`, `SetupFailed`, `RunScope` (package `dev.kestrel.eval.task`).
 - Produces: `Hooks.conversationState(): HookAnswer`, `Hooks.conversationControl(action: String, limits: String? = null): HookAnswer`, `Hooks.deleteTyped(): HookAnswer`; `class ConversationGuard(hooks: Hooks, clock: Clock)` with `fun close(seconds: Int = CLOSE_SECONDS)`, `fun deleteRun(warn: (String) -> Unit)`, `fun stopGoal(stop: () -> Unit): Boolean`, `CLOSE_SECONDS = 60` and `STOP_SECONDS = 15`; `class NewConversation(conversations: ConversationGuard) : Setup`; `internal fun <T> quietly(call: () -> T): T?` (package `dev.kestrel.eval.run`); `ConversationGuard.deleteLeft()` and `CLEANUP_SECONDS = 300`, the series' cleanup, which `Preflight` pushes as a restore; the test constants `FakeAdb.NO_CONVERSATION` and `FakeAdb.NOTHING_DELETED`, which every fake device answers by default.
 
-Counts: `:tools:eval` E₀ + 6 (`ConversationGuardTest` 4, `RunnerTest` + 1, `PreflightTest` + 1).
+Counts: `:tools:eval` E₀ + 6 (`ConversationGuardTest` 4, `RunnerTest` + 1, `PreflightTest` + 1): 304 with E₀ = 298.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -201,9 +201,9 @@ class ConversationGuardTest {
         assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
     }
 
-    // Plan 7F's delete-typed, which its Task 13a extends to tagged transcripts: the hooks' own conversations leave Kestrel's
-    // past conversations once the run's one is closed. One that a long final reply keeps open is only warned about after a
-    // run, and the series' cleanup, which waits longer, fails when it is still open.
+    // Plan 7F's delete-typed, which deletes the conversations that any hook's input opened (its Task 13a and f23bd193): the
+    // hooks' own conversations leave Kestrel's past conversations once the run's one is closed. One that a long final reply
+    // keeps open is only warned about after a run, and the series' cleanup, which waits longer, fails when it is still open.
     @Test
     fun deleteRunDeletesTheHooksOwnConversationsAndWarnsAboutAnOpenOneWhichTheSeriesCleanupDeletesOrFailsOn() {
         val warnings = mutableListOf<String>()
@@ -266,7 +266,7 @@ with:
 
     // Design 14.1 and 6.4 of sub-project 7: the run's command opens a conversation of its own, a goal that the run left
     // held is stopped, so that the next run's command does not resume it, and the run's conversation is closed and deleted
-    // after it (plan 7F's delete-typed, with its Task 13a).
+    // after it (plan 7F's delete-typed, which covers every input that a hook gives).
     @Test
     fun aRunClosesTheOpenConversationFirstStopsAGoalThatItLeftHeldAndDeletesItsOwnConversation() {
         run.adb.hook("AGENT_TASK") { done }
@@ -410,10 +410,11 @@ with:
         act("conversation-control", Extra.Text("do", action), limits?.let { Extra.Text("limits", it) })
 
     /**
-     * conversation-control --es do delete-typed (plan 7F with its Task 13a): deletes the closed conversations that a hook's
-     * input, typed or a tagged transcript, opened, as Kestrel noted them across restarts, and never another; answers
-     * `deleted=`, `open=` and `failed=`. One that is open or failed stays noted, and a second call deletes nothing more, so a
-     * lost answer is asked again.
+     * conversation-control --es do delete-typed (plan 7F with its Task 13a): deletes the closed conversations that the work
+     * of a hook's input opened, every input that a hook gives, tagged or not, as Kestrel marked them across restarts, and
+     * never another, nor one that an input of the owner's with his words or his choice has reached since; answers
+     * `deleted=`, `open=` and `failed=`. One that is open or failed stays marked, and a second call deletes nothing more, so
+     * a lost answer is asked again.
      */
     fun deleteTyped(): HookAnswer = read("conversation-control", Extra.Text("do", "delete-typed"))
 ```
@@ -487,11 +488,12 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
 
     /**
      * After a run: closes the run's conversation ([close]) and deletes the hooks' own conversations (plan 7F's delete-typed,
-     * which its Task 13a extends to tagged transcripts), so that no test conversation stays among the owner's past
-     * conversations and their search. Kestrel deletes only a conversation that a hook's input opened, never one of the
-     * owner's, and keeps its notes across a restart. A conversation that does not close within [CLOSE_SECONDS] seconds, as
-     * after a long final reply, only gives [warn] a warning: delete-typed keeps it noted, and the next run's restore or the
-     * series' cleanup ([deleteLeft]) deletes it. A deletion that failed fails the restore that calls it.
+     * which covers every input that a hook gives, tagged or not), so that no test conversation stays among the owner's past
+     * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no input of
+     * the owner's with his words or his choice has reached, never one of the owner's, and keeps its marks across a restart.
+     * A conversation that does not close within [CLOSE_SECONDS] seconds, as after a long final reply, only gives [warn] a
+     * warning: delete-typed keeps it marked, and the next run's restore or the series' cleanup ([deleteLeft]) deletes it. A
+     * deletion that failed fails the restore that calls it.
      */
     fun deleteRun(warn: (String) -> Unit) {
         try {
@@ -717,7 +719,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₀ + 6.
+Expected: BUILD SUCCESSFUL; `eval` E₀ + 6 (304).
 
 - [ ] **Step 7: Commit**
 
@@ -741,7 +743,7 @@ A task becomes a list of turns (design 14.4 of sub-project 7). This task brings 
 - Consumes: Task 1's `ConversationGuard`, `NewConversation` and `quietly`; plan 7D's `Refusals.ENDS`.
 - Produces: `sealed interface Turn` with `data class Turn.Say(val words: Request, val ends: String? = Turn.FINISHED)` and `Turn.FINISHED = "FINISHED"`; `object Turns` with `fun one(request: String): List<Turn>` and `fun problem(turns: List<Turn>): String?`; `Task.turns: List<Turn>` (in place of `Task.request`), checked by `Turns.problem` when the task is made; `class SentCommand(val tag: String, val expected: String?)` with `sent`, `answer: HookAnswer?` and `open`; `internal class RunState(putBack: PutBack)` with `commands`, `current`, `answer`, `tag` and the fields of the old inner class; `object Outcomes { fun merge(commands: List<SentCommand>): HookAnswer? }`; `internal enum class TurnsEnd { DONE, UNDELIVERED, CUT }`; `internal class TurnRunner(task, number, scope, state, options, tags, stopIfStopping)` with `fun run(): TurnsEnd`; `Runner.EXISTS_TRIES` becomes `internal`.
 
-Counts: `:tools:eval` E₁ + 3 (`OutcomesTest` 2, `RunnerTest` + 1), where E₁ = E₀ + 6.
+Counts: `:tools:eval` E₁ + 3 (`OutcomesTest` 2, `RunnerTest` + 1), where E₁ = E₀ + 6 (304): 307 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1830,7 +1832,7 @@ Expected: PASS; every test of `RunnerTest` passes unchanged but for the task's f
 - [ ] **Step 8: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`, then `git grep -n "\.request\b" -- tools/eval`
-Expected: BUILD SUCCESSFUL; `eval` E₁ + 3; the grep finds nothing.
+Expected: BUILD SUCCESSFUL; `eval` E₁ + 3 (307); the grep finds nothing.
 
 - [ ] **Step 9: Commit**
 
@@ -1843,7 +1845,7 @@ git commit -m "feat(eval): a task is a list of turns, and a run follows each spo
 
 ### Task 3: The other turns: the follow-up window, typed words, steering, a goal that acts, a restart, steps and checks
 
-The rest of design 14.4 of sub-project 7's turns and of design 15.3's tasks: a command spoken inside the follow-up window (the run waits until `voice-state` says `followUp=open` and speaks without the name), a typed command (`conversation-type`, plan 7F) whose questions the run answers as the owner would: a confirmation, a hand-over and a pick on the card over the app (`agent-answer --es channel card`, plan 7F as amended by this plan's plan 7F's Task 13a), any other question on the text channel's card (`agent-answer --es channel text`); a command that the run follows only until its goal acts, steering (spoken with the name, D9, or typed), the wait for the current command's end, a restart of Kestrel's process (the hook `crash`, after which the command is lost with its tag), a step between turns, and a check between turns that must hold within its time. A setup step whose change lives in Kestrel's process is a `ProcessSetup`, which the type system marks, and a restart applies every such step of the run again, the scripted model with the dry run's next script among them, so that a new step of that kind cannot be forgotten. A step that fails fails the run with `reason=setup`, and a check that does not hold with `reason=check`.
+The rest of design 14.4 of sub-project 7's turns and of design 15.3's tasks: a command spoken inside the follow-up window (the run waits until `voice-state` says `followUp=open` and speaks without the name), a typed command (`conversation-type`, plan 7F) whose questions the run answers as the owner would: a confirmation, a hand-over and a pick on the card over the app (`agent-answer --es channel card`, plan 7F's Task 13a, which presses it through the card desk's one entry for taps as the owner's tap), any other question on the text channel's card (`agent-answer --es channel text`); a command that the run follows only until its goal acts, steering (spoken with the name, D9, or typed), the wait for the current command's end, a restart of Kestrel's process (the hook `crash`, which answers `crashing` and ends the process half a second later, after which the command is lost with its tag), a step between turns, and a check between turns that must hold within its time. A setup step whose change lives in Kestrel's process is a `ProcessSetup`, which the type system marks, and a restart applies every such step of the run again, the scripted model with the dry run's next script among them, so that a new step of that kind cannot be forgotten. A step that fails fails the run with `reason=setup`, and a check that does not hold with `reason=check`.
 
 **Files:**
 - Create: `tools/eval/src/main/kotlin/dev/kestrel/eval/run/KestrelRestart.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/ScriptedModelSetup.kt`
@@ -1851,10 +1853,10 @@ The rest of design 14.4 of sub-project 7's turns and of design 15.3's tasks: a c
 - Test: create `tools/eval/src/test/kotlin/dev/kestrel/eval/task/TurnsTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/task/FakeConversation.kt`; modify `tools/eval/src/test/kotlin/dev/kestrel/eval/run/RunnerTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/device/FakeAdb.kt`
 
 **Interfaces:**
-- Consumes: Task 2's `Turn`, `Turns`, `SentCommand`, `RunState`, `Outcomes`, `TurnRunner`, `TurnsEnd`; plan 7D's `voice-state`'s `followUp=open|closed`; plan 7F's `conversation-type --es text --es tag [--ez live] [--es model] [--es marker]` and `agent-answer --es channel text`, and plan 7F's Task 13a's `agent-answer --es channel card`; the hook `crash --es text` (spec 16.1); `ScriptInstaller.install`, `remove` and `resource`.
+- Consumes: Task 2's `Turn`, `Turns`, `SentCommand`, `RunState`, `Outcomes`, `TurnRunner`, `TurnsEnd`; plan 7D's `voice-state`'s `followUp=open|closed`; plan 7F's `conversation-type --es text --es tag [--ez live] [--es model] [--es marker]` (the options need the tag, which every turn gives; it answers `typed read=<kind> tag=<tag>`) and `agent-answer --es channel text`, and plan 7F's Task 13a's `agent-answer --es channel card` (`answered tag=<tag> asking=<kind> channel=card`, or an error that leaves the question open); the hook `crash --es text` (spec 16.1; it answers `crashing`); `ScriptInstaller.install`, `remove` and `resource`.
 - Produces: `Turn.Say(words, channel = TurnChannel.SPOKEN, until = Until.END, ends = Turn.FINISHED)`, `Turn.Steer(words, channel = TurnChannel.SPOKEN)`, `Turn.AwaitEnd(ends = Turn.FINISHED)`, `Turn.Restart`, `Turn.Act(action: TurnAction)`, `Turn.Expect(check: Check, within: Duration = 30.seconds)`; `enum class TurnChannel { SPOKEN, FOLLOW_UP, TYPED }`; `enum class Until { END, ACTING }`; `interface TurnAction { fun run(scope: RunScope) }`; `interface ProcessSetup : Setup { fun renew(scope: RunScope) }`, which `SelfChatAliases` and `ScriptedModelSetup(scripts, task, script)` implement; `DryRun.restarts: List<String>`; `SentCommand.expected` (a `var`) and `lost`; `RunState.channel`, `unmet`, `stepFailed`; `Answers.overlayOnly(kind)`; `Verdicts.judge(…, unmet: Boolean = false)`; `Hooks.conversationType(text, tag, live = false, model = null, marker = null)`, `Hooks.crash(text)`, `Hooks.agentAnswer(tag, answer, confirming, channel: String? = null)`; `class KestrelRestart(device, hooks, clock, listening)` with `fun restart()`; `TurnRunner(…, restarter: KestrelRestart, renewed: List<ProcessSetup>)`; the test fake `FakeConversation(adb, clock)` with `Command`, `Until`, `planned`, `inputs`, `answers`, `onInput`, `windows`, `restoredAt`, `deleted`, `open`, `continued`, `commands`, `goal`, `pid`, `aliases`, `line(end, confirmed)`, `GUARD_SECONDS` and `FINISHED`; `FakeAdb.hookWith(action, answer)`.
 
-Counts: `:tools:eval` E₂ + 6 (`TurnsTest` 1, `RunnerTest` + 5), where E₂ = E₁ + 3.
+Counts: `:tools:eval` E₂ + 6 (`TurnsTest` 1, `RunnerTest` + 5), where E₂ = E₁ + 3 (307): 313 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1892,12 +1894,12 @@ import kotlin.time.Duration
  * answers as `<answer>` or `<answer>/<channel>`. As plan 7F's hook does, agent-answer on the text channel refuses a
  * confirmation, a hand-over and a pick, which only the card over the app answers (`channel=card`, plan 7F's Task 13a).
  * conversation-state counts the open conversation's commands (a "continue" adds none), conversation-control do=expire
- * closes it while no goal is open, do=delete-typed deletes the closed conversations that a tagged input opened, which
- * the notes keep across a restart, as plan 7F's Task 13a keeps them in a file ([deleted]), never one that a switch moved into, and
+ * closes it while no goal is open, do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
+ * outlive a restart, as plan 7F keeps them in a file ([deleted]), never one that a switch moved into, and
  * voice-state's followUp= is open from the end of a spoken command until the next input, unless [windows] is false. The
- * hook crash ends the process: `pidof` then gives a new process, the command that ran is lost with its tag, a goal that
- * was open is held as interrupted, the fixtures' self-chat aliases are gone with the process's memory, and the restore
- * that turned Kestrel on again happens at [clock]'s now, which voice-restore reads ([restoredAt]).
+ * hook crash answers `crashing` and ends the process: `pidof` then gives a new process, the command that ran is lost with
+ * its tag, a goal that was open is held as interrupted, the fixtures' self-chat aliases are gone with the process's
+ * memory, and the restore that turned Kestrel on again happens at [clock]'s now, which voice-restore reads ([restoredAt]).
  */
 class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Duration.ZERO }) {
     /**
@@ -1957,7 +1959,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
     private val questions = mutableMapOf<String, ArrayDeque<String>>()
     private val spoken = mutableSetOf<String>()
     private val lost = mutableSetOf<String>()
-    // The conversations that a tagged input opened, kept across a restart (plan 7F's Task 13a).
+    // The conversations that a hook's input opened, every command of the run being tagged, kept across a restart (plan 7F).
     private val own = mutableSetOf<Int>()
 
     init {
@@ -1986,7 +1988,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         adb.hook("CONVERSATION_CONTROL") { extras -> control(extras) }
         adb.hook("CRASH") {
             crash()
-            "crashed"
+            "crashing"
         }
         adb.on("^pidof dev\\.kestrel") { "$pid" }
         adb.on("^dumpsys activity services dev\\.kestrel/\\.app\\.KestrelAccessibilityService$") { "    app=ProcessRecord{1b2c $pid:dev.kestrel/u0a234}" }
@@ -2151,7 +2153,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         const val NAME = "Kestrel, "
         const val WAIT_READS = 3
 
-        /** Kestrel's guard against a crash loop in seconds, as voice-restore answers it (plan 7E's `Listening.CRASH_AFTER_RESTORE_MILLIS`). */
+        /** Kestrel's guard against a crash loop in seconds, as voice-restore answers it (`CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, main spec 8.5). */
         const val GUARD_SECONDS = 120
         private val COMPARED = setOf("marker", "recipient", "digits")
 
@@ -2646,7 +2648,9 @@ with:
      * agent-answer: the owner's answer to the task's open question; a confirmation's answer carries the category that
      * agent-state read. On [channel] `text` (plan 7F) it is the button of the text channel's card that the answer names, as
      * the owner's tap, or words typed on Kestrel's screen; on `card` (plan 7F's Task 13a) the button of the card over the app,
-     * the only place where a confirmation, a hand-over and a pick are answered; without a channel it is his voice.
+     * the only place where a confirmation, a hand-over and a pick are answered, pressed through the card desk's one entry
+     * for taps as the owner's tap (it answers `answered … channel=card`, or `held … until=unlock` for a Continue pressed on
+     * the lock screen); without a channel it is his voice.
      */
     fun agentAnswer(tag: String, answer: String, confirming: String?, channel: String? = null): HookAnswer =
         act(
@@ -2674,7 +2678,10 @@ with:
             model?.let { Extra.Text("model", it) }, marker?.let { Extra.Text("marker", it) },
         )
 
-    /** crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; the process ends before it answers. */
+    /**
+     * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the
+     * process ends half a second later.
+     */
     fun crash(text: String): HookAnswer = act("crash", Extra.Text("text", text))
 
     /** provider-standin: whether the stand-in runs, and the default profile's kind, ID and credential ([ProviderState]). */
@@ -2698,13 +2705,14 @@ import kotlin.time.Duration.Companion.seconds
  * crash (spec 16.1). Android starts Kestrel again when it binds Kestrel's accessibility service again, so [restart] waits
  * for a new process and the service's binding, for at most [START_SECONDS] seconds, closes Android's dialog about the crash
  * when it has the focus, and waits until Kestrel listens again ([listening]), as before a run. Kestrel's guard against a
- * crash loop (plan 7E) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
+ * crash loop (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
  * out that guard before its run; if Kestrel stays off all the same, the failure names the guard.
  */
 class KestrelRestart(private val device: Device, private val hooks: Hooks, private val clock: Clock, private val listening: () -> Unit) {
     fun restart() {
         val before = process()
-        // The process ends before it can answer the hook.
+        // The hook answers `crashing` and ends the process half a second later; a lost answer changes nothing, because
+        // only a new process counts.
         quietly { hooks.crash(CRASH_TEXT) }
         repeat(START_SECONDS / 2) {
             clock.sleep(2.seconds)
@@ -2718,7 +2726,7 @@ class KestrelRestart(private val device: Device, private val hooks: Hooks, priva
                     if (e is DeviceChanged) throw e
                     throw IllegalStateException(
                         "Kestrel did not listen after its process started again (${e.message ?: e.javaClass.simpleName}); its guard against a " +
-                            "crash loop keeps it off after a crash soon after a restore turned it on (plan 7E)",
+                            "crash loop keeps it off after a crash soon after a restore turned it on (main spec 8.5)",
                         e,
                     )
                 }
@@ -3014,7 +3022,9 @@ internal class TurnRunner(
 
     // Design 10.3, 12.2 and 12.3 of sub-project 7: after a typed input, the owner answers a confirmation, a hand-over and a
     // pick on the card over the app (plan 7F's Task 13a), and any other question on the text channel's card; after a
-    // spoken one, by voice.
+    // spoken one, by voice. The run presses confirm, no, cancel or a number on the card over the app, never Continue, so
+    // the card desk answers at once or refuses the press (the question stays open, and the next poll answers again); it
+    // never holds the press until the phone's unlock (`held … until=unlock`), which only a Continue on the lock screen gets.
     private fun channelFor(kind: String): String? = when {
         state.channel != TurnChannel.TYPED -> null
         Answers.overlayOnly(kind) -> CARD
@@ -3264,7 +3274,7 @@ Expected: PASS.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₂ + 6.
+Expected: BUILD SUCCESSFUL; `eval` E₂ + 6 (313).
 
 - [ ] **Step 8: Commit**
 
@@ -3287,7 +3297,7 @@ Design 14.4 of sub-project 7: the run answers a round's "Continue?" at a limit a
 - Consumes: Task 3's `TurnRunner`; plan 7D's `AgentHookAnswers.question(kind: QuestionKind)` and `QuestionKind` (`YES_NO`, `CONFIRM`, `FREE`, `PICK`, `SCREENSHOT`, `CONTINUE_GOAL`, `LIMIT`, `SWITCH`, `DELETE_HISTORY`); plan 7B's `ConversationOwner.asking`, which every question of the conversation's sets.
 - Produces: `enum class AtLimit { YES, SILENCE }`; `sealed interface Reply` with `Reply.Say(words)` and `Reply.LeaveOpen`; `Answers(confirm, decline, atLimits: List<AtLimit> = emptyList(), switches: Boolean = false)` with `fun reply(state: HookAnswer, earlier: List<Asked> = emptyList()): Reply?`; `Answers.kind` naming `limit`, `switch`, `delete-history` and `continue-goal`; `AskedRecord.before`, the questions before the open one, which a limit's answer counts; the constants `Answers.LIMIT`, `SWITCH`, `DELETE_HISTORY` and `CONTINUE_GOAL`; `agent-state`'s `question=continue-goal|switch|delete-history`.
 
-Counts: `:tools:eval` E₃ + 2 (`TaskModelTest` + 1, `AskedRecordTest` + 1), where E₃ = E₂ + 6; `:app` JVM A₀ (`AgentHookAnswersTest` changes a test's assertions).
+Counts: `:tools:eval` E₃ + 2 (`TaskModelTest` + 1, `AskedRecordTest` + 1), where E₃ = E₂ + 6 (313): 315 at the end of the task; `:app` JVM A₀ (`AgentHookAnswersTest` changes a test's assertions): 863.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3796,7 +3806,7 @@ Expected: PASS.
 - [ ] **Step 5: Run the modules' tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₃ + 2; `app` A₀.
+Expected: BUILD SUCCESSFUL; `tools\eval` E₃ + 2 (315); `app` A₀ (863).
 
 - [ ] **Step 6: Commit**
 
@@ -3819,7 +3829,7 @@ Design 15.3 of sub-project 7 checks what reached the model: the steering before 
 - Consumes: `ChatRequest.context`, `ChatMessage.User`, `ChatMessage.ToolResult` (`:core:providers`).
 - Produces: a scripted reply's `"requires": ["…"]` and `"refuses": ["…"]`; `ScriptedModel.MISMATCH`, the reason of the `fail` call that replaces a reply whose request does not match; `ScriptedModel.USED_UP`, the reason when the script has no more replies (the text that it had before).
 
-Counts: `:core:agent` G₀ + 2 (`ScriptedModelTest` 2).
+Counts: `:core:agent` G₀ + 2 (`ScriptedModelTest` 2): 317 with G₀ = 315.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3975,7 +3985,7 @@ Expected: PASS.
 - [ ] **Step 5: Run the module's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :core:agent:test :core:conversation:test`, then `$n = 0; Get-ChildItem core\agent\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "agent $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `agent` G₀ + 2. `:core:conversation`, whose tests use the scripted model too, passes unchanged.
+Expected: BUILD SUCCESSFUL; `agent` G₀ + 2 (317). `:core:conversation`, whose tests use the scripted model too, passes unchanged (308).
 
 - [ ] **Step 6: Commit**
 
@@ -3999,7 +4009,7 @@ The steps and checks of design 15.3's tasks, each a small typed class beside the
 - Consumes: Task 1's `ConversationGuard` and `Hooks.conversationState`/`conversationControl`; Task 3's `TurnAction`; plan 7D's `conversation-control do=limits` (answers `limits=<r>/<m>/<c> was=<r>/<m>/<c>`) and `do=restore-check` (answers `restored=nothing|open|closed|goal-held|goal-ended|pending`), `agent-state`'s `phase=` and `checklist=<done>/<total>|none`; plan 7E's `goal-control do=touch` (answers `touch=sent`).
 - Produces: `data object EndQuietTime : TurnAction`, `data object OwnerTouch : TurnAction`, `data object DeleteTestSms : TurnAction`, `data object SmallestLimits : Setup`; the checks `ConversationIs(open: Boolean? = null, continued: Boolean? = null, commands: Int? = null, goal: String? = null)`, `PhaseIs(phase: String)`, `ChecklistIs(done: Int, total: Int)`, `RestoredAs(restored: String)`, `AskedInOrder(entries: List<String>)`, `OnlyAlarmAt(hour: Int, minute: Int)`; `RunScope.asked: AskedRecord`; `RunState(putBack, record)`; `Hooks.restoreCheck()` and `Hooks.goalControl(action: String)`.
 
-Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2.
+Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2 (315): 321 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4222,7 +4232,10 @@ with:
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/hook/Hooks.kt`, replace:
 
 ```kotlin
-    /** crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; the process ends before it answers. */
+    /**
+     * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the
+     * process ends half a second later.
+     */
 ```
 
 with:
@@ -4240,7 +4253,10 @@ with:
      */
     fun goalControl(action: String): HookAnswer = act("goal-control", Extra.Text("do", action))
 
-    /** crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; the process ends before it answers. */
+    /**
+     * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the
+     * process ends half a second later.
+     */
 ```
 
 - [ ] **Step 4: The steps and the checks**
@@ -4414,7 +4430,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₄ + 6.
+Expected: BUILD SUCCESSFUL; `eval` E₄ + 6 (321).
 
 - [ ] **Step 7: Commit**
 
@@ -4438,7 +4454,7 @@ Design 15.3's tasks that a live model can run: `followup-settings` (a follow-up 
 - Consumes: Tasks 3, 4 and 6 (turns, `Answers.switches`, `EndQuietTime`, `DeleteTestSms`, `ConversationIs`, `AskedInOrder`); Task 5's `requires` and `refuses`; the existing steps `HomeScreen`, `ForceStop`, `UiNightMode`, `SettingsValue`, `TestName`, `KeptPermissions`, `FreeNumber`, `DeviceContact`, `FixturePresses`, `SelfChatAliases.TELEGRAM`, `FixtureScreen`, `EmuSms` and the checks `NightMode`, `SettingsIs`, `ReplyHasDigits`, `Confirmed`, `Recipient`, `SelfChat`, `Presses`, `ScreenHas`, `ReplyHas`; plan 7C's `search_conversations`; plan 7B's continued note "This conversation was continued on …" and records header "This conversation so far:".
 - Produces: `TaskKind.CONVERSATION`; `Task.runsLive: Boolean = true`, false for a task that runs only with the scripted model, which `run --live` skips with that reason; `object ConversationTasks` with `FOLLOWUP_SETTINGS`, `QUIET_TIME_ENDS`, `TYPED_CONTACT_THEN_MESSAGE`, `STAND_IN_TYPED_CONTACT_THEN_MESSAGE`, `SEARCH_PAST`, `CONTINUE_PAST` and `ALL`; `Catalogue.multiTurn(kind: DeviceKind, live: Boolean): List<Task>`; `SettingsTasks.START`, `NIGHT` and `TWO_MINUTES` (internal).
 
-Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6.
+Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 (321): 326 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5069,7 +5085,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₅ + 5.
+Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (326).
 
 - [ ] **Step 7: Commit**
 
@@ -5082,7 +5098,7 @@ git commit -m "feat(eval): the multi-turn tasks that run live, with their dry-ru
 
 ### Task 8: The multi-turn tasks of the scripted model, and `records-injection`
 
-The tasks of design 15.3 that need a goal still acting at a known step, or replies of a known cost: `steer-while-running` (steering while the goal acts), `limit-continue` (a round's "Continue?" at its limit, yes and then silence, the pause, and "continue"), `interrupt-continue` (the owner's touch, and "continue"), `resume-after-death` (Kestrel's process ends while the goal acts; the restore holds the goal, and "continue" resumes it). They run only with the scripted model (`runsLive = false`). Kestrel's guard against a crash loop (plan 7E) keeps it off after a crash less than 120 s after a restore turned it on, which the previous run's restart did; so `resume-after-death` first waits until the newest restore is older than the guard, read through the new debug hook `voice-restore`, never with a fixed wait. `records-injection` joins the injection fixtures: fixture 7's instruction reaches the conversation's records through a data note, and a harmless second command in the same conversation must not act on it; a check that only its dry run makes (`DryRun.checks`) shows that the records block reached the model.
+The tasks of design 15.3 that need a goal still acting at a known step, or replies of a known cost: `steer-while-running` (steering while the goal acts), `limit-continue` (a round's "Continue?" at its limit, yes and then silence, the pause, and "continue"), `interrupt-continue` (the owner's touch, and "continue"), `resume-after-death` (Kestrel's process ends while the goal acts; the restore holds the goal, and "continue" resumes it). They run only with the scripted model (`runsLive = false`). Kestrel's guard against a crash loop (main spec 8.5) keeps it off after a crash less than 120 s after a restore turned it on, which the previous run's restart did; so `resume-after-death` first waits until the newest restore is older than the guard, read through the new debug hook `voice-restore`, never with a fixed wait. `records-injection` joins the injection fixtures: fixture 7's instruction reaches the conversation's records through a data note, and a harmless second command in the same conversation must not act on it; a check that only its dry run makes (`DryRun.checks`) shows that the records block reached the model.
 
 **Files:**
 - Create: `app/src/debug/kotlin/dev/kestrel/app/debug/VoiceRestore.kt`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/steer-while-running.json`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/limit-continue.json`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/interrupt-continue.json`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/resume-after-death.json`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/resume-after-death-2.json`, `tools/eval/src/main/resources/dev/kestrel/eval/scripts/records-injection.json`
@@ -5090,10 +5106,10 @@ The tasks of design 15.3 that need a goal still acting at a known step, or repli
 - Test: create `app/src/testDebug/kotlin/dev/kestrel/app/debug/VoiceRestoreTest.kt`; modify `tools/eval/src/test/kotlin/dev/kestrel/eval/run/PreflightTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/device/FakeAdb.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/task/ConversationTasksTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/task/TasksTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/task/InjectionFixturesTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/command/CommandsTest.kt`
 
 **Interfaces:**
-- Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and plan 7E's guard against a crash loop; Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
+- Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and its guard against a crash loop (main spec 8.5); Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
 - Produces: `ConversationTasks.STEER_WHILE_RUNNING`, `LIMIT_CONTINUE`, `INTERRUPT_CONTINUE`, `RESUME_AFTER_DEATH`; the debug hook `voice-restore` (`restoredAgo=<seconds>|none guard=<seconds>`), `VoiceRestore.answer(restoredAt, now)` and the top-level `internal const val CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, which leaves `Listening`'s private companion without a change of its value or its use; `Hooks.voiceRestore()`, which the preflight reads, refusing a build from before this plan; `data object CrashGuardPassed : Setup` with `MARGIN_SECONDS`, `WAIT_SECONDS` and `left(answer, margin)`; `DryRun.checks: List<Check>`, which only a run without a model checks; `data class EndedOtherThan(end: String) : Check`; `InjectionFixtures.FIXTURES` (the 14) and `InjectionFixtures.RECORDS` (`records-injection`), with `ALL = FIXTURES + RECORDS`.
 
-Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5; `:app` JVM A₀ + 1 (`VoiceRestoreTest` 1).
+Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (326): 332 at the end of the task; `:app` JVM A₀ + 1 (`VoiceRestoreTest` 1): 864 with A₀ = 863.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5189,7 +5205,7 @@ In `tools/eval/src/test/kotlin/dev/kestrel/eval/task/ConversationTasksTest.kt`, 
         bench.assertPutBack()
     }
 
-    // Plan 7E's guard keeps Kestrel off after a crash soon after a restore turned it on, so the run waits it out first.
+    // Kestrel's guard (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so the run waits it out first.
     @Test
     fun resumeAfterDeathWaitsOutKestrelsGuardAgainstACrashLoopBeforeItsFirstCommand() {
         val (bench, send) = messengerBench()
@@ -5358,8 +5374,8 @@ In `tools/eval/src/test/kotlin/dev/kestrel/eval/run/PreflightTest.kt`, add these
 
 ```kotlin
 
-    // Plan 7G: a build without voice-restore is from before this plan: a restart of Kestrel could not wait out its guard
-    // against a crash loop, and its delete-typed may not cover the conversations of tagged transcripts (plan 7F's Task 13a).
+    // Plan 7G: a build without voice-restore is from before this plan, and a restart of Kestrel could not wait out its guard
+    // against a crash loop.
     @Test
     fun aBuildWithoutVoiceRestoreIsARefusal() {
         run.adb.hookFails("VOICE_RESTORE", "unknown command 'VOICE_RESTORE'")
@@ -5393,7 +5409,7 @@ Expected: FAIL both times, the builds do not compile: `ConversationTasks.STEER_W
 
 - [ ] **Step 3: Kestrel's guard against a crash loop, and checks of the scripted runs**
 
-Plan 7E keeps the time of the restore that turned Kestrel on in the stored listening mode (`ListeningSetting.restoredAt`, wall-clock milliseconds) until the next Off, and keeps Kestrel off after a crash less than `CRASH_AFTER_RESTORE_MILLIS` after it. The constant leaves `Listening`'s private companion for the top level of the file, so that the debug hook reads the same value.
+Listening keeps the time of the restore that turned Kestrel on in the stored listening mode (`ListeningSetting.restoredAt`, wall-clock milliseconds) until the next Off, and keeps Kestrel off after a crash less than `CRASH_AFTER_RESTORE_MILLIS` after it. The constant leaves `Listening`'s private companion for the top level of the file, so that the debug hook reads the same value.
 
 In `app/src/main/kotlin/dev/kestrel/app/listen/Listening.kt`, replace:
 
@@ -5439,7 +5455,7 @@ import dev.kestrel.app.listen.CRASH_AFTER_RESTORE_MILLIS
 /**
  * The answer of the hook voice-restore (plan 7G): how long ago, in whole seconds, the restore at the start of a process
  * turned Kestrel on, from the stored listening mode's restoredAt, or `none` when no restore's time is stored, and the
- * guard against a crash loop (plan 7E), within which a crash keeps Kestrel off. A run that ends Kestrel's process waits
+ * guard against a crash loop (main spec 8.5), within which a crash keeps Kestrel off. A run that ends Kestrel's process waits
  * until the restore is older than the guard. The times are the wall clock's, as Android's exit records are.
  */
 internal object VoiceRestore {
@@ -5490,7 +5506,7 @@ with:
 
     /**
      * voice-restore (plan 7G): `restoredAgo=<seconds>|none`, how long ago the restore at the start of Kestrel's process
-     * turned it on, and `guard=<seconds>`, plan 7E's guard against a crash loop, within which a crash keeps Kestrel off.
+     * turned it on, and `guard=<seconds>`, the guard against a crash loop (main spec 8.5), within which a crash keeps Kestrel off.
      */
     fun voiceRestore(): HookAnswer = read("voice-restore")
 ```
@@ -5507,8 +5523,8 @@ with:
 
 ```kotlin
         if (deleted == null) refuse("conversation-control do=delete-typed", "plan 7F of sub-project 7")
-        // A build without voice-restore is from before plan 7G: a restart could not wait out Kestrel's guard against a crash
-        // loop (CrashGuardPassed), and its delete-typed may not cover the conversations of tagged transcripts.
+        // A build without voice-restore is from before plan 7G, and a restart could not wait out Kestrel's guard against a
+        // crash loop (CrashGuardPassed).
         val guard = try {
             hooks.voiceRestore()["guard"]
         } catch (e: HookError) {
@@ -5539,7 +5555,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/task/ConversationSteps.kt`, add 
 ```kotlin
 
 /**
- * Waits until Kestrel's guard against a crash loop (plan 7E) has passed, before a task that ends Kestrel's process
+ * Waits until Kestrel's guard against a crash loop (main spec 8.5) has passed, before a task that ends Kestrel's process
  * ([Turn.Restart]): a crash less than the guard after a restore turned Kestrel on keeps it off, and the previous run's
  * restart was such a restore. voice-restore gives the restore's age; the step waits until it is older than the guard and
  * [MARGIN_SECONDS] more, for at most [WAIT_SECONDS] in all, and a lost answer is asked again after [LOOK_SECONDS].
@@ -5604,7 +5620,7 @@ import kotlin.time.Duration.Companion.seconds
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/KestrelRestart.kt`, replace:
 
 ```kotlin
- * crash loop (plan 7E) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
+ * crash loop (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
  * out that guard before its run; if Kestrel stays off all the same, the failure names the guard.
  */
 ```
@@ -5612,7 +5628,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/KestrelRestart.kt`, replace:
 with:
 
 ```kotlin
- * crash loop (plan 7E) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
+ * crash loop (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
  * out that guard before its run ([CrashGuardPassed]), and [restart] fails without a crash while voice-restore shows that
  * the guard holds; if Kestrel stays off all the same, the failure names the guard.
  */
@@ -5963,7 +5979,7 @@ Expected: PASS both times.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6; `app` A₀ + 1.
+Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (332); `app` A₀ + 1 (864).
 
 - [ ] **Step 8: Commit**
 
@@ -5986,7 +6002,7 @@ The main spec keeps the multi-turn tasks out of the 29 tasks' rates and records 
 - Consumes: Task 7's `Catalogue.multiTurn`.
 - Produces: `Command.Suite.multiTurn` (`suite --multi-turn`); `SeriesCommand(…, multiTurn: Boolean = false, pick)` with `SeriesCommand.SUITE` and `SeriesCommand.INJECTION`; `Report.multiTurn: Boolean = false`; `Baseline.multiTurn: Map<String, BaselinePart>` and `Baseline.withMultiTurn(device, part)`; `SuiteCall.multiTurn: Boolean = false`; `Resume.open(…, recordBaseline, multiTurn: Boolean = false)`, which refuses a folder whose `multiTurn` differs.
 
-Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6.
+Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (332): 336 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6626,7 +6642,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₇ + 4.
+Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (336).
 
 - [ ] **Step 7: Commit**
 
@@ -6639,17 +6655,17 @@ git commit -m "feat(eval): suite --multi-turn runs the multi-turn tasks apart, w
 
 ### Task 10: The hooks of plans 7D to 7F in `scripts\hook.ps1`
 
-`scripts\hook.ps1` learns the hooks that plans 7D, 7E and 7F added to the debug build, so that the owner and the controller can read and drive a conversation by hand, as `:tools:eval` does: `conversation-state`, `conversation-control` (with plan 7F's `-Do delete-typed`, review finding M1), `conversation-type`, `goal-service-state`, `goal-control`, `voice-restore` (Task 8), and `agent-answer -Channel voice|text|card` (`card` is plan 7F's Task 13a). Its help names `voice-state`'s `followUp=` and `agent-state`'s new fields. Its own checks refuse a wrong combination before it reaches a device.
+`scripts\hook.ps1` learns the hooks that plans 7D, 7E and 7F added to the debug build, so that the owner and the controller can read and drive a conversation by hand, as `:tools:eval` does: `conversation-state`, `conversation-control` (with plan 7F's `-Do delete-typed`, review finding M1), `conversation-type`, `goal-service-state`, `goal-control` (with plan 7E's `-Do refuse`, `refuse-off` and `send-later`, which plan 7E's decision 10 left to this plan), `voice-restore` (Task 8), `voice-task -HandOver` (plan 7F's `--ez handover true`, a stand-in round that first hands the owner a payment step), and `agent-answer -Channel voice|text|card` (`card` is plan 7F's Task 13a). Its help names `voice-state`'s `followUp=`, `agent-state`'s new fields and the card channel's answers. Its own checks refuse a wrong combination before it reaches a device.
 
 **Files:**
 - Modify: `scripts/hook.ps1`
 - Test: modify `scripts/tests/Hook.Tests.ps1`
 
 **Interfaces:**
-- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus`, `--es action stop|open|continue|cancel`).
-- Produces: the commands `conversation-state`, `conversation-control`, `conversation-type`, `goal-service-state`, `goal-control` and `voice-restore`, and the parameters `-Do`, `-Limits` and `-Channel`.
+- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`; the three options need `--es tag`, or the hook types nothing: `add --es tag for <options>: typed words without a tag take no options`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a; `answered tag=<tag> asking=<kind> channel=card`, or `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen); plan 7F's `VOICE_TASK --ez handover true` (Task 14, Step 8a; its answer then holds `first hands the owner a payment step`); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus|refuse|refuse-off|send-later`, `--es action stop|open|continue|cancel` with `tap` and `send-later`; the hook's error for another `do` is `add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later`).
+- Produces: the commands `conversation-state`, `conversation-control`, `conversation-type`, `goal-service-state`, `goal-control` and `voice-restore`, and the parameters `-Do`, `-Limits`, `-Channel` and `-HandOver`.
 
-Counts: Pester P₀ + 3 (`Hook.Tests.ps1` + 3).
+Counts: Pester P₀ + 3 (`Hook.Tests.ps1` + 3): 557 in PowerShell 7 with P₀ = 554.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6675,6 +6691,9 @@ with:
             @('conversation-type', '-Text', 'Find the number of Ana Test.', '-Tag', 't1', '-Live', '-Model', 'gpt-6-luna', '-Marker', 'maple heron'),
             @('goal-service-state'),
             @('goal-control', '-Do', 'tap', '-Action', 'stop'),
+            @('goal-control', '-Do', 'send-later', '-Action', 'cancel'),
+            @('goal-control', '-Do', 'refuse-off'),
+            @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'),
             @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'),
             @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card')
         )
@@ -6706,7 +6725,7 @@ with:
         $channel | Should -BeLike "*Cannot validate argument on parameter 'Channel'*"
     }
 
-    It 'refuses a -Do of the other hook, -Limits without -Do limits, -Action without -Do tap, and conversation-type without -Text' {
+    It 'refuses a -Do of the other hook, -Limits without -Do limits, -Action without -Do tap or send-later, -HandOver without a stand-in round, conversation-type''s options without -Tag, and conversation-type without -Text' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
 
@@ -6714,14 +6733,18 @@ with:
         $goal = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control 2>&1) -join "`n"
         $limits = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-control -Do expire -Limits 50/5/10 2>&1) -join "`n"
         $action = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control -Do touch -Action stop 2>&1) -join "`n"
-        $tap = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control -Do tap 2>&1) -join "`n"
+        $tap = (& pwsh -NoProfile -File $hook -Serial no-such-device goal-control -Do send-later 2>&1) -join "`n"
+        $handOver = (& pwsh -NoProfile -File $hook -Serial no-such-device voice-task -Clear -HandOver 2>&1) -join "`n"
+        $options = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-type -Text 'Find the number of Ana Test.' -Model gpt-6-luna 2>&1) -join "`n"
         $typed = (& pwsh -NoProfile -File $hook -Serial no-such-device conversation-type -Tag t1 2>&1) -join "`n"
 
         $control | Should -BeLike '*conversation-control needs -Do new, expire, limits, restore-check or delete-typed.*'
-        $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak or focus.*'
+        $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.*'
         $limits | Should -BeLike '*-Limits needs conversation-control -Do limits.*'
-        $action | Should -BeLike '*goal-control needs -Action with -Do tap, and only with it.*'
-        $tap | Should -BeLike '*goal-control needs -Action with -Do tap, and only with it.*'
+        $action | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
+        $tap | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
+        $handOver | Should -BeLike '*-HandOver needs voice-task -Seconds and -Reply.*'
+        $options | Should -BeLike '*conversation-type takes -Model, -Live and -Marker only with -Tag.*'
         $typed | Should -BeLike '*conversation-type needs -Text with the words to type.*'
     }
 
@@ -6769,9 +6792,11 @@ with:
     [string]$Revoke,
     [switch]$Restore,
     # sub-project 7: conversation parameters
-    [ValidateSet('new', 'expire', 'limits', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus')][string]$Do,
+    [ValidateSet('new', 'expire', 'limits', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')]
+    [string]$Do,
     [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
-    [ValidateSet('voice', 'text', 'card')][string]$Channel
+    [ValidateSet('voice', 'text', 'card')][string]$Channel,
+    [switch]$HandOver
 )
 ```
 
@@ -6789,10 +6814,21 @@ if ($Has -and -not $Key) { throw 'agent-memory -Has needs -Key; give the key to 
 if ($Command -eq 'conversation-control' -and $Do -notin @('new', 'expire', 'limits', 'restore-check', 'delete-typed')) {
     throw 'conversation-control needs -Do new, expire, limits, restore-check or delete-typed.'
 }
-if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus')) { throw 'goal-control needs -Do tap, touch, speak or focus.' }
+if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')) {
+    throw 'goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.'
+}
 if ($Limits -and -not ($Command -eq 'conversation-control' -and $Do -eq 'limits')) { throw '-Limits needs conversation-control -Do limits.' }
-if ($Command -eq 'goal-control' -and (($Do -eq 'tap') -ne [bool]$Action)) { throw 'goal-control needs -Action with -Do tap, and only with it.' }
+# The goal notification's button that tap presses and send-later sends.
+if ($Command -eq 'goal-control' -and (($Do -in @('tap', 'send-later')) -ne [bool]$Action)) {
+    throw 'goal-control needs -Action with -Do tap or send-later, and only with them.'
+}
 if ($Command -eq 'conversation-type' -and -not $Text) { throw 'conversation-type needs -Text with the words to type.' }
+# Only a tag carries conversation-type's options to the typed input, so the hook refuses them without one.
+if ($Command -eq 'conversation-type' -and -not $Tag -and ($Model -or $Live -or $PSBoundParameters.ContainsKey('Marker'))) {
+    throw 'conversation-type takes -Model, -Live and -Marker only with -Tag.'
+}
+# The stand-in round's payment step is an option of the stand-in round that voice-task sets.
+if ($HandOver -and -not ($Command -eq 'voice-task' -and $Seconds -gt 0 -and $Reply)) { throw '-HandOver needs voice-task -Seconds and -Reply.' }
 ```
 
 In `scripts/hook.ps1`, replace:
@@ -6811,6 +6847,7 @@ if ($Revoke) { $extras += "--es revoke $(ConvertTo-ShellText $Revoke)" }
 if ($Do) { $extras += "--es do $($Do.ToLowerInvariant())" }
 if ($Limits) { $extras += "--es limits $Limits" }
 if ($Channel) { $extras += "--es channel $($Channel.ToLowerInvariant())" }
+if ($HandOver) { $extras += '--ez handover true' }
 ```
 
 - [ ] **Step 4: The help**
@@ -6841,7 +6878,30 @@ with:
 #                                           text channel's card that the answer names, or as words typed on Kestrel's
 #                                           screen, which refuses a confirmation, a hand-over and a pick; with -Channel
 #                                           card (plan 7F's Task 13a), as the owner's tap on the button of the card over
-#                                           the app that the answer names, once the card takes taps
+#                                           the app that the answer names, through the card desk, once the card takes taps:
+#                                           answered ... channel=card, or held ... channel=card until=unlock for a Continue
+#                                           pressed on the lock screen, which answers by itself at the unlock within that
+#                                           lock; an error leaves the question open
+```
+
+In `scripts/hook.ps1`, replace:
+
+```powershell
+#   voice-task -Seconds n -Reply 'text'     makes each goal's round take n seconds, at most 120, and then answer with
+#                                           the reply, whole and of any length, which Kestrel says as the goal's final
+#                                           words, unless the owner stopped the goal, until voice-task -Clear or the end
+#                                           of Kestrel's process
+```
+
+with:
+
+```powershell
+#   voice-task -Seconds n -Reply 'text' [-HandOver]
+#                                           makes each goal's round take n seconds, at most 120, and then answer with
+#                                           the reply, whole and of any length, which Kestrel says as the goal's final
+#                                           words, unless the owner stopped the goal, until voice-task -Clear or the end
+#                                           of Kestrel's process; with -HandOver (plan 7F) the round first hands the owner
+#                                           a payment step, whose card waits for its Cancel or Continue
 ```
 
 In `scripts/hook.ps1`, replace:
@@ -6903,29 +6963,35 @@ with:
 #                                           to -Limits, or without it to the Conversations page's smallest, and answers
 #                                           the stored ones as was=; restore-check answers what the restore at the
 #                                           process's start found (restored=nothing, open, closed, goal-held, goal-ended
-#                                           or pending); delete-typed deletes the closed conversations in which a hook's
-#                                           input (conversation-type, or a tagged voice -Send heard) opened, also before a
-#                                           restart, and never another, and answers deleted=<n> open=<n> failed=<n>
+#                                           or pending); delete-typed deletes the closed conversations that the work of a
+#                                           hook's input opened (any input that a hook gives, tagged or not), also before a
+#                                           restart, unless an input of the owner's with his words or his choice reached
+#                                           them since, and never another, and answers deleted=<n> open=<n> failed=<n>
 #   voice-restore                           how long ago the restore at the process's start turned Kestrel on
 #                                           (restoredAgo=<seconds>|none) and the guard against a crash loop (guard=<seconds>),
 #                                           within which a crash keeps Kestrel off (plan 7G)
 #   conversation-type -Text 'words' [-Tag k [-Model id] [-Live] [-Marker 'words']]
 #                                           types the words as the owner does on Kestrel's conversation screen; -Tag,
-#                                           -Model, -Live and -Marker as for voice -Send heard; answers typed read=<kind>
-#   goal-service-state                      the goal service: whether it runs, its notification and its types, and the
-#                                           newest audio-focus request
-#   goal-control -Do tap -Action stop|open|continue|cancel | -Do touch|speak|focus
+#                                           -Model, -Live and -Marker as for voice -Send heard, the last three only with
+#                                           -Tag; answers typed read=<kind>, with tag=<tag> for a tag
+#   goal-service-state                      the goal service: whether it runs, its notification and its types, its starts
+#                                           and refusals in this process, an armed refusal, and the newest audio-focus
+#                                           request with the counts of requests and answers
+#   goal-control -Do tap|send-later -Action stop|open|continue|cancel | -Do touch|speak|focus|refuse|refuse-off
 #                                           tap presses that button of the goal notification in the shade, as the owner's
-#                                           finger; touch gives the conversation the owner's touch, as the touch watcher
+#                                           finger, and says which rows it had to expand; send-later hands that button's
+#                                           own PendingIntent to AlarmManager, which sends it 5 s later (send=scheduled, or
+#                                           send=none); touch gives the conversation the owner's touch, as the touch watcher
 #                                           reports it; speak and focus ask Android for the audio focus with and without
-#                                           the speech's types
+#                                           the speech's types; refuse makes the goal service's next start in this process
+#                                           fail as Android's refusal does, once, and refuse-off takes an armed refusal back
 # -Number picks an element by the number that the numbers overlay shows on it.
 ```
 
 - [ ] **Step 5: Run the tests to see them pass**
 
 Run: `scripts\test-scripts.ps1`
-Expected: every test passes in PowerShell 7 and in Windows PowerShell 5.1; PowerShell 7's count is P₀ + 3; PSScriptAnalyzer reports nothing.
+Expected: every test passes in PowerShell 7 and in Windows PowerShell 5.1; PowerShell 7's count is P₀ + 3 (557; Windows PowerShell 5.1: 556 passed and 1 skipped); PSScriptAnalyzer reports nothing.
 
 - [ ] **Step 6: Commit**
 
@@ -6938,13 +7004,13 @@ git commit -m "feat(scripts): hook.ps1 reads and drives the conversation, the go
 
 ### Task 11: The main spec, the design and plan 7D as this plan built them
 
-The controller's decision 11: the main spec (sections 5.3, 16.1, 16.5 and 18), design 10.3, 14.4, 15.3 and 16, and plan 7D's note on the test-limit seam say what this plan builds. The texts follow decisions 2 to 7, 9, 10 and 12, the review's H1 to H4 and M5, and plan 7F's decision 4, which left the screenshot card's buttons to this plan. The anchors are the texts at `b799de95`. This task changes only documentation, so it needs no build.
+The controller's decision 11: the main spec (sections 5.3, 16.1, 16.5 and 18), design 14.4, 15.3 and 16, and plan 7D's note on the test-limit seam say what this plan builds. The texts follow decisions 2 to 7, 9, 10 and 12, the review's H1 to H4 and M5, and plan 7F as built (its card channel through the card desk's one entry for taps, and `delete-typed` for every input that a hook gives). The anchors are the texts at `c6d38be6`. Plans 7D to 7F already wrote design 10.3's card buttons as this plan's draft wanted them (the screenshot question's Yes, No and "Reply…" without Cancel, plan 7F's decision 4), so this task no longer changes that row; every other text that it replaces is still the one that plan 7.0 wrote. This task changes only documentation, so it needs no build.
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-11-12-kestrel-design.md`, `docs/superpowers/specs/2026-11-24-conversations-design.md`, `docs/superpowers/plans/2026-11-24-conversations-7d-voice.md`
 
 **Interfaces:**
-- Consumes: Tasks 4 and 6 to 9 as built (their names and their commands), Task 8's `voice-restore`, and plan 7F's Task 13a (`agent-answer --es channel card`, `delete-typed` for tagged inputs).
+- Consumes: Tasks 4 and 6 to 9 as built (their names and their commands), Task 8's `voice-restore`, and plan 7F's Task 13a with its review fixes (`agent-answer --es channel card`, `delete-typed` for the conversations that any hook's input opened).
 - Produces: nothing that code reads.
 
 Counts: none.
@@ -7044,7 +7110,7 @@ sets small limits per round for a test, and reports what Kestrel found after a r
 with:
 
 ```text
-sets a round's limits within the Conversations page's bounds and puts the owner's back, reports what Kestrel found after a restart, and deletes the hooks' own past conversations, those that a typed or tagged input of a hook opened, never the owner's (`conversation-control`). It answers a question on the card over an app as the owner's tap on its button, pressed through Kestrel's card desk and never at the screen's coordinates (`agent-answer` on the channel `card`), and says how long ago a restore turned Kestrel on, so that a test that ends Kestrel's process first waits until Kestrel's guard against a crash loop has passed (`voice-restore`).
+sets a round's limits within the Conversations page's bounds and puts the owner's back, reports what Kestrel found after a restart, and deletes the hooks' own past conversations, those that a hook's input opened and that no input of the owner's with his words or his choice reached since, never the owner's (`conversation-control`). It answers a question on the card over an app as the owner's tap on its button, given to Kestrel's card desk as his tap is and never at the screen's coordinates (`agent-answer` on the channel `card`), and says how long ago a restore turned Kestrel on, so that a test that ends Kestrel's process first waits until Kestrel's guard against a crash loop has passed (`voice-restore`).
 ```
 
 In `docs/superpowers/specs/2026-11-12-kestrel-design.md`, replace:
@@ -7232,26 +7298,13 @@ with:
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
 
 ```text
-| Free question, screenshot question | Reply…, Cancel (the screenshot question also Yes, No, as spec 11.6 asks) |
-```
-
-with:
-
-```text
-| Free question | Reply…, Cancel |
-| Screenshot question | Yes, No, Reply… (spec 11.6), without Cancel, which would mean No (plan 7F's decision 4) |
-```
-
-In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
-
-```text
 with `--es channel text`, a typed answer through `TextChannel` |
 ```
 
 with:
 
 ```text
-with `--es channel text`, a typed answer through `TextChannel`, which refuses a confirmation, a hand-over and a pick; with `--es channel card`, the owner's tap on the card over the app, pressed through the card desk once its guard found that card on the overlay, with that button, taking taps (plan 7G) |
+with `--es channel text`, a typed answer through `TextChannel`, which refuses a confirmation, a hand-over and a pick; with `--es channel card`, the owner's tap on the card over the app, which the debug `CardPresser` gives to the card desk's one entry for taps once its guard found that card on the overlay, with that button, taking taps; a Continue pressed on the lock screen is held until the unlock, as the owner's is (plan 7F's Task 13a) |
 ```
 
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
@@ -7288,7 +7341,7 @@ reports what `restore()` found after a restart |
 with:
 
 ```text
-reports what `restore()` found after a restart; `delete-typed` deletes the hooks' own conversations, those that `conversation-type` or a tagged input opened, never the owner's (plans 7F and 7G) |
+reports what `restore()` found after a restart; `delete-typed` deletes the hooks' own conversations, those that the work of a hook's input opened (any input that a hook gives, tagged or not) and that no input of the owner's with his words or his choice reached since, never the owner's (plan 7F) |
 ```
 
 - [ ] **Step 3: Plan 7D's note on the test-limit seam**
@@ -7320,7 +7373,7 @@ with:
 - [ ] **Step 4: Check that no text names the seam or the old checks**
 
 Run: `(Select-String -Path docs\superpowers\specs\2026-11-12-kestrel-design.md -Pattern 'small limits|is confirmed as screen text in Standard mode|yes to "Continue the goal\?" finishes|screenshot question also Yes').Count`, then `(Select-String -Path docs\superpowers\specs\2026-11-24-conversations-design.md, docs\superpowers\plans\2026-11-24-conversations-7d-voice.md -Pattern 'debug-only seam|small limits|small round limits|input tap|secondary Google account|is in the list \||screenshot question also Yes').Count`
-Expected: `0` and `0`. The main spec's other mentions of the secondary Google account and of `input tap` are about other tests, and stay.
+Expected: `0` and `0`. The main spec's other mentions of the secondary Google account and of `input tap` are about other tests, and stay. (Design 10.3's screenshot row no longer says "screenshot question also Yes" since plan 7F, so the second pattern finds nothing there either.)
 
 - [ ] **Step 5: Commit**
 
