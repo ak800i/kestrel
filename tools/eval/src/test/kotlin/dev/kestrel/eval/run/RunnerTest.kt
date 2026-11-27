@@ -7,6 +7,7 @@ import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.task.Answers
+import dev.kestrel.eval.task.AtLimit
 import dev.kestrel.eval.task.Check
 import dev.kestrel.eval.task.FakeRun
 import dev.kestrel.eval.task.Rehearsal
@@ -242,8 +243,14 @@ class RunnerTest {
         }
         val restarted = task(setup = listOf(held)).copy(
             turns = listOf(Turn.Say(Request("send it"), until = Until.ACTING), Turn.Restart, Turn.Say(Request("continue"))),
-            dryRun = DryRun("timer.json", restarts = listOf("timer.json")),
+            dryRun = DryRun("timer.json", restarts = listOf("wifi-settings.json")),
         )
+        // The scripts as they reach the device, in their order.
+        val pushed = mutableListOf<String>()
+        run.adb.hostOut = { args ->
+            if (args.first() == "push") pushed += java.nio.file.Files.readString(java.nio.file.Paths.get(args[1]))
+            ""
+        }
 
         val line = runner().run(restarted, "[]", 1, "maple heron")
 
@@ -253,7 +260,63 @@ class RunnerTest {
         assertEquals(1, listened)
         assertEquals(1, renewed)
         assertEquals(listOf(mapOf("file" to "task.json"), mapOf("file" to "task.json"), mapOf("clear" to "true")), run.adb.hookCalls("AGENT_SCRIPT"))
+        // The run's script first, and after the restart the dry run's next one, not the first again.
+        assertEquals(listOf("[]", ScriptInstaller.resource("wifi-settings.json")), pushed)
         assertEquals(mapOf("text" to KestrelRestart.CRASH_TEXT), run.adb.hookCalls("CRASH").single())
+    }
+
+    // Ctrl+C during a restart's wait runs the restores, among them the scripted model's removal; the restart's install of
+    // the next script must then not start, or Kestrel would keep a scripted model after the run.
+    @Test
+    fun noScriptedModelIsInstalledOnceCtrlCBeganTheRestores() {
+        val task = task().copy(dryRun = DryRun("timer.json", restarts = listOf("wifi-settings.json")))
+        val setup = ScriptedModelSetup(ScriptInstaller(run.device, run.hooks, run.scope.work), task, "[]")
+        setup.apply(run.scope)
+
+        run.ctrlC().join()
+
+        assertThrows(Stopping::class.java) { setup.renew(run.scope) }
+        assertEquals(listOf(mapOf("file" to "task.json"), mapOf("clear" to "true")), run.adb.hookCalls("AGENT_SCRIPT"))
+    }
+
+    // Design 7.3 of sub-project 7: a command that the run follows until its goal acts, and that ends before the run saw its
+    // goal act, leaves the steering turns nothing to steer: the run fails, and its steering words never reach Kestrel,
+    // where they would start a new command that the run never follows.
+    @Test
+    fun aCommandThatEndsBeforeItsGoalActedFailsTheRunAndNothingIsSteered() {
+        val kestrel = FakeConversation(run.adb)
+        kestrel.planned += FakeConversation.Command()
+        val steered = task().copy(
+            turns = listOf(Turn.Say(Request("set an alarm for 7:00"), until = Until.ACTING), Turn.Steer(Request("make it 7:30 instead")), Turn.AwaitEnd()),
+        )
+
+        assertEquals(Reason.CHECK, runner().run(steered, "[]", 1, "maple heron").reason)
+
+        assertEquals(listOf("spoken:set an alarm for 7:00"), kestrel.inputs)
+        assertEquals(listOf("Kestrel, set an alarm for 7:00"), run.adb.hookCalls("VOICE").map { it["text"] })
+        assertTrue(
+            run.console.warnings.toString(),
+            run.console.warnings.contains(
+                "Task stand-in-hotspot, run 1: the command ended before the run saw its goal act, so the turns after it would steer, await or restart no goal.",
+            ),
+        )
+    }
+
+    // Design 7.4 of sub-project 7, as limit-continue asks: the run says yes to the round's first "Continue?" and leaves the
+    // second to Kestrel's own wait, because the run's answers count the limits before the open one (RunState.before).
+    @Test
+    fun theRunCountsTheLimitsBeforeTheOpenOneAndLeavesTheSecondOpen() {
+        val kestrel = FakeConversation(run.adb)
+        val limit = "asking=yes-no confirming=none question=limit"
+        kestrel.planned += FakeConversation.Command(end = FakeConversation.line("PAUSED_AT_LIMIT"), asks = listOf(limit, limit))
+        val limits = task(answers = Answers(atLimits = listOf(AtLimit.YES, AtLimit.SILENCE))).copy(
+            turns = listOf(Turn.Say(Request("turn on hotspot"), ends = "PAUSED_AT_LIMIT")),
+        )
+
+        runner().run(limits, "[]", 1, "maple heron")
+
+        assertEquals(listOf("yes"), kestrel.answers)
+        assertTrue(run.console.lines.toString(), run.console.lines.any { it.startsWith("detail task=stand-in-hotspot run=1 asked=limit:yes,limit:none ") })
     }
 
     @Test

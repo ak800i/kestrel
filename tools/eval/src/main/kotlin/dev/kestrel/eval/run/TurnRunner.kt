@@ -31,9 +31,10 @@ internal enum class TurnsEnd { DONE, UNDELIVERED, CUT }
  * the command's questions as the task says on the channel of the owner's latest input, with 3 s of quiet after an answer,
  * and stops after 30 s without an answer of the hooks. A [Turn.Steer] gives the goal that acts the owner's words, a
  * [Turn.AwaitEnd] follows the current command to its end, a [Turn.Restart] ends Kestrel's process, waits for the new one
- * and applies the run's [renewed] steps again, a [Turn.Act] runs a step, and a [Turn.Expect] reads a check until it holds. A command that timed out or stalled, one
- * that Kestrel refused before it ran, a check that did not hold and a step that failed end the turns, because nothing
- * after them would test what the task names.
+ * and applies the run's [renewed] steps again, a [Turn.Act] runs a step, and a [Turn.Expect] reads a check until it holds.
+ * A command that timed out or stalled, one that Kestrel refused before it ran, a check that did not hold, a step that
+ * failed, and a command followed until its goal acts that ended before the run saw its goal act end the turns, because
+ * nothing after them would test what the task names: a steer, an await or a restart then has no goal that acts.
  */
 internal class TurnRunner(
     private val task: Task,
@@ -56,11 +57,8 @@ internal class TurnRunner(
             stopIfStopping()
             val end = when (turn) {
                 is Turn.Say -> say(turn)
-                is Turn.Steer -> steer(turn)
-                is Turn.AwaitEnd -> state.current?.let { command ->
-                    command.expected = turn.ends
-                    follow(command, acting = false)
-                }
+                is Turn.Steer -> steer(index, turn)
+                is Turn.AwaitEnd -> awaitEnd(index, turn)
                 Turn.Restart -> step(index, "the restart of Kestrel") { restart() }
                 is Turn.Act -> step(index, turn.action.toString()) { turn.action.run(scope) }
                 is Turn.Expect -> expect(index, turn)
@@ -73,9 +71,7 @@ internal class TurnRunner(
     private fun say(turn: Turn.Say): TurnsEnd? {
         val words = turn.words.fill(scope.values)
         if (turn.channel == TurnChannel.FOLLOW_UP && !followUpOpen()) {
-            state.unmet = "the follow-up window"
-            console.warn("Task ${task.name}, run $number: Kestrel's follow-up window did not open within ${FOLLOW_UP.inWholeSeconds} s.")
-            return TurnsEnd.CUT
+            return unmet("the follow-up window", "Kestrel's follow-up window did not open within ${FOLLOW_UP.inWholeSeconds} s.")
         }
         state.channel = turn.channel
         val command = give(turn.ends) { tag ->
@@ -89,8 +85,10 @@ internal class TurnRunner(
     }
 
     // Design 7.3 of sub-project 7: the owner's words reach the goal that acts at its next step. They give Kestrel no
-    // command, so the run reads no end of theirs and follows the steered command on.
-    private fun steer(turn: Turn.Steer): TurnsEnd? {
+    // command, so the run reads no end of theirs and follows the steered command on. Without a command of the run's that
+    // runs, the words would start a new command, which the run would never follow, so the turn fails the run instead.
+    private fun steer(index: Int, turn: Turn.Steer): TurnsEnd? {
+        state.current ?: return unmet("a goal to steer", "turn ${index + 1} steers, but no command of the run's runs.")
         val words = turn.words.fill(scope.values)
         state.channel = turn.channel
         try {
@@ -99,6 +97,23 @@ internal class TurnRunner(
             // Steering has no command to read back; the steered goal's end and the task's checks show whether it arrived.
         }
         return null
+    }
+
+    // Follows the current command to its end, now expected as [Turn.AwaitEnd.ends]; without one, nothing would be awaited.
+    private fun awaitEnd(index: Int, turn: Turn.AwaitEnd): TurnsEnd? {
+        val command = state.current ?: return unmet("a command to await", "turn ${index + 1} awaits a command's end, but no command of the run's runs.")
+        command.expected = turn.ends
+        return follow(command, acting = false)
+    }
+
+    /**
+     * Fails the run with `reason=check` ([RunState.unmet]): the turns stop at [what], which a turn needed and did not get,
+     * and the console says [why].
+     */
+    private fun unmet(what: String, why: String): TurnsEnd {
+        state.unmet = what
+        console.warn("Task ${task.name}, run $number: $why")
+        return TurnsEnd.CUT
     }
 
     /** Waits up to [FOLLOW_UP] by the clock for Kestrel's follow-up window (design 6.6), which opens once its spoken final reply has ended. */
@@ -130,8 +145,9 @@ internal class TurnRunner(
     }
 
     /**
-     * Follows [command] to its end, or with [acting] until its goal acts with no question open, and answers its questions;
-     * null when the turns go on.
+     * Follows [command] to its end, or with [acting] until the run sees its goal act with no question open, and answers its
+     * questions; null when the turns go on. A command followed with [acting] that ends before the run saw its goal act fails
+     * the run ([unmet]), because the turns after it need a goal that acts.
      */
     private fun follow(command: SentCommand, acting: Boolean): TurnsEnd? {
         val start = clock.elapsed()
@@ -149,7 +165,13 @@ internal class TurnRunner(
                 continue
             }
             heard = elapsed()
-            if (pairs["state"] == "done") return ended(command, pairs)
+            if (pairs["state"] == "done") {
+                return ended(command, pairs) ?: if (acting) {
+                    unmet("the goal acting", "the command ended before the run saw its goal act, so the turns after it would steer, await or restart no goal.")
+                } else {
+                    null
+                }
+            }
             if (elapsed() < quietUntil) continue
             val asked = quietly { hooks.agentState(command.tag) } ?: continue
             val kind = Answers.kind(asked)
