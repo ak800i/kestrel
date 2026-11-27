@@ -13,8 +13,8 @@
 # profile (none when both have one; about 3 minutes per device otherwise), and then, without him, the script prepares
 # both devices again, opens the devices' live sessions (hook agent-live) and runs
 # scripts\eval.ps1 run --live (:tools:eval, sub-project 6) for the six tasks of design D3 on the A71 and the emulator's
-# tasks on kestrel-api37, 3 runs each, the comparison with -CompareModel, look_closer on the OCR fixture, the 14 injection
-# fixtures and the cache record; it stops when the sitting's AI Credits reach 150, checked before and after each task's
+# tasks on kestrel-api37, 3 runs each, the comparison with -CompareModel, look_closer on the OCR fixture, the injection
+# fixtures that scripts\eval.ps1 list names for kestrel-api37, and the cache record; it stops when the sitting's AI Credits reach 150, checked before and after each task's
 # runs, and then runs only the step end. A run whose credits are unknown (:tools:eval's credits=unknown, when it could not read the end of a live
 # task) stops the sitting in the same way; a later call with -Step and -AssumeUnknownCredits <n> counts each such run of
 # the earlier calls as n AI Credits, says so in a line of its own, and keeps the ceiling of 150 on the sum. Each sitting
@@ -2195,10 +2195,35 @@ function Invoke-LookCloserStep {
     }
 }
 
-# Design D30 step 21 (spec 16.6): the 14 injection fixtures on kestrel-api37, 3 runs each, in Standard mode, with the
-# answers and the check (beforeTestMode=0, no press in presses.log) of :tools:eval's fixtures.
+# Runs scripts\eval.ps1 list in a PowerShell of its own and returns the lines that it printed. scripts\eval.ps1 lets the
+# tool write to its console directly (Invoke-Java), so only a process of its own, whose output is a pipe that the tool
+# inherits, gives those lines to this script. The call may build the tool first. Throws when it does not end within 15
+# minutes or ends with an exit code other than 0. A seam for the tests.
+function Invoke-EvalList {
+    $run = Invoke-TimedProcess -FilePath ([Environment]::ProcessPath) -TimeoutSeconds 900 -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $PSScriptRoot 'eval.ps1'), 'list')
+    if (-not $run.Completed) { throw 'scripts\eval.ps1 list did not end within 15 minutes.' }
+    if ($run.ExitCode -ne 0) { throw "scripts\eval.ps1 list ended with exit code $($run.ExitCode)." }
+    @($run.Output -split '\r?\n')
+}
+
+# The names of the tasks in the lines of scripts\eval.ps1 list ('task=<name> kind=<kind> devices=<folders> ...') whose
+# kind is $Kind and whose devices include $Device, the device's folder name, in the catalogue's order.
+function Get-EvalTaskNames([string[]]$Lines, [string]$Kind, [string]$Device) {
+    foreach ($line in $Lines) {
+        if ("$line".Trim() -match '^task=(\S+) kind=(\S+) devices=(\S+)(\s|$)' -and $Matches[2] -eq $Kind -and $Device -in ($Matches[3] -split ',')) { $Matches[1] }
+    }
+}
+
+# Design D30 step 21 (spec 16.6): the injection fixtures on kestrel-api37, 3 runs each, in Standard mode, with the
+# answers and the check (beforeTestMode=0, no press in presses.log) of :tools:eval's fixtures. The fixtures are those of
+# the tool's catalogue (InjectionFixtures.ALL: the 14 fixtures of :testapp and records-injection, plan 7G), read from
+# scripts\eval.ps1 list, so that the sitting runs each fixture that the tool has, also one added later.
 function Invoke-InjectionStep {
-    foreach ($number in 1..14) { Invoke-TaskRuns injection $EmulatorSerial ('inject-{0:D2}' -f $number) | Out-Null }
+    $fixtures = @(Get-EvalTaskNames (Invoke-EvalList) 'injection' 'kestrel-api37')
+    if (-not $fixtures) { throw 'scripts\eval.ps1 list names no injection fixture for kestrel-api37.' }
+    Add-Result injection "the injection fixtures of :tools:eval's catalogue: $($fixtures -join ', ')"
+    foreach ($fixture in $fixtures) { Invoke-TaskRuns injection $EmulatorSerial $fixture | Out-Null }
 }
 
 # Design D30 step 22 (D5): the share of input tokens read from the cache per model; for a model with explicit cache
@@ -2260,7 +2285,7 @@ $plans = @{
         @{ Name = 'emulator-runs'; Minutes = 35; Title = 'the live D3 runs on kestrel-api37, 3 each'; Run = 'Invoke-EmulatorRunsStep' }
         @{ Name = 'compare'; Minutes = 30; Title = 'the emulator''s tasks again with the comparison''s model'; Run = 'Invoke-CompareStep' }
         @{ Name = 'look-closer'; Minutes = 10; Title = 'look_closer on the OCR fixture of both devices'; Run = 'Invoke-LookCloserStep' }
-        @{ Name = 'injection'; Minutes = 45; Title = 'the 14 injection fixtures on kestrel-api37, 3 runs each'; Run = 'Invoke-InjectionStep' }
+        @{ Name = 'injection'; Minutes = 45; Title = 'the injection fixtures of :tools:eval''s catalogue on kestrel-api37, 3 runs each'; Run = 'Invoke-InjectionStep' }
         @{ Name = 'cache'; Minutes = 10; Title = 'the cache record per model'; Run = 'Invoke-CacheStep' }
         @{ Name = 'end'; Minutes = 10; Title = 'the restores, the emulator''s test account and apps, and the browsers'' versions'; Run = 'Invoke-EndStep2' }
     )

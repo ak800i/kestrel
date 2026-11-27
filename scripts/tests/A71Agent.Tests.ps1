@@ -26,6 +26,8 @@ BeforeAll {
         'Get-VoiceState', 'Register-ListeningRestore', 'Register-SittingEndRestores', 'Test-GmailAccount', 'Test-StepCalls', 'Get-StandInText',
         'Get-SpentCredits', 'Assert-CreditsLeft', 'Invoke-LookCloserStep', 'Get-A71', 'Invoke-SittingSteps', 'Invoke-EndStep2', 'Invoke-Restore',
         'Get-UnknownCreditCount', 'Test-SittingCreditsUnknown', 'Get-UnknownRunCount', 'Get-AssumedUnknownCount', 'Add-AssumedCreditsResult')
+    # The injection step, which runs the fixtures that :tools:eval's catalogue names (fix-7g-coldboot-sync).
+    $helpers += @('Invoke-EvalList', 'Get-EvalTaskNames', 'Invoke-InjectionStep')
     # The owner's decisions for the sittings (fix-5c-owner), and the helpers that their steps call, which the tests mock.
     $helpers += @('Test-WazeDevice', 'Invoke-SetupStep', 'Invoke-A71RunsStep', 'Grant-AgentPermissions', 'Enable-NotificationAccess', 'Test-EmulatorOwnAccount', 'Test-TelegramDevice', 'Test-TelegramSignedIn', 'Get-MissingApps', 'Test-WazeNavigating',
         'Test-WazeHome', 'Set-EmulatorFix', 'Start-TestLocation', 'Invoke-EmulatorAccountItem', 'Invoke-OwnerItem', 'Invoke-OwnerStep', 'Set-OwnerNames',
@@ -250,6 +252,28 @@ Describe 'The helpers of the sittings of sub-project 5' {
         $stop.Exception.Message | Should -BeExactly ('kestrel-api37 is busy with another job, such as another test run, an install or an evaluation task, so scripts\eval.ps1 did not run inject-01 there. ' +
             'Wait for that job to end, or check what runs (adb -s emulator-5554 shell top -b -n 1), and then call sitting 2 again with -Step prepare,injection and the steps after it, which runs the tasks of injection again.')
         $stop.Exception.Message | Should -Not -BeLike '*cold-boot*'
+    }
+
+    It 'runs every injection fixture that scripts\eval.ps1 list names for kestrel-api37, in the catalogue''s order, also records-injection after the 14' {
+        $EmulatorSerial = 'emulator-5554'
+        $ran = [System.Collections.Generic.List[string]]::new()
+        $fixtures = @((1..14 | ForEach-Object { 'inject-{0:D2}' -f $_ }) + 'records-injection' + 'inject-later')
+        Mock Invoke-EvalList {
+            'BUILD SUCCESSFUL'
+            'task=hotspot kind=d3 devices=a71,kestrel-api37 dryRun=stand-in-hotspot.json_on_stand-in-hotspot rehearsal=steps'
+            foreach ($name in $fixtures) { "task=$name kind=injection devices=kestrel-api37 dryRun=hostile.json rehearsal=steps" }
+            'task=a71-only kind=injection devices=a71 dryRun=hostile.json rehearsal=steps'
+        }
+        Mock Invoke-TaskRuns { $ran.Add("$StepName $Device $Task") }
+        Mock Add-Result { }
+
+        Invoke-InjectionStep
+
+        @($ran) | Should -BeExactly @($fixtures | ForEach-Object { "injection emulator-5554 $_" })
+        Should -Invoke Add-Result -Times 1 -Exactly -ParameterFilter { $StepName -eq 'injection' -and $Text -eq "the injection fixtures of :tools:eval's catalogue: $($fixtures -join ', ')" }
+
+        Mock Invoke-EvalList { 'task=hotspot kind=d3 devices=kestrel-api37 dryRun=none rehearsal=steps' }
+        { Invoke-InjectionStep } | Should -Throw 'scripts\eval.ps1 list names no injection fixture for kestrel-api37.'
     }
 }
 
