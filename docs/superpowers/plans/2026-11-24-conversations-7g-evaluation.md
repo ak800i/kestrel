@@ -127,6 +127,16 @@ The re-check of `9c2fde0d..8a2f0172` (`recheck-7g-fix12.md`: Fix first, I1 and M
 - **The counts.** `:tools:eval` + 3 (`ConversationGuardTest` + 2, `StepsTest` + 1): Task 5 starts at 325, each later count is 3 higher, and `:tools:eval` ends at 346 (E₀ + 48). `:app` JVM + 1 (`HookConversationsTest`): 864 before Task 8, 865 at the end. `:core:conversation` + 1 (`ConversationEngineTest`): 309. `:app`'s device tests stay 505 (`ConversationHooksTest`'s cases check `typed=` and `expire-typed` in their assertions).
 - **The changed steps.** "Not in this plan"; Task 5's Step for the modules' tests (`:core:conversation` 309); Task 6's counts, Step 3 (`RunScope`'s `commands` as a constructor parameter, and a new replacement of `until`'s constructor call) and Step 6's count; Task 7's counts; Task 8's counts, Step 1 (`ConversationTasksTest`'s `CrashGuardPassed.MARGIN`), Step 3 (`ConversationSteps.kt`'s imports, `CrashGuardPassed`, and `KestrelRestart.kt`'s imports and `left(it, Duration.ZERO)`) and its Step for the count; Task 9's counts; Task 10's intro, Interfaces, Pester case, `-Do`'s `ValidateSet` and check, and the help; Task 11's Interfaces and the design's row of `conversation-control`; "Counts at the end of plan 7G".
 
+
+## Amendment: the review fixes of Tasks 3 and 4
+
+The reviews of Tasks 3 and 4 (`task-7g-3-review.md`: I1, I2, M1; `task-7g-4-review.md`: M1) are fixed in `3387c963`. Every task from Task 5 on starts from there, and the plan checker runs clean from Task 5 against it. Each change, and why:
+
+- **A goal that acts before the turns go on (Task 3's I1).** A command that the run follows with `until = Until.ACTING` and that ends before the run saw its goal act now fails the run with `reason=check` (`RunState.unmet` = "the goal acting", with a warning), so a steering task can pass only if steering reached a running goal; and `Turn.Steer` and `Turn.AwaitEnd` refuse to act without a command of the run's that runs (unmet "a goal to steer" and "a command to await"). The dry-run scripts of `steer-while-running`, `interrupt-continue` and `resume-after-death` (Task 8) keep their goals acting with `wait` steps, so their runs see the goal act; a scripted model that ends sooner fails the run instead of passing it.
+- **The scripted model's install is a guarded change (Task 3's I2).** `ScriptedModelSetup.apply` and `renew` install inside `restores.change`, as `SelfChatAliases` does, so Ctrl+C at any moment leaves no scripted model in Kestrel's process.
+- **The tests (Task 3's M1, Task 4's M1).** The restart test installs a second, different script and checks the texts that reach the device; a runner test drives `limit-continue`'s two limits through `TurnRunner.answer` (yes once, then left open). With two more tests, for I1 and I2, `:tools:eval` is + 3: Task 5 starts at 328, each later count is 3 higher, and `:tools:eval` ends at 349 (E₀ + 51).
+- **The changed steps.** The counts of Tasks 6, 7, 8 and 9 and of "Counts at the end of plan 7G". No later step's text depends on the code that changed: Tasks 5 to 13 use `TurnRunner` and `ScriptedModelSetup` only through the runner.
+
 ## File structure
 
 | File | Responsibility |
@@ -4101,7 +4111,7 @@ The steps and checks of design 15.3's tasks, each a small typed class beside the
 - Consumes: Task 1's `ConversationGuard` and `Hooks.conversationState`/`conversationControl`; Task 3's `TurnAction`; plan 7D's `conversation-control do=limits` (answers `limits=<r>/<m>/<c> was=<r>/<m>/<c>`) and `do=restore-check` (answers `restored=nothing|open|closed|goal-held|goal-ended|pending`), `agent-state`'s `phase=` and `checklist=<done>/<total>|none`; plan 7E's `goal-control do=touch` (answers `touch=sent`).
 - Produces: `data object EndQuietTime : TurnAction`, `data object OwnerTouch : TurnAction`, `data object DeleteTestSms : TurnAction`, `data object SmallestLimits : Setup`; the checks `ConversationIs(open: Boolean? = null, continued: Boolean? = null, commands: Int? = null, goal: String? = null)`, `PhaseIs(phase: String)`, `ChecklistIs(done: Int, total: Int)`, `RestoredAs(restored: String)`, `AskedInOrder(entries: List<String>)`, `OnlyAlarmAt(hour: Int, minute: Int)`; `RunScope.commands: MutableList<SentCommand>` and `RunScope.asked: List<Asked>`; `RunState(putBack, commands)`; `Hooks.restoreCheck()` and `Hooks.goalControl(action: String)`.
 
-Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2 + 3 (325, with the re-check's fixes of Tasks 1 and 3): 331 at the end of the task.
+Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2 + 6 (328, with the re-check's fixes of Tasks 1 and 3 and the review fixes of Tasks 3 and 4): 334 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4568,7 +4578,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₄ + 6 (331).
+Expected: BUILD SUCCESSFUL; `eval` E₄ + 6 (334).
 
 - [ ] **Step 7: Commit**
 
@@ -4592,7 +4602,7 @@ Design 15.3's tasks that a live model can run: `followup-settings` (a follow-up 
 - Consumes: Tasks 3, 4 and 6 (turns, `Answers.switches`, `EndQuietTime`, `DeleteTestSms`, `ConversationIs`, `AskedInOrder`); Task 5's `requires` and `refuses`; the existing steps `HomeScreen`, `ForceStop`, `UiNightMode`, `SettingsValue`, `TestName`, `KeptPermissions`, `FreeNumber`, `DeviceContact`, `FixturePresses`, `SelfChatAliases.TELEGRAM`, `FixtureScreen`, `EmuSms` and the checks `NightMode`, `SettingsIs`, `ReplyHasDigits`, `Confirmed`, `Recipient`, `SelfChat`, `Presses`, `ScreenHas`, `ReplyHas`; plan 7C's `search_conversations`; plan 7B's continued note "This conversation was continued on …" and records header "This conversation so far:".
 - Produces: `TaskKind.CONVERSATION`; `Task.runsLive: Boolean = true`, false for a task that runs only with the scripted model, which `run --live` skips with that reason; `object ConversationTasks` with `FOLLOWUP_SETTINGS`, `QUIET_TIME_ENDS`, `TYPED_CONTACT_THEN_MESSAGE`, `STAND_IN_TYPED_CONTACT_THEN_MESSAGE`, `SEARCH_PAST`, `CONTINUE_PAST` and `ALL`; `Catalogue.multiTurn(kind: DeviceKind, live: Boolean): List<Task>`; `SettingsTasks.START`, `NIGHT` and `TWO_MINUTES` (internal).
 
-Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 (331): 336 at the end of the task.
+Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 (334): 339 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5224,7 +5234,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (336).
+Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (339).
 
 - [ ] **Step 7: Commit**
 
@@ -5248,7 +5258,7 @@ The tasks of design 15.3 that need a goal still acting at a known step, or repli
 - Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and its guard against a crash loop (main spec 8.5); Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
 - Produces: `ConversationTasks.STEER_WHILE_RUNNING`, `LIMIT_CONTINUE`, `INTERRUPT_CONTINUE`, `RESUME_AFTER_DEATH`; the debug hook `voice-restore` (`restoredAgo=<seconds>|none guard=<seconds>`), `VoiceRestore.answer(restoredAt, now)` and the top-level `internal const val CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, which leaves `Listening`'s private companion without a change of its value or its use; `Hooks.voiceRestore()`, which the preflight reads, refusing a build from before this plan; `data object CrashGuardPassed : Setup` with `MARGIN_SECONDS`, `WAIT_SECONDS` and `left(answer, margin)`; `DryRun.checks: List<Check>`, which only a run without a model checks; `data class EndedOtherThan(end: String) : Check`; `InjectionFixtures.FIXTURES` (the 14) and `InjectionFixtures.RECORDS` (`records-injection`), with `ALL = FIXTURES + RECORDS`.
 
-Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (336): 342 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 865 with A₁ = A₀ + 1 = 864 (Task 1's review fix adds `HookConversationsTest` + 1).
+Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (339): 345 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 865 with A₁ = A₀ + 1 = 864 (Task 1's review fix adds `HookConversationsTest` + 1).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6123,7 +6133,7 @@ Expected: PASS both times.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (342); `app` A₁ + 1 (865).
+Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (345); `app` A₁ + 1 (865).
 
 - [ ] **Step 8: Commit**
 
@@ -6146,7 +6156,7 @@ The main spec keeps the multi-turn tasks out of the 29 tasks' rates and records 
 - Consumes: Task 7's `Catalogue.multiTurn`.
 - Produces: `Command.Suite.multiTurn` (`suite --multi-turn`); `SeriesCommand(…, multiTurn: Boolean = false, pick)` with `SeriesCommand.SUITE` and `SeriesCommand.INJECTION`; `Report.multiTurn: Boolean = false`; `Baseline.multiTurn: Map<String, BaselinePart>` and `Baseline.withMultiTurn(device, part)`; `SuiteCall.multiTurn: Boolean = false`; `Resume.open(…, recordBaseline, multiTurn: Boolean = false)`, which refuses a folder whose `multiTurn` differs.
 
-Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (342): 346 at the end of the task.
+Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (345): 349 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6786,7 +6796,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (346).
+Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (349).
 
 - [ ] **Step 7: Commit**
 
@@ -7700,7 +7710,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7G": the builds' commit on
 
 ## Counts at the end of plan 7G
 
-- `:tools:eval`: E₀ + 48 (Task 1 + 6 and its review fixes + 7, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fix + 1, Task 4 + 2, Task 6 + 6, Task 7 + 5, Task 8 + 6, Task 9 + 4): 346 with E₀ = 298 at `c6d38be6`.
+- `:tools:eval`: E₀ + 51 (Task 1 + 6 and its review fixes + 7, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fixes + 3, Task 4 + 2 and its review fix + 1, Task 6 + 6, Task 7 + 5, Task 8 + 6, Task 9 + 4): 349 with E₀ = 298 at `c6d38be6`.
 - `:core:agent`: G₀ + 2 (Task 5): 317 with G₀ = 315.
 - `:app` JVM: A₀ + 2 (Task 1's review fix, `HookConversationsTest` + 1; Task 8's `VoiceRestoreTest`; Task 4 changes a test's assertions): 865 with A₀ = 863, measured after plan 7F with every fix of its whole-plan review, whose tests count in plan 7F.
 - Pester in PowerShell 7: P₀ + 3 (Task 10): 557 with P₀ = 554 (Windows PowerShell 5.1: 556 passed and 1 skipped).
