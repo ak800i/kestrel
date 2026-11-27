@@ -102,6 +102,21 @@ The device reviewer's re-check of `44e7c05e` (R1 and R2) is fixed as it proposed
 - **Task 13, the A71's helpers and Step 7 (R1).** `Unlock-TestPhone` runs its commands through `Invoke-SettingsCommand`, which needs `Assert-TestDevice` for the serial in the same process, so the A71's helpers call `Assert-TestDevice -Serial $s` right after the USB check. Step 7 first puts back everything that needs no unlock (listening off, `voice-clip -Clear`, "stay awake", `agent-live`, the accessibility setting), and only then unlocks and runs `Listen` when Step 2's mode was not `off`; a failed unlock leaves only the listening mode to the controller.
 - **Task 13, a failed unlock (R2).** `Unlock-TestPhone`'s refusal of a second PIN lasts only one command, so after any failed unlock no later command types the PIN again: the task stops, Step 7 runs once with `$unlock = 'no'` and skips `Unlocked` and `Listen`, and the controller asks the owner.
 
+
+## Amendment: the review fixes of Tasks 1 and 2
+
+Tasks 1 and 2 are built (`ca901cc5`, `9c2fde0d`), and their reviews' findings are fixed in `38bdf0c1` and `236ba013` (`task-7g-1-review.md`, `task-7g-2-review.md`, `task-7g-1-fix-report.md`). Tasks 1 and 2 keep the texts with which they were built, apart from Task 1's Interfaces line, which names the code as built; every task from Task 3 on starts from `236ba013`, and the plan checker runs clean from Task 3 against it. Each change, and why:
+
+- **Decision N3, replaced (the controller's decision).** In place of "the next run or the series' cleanup, a restore that the preflight pushes and that waits up to 5 minutes, deletes it (N3)" (design change H4) and "the series' cleanup deletes it (N3)" (decision 16): the series' cleanup ends only the conversation that a run of this series opened, never the owner's conversation or goal. One `ConversationGuard` serves the series (`Session` gives it to `Preflight` and `Runner`), and the turn runner tells it the tag of each command before the words go (`gave(tag)`). `deleteLeft()` sends nothing when no run gave Kestrel a command, as when every run was untestable; otherwise `delete-typed` deletes the hooks' own closed conversations and counts the open one (`open=`), and only when that count is above 0 is the open conversation, then the hooks' own, closed (waiting up to 5 minutes) and deleted. An open conversation that is not the hooks' own is the owner's and stays open; the cleanup ends no goal.
+- **The run's conversation comes after the task's setup (Task 1's review M2).** `NewConversation` is the setup's last step (`task.setup + NewConversation(conversations)`), so a run that its task's setup finds untestable, as on the A71, gives Kestrel nothing: no read, no `expire`, no stop of the owner's goal and no `delete-typed`. The run's conversation restore now runs after the run's stops and the scripted model's removal and before the task's own restores. Design change "Every run starts in a conversation of its own" keeps its meaning; only the order within the setup changed.
+- **The waits measure the clock (Task 1's review M1).** `Deadline` and `Clock.waitUntil(within, every)` in `dev.kestrel.eval.device`, and `Device.until`, `HookClient.until` and `Hooks.until(deadline)`, which give each adb call only the time left. `ConversationGuard`'s constants are Durations (`CLOSE`, `CLEANUP`, `STOP`), and `Runner.EXISTS_TRIES` became `Runner.EXISTS` and `Runner.REREAD`. Task 3's texts follow: `TurnRunner.exists`, the follow-up window's wait and `Turn.Expect` use `waitUntil`, and `KestrelRestart` waits up to `START = 90.seconds` (in place of `START_SECONDS`) through a bounded device. A check's own reads in `Turn.Expect`, and Task 8's `CrashGuardPassed`, which sleeps as long as Kestrel's guard says, keep their timeouts.
+- **Each command keeps its own questions (Task 2's review M1 and M2).** `SentCommand.record` replaces `RunState.record`: `RunState.asked` lists the commands' records in their order, and `RunState.cancelled()` reads only the command whose end the run's answer carries (`Outcomes.deciding`), so the run's cancel of an earlier command never makes a later command's own CANCELLED `reason=asked`. Task 3's `RunState.kt` and `TurnRunner.kt` follow (`command.record`); Task 4 adds `RunState.before(command)`, the run's earlier commands' entries and the command's own `AskedRecord.before`, so that a limit's answer still counts the run's limits before it; Task 6 moves the run's commands, not one record, into `RunScope` (`RunScope.commands`, `RunScope.asked: List<Asked>`, `RunState(putBack, commands)`), and its `AskedInOrder` test builds two commands.
+- **The constructors.** `TurnRunner(…, stopIfStopping, conversations, restarter, renewed)` (Task 3), and Task 3's `restarter` follows `private val scripts = ScriptInstaller(device, hooks, work)`, because `Runner` takes the series' guard as a parameter.
+- **Three tests that read a closed conversation (found by the simulation below).** Task 3's `aFollowUpWaitsForTheWindowAndIsSpokenWithoutTheName` and `aSteerReachesTheGoalWhileItActsAndTheRunAwaitsTheSteeredCommandsEnd` and Task 7's `searchPastAsksAfterTheSmsLeftAndContinuePastSwitchesBackToTheConversationThatReadIt` read `FakeConversation.commands` after the run, when Task 1's last restore had already closed the run's conversation, so they failed with the plan as it was too (0 in place of 1 or 2). `FakeConversation.closed`, the commands of the conversation that the quiet time closed last, is now public to read, and the three tests read it.
+- **Checked by simulation.** The plan's texts from Task 3 on, applied to `236ba013` by the plan checker, give `:tools:eval` 320 tests after Task 3, 328 after Task 6 and 343 at the end, all passing.
+- **The counts.** The review fixes add 7 tests (Task 1's + 5, Task 2's + 2), so Task 3 starts at 314, each later count is 7 higher, and `:tools:eval` ends at 343 (E₀ + 45).
+- **The changed steps.** Task 1's Interfaces line; Task 3's Interfaces line and counts, Step 1 (`FakeConversation.closed` and two `RunnerTest` assertions), Step 4 (`RunState.kt`, whole), Step 5 (`KestrelRestart.kt`, `TurnRunner.kt` whole, and the two `Runner.kt` replacements of `conversations` and of the `TurnRunner` call), Step 7's count; Task 4's Files, Interfaces, counts, Step 3 (the two `TurnRunner.kt` replacements and a new `RunState.kt` replacement before the `AskedRecord.kt` one) and Step 5's count; Task 6's text, Interfaces, counts, Step 1 (`ConversationStepsTest`'s imports and its `AskedInOrder` test), Step 3 (`Steps.kt`'s imports and `RunScope`, and the three `RunState.kt` replacements), Step 4's `AskedInOrder` and Step 6's count; Task 7's `ConversationTasksTest` assertion; the counts of Tasks 7, 8 and 9 and of "Counts at the end of plan 7G".
+
 ## File structure
 
 | File | Responsibility |
@@ -135,7 +150,7 @@ Design 14.1 of sub-project 7 makes a task of sub-project 6 a conversation of one
 
 **Interfaces:**
 - Consumes: plan 7D's hooks `conversation-state` (`open=yes|no continued=yes|no commands=<n> goal=<phase>|none quiet=off|held|running quietLeft=<seconds>|none replyChannel=voice|text testMode=on|off`) and `conversation-control --es do expire` (`expire=sent`); plan 7F's `conversation-control --es do delete-typed` (`deleted=<n> open=<n> failed=<n>`), which deletes the conversations that any hook's input opened, tagged or not (plan 7F's Task 13a and `f23bd193`), and whose unknown `--es do` a build from before plan 7F refuses with `add --es do with one of new, expire, limits or restore-check` (at `c6d38be6`: `… limits, restore-check or delete-typed`); `Setup`, `SetupResult`, `SetupFailed`, `RunScope` (package `dev.kestrel.eval.task`).
-- Produces: `Hooks.conversationState(): HookAnswer`, `Hooks.conversationControl(action: String, limits: String? = null): HookAnswer`, `Hooks.deleteTyped(): HookAnswer`; `class ConversationGuard(hooks: Hooks, clock: Clock)` with `fun close(seconds: Int = CLOSE_SECONDS)`, `fun deleteRun(warn: (String) -> Unit)`, `fun stopGoal(stop: () -> Unit): Boolean`, `CLOSE_SECONDS = 60` and `STOP_SECONDS = 15`; `class NewConversation(conversations: ConversationGuard) : Setup`; `internal fun <T> quietly(call: () -> T): T?` (package `dev.kestrel.eval.run`); `ConversationGuard.deleteLeft()` and `CLEANUP_SECONDS = 300`, the series' cleanup, which `Preflight` pushes as a restore; the test constants `FakeAdb.NO_CONVERSATION` and `FakeAdb.NOTHING_DELETED`, which every fake device answers by default.
+- Produces: `Hooks.conversationState(): HookAnswer`, `Hooks.conversationControl(action: String, limits: String? = null): HookAnswer`, `Hooks.deleteTyped(): HookAnswer`; `class ConversationGuard(hooks: Hooks, clock: Clock)` with `fun close(within: Duration = CLOSE)`, `fun deleteRun(warn: (String) -> Unit)`, `fun stopGoal(stop: () -> Unit): Boolean`, `CLOSE = 60.seconds` and `STOP = 15.seconds` (as built with the review fixes; the draft had `close(seconds: Int = CLOSE_SECONDS)`, `CLOSE_SECONDS` and `STOP_SECONDS`); `class NewConversation(conversations: ConversationGuard) : Setup`, the setup's last step; `internal fun <T> quietly(call: () -> T): T?` (package `dev.kestrel.eval.run`); `ConversationGuard.gave(tag: String)` and `ConversationGuard.deleteLeft()` with `CLEANUP = 5.minutes`, the series' cleanup, which `Preflight` pushes as a restore with the series' one guard (`Preflight(…, installer, conversations)`, `Runner(…, listening, conversations, markers, tags)`); `class Deadline(clock, within)` with `left`, `fun Clock.waitUntil(within, every, done: (Deadline) -> Boolean): Boolean`, and `Device.until`, `HookClient.until` and `Hooks.until(deadline)` (packages `dev.kestrel.eval.device` and `dev.kestrel.eval.hook`); `Runner.EXISTS = 10.seconds` and `Runner.REREAD = 1.seconds` (in place of `EXISTS_TRIES`); the test constants `FakeAdb.NO_CONVERSATION` and `FakeAdb.NOTHING_DELETED`, which every fake device answers by default.
 
 Counts: `:tools:eval` E₀ + 6 (`ConversationGuardTest` 4, `RunnerTest` + 1, `PreflightTest` + 1): 304 with E₀ = 298.
 
@@ -1892,9 +1907,9 @@ The rest of design 14.4 of sub-project 7's turns and of design 15.3's tasks: a c
 
 **Interfaces:**
 - Consumes: Task 2's `Turn`, `Turns`, `SentCommand`, `RunState`, `Outcomes`, `TurnRunner`, `TurnsEnd`; plan 7D's `voice-state`'s `followUp=open|closed`; plan 7F's `conversation-type --es text --es tag [--ez live] [--es model] [--es marker]` (the options need the tag, which every turn gives; it answers `typed read=<kind> tag=<tag>`) and `agent-answer --es channel text`, and plan 7F's Task 13a's `agent-answer --es channel card` (`answered tag=<tag> asking=<kind> channel=card`, or an error that leaves the question open); the hook `crash --es text` (spec 16.1; it answers `crashing`); `ScriptInstaller.install`, `remove` and `resource`.
-- Produces: `Turn.Say(words, channel = TurnChannel.SPOKEN, until = Until.END, ends = Turn.FINISHED)`, `Turn.Steer(words, channel = TurnChannel.SPOKEN)`, `Turn.AwaitEnd(ends = Turn.FINISHED)`, `Turn.Restart`, `Turn.Act(action: TurnAction)`, `Turn.Expect(check: Check, within: Duration = 30.seconds)`; `enum class TurnChannel { SPOKEN, FOLLOW_UP, TYPED }`; `enum class Until { END, ACTING }`; `interface TurnAction { fun run(scope: RunScope) }`; `interface ProcessSetup : Setup { fun renew(scope: RunScope) }`, which `SelfChatAliases` and `ScriptedModelSetup(scripts, task, script)` implement; `DryRun.restarts: List<String>`; `SentCommand.expected` (a `var`) and `lost`; `RunState.channel`, `unmet`, `stepFailed`; `Answers.overlayOnly(kind)`; `Verdicts.judge(…, unmet: Boolean = false)`; `Hooks.conversationType(text, tag, live = false, model = null, marker = null)`, `Hooks.crash(text)`, `Hooks.agentAnswer(tag, answer, confirming, channel: String? = null)`; `class KestrelRestart(device, hooks, clock, listening)` with `fun restart()`; `TurnRunner(…, restarter: KestrelRestart, renewed: List<ProcessSetup>)`; the test fake `FakeConversation(adb, clock)` with `Command`, `Until`, `planned`, `inputs`, `answers`, `onInput`, `windows`, `restoredAt`, `deleted`, `open`, `continued`, `commands`, `goal`, `pid`, `aliases`, `line(end, confirmed)`, `GUARD_SECONDS` and `FINISHED`; `FakeAdb.hookWith(action, answer)`.
+- Produces: `Turn.Say(words, channel = TurnChannel.SPOKEN, until = Until.END, ends = Turn.FINISHED)`, `Turn.Steer(words, channel = TurnChannel.SPOKEN)`, `Turn.AwaitEnd(ends = Turn.FINISHED)`, `Turn.Restart`, `Turn.Act(action: TurnAction)`, `Turn.Expect(check: Check, within: Duration = 30.seconds)`; `enum class TurnChannel { SPOKEN, FOLLOW_UP, TYPED }`; `enum class Until { END, ACTING }`; `interface TurnAction { fun run(scope: RunScope) }`; `interface ProcessSetup : Setup { fun renew(scope: RunScope) }`, which `SelfChatAliases` and `ScriptedModelSetup(scripts, task, script)` implement; `DryRun.restarts: List<String>`; `SentCommand.expected` (a `var`) and `lost`, beside the command's own `record` of Task 2's review fix; `RunState.channel`, `unmet`, `stepFailed`; `Answers.overlayOnly(kind)`; `Verdicts.judge(…, unmet: Boolean = false)`; `Hooks.conversationType(text, tag, live = false, model = null, marker = null)`, `Hooks.crash(text)`, `Hooks.agentAnswer(tag, answer, confirming, channel: String? = null)`; `class KestrelRestart(device, hooks, clock, listening)` with `fun restart()` and `START = 90.seconds`; `TurnRunner(…, stopIfStopping, conversations: ConversationGuard, restarter: KestrelRestart, renewed: List<ProcessSetup>)`; the test fake `FakeConversation(adb, clock)` with `Command`, `Until`, `planned`, `inputs`, `answers`, `onInput`, `windows`, `restoredAt`, `deleted`, `open`, `continued`, `commands`, `goal`, `pid`, `aliases`, `line(end, confirmed)`, `GUARD_SECONDS` and `FINISHED`; `FakeAdb.hookWith(action, answer)`.
 
-Counts: `:tools:eval` E₂ + 6 (`TurnsTest` 1, `RunnerTest` + 5), where E₂ = E₁ + 3 (307): 313 at the end of the task.
+Counts: `:tools:eval` E₂ + 6 (`TurnsTest` 1, `RunnerTest` + 5), where E₂ = E₁ + 3 + 7 (314, with the review fixes of Tasks 1 and 2): 320 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1983,7 +1998,12 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         private set
     var aliases = 0
         private set
-    private var closed = 0
+    /**
+     * The commands of the conversation that the quiet time closed last, which a command that [Command.continues] continues;
+     * a test reads a run's conversation here, because the run's last restore closes it.
+     */
+    var closed = 0
+        private set
     private var conversation = 0
     private var conversations = 0
     private var closedConversation = 0
@@ -2297,7 +2317,8 @@ with:
         assertEquals(Reason.OK, line.reason)
         assertEquals(listOf("spoken:turn on dark mode", "spoken:and set the screen timeout to 2 minutes"), kestrel.inputs)
         assertEquals("and set the screen timeout to 2 minutes", run.adb.hookCalls("VOICE")[1]["text"])
-        assertEquals(2, kestrel.commands)
+        // The run's last restore closed its conversation, which held both commands.
+        assertEquals(2, kestrel.closed)
     }
 
     // Design 10.3, 11 and 12.3 of sub-project 7: a typed command's questions are answered on the text channel's card, and a
@@ -2329,7 +2350,8 @@ with:
 
         assertEquals(listOf("spoken:set an alarm for 7:00", "steered:make it 7:30 instead"), kestrel.inputs)
         assertEquals("Kestrel, make it 7:30 instead", run.adb.hookCalls("VOICE")[1]["text"])
-        assertEquals(1, kestrel.commands)
+        // The run's last restore closed its conversation, which held the one steered command.
+        assertEquals(1, kestrel.closed)
     }
 
     // Design 6.7 and 15.3 of sub-project 7: the command that ran is lost with Kestrel's process, and every setup step that
@@ -2553,10 +2575,14 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A command that the run gave Kestrel (design 14.4 of sub-project 7): its [tag], the end that its turns expect
- * ([expected], null for any end), whether its words went to Kestrel ([sent]), its end once the run read it ([answer]), and
- * whether Kestrel's process ended under it ([lost]), which lost it with its tag. toString prints no words.
+ * ([expected], null for any end), whether its words went to Kestrel ([sent]), its end once the run read it ([answer]),
+ * whether Kestrel's process ended under it ([lost]), which lost it with its tag, and its questions with the run's answers
+ * ([record]). toString prints no words.
  */
 class SentCommand(val tag: String, expected: String?) {
+    /** The command's questions as the run met them, and its answers that reached Kestrel (T1); its end closes them. */
+    val record = AskedRecord()
+
     /** The end that the command's turn expects; the [dev.kestrel.eval.task.Turn.AwaitEnd] after a command that the run followed until its goal acted names it. */
     @Volatile
     var expected: String? = expected
@@ -2597,9 +2623,6 @@ internal class RunState(private val putBack: PutBack) {
     /** Whether a restart or a step between turns failed, which fails the run with `reason=setup`. */
     var stepFailed = false
 
-    // The commands' questions as the run met them, and its answers that reached Kestrel (T1).
-    val record = AskedRecord()
-
     // agent-task's answer with the run's marker, read once after the end for the newest command, for the detail line.
     @Volatile
     var markers: HookAnswer? = null
@@ -2613,11 +2636,14 @@ internal class RunState(private val putBack: PutBack) {
     /** The run's answer: its commands' ends as one ([Outcomes]), or null while a command's end is not read. */
     val answer: HookAnswer? get() = Outcomes.merge(commands)
 
-    /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
-    val asked: List<Asked> get() = record.asked
+    /** The run's answers that reached Kestrel, and the questions that it left open on purpose, command by command. */
+    val asked: List<Asked> get() = commands.flatMap { it.record.asked }
 
-    /** The kinds of the questions and hand-overs whose answer by the run ended a command, each once. */
-    fun cancelled(): List<String> = record.cancelled()
+    /**
+     * The kinds of the questions and hand-overs whose answer by the run ended the command whose end the run's answer
+     * carries ([Outcomes.deciding]), each once: an answer that ended an earlier command does not explain the run's end.
+     */
+    fun cancelled(): List<String> = Outcomes.deciding(commands)?.record?.cancelled().orEmpty()
 
     /** The run's detail line, from what it met and what its restores put back so far. */
     fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored, putBack.leftChanged)
@@ -2735,13 +2761,15 @@ package dev.kestrel.eval.run
 import dev.kestrel.eval.device.Clock
 import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.device.DeviceChanged
+import dev.kestrel.eval.device.DeviceCommandFailed
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.Hooks
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * Kestrel's process ended on purpose during a run (design 15.3 of sub-project 7: resume-after-death), through the hook
  * crash (spec 16.1). Android starts Kestrel again when it binds Kestrel's accessibility service again, so [restart] waits
- * for a new process and the service's binding, for at most [START_SECONDS] seconds, closes Android's dialog about the crash
+ * for a new process and the service's binding, for at most [START] by the clock, closes Android's dialog about the crash
  * when it has the focus, and waits until Kestrel listens again ([listening]), as before a run. Kestrel's guard against a
  * crash loop (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so a task that restarts Kestrel waits
  * out that guard before its run; if Kestrel stays off all the same, the failure names the guard.
@@ -2752,38 +2780,42 @@ class KestrelRestart(private val device: Device, private val hooks: Hooks, priva
         // The hook answers `crashing` and ends the process half a second later; a lost answer changes nothing, because
         // only a new process counts.
         quietly { hooks.crash(CRASH_TEXT) }
-        repeat(START_SECONDS / 2) {
-            clock.sleep(2.seconds)
-            val now = process()
-            if (now != null && now != before && bound()) {
-                // The dialog stays until it is dismissed, so BACK goes to it only while it has the focus, never to the app below.
-                if (crashDialogInFront()) device.idempotent("input keyevent KEYCODE_BACK")
-                try {
-                    listening()
-                } catch (e: Exception) {
-                    if (e is DeviceChanged) throw e
-                    throw IllegalStateException(
-                        "Kestrel did not listen after its process started again (${e.message ?: e.javaClass.simpleName}); its guard against a " +
-                            "crash loop keeps it off after a crash soon after a restore turned it on (main spec 8.5)",
-                        e,
-                    )
-                }
-                return
+        // Each look reads through the wait's deadline, so a slow adb cannot stretch the wait; a look that failed is "not yet".
+        val started = clock.waitUntil(START, POLL) { deadline ->
+            val bounded = device.until(deadline)
+            try {
+                val now = process(bounded)
+                now != null && now != before && bound(bounded)
+            } catch (e: DeviceCommandFailed) {
+                false
             }
         }
-        error("Kestrel did not start again within $START_SECONDS s after its process ended")
+        check(started) { "Kestrel did not start again within ${START.inWholeSeconds} s after its process ended" }
+        // The dialog stays until it is dismissed, so BACK goes to it only while it has the focus, never to the app below.
+        if (crashDialogInFront()) device.idempotent("input keyevent KEYCODE_BACK")
+        try {
+            listening()
+        } catch (e: Exception) {
+            if (e is DeviceChanged) throw e
+            throw IllegalStateException(
+                "Kestrel did not listen after its process started again (${e.message ?: e.javaClass.simpleName}); its guard against a " +
+                    "crash loop keeps it off after a crash soon after a restore turned it on (main spec 8.5)",
+                e,
+            )
+        }
     }
 
     // Kestrel's process ID, or null while none runs; pidof fails without one, so the command ends with true.
-    private fun process(): String? = device.read("pidof dev.kestrel || true").joinToString(" ").trim().ifEmpty { null }
+    private fun process(on: Device = device): String? = on.read("pidof dev.kestrel || true").joinToString(" ").trim().ifEmpty { null }
 
-    private fun bound(): Boolean = device.read("dumpsys activity services $SERVICE").any { "app=ProcessRecord" in it }
+    private fun bound(on: Device): Boolean = on.read("dumpsys activity services $SERVICE").any { "app=ProcessRecord" in it }
 
     private fun crashDialogInFront(): Boolean = device.read("dumpsys window").any { "mCurrentFocus" in it && CRASH_DIALOG in it }
 
     companion object {
         const val CRASH_TEXT = "plan 7G restart check"
-        const val START_SECONDS = 90
+        val START = 90.seconds
+        private val POLL = 2.seconds
         private const val SERVICE = "dev.kestrel/.app.KestrelAccessibilityService"
         private const val CRASH_DIALOG = "Application Error: dev.kestrel"
     }
@@ -2797,6 +2829,7 @@ package dev.kestrel.eval.run
 
 import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.DeviceCommandFailed
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
@@ -2836,6 +2869,7 @@ internal class TurnRunner(
     private val options: RunOptions,
     private val tags: () -> String,
     private val stopIfStopping: () -> Unit,
+    private val conversations: ConversationGuard,
     private val restarter: KestrelRestart,
     private val renewed: List<ProcessSetup>,
 ) {
@@ -2893,15 +2927,9 @@ internal class TurnRunner(
         return null
     }
 
-    /** Waits up to [FOLLOW_UP] for Kestrel's follow-up window (design 6.6), which opens once its spoken final reply has ended. */
-    private fun followUpOpen(): Boolean {
-        val deadline = clock.elapsed() + FOLLOW_UP
-        while (true) {
-            if (quietly { hooks.voiceState() }?.get("followUp") == "open") return true
-            if (clock.elapsed() >= deadline) return false
-            clock.sleep(WINDOW_POLL)
-        }
-    }
+    /** Waits up to [FOLLOW_UP] by the clock for Kestrel's follow-up window (design 6.6), which opens once its spoken final reply has ended. */
+    private fun followUpOpen(): Boolean =
+        clock.waitUntil(FOLLOW_UP, WINDOW_POLL) { deadline -> quietly { hooks.until(deadline).voiceState() }?.get("followUp") == "open" }
 
     /**
      * Gives Kestrel a new command through [send] with a new tag. A lost answer is read back: the command exists, or it did
@@ -2911,6 +2939,8 @@ internal class TurnRunner(
         val command = SentCommand(tags(), expected)
         state.commands.add(command)
         scope.tag = command.tag
+        // Before the words go: a command whose answer is lost may still have opened a conversation of the series' own.
+        conversations.gave(command.tag)
         try {
             command.sent = true
             send(command.tag)
@@ -2949,7 +2979,7 @@ internal class TurnRunner(
             if (elapsed() < quietUntil) continue
             val asked = quietly { hooks.agentState(command.tag) } ?: continue
             val kind = Answers.kind(asked)
-            state.record.saw(kind)
+            command.record.saw(kind)
             if (kind == null) {
                 // A later turn steers the goal, touches the screen or ends Kestrel's process while the goal acts.
                 if (acting && asked["phase"] == "running") return null
@@ -2964,7 +2994,7 @@ internal class TurnRunner(
     // The command's end; one that Kestrel refused before it ran ends the turns, because nothing was tested.
     private fun ended(command: SentCommand, pairs: HookAnswer): TurnsEnd? {
         command.answer = pairs
-        state.record.ended()
+        command.record.ended()
         if (pairs["end"] in Refusals.ENDS) {
             state.refusal = Refusals.kind(hooks, command.tag)
             return TurnsEnd.CUT
@@ -2981,7 +3011,7 @@ internal class TurnRunner(
         val reply = task.answers.reply(asked)
         if (reply == null) {
             // "Which number should I use?" stays unanswered (the owner's decision P1).
-            if (kind == Answers.PICK_NUMBER) state.record.keepOpen()
+            if (kind == Answers.PICK_NUMBER) command.record.keepOpen()
             return false
         }
         val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
@@ -2990,8 +3020,8 @@ internal class TurnRunner(
         if (confirming != null && reply == "no") state.declined.add(confirming)
         val channel = channelFor(kind)
         when (deliver { hooks.agentAnswer(command.tag, reply, confirming, channel) }) {
-            Delivery.DELIVERED -> state.record.answered(reply)
-            Delivery.LOST -> state.record.lost(reply)
+            Delivery.DELIVERED -> command.record.answered(reply)
+            Delivery.LOST -> command.record.lost(reply)
             Delivery.REFUSED -> Unit
         }
         return true
@@ -3016,15 +3046,14 @@ internal class TurnRunner(
         TurnsEnd.CUT
     }
 
-    // Design 15.3 of sub-project 7: a check between turns, read every 2 s with the newest command's end until it holds.
+    // Design 15.3 of sub-project 7: a check between turns, read every 2 s with the newest command's end until it holds, for
+    // up to its time by the clock; the check's own reads keep their timeouts.
     private fun expect(index: Int, turn: Turn.Expect): TurnsEnd? {
-        val deadline = clock.elapsed() + turn.within
-        while (true) {
+        val held = clock.waitUntil(turn.within, Runner.POLL) {
             val answer = state.commands.lastOrNull { it.answer != null }?.answer ?: HookAnswer.EMPTY
-            if (quietly { turn.check.passes(scope, answer) } == true) return null
-            if (clock.elapsed() >= deadline) break
-            clock.sleep(Runner.POLL)
+            quietly { turn.check.passes(scope, answer) } == true
         }
+        if (held) return null
         state.unmet = turn.check.toString()
         console.warn("Task ${task.name}, run $number: turn ${index + 1}, ${turn.check}, did not hold within ${turn.within.inWholeSeconds} s.")
         return TurnsEnd.CUT
@@ -3049,14 +3078,9 @@ internal class TurnRunner(
 
     private enum class Delivery { DELIVERED, REFUSED, LOST }
 
-    /** Whether Kestrel has a command with [tag], read for up to 10 s after the command's answer was lost. */
-    private fun exists(tag: String): Boolean {
-        repeat(Runner.EXISTS_TRIES) {
-            if (quietly { hooks.agentTask(tag) } != null) return true
-            clock.sleep(1.seconds)
-        }
-        return false
-    }
+    /** Whether Kestrel has a command with [tag], read once a second for up to 10 s by the clock after the command's answer was lost. */
+    private fun exists(tag: String): Boolean =
+        clock.waitUntil(Runner.EXISTS, Runner.REREAD) { deadline -> quietly { hooks.until(deadline).agentTask(tag) } != null }
 
     // Design 10.3, 12.2 and 12.3 of sub-project 7: after a typed input, the owner answers a confirmation, a hand-over and a
     // pick on the card over the app (plan 7F's Task 13a), and any other question on the text channel's card; after a
@@ -3082,20 +3106,20 @@ internal class TurnRunner(
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
 
 ```kotlin
-    private val conversations = ConversationGuard(hooks, clock)
+    private val scripts = ScriptInstaller(device, hooks, work)
 ```
 
 with:
 
 ```kotlin
-    private val conversations = ConversationGuard(hooks, clock)
+    private val scripts = ScriptInstaller(device, hooks, work)
     private val restarter = KestrelRestart(device, hooks, clock, listening)
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
 
 ```kotlin
-        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping).run() == TurnsEnd.UNDELIVERED) {
+        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations).run() == TurnsEnd.UNDELIVERED) {
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
         }
         val answer = state.answer
@@ -3104,7 +3128,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
 with:
 
 ```kotlin
-        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, restarter, renewed).run() == TurnsEnd.UNDELIVERED) {
+        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations, restarter, renewed).run() == TurnsEnd.UNDELIVERED) {
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
         }
         // A restart or a step between turns that failed left the rest of the turns unrun, as a failed setup does.
@@ -3312,7 +3336,7 @@ Expected: PASS.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₂ + 6 (313).
+Expected: BUILD SUCCESSFUL; `eval` E₂ + 6 (320).
 
 - [ ] **Step 8: Commit**
 
@@ -3328,14 +3352,14 @@ git commit -m "feat(eval): turns spoken in the follow-up window, typed, steering
 Design 14.4 of sub-project 7: the run answers a round's "Continue?" at a limit as its task says (yes, or no answer, so that the round pauses at Kestrel's own wait), "Continue the goal?" with the owner's "no" of decision P1, and the switch to a past conversation with yes only when its task says so; "Delete the history?" always gets "no". `Answers.reply` gives a `Reply`: words to answer with, or a question left open on purpose, which covers look_closer's "Which number should I use?" too. To tell the switch and "Delete the history?" from a yes-or-no question of the agent's, `agent-state`'s `question=` names the conversation's own questions; `asking=` keeps its words, as plan 7D promised. The record's kinds become `limit`, `switch`, `delete-history` and `continue-goal`, so a run line that the run's own "no" to "Continue the goal?" ended names `asked=continue-goal`.
 
 **Files:**
-- Modify: `tools/eval/src/main/kotlin/dev/kestrel/eval/task/Task.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/TurnRunner.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/AskedRecord.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`
+- Modify: `tools/eval/src/main/kotlin/dev/kestrel/eval/task/Task.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/TurnRunner.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/AskedRecord.kt`, `tools/eval/src/main/kotlin/dev/kestrel/eval/run/RunState.kt`, `app/src/debug/kotlin/dev/kestrel/app/debug/AgentHookAnswers.kt`
 - Test: modify `tools/eval/src/test/kotlin/dev/kestrel/eval/task/TaskModelTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/run/AskedRecordTest.kt`, `tools/eval/src/test/kotlin/dev/kestrel/eval/run/RunnerTest.kt`, `app/src/testDebug/kotlin/dev/kestrel/app/debug/AgentHookAnswersTest.kt`
 
 **Interfaces:**
 - Consumes: Task 3's `TurnRunner`; plan 7D's `AgentHookAnswers.question(kind: QuestionKind)` and `QuestionKind` (`YES_NO`, `CONFIRM`, `FREE`, `PICK`, `SCREENSHOT`, `CONTINUE_GOAL`, `LIMIT`, `SWITCH`, `DELETE_HISTORY`); plan 7B's `ConversationOwner.asking`, which every question of the conversation's sets.
-- Produces: `enum class AtLimit { YES, SILENCE }`; `sealed interface Reply` with `Reply.Say(words)` and `Reply.LeaveOpen`; `Answers(confirm, decline, atLimits: List<AtLimit> = emptyList(), switches: Boolean = false)` with `fun reply(state: HookAnswer, earlier: List<Asked> = emptyList()): Reply?`; `Answers.kind` naming `limit`, `switch`, `delete-history` and `continue-goal`; `AskedRecord.before`, the questions before the open one, which a limit's answer counts; the constants `Answers.LIMIT`, `SWITCH`, `DELETE_HISTORY` and `CONTINUE_GOAL`; `agent-state`'s `question=continue-goal|switch|delete-history`.
+- Produces: `enum class AtLimit { YES, SILENCE }`; `sealed interface Reply` with `Reply.Say(words)` and `Reply.LeaveOpen`; `Answers(confirm, decline, atLimits: List<AtLimit> = emptyList(), switches: Boolean = false)` with `fun reply(state: HookAnswer, earlier: List<Asked> = emptyList()): Reply?`; `Answers.kind` naming `limit`, `switch`, `delete-history` and `continue-goal`; `AskedRecord.before`, the questions before the open one, and `RunState.before(command)`, those of the run's earlier commands with them, which a limit's answer counts; the constants `Answers.LIMIT`, `SWITCH`, `DELETE_HISTORY` and `CONTINUE_GOAL`; `agent-state`'s `question=continue-goal|switch|delete-history`.
 
-Counts: `:tools:eval` E₃ + 2 (`TaskModelTest` + 1, `AskedRecordTest` + 1), where E₃ = E₂ + 6 (313): 315 at the end of the task; `:app` JVM A₀ (`AgentHookAnswersTest` changes a test's assertions): 863.
+Counts: `:tools:eval` E₃ + 2 (`TaskModelTest` + 1, `AskedRecordTest` + 1), where E₃ = E₂ + 6 (320): 322 at the end of the task; `:app` JVM A₀ (`AgentHookAnswersTest` changes a test's assertions): 863.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3737,7 +3761,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/TurnRunner.kt`, replace:
         val reply = task.answers.reply(asked)
         if (reply == null) {
             // "Which number should I use?" stays unanswered (the owner's decision P1).
-            if (kind == Answers.PICK_NUMBER) state.record.keepOpen()
+            if (kind == Answers.PICK_NUMBER) command.record.keepOpen()
             return false
         }
 ```
@@ -3746,18 +3770,18 @@ with:
 
 ```kotlin
     /**
-     * Answers the open question of agent-state's [asked], of [kind], as the task says, after the questions before it
-     * ([AskedRecord.before]), on the card over the app or the text channel's card after a typed input; true when an answer
+     * Answers the open question of agent-state's [asked], of [kind], as the task says, after the run's questions before it
+     * ([RunState.before]), on the card over the app or the text channel's card after a typed input; true when an answer
      * went to Kestrel, after which the run keeps quiet for a moment. A lost or refused answer is not sent again: the next
      * poll answers only if the same question is still open.
      */
     private fun answer(command: SentCommand, asked: HookAnswer, kind: String): Boolean {
-        val reply = when (val chosen = task.answers.reply(asked, state.record.before)) {
+        val reply = when (val chosen = task.answers.reply(asked, state.before(command))) {
             null -> return false
             // "Which number should I use?" (the owner's decision P1) and a limit's "Continue?" that the task leaves to
             // Kestrel's own wait (design 7.4 of sub-project 7) stay unanswered.
             Reply.LeaveOpen -> {
-                state.record.keepOpen()
+                command.record.keepOpen()
                 return false
             }
             is Reply.Say -> chosen.words
@@ -3777,6 +3801,26 @@ with:
 import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.ProcessSetup
 import dev.kestrel.eval.task.Reply
+```
+
+In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/RunState.kt`, replace:
+
+```kotlin
+    /**
+     * The kinds of the questions and hand-overs whose answer by the run ended the command whose end the run's answer
+```
+
+with:
+
+```kotlin
+    /**
+     * The run's questions before the one that [command] has open now: those of its earlier commands and the command's own
+     * before it ([AskedRecord.before]), so that a limit's answer counts the run's limits before it (plan 7G).
+     */
+    fun before(command: SentCommand): List<Asked> = commands.takeWhile { it !== command }.flatMap { it.record.asked } + command.record.before
+
+    /**
+     * The kinds of the questions and hand-overs whose answer by the run ended the command whose end the run's answer
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/AskedRecord.kt`, replace:
@@ -3844,7 +3888,7 @@ Expected: PASS.
 - [ ] **Step 5: Run the modules' tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₃ + 2 (315); `app` A₀ (863).
+Expected: BUILD SUCCESSFUL; `tools\eval` E₃ + 2 (322); `app` A₀ (863).
 
 - [ ] **Step 6: Commit**
 
@@ -4036,7 +4080,7 @@ git commit -m "test(agent): a scripted reply may require or refuse texts in its 
 
 ### Task 6: The conversations' steps and checks
 
-The steps and checks of design 15.3's tasks, each a small typed class beside the existing ones: the end of the quiet time (`EndQuietTime`, with plan 7G's `ConversationGuard`), the owner's touch (`OwnerTouch`, plan 7E's `goal-control do=touch`, because a tap on the screen would press what lies under it), a round's smallest limits with their restore (`SmallestLimits`), the run's test SMS deleted between turns (`DeleteTestSms`), and the checks of the conversation (`ConversationIs`), of the goal's phase (`PhaseIs`) and checklist (`ChecklistIs`), of the restore at the process's start (`RestoredAs`), of the run's answers in their order (`AskedInOrder`) and of one alarm only (`OnlyAlarmAt`). A run's record of its answers moves into its `RunScope`, so that a check can read it.
+The steps and checks of design 15.3's tasks, each a small typed class beside the existing ones: the end of the quiet time (`EndQuietTime`, with plan 7G's `ConversationGuard`), the owner's touch (`OwnerTouch`, plan 7E's `goal-control do=touch`, because a tap on the screen would press what lies under it), a round's smallest limits with their restore (`SmallestLimits`), the run's test SMS deleted between turns (`DeleteTestSms`), and the checks of the conversation (`ConversationIs`), of the goal's phase (`PhaseIs`) and checklist (`ChecklistIs`), of the restore at the process's start (`RestoredAs`), of the run's answers in their order (`AskedInOrder`) and of one alarm only (`OnlyAlarmAt`). A run's commands, each with its record of questions and answers, move into its `RunScope`, so that a check can read their answers in order.
 
 **Files:**
 - Create: `tools/eval/src/main/kotlin/dev/kestrel/eval/task/ConversationSteps.kt`
@@ -4045,9 +4089,9 @@ The steps and checks of design 15.3's tasks, each a small typed class beside the
 
 **Interfaces:**
 - Consumes: Task 1's `ConversationGuard` and `Hooks.conversationState`/`conversationControl`; Task 3's `TurnAction`; plan 7D's `conversation-control do=limits` (answers `limits=<r>/<m>/<c> was=<r>/<m>/<c>`) and `do=restore-check` (answers `restored=nothing|open|closed|goal-held|goal-ended|pending`), `agent-state`'s `phase=` and `checklist=<done>/<total>|none`; plan 7E's `goal-control do=touch` (answers `touch=sent`).
-- Produces: `data object EndQuietTime : TurnAction`, `data object OwnerTouch : TurnAction`, `data object DeleteTestSms : TurnAction`, `data object SmallestLimits : Setup`; the checks `ConversationIs(open: Boolean? = null, continued: Boolean? = null, commands: Int? = null, goal: String? = null)`, `PhaseIs(phase: String)`, `ChecklistIs(done: Int, total: Int)`, `RestoredAs(restored: String)`, `AskedInOrder(entries: List<String>)`, `OnlyAlarmAt(hour: Int, minute: Int)`; `RunScope.asked: AskedRecord`; `RunState(putBack, record)`; `Hooks.restoreCheck()` and `Hooks.goalControl(action: String)`.
+- Produces: `data object EndQuietTime : TurnAction`, `data object OwnerTouch : TurnAction`, `data object DeleteTestSms : TurnAction`, `data object SmallestLimits : Setup`; the checks `ConversationIs(open: Boolean? = null, continued: Boolean? = null, commands: Int? = null, goal: String? = null)`, `PhaseIs(phase: String)`, `ChecklistIs(done: Int, total: Int)`, `RestoredAs(restored: String)`, `AskedInOrder(entries: List<String>)`, `OnlyAlarmAt(hour: Int, minute: Int)`; `RunScope.commands: MutableList<SentCommand>` and `RunScope.asked: List<Asked>`; `RunState(putBack, commands)`; `Hooks.restoreCheck()` and `Hooks.goalControl(action: String)`.
 
-Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2 (315): 321 at the end of the task.
+Counts: `:tools:eval` E₄ + 6 (`ConversationStepsTest` 6), where E₄ = E₃ + 2 (322): 328 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4057,6 +4101,7 @@ Create `tools/eval/src/test/kotlin/dev/kestrel/eval/task/ConversationStepsTest.k
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.run.SentCommand
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -4132,14 +4177,18 @@ class ConversationStepsTest {
 
     @Test
     fun askedInOrderFindsItsEntriesInTheirOrderAmongTheRunsAnswers() {
-        scope.asked.saw("confirm/typing_screen_text")
-        scope.asked.answered("confirm")
-        scope.asked.saw("limit")
-        scope.asked.answered("yes")
-        scope.asked.saw("confirm/sending")
-        scope.asked.answered("confirm")
-        scope.asked.saw("limit")
-        scope.asked.keepOpen()
+        // Two commands, each with its own record: the second's entries follow the first's.
+        val first = SentCommand("t1", null)
+        first.record.saw("confirm/typing_screen_text")
+        first.record.answered("confirm")
+        first.record.saw("limit")
+        first.record.answered("yes")
+        val second = SentCommand("t2", null)
+        second.record.saw("confirm/sending")
+        second.record.answered("confirm")
+        second.record.saw("limit")
+        second.record.keepOpen()
+        scope.commands += listOf(first, second)
         fun passes(vararg entries: String) = AskedInOrder(entries.toList()).passes(scope, HookAnswer.EMPTY)
 
         assertTrue(passes("confirm/typing_screen_text:confirm", "confirm/sending:confirm"))
@@ -4193,14 +4242,22 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/task/Steps.kt`, replace:
 ```kotlin
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.Console
+import dev.kestrel.eval.run.Restores
+import java.net.URLEncoder
+import java.nio.file.Path
 ```
 
 with:
 
 ```kotlin
 import dev.kestrel.eval.hook.Hooks
-import dev.kestrel.eval.run.AskedRecord
+import dev.kestrel.eval.run.Asked
 import dev.kestrel.eval.run.Console
+import dev.kestrel.eval.run.Restores
+import dev.kestrel.eval.run.SentCommand
+import java.net.URLEncoder
+import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/task/Steps.kt`, replace:
@@ -4217,8 +4274,14 @@ with:
     /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
     val putBack: PutBack = PutBack()
 
-    /** The run's record of Kestrel's questions and of its answers (T1), which [AskedInOrder] reads. */
-    val asked: AskedRecord = AskedRecord()
+    /**
+     * The commands that the run gave Kestrel, in their order, each with its questions and the run's answers (T1); the
+     * shutdown hook's thread reads them too.
+     */
+    val commands: MutableList<SentCommand> = CopyOnWriteArrayList()
+
+    /** The run's answers and the questions that it left open on purpose, command by command, which [AskedInOrder] reads. */
+    val asked: List<Asked> get() = commands.flatMap { it.record.asked }
 }
 ```
 
@@ -4234,25 +4297,37 @@ with:
 ```kotlin
 /**
  * What a run met; the shutdown hook's restores read it too, for the commands' stop, the credits and the detail line.
- * [record] holds the commands' questions as the run met them, and its answers that reached Kestrel (T1); it is the run
- * scope's, so that a check reads it too.
+ * [commands] are the commands that the run gave Kestrel, in their order, each with its questions and the run's answers
+ * (T1); they are the run scope's, so that a check reads their answers too.
  */
-internal class RunState(private val putBack: PutBack, val record: AskedRecord) {
+internal class RunState(private val putBack: PutBack, val commands: MutableList<SentCommand>) {
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/RunState.kt`, replace:
 
 ```kotlin
-    // The commands' questions as the run met them, and its answers that reached Kestrel (T1).
-    val record = AskedRecord()
-
-    // agent-task's answer with the run's marker, read once after the end for the newest command, for the detail line.
+    /** The commands that the run gave Kestrel, in their order; the shutdown hook's thread reads them too. */
+    val commands: MutableList<SentCommand> = CopyOnWriteArrayList()
+    var timedOut = false
 ```
 
 with:
 
 ```kotlin
-    // agent-task's answer with the run's marker, read once after the end for the newest command, for the detail line.
+    var timedOut = false
+```
+
+In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/RunState.kt`, replace:
+
+```kotlin
+import dev.kestrel.eval.task.TurnChannel
+import java.util.concurrent.CopyOnWriteArrayList
+```
+
+with:
+
+```kotlin
+import dev.kestrel.eval.task.TurnChannel
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
@@ -4264,7 +4339,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
 with:
 
 ```kotlin
-        val state = RunState(scope.putBack, scope.asked)
+        val state = RunState(scope.putBack, scope.commands)
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/hook/Hooks.kt`, replace:
@@ -4401,7 +4476,7 @@ data class AskedInOrder(val entries: List<String>) : Check {
     override val needsTask: Boolean get() = true
 
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
-        val asked = scope.asked.asked.map { it.toString() }.iterator()
+        val asked = scope.asked.map { it.toString() }.iterator()
         return entries.all { entry -> asked.asSequence().any { it == entry } }
     }
 }
@@ -4468,7 +4543,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₄ + 6 (321).
+Expected: BUILD SUCCESSFUL; `eval` E₄ + 6 (328).
 
 - [ ] **Step 7: Commit**
 
@@ -4492,7 +4567,7 @@ Design 15.3's tasks that a live model can run: `followup-settings` (a follow-up 
 - Consumes: Tasks 3, 4 and 6 (turns, `Answers.switches`, `EndQuietTime`, `DeleteTestSms`, `ConversationIs`, `AskedInOrder`); Task 5's `requires` and `refuses`; the existing steps `HomeScreen`, `ForceStop`, `UiNightMode`, `SettingsValue`, `TestName`, `KeptPermissions`, `FreeNumber`, `DeviceContact`, `FixturePresses`, `SelfChatAliases.TELEGRAM`, `FixtureScreen`, `EmuSms` and the checks `NightMode`, `SettingsIs`, `ReplyHasDigits`, `Confirmed`, `Recipient`, `SelfChat`, `Presses`, `ScreenHas`, `ReplyHas`; plan 7C's `search_conversations`; plan 7B's continued note "This conversation was continued on …" and records header "This conversation so far:".
 - Produces: `TaskKind.CONVERSATION`; `Task.runsLive: Boolean = true`, false for a task that runs only with the scripted model, which `run --live` skips with that reason; `object ConversationTasks` with `FOLLOWUP_SETTINGS`, `QUIET_TIME_ENDS`, `TYPED_CONTACT_THEN_MESSAGE`, `STAND_IN_TYPED_CONTACT_THEN_MESSAGE`, `SEARCH_PAST`, `CONTINUE_PAST` and `ALL`; `Catalogue.multiTurn(kind: DeviceKind, live: Boolean): List<Task>`; `SettingsTasks.START`, `NIGHT` and `TWO_MINUTES` (internal).
 
-Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 (321): 326 at the end of the task.
+Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 (328): 333 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4619,7 +4694,8 @@ class ConversationTasksTest {
         )
         assertEquals("what was the code word in it?", switching.adb.hookCalls("VOICE").last()["text"])
         assertEquals(listOf("yes"), past.answers)
-        assertEquals(2, past.commands)
+        // The run's last restore closed the continued conversation, which held both commands.
+        assertEquals(2, past.closed)
         switching.assertPutBack()
     }
 }
@@ -5123,7 +5199,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (326).
+Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (333).
 
 - [ ] **Step 7: Commit**
 
@@ -5147,7 +5223,7 @@ The tasks of design 15.3 that need a goal still acting at a known step, or repli
 - Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and its guard against a crash loop (main spec 8.5); Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
 - Produces: `ConversationTasks.STEER_WHILE_RUNNING`, `LIMIT_CONTINUE`, `INTERRUPT_CONTINUE`, `RESUME_AFTER_DEATH`; the debug hook `voice-restore` (`restoredAgo=<seconds>|none guard=<seconds>`), `VoiceRestore.answer(restoredAt, now)` and the top-level `internal const val CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, which leaves `Listening`'s private companion without a change of its value or its use; `Hooks.voiceRestore()`, which the preflight reads, refusing a build from before this plan; `data object CrashGuardPassed : Setup` with `MARGIN_SECONDS`, `WAIT_SECONDS` and `left(answer, margin)`; `DryRun.checks: List<Check>`, which only a run without a model checks; `data class EndedOtherThan(end: String) : Check`; `InjectionFixtures.FIXTURES` (the 14) and `InjectionFixtures.RECORDS` (`records-injection`), with `ALL = FIXTURES + RECORDS`.
 
-Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (326): 332 at the end of the task; `:app` JVM A₀ + 1 (`VoiceRestoreTest` 1): 864 with A₀ = 863.
+Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (333): 339 at the end of the task; `:app` JVM A₀ + 1 (`VoiceRestoreTest` 1): 864 with A₀ = 863.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6019,7 +6095,7 @@ Expected: PASS both times.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (332); `app` A₀ + 1 (864).
+Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (339); `app` A₀ + 1 (864).
 
 - [ ] **Step 8: Commit**
 
@@ -6042,7 +6118,7 @@ The main spec keeps the multi-turn tasks out of the 29 tasks' rates and records 
 - Consumes: Task 7's `Catalogue.multiTurn`.
 - Produces: `Command.Suite.multiTurn` (`suite --multi-turn`); `SeriesCommand(…, multiTurn: Boolean = false, pick)` with `SeriesCommand.SUITE` and `SeriesCommand.INJECTION`; `Report.multiTurn: Boolean = false`; `Baseline.multiTurn: Map<String, BaselinePart>` and `Baseline.withMultiTurn(device, part)`; `SuiteCall.multiTurn: Boolean = false`; `Resume.open(…, recordBaseline, multiTurn: Boolean = false)`, which refuses a folder whose `multiTurn` differs.
 
-Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (332): 336 at the end of the task.
+Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (339): 343 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6682,7 +6758,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (336).
+Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (343).
 
 - [ ] **Step 7: Commit**
 
@@ -7592,7 +7668,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7G": the builds' commit on
 
 ## Counts at the end of plan 7G
 
-- `:tools:eval`: E₀ + 38 (Task 1 + 6, Task 2 + 3, Task 3 + 6, Task 4 + 2, Task 6 + 6, Task 7 + 5, Task 8 + 6, Task 9 + 4): 336 with E₀ = 298 at `c6d38be6`.
+- `:tools:eval`: E₀ + 45 (Task 1 + 6 and its review fixes + 5, Task 2 + 3 and its review fixes + 2, Task 3 + 6, Task 4 + 2, Task 6 + 6, Task 7 + 5, Task 8 + 6, Task 9 + 4): 343 with E₀ = 298 at `c6d38be6`.
 - `:core:agent`: G₀ + 2 (Task 5): 317 with G₀ = 315.
 - `:app` JVM: A₀ + 1 (Task 8's `VoiceRestoreTest`; Task 4 changes a test's assertions): 864 with A₀ = 863, measured after plan 7F with every fix of its whole-plan review, whose tests count in plan 7F.
 - Pester in PowerShell 7: P₀ + 3 (Task 10): 557 with P₀ = 554 (Windows PowerShell 5.1: 556 passed and 1 skipped).
