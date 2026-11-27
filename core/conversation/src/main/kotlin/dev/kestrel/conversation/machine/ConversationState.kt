@@ -51,7 +51,14 @@ data class ConversationState(
     val timers: Timers = Timers(),
     val settings: ConversationSettings = ConversationSettings(),
     val safetyTestMode: Boolean = true,
-)
+) {
+    /**
+     * The owner's inputs whose work is still to come: the commands and Kestrel's own requests that wait ([waiting]), and the
+     * answer to "Continue the goal?" ([continueAnswer]), whose round resumes on the later `ContinueAnswered`. A later step
+     * starts each one's work, as the `StartGoal`, `ResumeGoal`, `RunLocal` or `SwitchTo` that names it, or drops it.
+     */
+    val pendingInputs: List<OwnerInput> get() = waiting + listOfNotNull(continueAnswer)
+}
 
 /** The open conversation's id: a goal and its records belong to the open conversation only. */
 internal val ConversationState.openId: ConversationId get() = checkNotNull(id) { "No conversation is open" }

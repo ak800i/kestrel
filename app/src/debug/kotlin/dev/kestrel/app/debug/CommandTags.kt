@@ -29,7 +29,8 @@ import java.util.IdentityHashMap
  * identity, so that no other transcript with the same words takes its tag. A tagged transcript that gave the conversation
  * an input gets the hook's options (`model`, `live`, `marker`) on that input ([input]), and [onConversationStep] then
  * notes the number of the conversation's command that the input started: a goal's round, Kestrel's own request or a
- * switch, also when it waited for an earlier one. It also counts the words of the newest goal ([lastGoalWords]) for the
+ * switch, also when its work came in a later step: it waited for an earlier one, or it answered "Continue the goal?" and
+ * the goal's round resumed for it. It also counts the words of the newest goal ([lastGoalWords]) for the
  * A71 session. It keeps the newest [MAX_TAGS] tags and [MAX_COMMANDS] commands, in memory only, and holds tags, numbers,
  * kinds, options and hashes, never words.
  */
@@ -279,9 +280,11 @@ internal class CommandTags {
     }
 
     /**
-     * Notes which of the conversation's commands an input of a tagged transcript started (design 14.4 of sub-project 7). An
-     * input that started nothing and does not wait for the goal's end, as steering, an answer or a stop, did nothing that
-     * the tag counts.
+     * Notes which of the conversation's commands an input of a tagged transcript started (design 14.4 of sub-project 7),
+     * in its own step or in a later one while its work was still to come ([ConversationState.pendingInputs]): a command
+     * that waited for the goal's end, or the answer to "Continue the goal?", whose round resumes two steps later. An
+     * input whose work neither started nor is still to come, as steering, a stop or an answer to another question, did
+     * nothing that the tag counts, and neither did a held input once the machine dropped it.
      */
     @Synchronized
     fun onConversationStep(event: ConversationEvent, state: ConversationState, step: MachineStep) {
@@ -323,10 +326,17 @@ internal class CommandTags {
             val tag = input?.let { inputs.remove(it.id) } ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }
-        val input = given ?: return
-        if (input.id in started || step.state.waiting.any { it.id == input.id }) return
-        val tag = inputs.remove(input.id) ?: return
-        tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
+        // The one rule for work still to come (plan 7G): an input keeps its tag while the machine holds its work for a later
+        // step (ConversationState.pendingInputs), and the tag goes to that work's command when it starts, above. The step's
+        // own input and the inputs that were pending before it are settled here: one whose work neither started nor is
+        // still to come, as steering, a stop, an answer to another question or a held input that the step dropped, did
+        // nothing that the tag counts.
+        val pending = step.state.pendingInputs.mapTo(HashSet()) { it.id }
+        for (settled in listOfNotNull(given) + state.pendingInputs) {
+            if (settled.id in started || settled.id in pending) continue
+            val tag = inputs.remove(settled.id) ?: continue
+            tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
+        }
     }
 
     // The command whose work [effect] starts, with the input that it starts for; null for an effect that starts none.

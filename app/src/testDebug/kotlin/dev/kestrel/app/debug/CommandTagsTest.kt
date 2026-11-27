@@ -1,6 +1,7 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.goal.ResumeCause
 import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.goal.GoalAction
 import dev.kestrel.app.goal.GoalButtons
@@ -17,6 +18,7 @@ import dev.kestrel.app.orchestrator.VoiceView
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.conversation.channel.DialogueEvent
+import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
@@ -27,6 +29,7 @@ import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
@@ -172,6 +175,67 @@ class CommandTagsTest {
         tags.onConversationStep(ConversationEvent.Input(input), ConversationState(), MachineStep(ConversationState()))
 
         assertEquals(CommandTags.Role.NONE, tags.tagged("go-on")?.role)
+    }
+
+    // Plan 7G's resume-after-death task: after a restart, "Kestrel, continue" answers the open "Continue the goal?" with
+    // yes. The machine holds that answer (continueAnswer) and resumes the goal's round for it two steps later, so its tag
+    // waits for the round's command.
+    private fun continueAnswered(tag: String): Pair<OwnerInput, ConversationState> {
+        step(Event.Toggle)
+        step(Event.ConversationChanged(VoiceView(open = true, goal = GoalPhase.INTERRUPTED, asking = QuestionKind.CONTINUE_GOAL, question = 1)))
+        val heard = Event.Heard("Kestrel, continue.", named = true)
+        assertTrue(tags.register(tag, heard, VoiceHooks.readOf(heard.text, named = true)))
+        val input = inputsOf(step(heard)).single()
+        assertEquals(InputIntent.Answer(ChannelAnswer.Yes, question = 1), input.intent)
+
+        val asking = ConversationState(asksContinue = true)
+        val held = asking.copy(continueAnswer = input)
+        tags.onConversationStep(ConversationEvent.Input(input), asking, MachineStep(held, listOf(ConversationEffect.AnswerQuestion(1, ChannelAnswer.Yes))))
+        assertEquals(CommandTags.Role.CONVERSE, tags.tagged(tag)?.role)
+        tags.onConversationStep(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes)), held, MachineStep(held))
+        assertEquals(CommandTags.Role.CONVERSE, tags.tagged(tag)?.role)
+        return input to held
+    }
+
+    @Test
+    fun theAnswerThatResumesAHeldGoalGetsTheResumedRoundsCommand() {
+        val (input, held) = continueAnswered("continue")
+
+        val resumed = ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, input)
+        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), held, MachineStep(ConversationState(command = 1), listOf(resumed)))
+
+        assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "continue", task = 1), tags.tagged("continue"))
+    }
+
+    @Test
+    fun aHeldInputsTagCountsNothingOnceTheMachineDropsItsWork() {
+        // The goal had ended meanwhile, so the answer resumes nothing.
+        val (_, held) = continueAnswered("late")
+        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), held, MachineStep(ConversationState()))
+        assertEquals(CommandTags.Role.NONE, tags.tagged("late")?.role)
+
+        // A command that waited for the goal's end, which "stop" then dropped with the goal.
+        val waited = checkNotNull(tags.typed("waited", OwnerInput(13, InputChannel.TEXT, InputIntent.Command("and the times"), 0), "command"))
+        val waiting = ConversationState(waiting = listOf(waited))
+        tags.onConversationStep(ConversationEvent.Input(waited), ConversationState(), MachineStep(waiting))
+        assertEquals(CommandTags.Role.CONVERSE, tags.tagged("waited")?.role)
+        tags.onConversationStep(ConversationEvent.Input(OwnerInput(14, InputChannel.TEXT, InputIntent.Stop, 0)), waiting, MachineStep(ConversationState()))
+        assertEquals(CommandTags.Role.NONE, tags.tagged("waited")?.role)
+    }
+
+    @Test
+    fun anAnswerToAnotherQuestionStillStartsNothing() {
+        step(Event.Toggle)
+        step(Event.ConversationChanged(VoiceView(open = true, goal = GoalPhase.ASKING, asking = QuestionKind.CONFIRM, question = 2)))
+        val heard = Event.Heard("Yes.", named = false)
+        assertTrue(tags.register("yes", heard, VoiceHooks.readOf(heard.text, named = false)))
+        val input = inputsOf(step(heard)).single()
+        assertEquals(InputIntent.Answer(ChannelAnswer.Yes, question = 2), input.intent)
+
+        val asking = ConversationState(command = 1)
+        tags.onConversationStep(ConversationEvent.Input(input), asking, MachineStep(asking, listOf(ConversationEffect.AnswerQuestion(2, ChannelAnswer.Yes))))
+
+        assertEquals(CommandTags.Role.NONE, tags.tagged("yes")?.role)
     }
 
     // Design 14.4 of sub-project 7: conversation-type tags a typed input, which carries the tag's options.
