@@ -6,6 +6,7 @@ import dev.kestrel.eval.report.Report
 import dev.kestrel.eval.report.SuiteCall
 import dev.kestrel.eval.run.EvalAccess
 import dev.kestrel.eval.run.EvalPermissions
+import dev.kestrel.eval.task.StandIns
 import dev.kestrel.eval.task.ZenDump
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -150,6 +151,19 @@ class CommandsTest {
         assertEquals(3.0, report.tasks[0].meanSteps, 0.0)
         assertEquals(4, report.totals.runs)
         assertFalse(report.live)
+    }
+
+    @Test
+    fun aMultiTurnSuiteRunsIntoAFolderOfItsOwnWhoseReportSaysSo() {
+        assertEquals(Command.Suite("emulator-5554", multiTurn = true), Arguments.parse(listOf("suite", "--device", "emulator-5554", "--multi-turn")))
+        val series = SeriesCommand(fake.environment, SeriesCommand.SUITE, live = false, runs = 1, multiTurn = true) { listOf(StandIns.HOTSPOT) }
+
+        assertEquals(Cli.EXIT_PASSED, series.execute("emulator-5554") {})
+
+        val folder = fake.root.resolve("eval-results").resolve("kestrel-api37-multi-turn-20261123-120000")
+        assertEquals(folder, series.folder)
+        assertTrue(Report.read(folder.resolve("report.json")).multiTurn)
+        assertTrue(Files.readAllLines(folder.resolve("runs.txt")).first().contains("\tsuite\tstand-in-hotspot on kestrel-api37, 1 runs"))
     }
 
     @Test

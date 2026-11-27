@@ -275,4 +275,21 @@ class ResumeTest {
         assertTrue(fake.output.contains("eval\\baseline.json now holds the part of kestrel-api37"))
         assertTrue(fake.output.contains("The egress check of the recorded runs failed (connections=0 failures=0 unknown=1); see egress.txt in $folder."))
     }
+
+    // Plan 7G: a multi-turn folder goes on only with --multi-turn, and a suite's folder only without it.
+    @Test
+    fun aResumeIsRefusedWhenItsMultiTurnDiffersFromTheFolders() {
+        val multiTurn = folder(
+            "kestrel-api37-multi-turn-20261124-100000",
+            SuiteCall("kestrel-api37", live = false, runs = 2, tasks = listOf("followup-settings"), commit = commit, multiTurn = true),
+            "2026-11-24 10:00:00\tsuite\tfollowup-settings on kestrel-api37, 2 runs", line("followup-settings", 1),
+        )
+        val before = runLines().size
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--resume", multiTurn.toString()))
+        assertTrue(fake.output.contains("give --multi-turn as that call did"))
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--multi-turn", "--resume", halfDone().toString()))
+        assertTrue(fake.output.contains("give no --multi-turn"))
+        assertEquals(before, runLines().size)
+    }
 }

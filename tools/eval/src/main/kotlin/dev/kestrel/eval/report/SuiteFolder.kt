@@ -26,6 +26,8 @@ data class SuiteCall(
      * one's state when the live series began (plan 6B-basefix); null without a model.
      */
     val permissions: Map<String, Boolean>? = null,
+    /** Whether the folder holds the multi-turn tasks (`suite --multi-turn`, plan 7G); false for a folder from before them. */
+    val multiTurn: Boolean = false,
 ) {
     fun write(folder: Path) {
         Files.createDirectories(folder)

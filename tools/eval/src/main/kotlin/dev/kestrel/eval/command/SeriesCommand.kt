@@ -25,8 +25,10 @@ import java.time.format.DateTimeFormatter
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A series of tasks into a new results folder `eval-results\<device>[-injection]-<yyyyMMdd-HHmmss>\` (design D6 and D10
- * of sub-project 6): `suite.json` with what the series was asked for ([SuiteCall]) and the Kestrel build that ran it
+ * A series of tasks into a new results folder `eval-results\<device>[-injection|-multi-turn]-<yyyyMMdd-HHmmss>\` (design
+ * D6 and D10 of sub-project 6; `-multi-turn` for the multi-turn tasks of plan 7G, whose report says so and whose
+ * `runs.txt` has a suite's step, `suite`): `suite.json` with what the series was asked for ([SuiteCall]) and the Kestrel
+ * build that ran it
  * ([KestrelBuild]), `runs.txt` in `Add-SessionResult`'s form, with the line `<task> on <the A71|kestrel-api37>, <n> runs`
  * before each task's run lines, which a71-agent.ps1's `Get-SittingRuns` and `ConvertFrom-TaskLine` read, `details.txt`
  * with each run's detail line ([dev.kestrel.eval.run.RunDetail]), one for each run line, and `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures and records-injection on
@@ -49,6 +51,8 @@ class SeriesCommand(
     private val recordBaseline: Boolean = false,
     /** Whether PCAPdroid captures the series (design D11): always for a live series, and for a dry run with `--egress`. */
     private val egress: Boolean = live,
+    /** Whether the series runs the multi-turn tasks (plan 7G), into a folder of their own. */
+    private val multiTurn: Boolean = false,
     private val pick: (DeviceKind) -> List<Task>,
 ) {
     /** The report and the folder of the series, once it ended. */
@@ -66,7 +70,7 @@ class SeriesCommand(
         val kind = session.device.kind
         val suite = pick(kind)
         val head = commit()
-        val resumed = resume?.let { Resume.open(environment, it, kind, live, suite, head, recordBaseline) }
+        val resumed = resume?.let { Resume.open(environment, it, kind, live, suite, head, recordBaseline, multiTurn) }
         val recorded = resumed?.folder?.call?.kestrel
         if (recorded != null && !recorded.sameInstall(KestrelBuild.installed(session.device))) {
             throw Refusal("Kestrel was installed again since the folder's runs, which ran its ${recorded.label}; run a new suite.")
@@ -77,7 +81,12 @@ class SeriesCommand(
         val runs = resumed?.call?.runs ?: runs
         fun count(task: Task) = task.runsAtMost?.let { minOf(it, runs) } ?: runs
         val stamp = environment.clock.now().format(STAMP)
-        val folder: Path = resumed?.folder?.path ?: environment.root.resolve("eval-results").resolve("${kind.folder}${if (name == "injection") "-injection" else ""}-$stamp")
+        val suffix = when {
+            name == INJECTION -> "-injection"
+            multiTurn -> "-multi-turn"
+            else -> ""
+        }
+        val folder: Path = resumed?.folder?.path ?: environment.root.resolve("eval-results").resolve("${kind.folder}$suffix-$stamp")
         val resumption = resumed?.folder?.resume(tasks.map { it.name to count(it) }, resumed.sameCommit)
         if (resumption != null && resumption.runs.isNotEmpty()) resumed.folder.rewrite(resumption.kept, stamp)
         if (resumed != null && !resumed.sameCommit && resumption!!.kept.isNotEmpty()) {
@@ -86,7 +95,8 @@ class SeriesCommand(
                     "results still hold before --record-baseline, or remove their blocks from runs.txt and resume again.",
             )
         }
-        val call = (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head)).copy(kestrel = recorded ?: KestrelBuild.installed(session.device))
+        val call = (resumed?.call ?: SuiteCall(kind.folder, live, runs, tasks.map { it.name }, head, multiTurn = multiTurn))
+            .copy(kestrel = recorded ?: KestrelBuild.installed(session.device))
         call.write(folder)
         val runsFile = ResultsFile(folder.resolve(SuiteFolder.RUNS), environment.clock)
         val detailsFile = ResultsFile(folder.resolve(SuiteFolder.DETAILS), environment.clock)
@@ -113,7 +123,7 @@ class SeriesCommand(
             egressResult?.let {
                 session.console.line("egress=${if (it.passed) "pass" else "fail"} connections=${it.connections} failures=${it.failures}${if (it.unknown > 0) " unknown=${it.unknown}" else ""}")
             }
-            val report = Report.of(kind, head, live, start, environment.clock.now(), all).copy(egress = egressResult)
+            val report = Report.of(kind, head, live, start, environment.clock.now(), all).copy(egress = egressResult, multiTurn = multiTurn)
             report.write(folder.resolve("report.json"))
             this.report = report
             this.folder = folder
@@ -199,16 +209,23 @@ class SeriesCommand(
     companion object {
         private val STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
-        fun suite(environment: Environment, command: Command.Suite): SeriesCommand =
-            SeriesCommand(environment, "suite", command.live, command.runs, command.resume, command.recordBaseline, command.live || command.egress) { kind ->
-                val suite = Catalogue.suite(kind, command.live)
-                val unknown = command.tasks.orEmpty().filter { name -> suite.none { it.name == name } }
-                if (unknown.isNotEmpty()) throw Refusal("The suite of ${kind.label} has no task ${unknown.joinToString()}.")
-                command.tasks?.let { names -> suite.filter { it.name in names } } ?: suite
+        /** The step of a suite's lines in `runs.txt`, which the readers of a suite's folder look for, also a multi-turn one's. */
+        const val SUITE = "suite"
+        const val INJECTION = "injection"
+
+        fun suite(environment: Environment, command: Command.Suite): SeriesCommand = SeriesCommand(
+            environment, SUITE, command.live, command.runs, command.resume, command.recordBaseline, command.live || command.egress, command.multiTurn,
+        ) { kind ->
+            val suite = if (command.multiTurn) Catalogue.multiTurn(kind, command.live) else Catalogue.suite(kind, command.live)
+            val unknown = command.tasks.orEmpty().filter { name -> suite.none { it.name == name } }
+            if (unknown.isNotEmpty()) {
+                throw Refusal("The ${if (command.multiTurn) "multi-turn suite" else "suite"} of ${kind.label} has no task ${unknown.joinToString()}.")
             }
+            command.tasks?.let { names -> suite.filter { it.name in names } } ?: suite
+        }
 
         fun injection(environment: Environment, command: Command.Injection): SeriesCommand =
-            SeriesCommand(environment, "injection", command.live, command.runs ?: if (command.live) 5 else 1) { kind ->
+            SeriesCommand(environment, INJECTION, command.live, command.runs ?: if (command.live) 5 else 1) { kind ->
                 if (kind != DeviceKind.EMULATOR) throw Refusal("The injection fixtures run on kestrel-api37 only.")
                 InjectionFixtures.ALL
             }

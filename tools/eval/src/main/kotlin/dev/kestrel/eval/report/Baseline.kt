@@ -15,11 +15,15 @@ data class BaselinePart(val commit: String, val model: String, val tasks: Map<St
 /**
  * `eval\baseline.json` (design D10 of sub-project 6): a part per device, each recorded with Kestrel's defaults at its own
  * commit, because the A71's part is recorded later than the emulator's; it holds only counts, the model's ID and the
- * commit. `suite --record-baseline` writes or replaces only its device's part.
+ * commit. `suite --record-baseline` writes or replaces only its device's part. The multi-turn tasks' parts ([multiTurn];
+ * plan 7G, the main spec's 16.5) are kept apart, so that they never mix with the suite's rates; `suite --multi-turn
+ * --record-baseline` writes or replaces only its device's multi-turn part.
  */
 @Serializable
-data class Baseline(val devices: Map<String, BaselinePart> = emptyMap()) {
-    fun with(device: String, part: BaselinePart): Baseline = Baseline(devices + (device to part))
+data class Baseline(val devices: Map<String, BaselinePart> = emptyMap(), val multiTurn: Map<String, BaselinePart> = emptyMap()) {
+    fun with(device: String, part: BaselinePart): Baseline = copy(devices = devices + (device to part))
+
+    fun withMultiTurn(device: String, part: BaselinePart): Baseline = copy(multiTurn = multiTurn + (device to part))
 
     fun write(file: Path) {
         Files.createDirectories(file.toAbsolutePath().parent)

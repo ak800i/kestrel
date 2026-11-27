@@ -47,4 +47,21 @@ class BaselineTest {
         assertTrue(Baseline.problem(report.copy(model = "none"))!!.contains("model"))
         assertThrows(IllegalArgumentException::class.java) { Baseline.part(report.copy(model = "none")) }
     }
+
+    // The main spec's 16.5: the multi-turn tasks' parts are kept apart from the suite's, and neither replaces the other.
+    @Test
+    fun theMultiTurnPartsAreKeptApartFromTheSuitesParts() {
+        val file = Files.createTempDirectory("eval-baseline").resolve("baseline.json")
+        val suite = BaselinePart("a".repeat(40), "m1", mapOf("timer" to BaselineTask(2, 3)))
+        val multiTurn = BaselinePart("c".repeat(40), "m1", mapOf("followup-settings" to BaselineTask(3, 3)))
+
+        Baseline().with("a71", suite).write(file)
+        Baseline.read(file).withMultiTurn("a71", multiTurn).write(file)
+        Baseline.read(file).with("kestrel-api37", suite).write(file)
+
+        val read = Baseline.read(file)
+        assertEquals(mapOf("a71" to suite, "kestrel-api37" to suite), read.devices)
+        assertEquals(mapOf("a71" to multiTurn), read.multiTurn)
+        assertEquals(setOf("devices", "multiTurn"), Json.parseToJsonElement(Files.readString(file)).jsonObject.keys)
+    }
 }

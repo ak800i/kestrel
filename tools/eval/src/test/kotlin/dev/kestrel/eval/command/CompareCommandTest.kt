@@ -157,4 +157,23 @@ class CompareCommandTest {
         assertEquals(Command.Suite("emulator-5554", live = true, compare = true), Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "3", "--compare")))
         assertEquals(Command.Suite("emulator-5554", live = true, runs = 1), Arguments.parse(listOf("suite", "--device", "emulator-5554", "--live", "--runs", "1")))
     }
+
+    @Test
+    fun aMultiTurnFolderIsJudgedAgainstItsDevicesMultiTurnPartOnly() {
+        val multiTurn = listOf("followup-settings", "quiet-time-ends")
+        val file = fake.root.resolve("eval").resolve("baseline.json")
+        baseline("kestrel-api37")
+        val folder = folder("kestrel-api37-multi-turn-20261124-100000", report("kestrel-api37", "m1", tasks = multiTurn).copy(multiTurn = true))
+
+        assertEquals(Cli.EXIT_REFUSED, fake.cli("compare", folder))
+        assertTrue(
+            fake.output.contains(
+                "eval\\baseline.json has no multi-turn part for kestrel-api37; record one with scripts\\eval.ps1 suite --device <serial> --live --multi-turn --record-baseline.",
+            ),
+        )
+
+        Baseline.read(file).withMultiTurn("kestrel-api37", BaselinePart("b".repeat(40), "m1", multiTurn.associateWith { BaselineTask(3, 3) })).write(file)
+        assertEquals(Cli.EXIT_PASSED, fake.cli("compare", folder))
+        assertTrue(fake.output.contains("compare=kestrel-api37-multi-turn result=pass rate=100.0 baseline=100.0 tasks=2"))
+    }
 }

@@ -78,7 +78,8 @@ class Cli(private val environment: Environment) {
     }
 
     /**
-     * A suite, then with `--record-baseline` its device's part of `eval\baseline.json` (design D10 of sub-project 6), and
+     * A suite, then with `--record-baseline` its device's part of `eval\baseline.json` (design D10 of sub-project 6; with
+     * `--multi-turn`, its multi-turn part, plan 7G), and
      * with `--compare` the judgement of its folder, with the re-runs on the same device. With `--resume`, the part is of
      * the whole folder, and only once each of its tasks' runs has a line.
      */
@@ -92,8 +93,11 @@ class Cli(private val environment: Environment) {
                 throw Refusal("eval\\baseline.json was not changed: ${series.incomplete.joinToString()} still have runs without a line in ${series.folder}; resume it again.")
             }
             Baseline.problem(report)?.let { throw Refusal("eval\\baseline.json was not changed: $it. The suite's results are still in ${series.folder}.") }
-            Baseline.read(file).with(report.device, Baseline.part(report)).write(file)
-            environment.out.println("eval\\baseline.json now holds the part of ${report.device}, commit ${report.commit}, model ${report.model}.")
+            val baseline = Baseline.read(file)
+            val part = Baseline.part(report)
+            (if (command.multiTurn) baseline.withMultiTurn(report.device, part) else baseline.with(report.device, part)).write(file)
+            val name = if (command.multiTurn) "multi-turn part" else "part"
+            environment.out.println("eval\\baseline.json now holds the $name of ${report.device}, commit ${report.commit}, model ${report.model}.")
             report.egress?.takeIf { !it.passed }?.let {
                 environment.out.println("The egress check of the recorded runs failed (connections=${it.connections} failures=${it.failures} unknown=${it.unknown}); see egress.txt in ${series.folder}.")
             }
@@ -119,7 +123,7 @@ class Cli(private val environment: Environment) {
         val USAGE: String = """
             |Usage: scripts\eval.ps1 <command> [options]
             |  run --device <serial> --task <name> [--runs n] [--live] [--model id] [--name first-name] [--dry-run] [--results file]
-            |  suite --device <serial> [--live] [--runs n] [--tasks a,b] [--compare] [--record-baseline] [--egress] [--resume <results folder>]
+            |  suite --device <serial> [--live] [--runs n] [--tasks a,b] [--multi-turn] [--compare] [--record-baseline] [--egress] [--resume <results folder>]
             |  compare <results folder>... [--rerun --device <serial>]
             |  injection --device <serial> [--live] [--runs n]
             |  rehearse --device <serial> [--tasks a,b]

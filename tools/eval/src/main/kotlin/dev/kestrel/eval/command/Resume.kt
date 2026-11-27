@@ -11,7 +11,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The folder that `suite --resume` continues, once it passed the checks: the same device and the same `--live` as this
- * call, one model in its runs, and a commit that differs from HEAD at most in paths that change no run of Kestrel
+ * call, the same `--multi-turn` (plan 7G), one model in its runs, and a commit that differs from HEAD at most in paths
+ * that change no run of Kestrel
  * ([KESTREL_PATHS]), because the baseline names one commit for the whole folder, HEAD's. [call] is the folder's suite with
  * HEAD's commit; a folder from before `suite.json` counts as the whole suite of its device, with the commit that git's
  * reflog shows for HEAD at the time of its name. [commit] is the commit that the folder's runs ran at; when it is not
@@ -28,7 +29,10 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, v
          */
         val KESTREL_PATHS = listOf("--", ".", ":(exclude,attr:kestrel-neutral)")
 
-        fun open(environment: Environment, path: String, kind: DeviceKind, live: Boolean, suite: List<Task>, head: String, recordBaseline: Boolean): Resume {
+        fun open(
+            environment: Environment, path: String, kind: DeviceKind, live: Boolean, suite: List<Task>, head: String, recordBaseline: Boolean,
+            multiTurn: Boolean = false,
+        ): Resume {
             val folder = SuiteFolder.read(environment.root.resolve(path))
             val device = folder.call?.device ?: folder.device
                 ?: throw Refusal("${folder.path} is no suite's results folder: its name is not <device>-<yyyyMMdd-HHmmss>, and it has no suite.json.")
@@ -38,6 +42,12 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, v
             }
             val ran = folder.call?.live ?: folder.live ?: live
             if (ran != live) throw Refusal("${folder.path}'s suite ran ${with(ran)}, and this call runs ${with(live)}; give the same.")
+            // A folder from before suite.json holds a suite, never the multi-turn tasks.
+            if ((folder.call?.multiTurn ?: false) != multiTurn) {
+                throw Refusal(
+                    if (multiTurn) "${folder.path} holds a suite, not the multi-turn tasks; give no --multi-turn." else "${folder.path} holds the multi-turn tasks; give --multi-turn as that call did.",
+                )
+            }
             if (folder.models.size > 1) throw Refusal("${folder.path}'s runs name more than one model (${folder.models.sorted().joinToString()}); run a new suite.")
             val commit = folder.call?.commit ?: folder.stamp?.let { Reflog.headAt(git(environment, Reflog.COMMAND) ?: "", it) }
                 ?: throw Refusal("${folder.path} names no commit, and git's reflog has no HEAD from its time; run a new suite.")
@@ -51,7 +61,7 @@ class Resume private constructor(val folder: SuiteFolder, val call: SuiteCall, v
                     )
                 }
             }
-            val call = SuiteCall(device, live, folder.call?.runs ?: folder.runs ?: Comparison.RUNS, folder.call?.tasks ?: suite.map { it.name }, head)
+            val call = SuiteCall(device, live, folder.call?.runs ?: folder.runs ?: Comparison.RUNS, folder.call?.tasks ?: suite.map { it.name }, head, multiTurn = multiTurn)
             if (recordBaseline && (call.runs != Comparison.RUNS || call.tasks.toSet() != suite.map { it.name }.toSet())) {
                 throw Refusal("--record-baseline records a suite of every task with ${Comparison.RUNS} runs, and ${folder.path} holds ${call.tasks.size} tasks with ${call.runs} runs.")
             }

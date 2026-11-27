@@ -45,7 +45,8 @@ data class EgressSummary(val passed: Boolean, val connections: Int, val failures
 
 /**
  * `report.json` of a results folder (design D10 of sub-project 6), the per-task fields of plan 6A; plan 6B adds the
- * egress check's result and plan 6C datamarking's state.
+ * egress check's result and plan 6C datamarking's state; plan 7G adds whether its tasks are the multi-turn tasks
+ * ([multiTurn]), which `compare` judges against the baseline's multi-turn part.
  */
 @Serializable
 data class Report(
@@ -58,6 +59,7 @@ data class Report(
     val tasks: List<TaskReport>,
     val totals: Totals,
     val egress: EgressSummary? = null,
+    val multiTurn: Boolean = false,
 ) {
     fun write(file: Path) {
         Files.createDirectories(file.toAbsolutePath().parent)
