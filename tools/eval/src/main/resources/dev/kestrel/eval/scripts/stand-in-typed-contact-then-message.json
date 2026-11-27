@@ -1,0 +1,9 @@
+[
+  {"tool": "find_contact", "arguments": {"name": "{name} Test"}},
+  {"tool": "finish", "arguments": {"summary": "{name} Test's number is {number}.", "evidence": [{"step": 1}]}},
+  {"tool": "tap", "target": {"label": "Saved Messages · Bread and milk"}, "arguments": {"reason": "open the chat", "category": "reading"}, "requires": ["This conversation so far:", "{name} Test"]},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the chat open"}},
+  {"tool": "type_text", "target": {"label": "Message"}, "arguments": {"text": "{number}", "reason": "write the number", "category": "typing_screen_text"}},
+  {"tool": "tap", "target": {"label": "Send", "class": "Button"}, "arguments": {"reason": "send it", "category": "sending"}},
+  {"tool": "finish", "arguments": {"summary": "I sent {name} Test's number to your Saved Messages.", "evidence": [{"target": {"label": "{number}"}}]}}
+]

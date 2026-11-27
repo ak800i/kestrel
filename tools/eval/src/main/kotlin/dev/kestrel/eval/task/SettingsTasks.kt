@@ -11,8 +11,9 @@ import kotlin.time.Duration.Companion.seconds
  */
 object SettingsTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
-    private val START = listOf(HomeScreen, ForceStop(Hotspots.SETTINGS))
-    private val NIGHT = Shell("cmd uimode night yes", "cmd uimode night no")
+    internal val START = listOf(HomeScreen, ForceStop(Hotspots.SETTINGS))
+    internal val NIGHT = Shell("cmd uimode night yes", "cmd uimode night no")
+    internal val TWO_MINUTES = Shell("settings put system screen_off_timeout 120000", "settings put system screen_off_timeout 30000")
     private val DIM = Shell("settings put system screen_brightness 9", "settings put system screen_brightness 200")
 
     private fun task(name: String, request: String, setup: List<Setup>, check: List<Check>, rehearsal: Rehearsal, guards: List<Setup> = emptyList()) = Task(
@@ -39,7 +40,7 @@ object SettingsTasks {
         "screen-timeout", "set the screen timeout to 2 minutes",
         listOf(SettingsValue("system", "screen_off_timeout", "30000")),
         listOf(SettingsIs("system", "screen_off_timeout", Wanted.Equals("120000"))),
-        Rehearsal.Steps(listOf(Shell("settings put system screen_off_timeout 120000", "settings put system screen_off_timeout 30000"))),
+        Rehearsal.Steps(listOf(TWO_MINUTES)),
     )
 
     val DND = task(

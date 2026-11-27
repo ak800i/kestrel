@@ -95,6 +95,18 @@ class CommandsTest {
     }
 
     @Test
+    fun aTaskThatRunsOnlyWithTheScriptedModelIsSkippedWithLiveBeforeThePreflight() {
+        assertEquals(Cli.EXIT_PASSED, fake.cli("run", "--device", "emulator-5554", "--task", "stand-in-typed-contact-then-message", "--runs", "1", "--live"))
+
+        assertEquals(
+            listOf("task=stand-in-typed-contact-then-message run=1 result=skipped end=none check=skipped steps=0 workMs=0 credits=0.00 model=none in=0 out=0 cacheRead=0 cacheWrite=0 reason=untestable"),
+            runLines(),
+        )
+        assertTrue(fake.output.contains("Task stand-in-typed-contact-then-message runs only with the scripted model, so it does not run with --live."))
+        assertTrue(fake.adb.hookCalls("VOICE").isEmpty())
+    }
+
+    @Test
     fun aFailedRunEndsWithExitCode1() {
         fake.adb.hook("SCREEN_HAS") { "count=0 app=dev.kestrel.testapp" }
 
@@ -329,7 +341,7 @@ class CommandsTest {
     @Test
     fun listShowsEveryTaskOrThoseOfADevice() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("list"))
-        assertEquals(49, fake.output.lines().count { it.startsWith("task=") })
+        assertEquals(55, fake.output.lines().count { it.startsWith("task=") })
         assertTrue(fake.output.contains("task=hotspot kind=d3 devices=kestrel-api37 dryRun=stand-in-hotspot.json_on_stand-in-hotspot rehearsal=setup-only"))
 
         fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
@@ -341,7 +353,10 @@ class CommandsTest {
             "calendar-add", "calendar-read", "contact-add", "contact-number", "contact-delete-declined", "email-self", "notification-read",
             "firefox-url", "youtube-search", "maps-place", "photo-latest",
         )
-        assertEquals(suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email"), names)
+        assertEquals(
+            suite + listOf("telegram-late", "waze-home", "firefox-wiki", "telegram-photos", "read-email", "followup-settings", "quiet-time-ends", "typed-contact-then-message"),
+            names,
+        )
     }
 
     @Test

@@ -4,8 +4,12 @@ import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.run.Asked
 
-/** The kinds of task: the six tasks of D3 of sub-project 5, the suite's other tasks (plan 6B), their stand-ins and the injection fixtures. */
-enum class TaskKind { D3, SUITE, STAND_IN, INJECTION }
+/**
+ * The kinds of task: the six tasks of D3 of sub-project 5, the suite's other tasks (plan 6B), their stand-ins, the
+ * injection fixtures, and the multi-turn tasks of sub-project 7 with their stand-ins (plan 7G), which run apart from the
+ * suite.
+ */
+enum class TaskKind { D3, SUITE, STAND_IN, INJECTION, CONVERSATION }
 
 /**
  * A task's run without a model: the scripted model's replies in [script], a resource of `dev/kestrel/eval/scripts`, run
@@ -176,6 +180,12 @@ data class Task(
     val gap: String? = null,
     /** Whether the task needs `:testapp` on the device, as notification-read does for its notification. */
     val testApp: Boolean = false,
+    /**
+     * Whether the task runs with a model (plan 7G); false for a task whose turns need a goal that still acts at a known step,
+     * or replies of a known cost, which only the scripted model gives, and for the stand-in of a task that runs live, whose
+     * checks come from its script.
+     */
+    val runsLive: Boolean = true,
 ) {
     init {
         Turns.problem(turns)?.let { throw IllegalArgumentException("Task $name: $it.") }

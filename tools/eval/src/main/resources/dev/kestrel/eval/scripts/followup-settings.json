@@ -1,0 +1,13 @@
+[
+  {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the dark theme"}},
+  {"tool": "tap", "target": {"label": "Dark theme"}, "arguments": {"reason": "turn the dark theme on", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the page show the dark theme"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "finish", "arguments": {"summary": "The dark theme is on.", "evidence": [{"target": {"label": "Dark theme"}, "checked": true}]}},
+  {"tool": "open_settings", "arguments": {"page": "display", "reason": "find the screen timeout"}, "requires": ["This conversation so far:"]},
+  {"tool": "tap", "target": {"contains": "Screen timeout"}, "arguments": {"reason": "open the screen timeout", "category": "ordinary_settings"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the choices show"}},
+  {"tool": "wait", "arguments": {"seconds": 2, "reason": "let the page settle"}},
+  {"tool": "tap", "target": {"label": "2 minutes"}, "arguments": {"reason": "choose 2 minutes", "category": "ordinary_settings"}},
+  {"tool": "finish", "arguments": {"summary": "The screen turns off after 2 minutes.", "evidence": [{"target": {"label": "2 minutes"}, "checked": true}]}}
+]

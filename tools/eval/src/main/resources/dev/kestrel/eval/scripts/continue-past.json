@@ -1,0 +1,6 @@
+[
+  {"tool": "list_sms", "arguments": {"limit": 1}},
+  {"tool": "finish", "arguments": {"summary": "Your latest SMS says: Kestrel test: the code word is {marker}.", "evidence": [{"step": 1}]}},
+  {"tool": "list_sms", "arguments": {"limit": 1}, "requires": ["This conversation was continued on", "{marker}"]},
+  {"tool": "finish", "arguments": {"summary": "The code word in it is {marker}.", "evidence": [{"step": 1}]}}
+]

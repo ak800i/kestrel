@@ -26,10 +26,14 @@ class TasksTest {
         for (task in Catalogue.ALL) {
             val dryRun = task.dryRun ?: continue
             val values = RunValues("maple heron", "Ana", "6:45", "+1 202 555 0160", "pera.test@example.com", "2026-11-24", "6", "45")
-            assertTrue(task.name, Json.parseToJsonElement(values.fill(ScriptInstaller.resource(dryRun.script), json = true)).jsonArray.isNotEmpty())
+            for (script in listOf(dryRun.script) + dryRun.restarts) {
+                assertTrue(task.name, Json.parseToJsonElement(values.fill(ScriptInstaller.resource(script), json = true)).jsonArray.isNotEmpty())
+            }
+            // A multi-turn task's stand-in is a multi-turn task too, so that it runs apart from the suite as well.
+            val standInKind = if (task.kind == TaskKind.CONVERSATION) TaskKind.CONVERSATION else TaskKind.STAND_IN
             dryRun.standIn?.let { standIn ->
                 val executed = Catalogue.find(standIn)
-                assertTrue(task.name, executed != null && executed.kind == TaskKind.STAND_IN && executed.dryRun?.standIn == null)
+                assertTrue(task.name, executed != null && executed.kind == standInKind && executed.dryRun?.standIn == null)
             }
         }
     }
@@ -58,6 +62,21 @@ class TasksTest {
             assertEquals(name, setOf("typing_screen_text", "sending"), Catalogue.find(name)!!.answers.confirm)
         }
         assertTrue(Catalogue.ALL.none { "calls" in it.answers.confirm })
+    }
+
+    // Design 15.3 of sub-project 7 and the main spec's 16.5: the multi-turn tasks run apart from the suite, live on the
+    // devices that they name, and with their scripts on kestrel-api37 only.
+    @Test
+    fun theMultiTurnTasksRunApartFromTheSuite() {
+        assertTrue(listOf(true, false).all { live -> Catalogue.suite(DeviceKind.EMULATOR, live).none { it.kind == TaskKind.CONVERSATION } })
+        assertEquals(listOf("followup-settings", "quiet-time-ends", "search-past", "continue-past"), Catalogue.multiTurn(DeviceKind.EMULATOR, live = true).map { it.name })
+        assertEquals(listOf("followup-settings", "quiet-time-ends", "typed-contact-then-message"), Catalogue.multiTurn(DeviceKind.A71, live = true).map { it.name })
+        assertEquals(
+            listOf("followup-settings", "quiet-time-ends", "stand-in-typed-contact-then-message", "search-past", "continue-past"),
+            Catalogue.multiTurn(DeviceKind.EMULATOR, live = false).map { it.name },
+        )
+        assertEquals(emptyList<String>(), Catalogue.multiTurn(DeviceKind.A71, live = false).map { it.name })
+        assertEquals(listOf("stand-in-typed-contact-then-message"), Catalogue.ALL.filter { !it.runsLive }.map { it.name })
     }
 
     @Test
