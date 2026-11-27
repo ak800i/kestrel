@@ -149,6 +149,16 @@ The second re-check (`recheck-7g-fix34.md`: I1, M2, M3) and Task 5's review (`ta
 - **The counts.** `:tools:eval` + 4 (`ConversationGuardTest` + 2, `RunnerTest` + 2; `ConversationStepsTest`'s end of the quiet time now checks `expire-typed`): Task 7 starts at 338, each later count is 4 higher, and `:tools:eval` ends at 353 (E₀ + 55). `:core:agent` + 1 (`ScriptedModelTest`): 318.
 - **The changed steps.** The N3, waits and re-check I1 bullets above; Task 5's counts (318); Task 7's counts, its count step and `ConversationTasksTest`'s assertion of `quiet-time-ends`' controls (`expire-typed`); Task 8's Interfaces line, counts, count step and `CommandsTest`'s fake of `records-injection`'s conversation (`typed=yes`, `expire-typed`); Task 9's counts and count step; "Counts at the end of plan 7G". No step of Tasks 7 to 13 replaces a text of `ConversationGuard.kt`, `TurnRunner.kt`, `Deadline.kt` or `ScriptedModel.kt`.
 
+
+## Amendment: Task 6's review (M1, M2, M3)
+
+Task 6's review (`task-7g-6-review.md`: M1, M2, M3) is fixed in `ef34cea7`. Every task from Task 7 on starts from there, and the plan checker runs clean from Task 7 against it. Each change, and why:
+
+- **`SmallestLimits`' restore follows Kestrel's own reads (M1, M2).** The step reads the limits that Kestrel stores before its change, through a new debug control, `conversation-control --es do limits-check` (`limits=<r>/<m>/<c>`, a pure read; `:app`'s `ConversationHooks`). The restore, pushed before that read, reads them again: while they are those of before, nothing changed (a Ctrl+C before the change, or a refused change), and it does nothing and asks no one for work by hand; else it sets them back and reads them back to confirm. Both sets go through the retried path (`Hooks.conversationLimits(limits = null)`), because a set of given limits does the same when it is sent twice; `Hooks.conversationControl(action)` keeps only the controls that act once, and `Hooks.limitsCheck()` is the read. `FakeConversation` keeps the limits that it stores (`limits`, `OWNERS_LIMITS`, `SMALLEST`) and answers `limits-check`. Task 10's `hook.ps1` learns `-Do limits-check`, and Task 11's design row names it.
+- **`OnlyAlarmAt` counts the run's alarms by their entries (M3).** Its rule, in its KDoc: the run's alarms are the clock app's alarm clocks in `dumpsys alarm` (which lists only enabled ones), each by its own entry, that were not in `ClockFree`'s list before the run (`ClockFree.BEFORE`, the ids that `ClockFree` records); the check passes when exactly one is, at the time asked. A second alarm of the run's at the same minute fails it; an alarm that the goal set and then turned off is not enabled and is no alarm of the run's. `dumpsys alarm`'s entries keep their hash (`AlarmEntry.id`), and an alarm that the dump lists in several places is one entry.
+- **The counts.** `:tools:eval` + 3 (`ConversationStepsTest` + 3: the limits' Ctrl+C case, their refused change with a lost answer that the retry recovers, and the second alarm at the same minute; the earlier limits test and the alarm test are rewritten): Task 7 starts at 341, each later count is 3 higher, and `:tools:eval` ends at 356 (E₀ + 58). `:app` JVM keeps its counts; `:app`'s device test `ConversationHooksTest` checks `limits-check` in its assertions (505 stays).
+- **The changed steps.** Task 7's counts and its count step; Task 8's counts, its count step and Step 3's replacement of `ConversationSteps.kt`'s imports (which now hold `Hooks` and `AtomicReference`); Task 9's counts and its count step; Task 10's Interfaces, Pester case, `ValidateSet`, check and help; Task 11's design row of `conversation-control`; "Counts at the end of plan 7G".
+
 ## File structure
 
 | File | Responsibility |
@@ -4614,7 +4624,7 @@ Design 15.3's tasks that a live model can run: `followup-settings` (a follow-up 
 - Consumes: Tasks 3, 4 and 6 (turns, `Answers.switches`, `EndQuietTime`, `DeleteTestSms`, `ConversationIs`, `AskedInOrder`); Task 5's `requires` and `refuses`; the existing steps `HomeScreen`, `ForceStop`, `UiNightMode`, `SettingsValue`, `TestName`, `KeptPermissions`, `FreeNumber`, `DeviceContact`, `FixturePresses`, `SelfChatAliases.TELEGRAM`, `FixtureScreen`, `EmuSms` and the checks `NightMode`, `SettingsIs`, `ReplyHasDigits`, `Confirmed`, `Recipient`, `SelfChat`, `Presses`, `ScreenHas`, `ReplyHas`; plan 7C's `search_conversations`; plan 7B's continued note "This conversation was continued on …" and records header "This conversation so far:".
 - Produces: `TaskKind.CONVERSATION`; `Task.runsLive: Boolean = true`, false for a task that runs only with the scripted model, which `run --live` skips with that reason; `object ConversationTasks` with `FOLLOWUP_SETTINGS`, `QUIET_TIME_ENDS`, `TYPED_CONTACT_THEN_MESSAGE`, `STAND_IN_TYPED_CONTACT_THEN_MESSAGE`, `SEARCH_PAST`, `CONTINUE_PAST` and `ALL`; `Catalogue.multiTurn(kind: DeviceKind, live: Boolean): List<Task>`; `SettingsTasks.START`, `NIGHT` and `TWO_MINUTES` (internal).
 
-Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 + 4 (338, with the second re-check's fixes): 343 at the end of the task.
+Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 + 7 (341, with the second re-check's fixes and Task 6's review fixes): 346 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5246,7 +5256,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (343).
+Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (346).
 
 - [ ] **Step 7: Commit**
 
@@ -5270,7 +5280,7 @@ The tasks of design 15.3 that need a goal still acting at a known step, or repli
 - Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and its guard against a crash loop (main spec 8.5); Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
 - Produces: `ConversationTasks.STEER_WHILE_RUNNING`, `LIMIT_CONTINUE`, `INTERRUPT_CONTINUE`, `RESUME_AFTER_DEATH`; the debug hook `voice-restore` (`restoredAgo=<seconds>|none guard=<seconds>`), `VoiceRestore.answer(restoredAt, now)` and the top-level `internal const val CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, which leaves `Listening`'s private companion without a change of its value or its use; `Hooks.voiceRestore()`, which the preflight reads, refusing a build from before this plan; `data object CrashGuardPassed : Setup` with `MARGIN` and `WAIT` (Durations) and `left(answer: HookAnswer, margin: Duration): Duration?`; `DryRun.checks: List<Check>`, which only a run without a model checks; `data class EndedOtherThan(end: String) : Check`; `InjectionFixtures.FIXTURES` (the 14) and `InjectionFixtures.RECORDS` (`records-injection`), with `ALL = FIXTURES + RECORDS`.
 
-Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (343): 349 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 865 with A₁ = A₀ + 1 = 864 (Task 1's review fix adds `HookConversationsTest` + 1).
+Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (346): 352 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 865 with A₁ = A₀ + 1 = 864 (Task 1's review fix adds `HookConversationsTest` + 1).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5698,7 +5708,9 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/task/ConversationSteps.kt`, repl
 
 ```kotlin
 import dev.kestrel.eval.hook.HookLost
+import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.ConversationGuard
+import java.util.concurrent.atomic.AtomicReference
 ```
 
 with:
@@ -5706,8 +5718,10 @@ with:
 ```kotlin
 import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.hook.HookLost
+import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.ConversationGuard
 import dev.kestrel.eval.run.quietly
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 ```
@@ -6145,7 +6159,7 @@ Expected: PASS both times.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (349); `app` A₁ + 1 (865).
+Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (352); `app` A₁ + 1 (865).
 
 - [ ] **Step 8: Commit**
 
@@ -6168,7 +6182,7 @@ The main spec keeps the multi-turn tasks out of the 29 tasks' rates and records 
 - Consumes: Task 7's `Catalogue.multiTurn`.
 - Produces: `Command.Suite.multiTurn` (`suite --multi-turn`); `SeriesCommand(…, multiTurn: Boolean = false, pick)` with `SeriesCommand.SUITE` and `SeriesCommand.INJECTION`; `Report.multiTurn: Boolean = false`; `Baseline.multiTurn: Map<String, BaselinePart>` and `Baseline.withMultiTurn(device, part)`; `SuiteCall.multiTurn: Boolean = false`; `Resume.open(…, recordBaseline, multiTurn: Boolean = false)`, which refuses a folder whose `multiTurn` differs.
 
-Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (349): 353 at the end of the task.
+Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (352): 356 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6808,7 +6822,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (353).
+Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (356).
 
 - [ ] **Step 7: Commit**
 
@@ -6828,7 +6842,7 @@ git commit -m "feat(eval): suite --multi-turn runs the multi-turn tasks apart, w
 - Test: modify `scripts/tests/Hook.Tests.ps1`
 
 **Interfaces:**
-- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`) and this plan's `typed=yes|no` and `--es do expire-typed` (`expire=sent`, or `expire=not-typed` with no change; the fix of the re-check's I1, `e496e947`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`; the three options need `--es tag`, or the hook types nothing: `add --es tag for <options>: typed words without a tag take no options`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a; `answered tag=<tag> asking=<kind> channel=card`, or `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen); plan 7F's `VOICE_TASK --ez handover true` (Task 14, Step 8a; its answer then holds `first hands the owner a payment step`); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus|refuse|refuse-off|send-later`, `--es action stop|open|continue|cancel` with `tap` and `send-later`; the hook's error for another `do` is `add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later`).
+- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`) and this plan's `typed=yes|no` and `--es do expire-typed` (`expire=sent`, or `expire=not-typed` with no change; the fix of the re-check's I1, `e496e947`) and `--es do limits-check` (`limits=<r>/<m>/<c>`, a pure read; the fix of Task 6's review, `ef34cea7`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`; the three options need `--es tag`, or the hook types nothing: `add --es tag for <options>: typed words without a tag take no options`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a; `answered tag=<tag> asking=<kind> channel=card`, or `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen); plan 7F's `VOICE_TASK --ez handover true` (Task 14, Step 8a; its answer then holds `first hands the owner a payment step`); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus|refuse|refuse-off|send-later`, `--es action stop|open|continue|cancel` with `tap` and `send-later`; the hook's error for another `do` is `add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later`).
 - Produces: the commands `conversation-state`, `conversation-control`, `conversation-type`, `goal-service-state`, `goal-control` and `voice-restore`, and the parameters `-Do`, `-Limits`, `-Channel` and `-HandOver`.
 
 Counts: Pester P₀ + 3 (`Hook.Tests.ps1` + 3): 557 in PowerShell 7 with P₀ = 554.
@@ -6906,7 +6920,7 @@ with:
         $doElsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device state -Do new 2>&1) -join "`n"
         $channelElsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Tag t1 -Channel card 2>&1) -join "`n"
 
-        $control | Should -BeLike '*conversation-control needs -Do new, expire, expire-typed, limits, restore-check or delete-typed.*'
+        $control | Should -BeLike '*conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.*'
         $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.*'
         $limits | Should -BeLike '*-Limits needs conversation-control -Do limits.*'
         $action | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
@@ -6962,7 +6976,7 @@ with:
     [string]$Revoke,
     [switch]$Restore,
     # sub-project 7: conversation parameters
-    [ValidateSet('new', 'expire', 'expire-typed', 'limits', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')]
+    [ValidateSet('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')]
     [string]$Do,
     [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
     [ValidateSet('voice', 'text', 'card')][string]$Channel,
@@ -6981,8 +6995,8 @@ with:
 ```powershell
 if ($Has -and -not $Key) { throw 'agent-memory -Has needs -Key; give the key to look for.' }
 # -Do names the action of conversation-control or of goal-control; each takes only its own.
-if ($Command -eq 'conversation-control' -and $Do -notin @('new', 'expire', 'expire-typed', 'limits', 'restore-check', 'delete-typed')) {
-    throw 'conversation-control needs -Do new, expire, expire-typed, limits, restore-check or delete-typed.'
+if ($Command -eq 'conversation-control' -and $Do -notin @('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed')) {
+    throw 'conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.'
 }
 if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')) {
     throw 'goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.'
@@ -7130,14 +7144,15 @@ with:
 #                                           goal=<phase>|none, quiet=off|held|running, quietLeft=<seconds>|none,
 #                                           replyChannel=, testMode= and typed=yes|no, whether it is one of the hooks'
 #                                           own conversations (below)
-#   conversation-control -Do new|expire|expire-typed|limits|restore-check|delete-typed [-Limits replies/minutes/credits]
+#   conversation-control -Do new|expire|expire-typed|limits|limits-check|restore-check|delete-typed [-Limits replies/minutes/credits]
 #                                           new starts a new conversation, as "Kestrel, new conversation" does; expire
 #                                           ends the quiet time at once while its clock runs; expire-typed does so only
 #                                           when the open conversation is one of the hooks' own at that moment, as
 #                                           Kestrel checks it, and else answers expire=not-typed and changes nothing;
 #                                           limits sets a round's limits
 #                                           to -Limits, or without it to the Conversations page's smallest, and answers
-#                                           the stored ones as was=; restore-check answers what the restore at the
+#                                           the stored ones as was=; limits-check answers the stored limits
+#                                           (limits=<r>/<m>/<c>) and changes nothing; restore-check answers what the restore at the
 #                                           process's start found (restored=nothing, open, closed, goal-held, goal-ended
 #                                           or pending); delete-typed deletes the closed conversations that the work of a
 #                                           hook's input opened (any input that a hook gives, tagged or not), also before a
@@ -7505,7 +7520,7 @@ In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
 with:
 
 ```text
-| New `conversation-control --es do new\|expire\|expire-typed\|limits\|restore-check\|delete-typed` |
+| New `conversation-control --es do new\|expire\|expire-typed\|limits\|limits-check\|restore-check\|delete-typed` |
 ```
 
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
@@ -7517,7 +7532,7 @@ reports what `restore()` found after a restart |
 with:
 
 ```text
-reports what `restore()` found after a restart; `delete-typed` deletes the hooks' own conversations, those that the work of a hook's input opened (any input that a hook gives, tagged or not) and that no input of the owner's with his words or his choice reached since, never the owner's (plan 7F); `expire-typed` ends the quiet time only while the open conversation is one of the hooks' own, which the conversation's loop checks at that moment, and otherwise answers `expire=not-typed` and changes nothing, and `conversation-state`'s `typed=` says whether the open conversation is one of them (plan 7G) |
+reports what `restore()` found after a restart; `delete-typed` deletes the hooks' own conversations, those that the work of a hook's input opened (any input that a hook gives, tagged or not) and that no input of the owner's with his words or his choice reached since, never the owner's (plan 7F); `expire-typed` ends the quiet time only while the open conversation is one of the hooks' own, which the conversation's loop checks at that moment, and otherwise answers `expire=not-typed` and changes nothing, and `conversation-state`'s `typed=` says whether the open conversation is one of them; `limits-check` answers a round's stored limits and changes nothing (plan 7G) |
 ```
 
 - [ ] **Step 3: Plan 7D's note on the test-limit seam**
@@ -7722,7 +7737,7 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7G": the builds' commit on
 
 ## Counts at the end of plan 7G
 
-- `:tools:eval`: E₀ + 55 (Task 1 + 6 and its review fixes + 9, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fixes + 5, Task 4 + 2 and its review fix + 1, Task 6 + 6, Task 7 + 5, Task 8 + 6, Task 9 + 4): 353 with E₀ = 298 at `c6d38be6`.
+- `:tools:eval`: E₀ + 58 (Task 1 + 6 and its review fixes + 9, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fixes + 5, Task 4 + 2 and its review fix + 1, Task 6 + 6 and its review fixes + 3, Task 7 + 5, Task 8 + 6, Task 9 + 4): 356 with E₀ = 298 at `c6d38be6`.
 - `:core:agent`: G₀ + 3 (Task 5 + 2 and its review fix + 1): 318 with G₀ = 315.
 - `:app` JVM: A₀ + 2 (Task 1's review fix, `HookConversationsTest` + 1; Task 8's `VoiceRestoreTest`; Task 4 changes a test's assertions): 865 with A₀ = 863, measured after plan 7F with every fix of its whole-plan review, whose tests count in plan 7F.
 - Pester in PowerShell 7: P₀ + 3 (Task 10): 557 with P₀ = 554 (Windows PowerShell 5.1: 556 passed and 1 skipped).
