@@ -1,0 +1,6 @@
+[
+  {"tool": "wait", "arguments": {"seconds": 5, "reason": "let the chat settle"}, "requires": ["You are continuing this goal after a restart of Kestrel.", "c1 [done]", "Look at the screen afresh"]},
+  {"tool": "tap", "target": {"label": "Send", "class": "Button"}, "arguments": {"reason": "send it", "category": "sending"}},
+  {"tool": "update_checklist", "arguments": {"items": [{"id": "c1", "text": "Write the message in Saved Messages", "state": "done"}, {"id": "c2", "text": "Send the message", "state": "done", "step": 2}]}},
+  {"tool": "finish", "arguments": {"summary": "I told {name} that you're 10 minutes late.", "evidence": [{"target": {"label": "I'm 10 minutes late for {marker}"}}]}}
+]

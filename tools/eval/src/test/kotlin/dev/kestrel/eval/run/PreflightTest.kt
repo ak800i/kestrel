@@ -172,4 +172,16 @@ class PreflightTest {
         val changed = assertThrows(AccountsChanged::class.java) { guard.check(before) }
         assertEquals("kestrel-api37's owner data changed during the command: Google accounts 1 before, 0 now. Check the emulator by hand.", changed.message)
     }
+
+    // Plan 7G: a build without voice-restore is from before this plan, and a restart of Kestrel could not wait out its guard
+    // against a crash loop.
+    @Test
+    fun aBuildWithoutVoiceRestoreIsARefusal() {
+        run.adb.hookFails("VOICE_RESTORE", "unknown command 'VOICE_RESTORE'")
+
+        assertEquals(
+            "Kestrel on emulator-5554 answers no voice-restore, as a build from before plan 7G of sub-project 7 does; install the current debug build with scripts\\install.ps1.",
+            assertThrows(Refusal::class.java) { preflight().prepare(needsTestApp = false) }.message,
+        )
+    }
 }

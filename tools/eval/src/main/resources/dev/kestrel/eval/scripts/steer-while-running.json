@@ -1,0 +1,5 @@
+[
+  {"tool": "wait", "arguments": {"seconds": 10, "reason": "let the clock app settle"}},
+  {"tool": "set_alarm", "arguments": {"hour": 7, "minute": 30}, "requires": ["The owner added (spoken)", "make it 7:30 instead"]},
+  {"tool": "finish", "arguments": {"summary": "The alarm is set for 7:30 tomorrow morning.", "evidence": [{"step": 2}]}}
+]

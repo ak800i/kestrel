@@ -1,0 +1,6 @@
+[
+  {"tool": "wait", "arguments": {"seconds": 1, "reason": "let the page settle"}, "credits": 10},
+  {"tool": "wait", "arguments": {"seconds": 1, "reason": "let the page settle"}, "credits": 10},
+  {"tool": "tap", "target": {"label": "Wi-Fi hotspot"}, "arguments": {"reason": "turn the hotspot on", "category": "ordinary_settings"}, "requires": ["You are continuing this goal after a pause at a limit."]},
+  {"tool": "finish", "arguments": {"summary": "The hotspot is on.", "evidence": [{"target": {"label": "Wi-Fi hotspot"}, "checked": true}]}}
+]

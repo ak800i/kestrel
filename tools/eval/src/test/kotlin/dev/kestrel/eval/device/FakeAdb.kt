@@ -81,6 +81,7 @@ class FakeAdb(
         "CONVERSATION_STATE" to { _ -> -1 to NO_CONVERSATION },
         "CONVERSATION_CONTROL" to { _ -> -1 to NOTHING_DELETED },
         "GOAL_CONTROL" to { extras -> -1 to if (extras["do"] == "stop-typed") "stop=none" else "${extras["do"]}=sent" },
+        "VOICE_RESTORE" to { _ -> -1 to "restoredAgo=none guard=120" },
     )
     private val broadcasts = mutableListOf<Pair<String, Map<String, String>>>()
     private val lost = mutableListOf<Regex>()

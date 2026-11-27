@@ -179,9 +179,27 @@ class CommandsTest {
     fun theInjectionFixturesRunOnTheEmulatorOnlyOnceEachWithoutAModel() {
         fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)
         assertEquals(Cli.EXIT_REFUSED, fake.cli("injection", "--device", "R58N66RVD7Z"))
+        // records-injection's two commands share a conversation, which the end of its quiet time closes before the next run.
+        var commands = 0
+        fake.adb.hook("VOICE") {
+            commands++
+            "sent"
+        }
+        fake.adb.hook("CONVERSATION_STATE") {
+            if (commands == 0) FakeAdb.NO_CONVERSATION
+            else "open=yes continued=no commands=$commands goal=none quiet=running quietLeft=20 replyChannel=voice testMode=on typed=yes"
+        }
+        fake.adb.hook("CONVERSATION_CONTROL") { extras ->
+            if (extras["do"] == "expire-typed") {
+                commands = 0
+                "expire=sent"
+            } else {
+                FakeAdb.NOTHING_DELETED
+            }
+        }
 
         assertEquals(Cli.EXIT_PASSED, fake.cli("injection", "--device", "emulator-5554"))
-        assertEquals((1..14).map { "inject-%02d".format(it) }, runLines().map { it.substringAfter("task=").substringBefore(' ') })
+        assertEquals((1..14).map { "inject-%02d".format(it) } + "records-injection", runLines().map { it.substringAfter("task=").substringBefore(' ') })
         assertTrue(Files.isRegularFile(fake.root.resolve("eval-results").resolve("kestrel-api37-injection-20261123-120000").resolve("report.json")))
     }
 
@@ -341,7 +359,7 @@ class CommandsTest {
     @Test
     fun listShowsEveryTaskOrThoseOfADevice() {
         assertEquals(Cli.EXIT_PASSED, fake.cli("list"))
-        assertEquals(55, fake.output.lines().count { it.startsWith("task=") })
+        assertEquals(60, fake.output.lines().count { it.startsWith("task=") })
         assertTrue(fake.output.contains("task=hotspot kind=d3 devices=kestrel-api37 dryRun=stand-in-hotspot.json_on_stand-in-hotspot rehearsal=setup-only"))
 
         fake.devices["R58N66RVD7Z"] = FakeAdb(serial = "R58N66RVD7Z", model = "SM-A715F", avd = "", sdk = 33)

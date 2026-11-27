@@ -1,10 +1,14 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.ConversationGuard
+import dev.kestrel.eval.run.quietly
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The end of the quiet time between two turns (design 6.6 and 9.6 of sub-project 7): the open conversation closes as at
@@ -112,4 +116,50 @@ data class AskedInOrder(val entries: List<String>) : Check {
         val asked = scope.asked.map { it.toString() }.iterator()
         return entries.all { entry -> asked.asSequence().any { it == entry } }
     }
+}
+
+/**
+ * Waits until Kestrel's guard against a crash loop (main spec 8.5) has passed, before a task that ends Kestrel's process
+ * ([Turn.Restart]): a crash less than the guard after a restore turned Kestrel on keeps it off, and the previous run's
+ * restart was such a restore. voice-restore gives the restore's age; the step waits until it is older than the guard and
+ * [MARGIN] more, for at most [WAIT] by the clock, and a lost answer is asked again after [LOOK]. Every read goes through
+ * the wait's [Deadline], so none outlives it, and the step fails as soon as its next pause would not end before it.
+ */
+data object CrashGuardPassed : Setup {
+    val MARGIN = 5.seconds
+    val WAIT = 180.seconds
+    private val LOOK = 10.seconds
+
+    override fun apply(scope: RunScope): SetupResult {
+        val deadline = Deadline(scope.clock, WAIT)
+        while (true) {
+            val answer = quietly { scope.hooks.until(deadline).voiceRestore() }
+            val wait = if (answer == null) LOOK else left(answer, MARGIN) ?: return SetupResult.Ready
+            if (wait >= deadline.left) {
+                throw SetupFailed("Kestrel's guard against a crash loop did not pass within ${WAIT.inWholeSeconds} s (voice-restore: ${answer?.text ?: "no answer"}).")
+            }
+            scope.clock.sleep(wait)
+        }
+    }
+
+    /**
+     * How long Kestrel's guard holds after voice-restore's [answer], with [margin] more, or null when it has passed or no
+     * restore's time is stored.
+     */
+    fun left(answer: HookAnswer, margin: Duration): Duration? {
+        val ago = answer["restoredAgo"]?.takeIf { it != "none" }?.toLong() ?: return null
+        val guard = checkNotNull(answer["guard"]?.toLong()) { "voice-restore gave no guard." }
+        val left = guard.seconds + margin - ago.seconds
+        return left.takeIf { it.isPositive() }
+    }
+}
+
+/**
+ * The run's end is not [end], such as `FAILED_BY_MODEL`, which the scripted model's `fail` call gives when a request
+ * lacks a text that its reply requires (Task 5); a dry run's check ([DryRun.checks]).
+ */
+data class EndedOtherThan(val end: String) : Check {
+    override val needsTask: Boolean get() = true
+
+    override fun passes(scope: RunScope, answer: HookAnswer): Boolean = answer["end"].let { it != null && it != end }
 }

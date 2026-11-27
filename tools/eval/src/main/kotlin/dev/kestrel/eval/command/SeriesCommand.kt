@@ -29,7 +29,7 @@ import kotlin.time.Duration.Companion.seconds
  * of sub-project 6): `suite.json` with what the series was asked for ([SuiteCall]) and the Kestrel build that ran it
  * ([KestrelBuild]), `runs.txt` in `Add-SessionResult`'s form, with the line `<task> on <the A71|kestrel-api37>, <n> runs`
  * before each task's run lines, which a71-agent.ps1's `Get-SittingRuns` and `ConvertFrom-TaskLine` read, `details.txt`
- * with each run's detail line ([dev.kestrel.eval.run.RunDetail]), one for each run line, and `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures on
+ * with each run's detail line ([dev.kestrel.eval.run.RunDetail]), one for each run line, and `report.json`. `suite` runs the suite of the device (3 runs each by default); `injection` the 14 fixtures and records-injection on
  * kestrel-api37 (once without a model, 5 times live, by default). With [resume], a suite goes on in the folder of one
  * that stopped ([Resume]), and only while the Kestrel install that ran it is still the device's: it keeps the tasks
  * whose runs all have a line that ended (not `reason=stopped` nor `reason=owner-busy`), runs the rest of the last task that was cut short (all of it,

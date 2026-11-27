@@ -200,8 +200,10 @@ class Runner(
         // For the detail line: whether a say text and a data tool's result of the newest command held the run's marker.
         val newest = state.tag
         if (answer != null && newest != null) state.markers = quietly { hooks.agentTask(newest, marker = scope.values.marker) }
+        // A dry run's own checks hold only for the scripted model's run.
+        val checks = if (options.live) task.check else task.check + task.dryRun?.checks.orEmpty()
         // A check between turns that did not hold left the rest of the turns unrun, so the task's checks would judge nothing.
-        val checked = answer != null && state.unmet == null && task.check.all { it.passes(scope, answer) }
+        val checked = answer != null && state.unmet == null && checks.all { it.passes(scope, answer) }
         if (state.stalled) {
             console.warn("Task ${task.name}, run $number: the device did not answer for ${STALL.inWholeSeconds} s while the task ran, so the run stopped waiting.")
         }

@@ -126,6 +126,14 @@ class Preflight(
             null
         }
         if (deleted == null) refuse("conversation-control do=delete-typed", "plan 7F of sub-project 7")
+        // A build without voice-restore is from before plan 7G, and a restart could not wait out Kestrel's guard against a
+        // crash loop (CrashGuardPassed).
+        val guard = try {
+            hooks.voiceRestore()["guard"]
+        } catch (e: HookError) {
+            null
+        }
+        if (guard == null) refuse("voice-restore", "plan 7G of sub-project 7")
         restores.push("the hooks' own conversations deleted", "Kestrel > Past conversations: delete the conversations of the series' runs.") {
             conversations.deleteLeft()
         }

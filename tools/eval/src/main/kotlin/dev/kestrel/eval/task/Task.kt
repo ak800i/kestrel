@@ -15,9 +15,10 @@ enum class TaskKind { D3, SUITE, STAND_IN, INJECTION, CONVERSATION }
  * A task's run without a model: the scripted model's replies in [script], a resource of `dev/kestrel/eval/scripts`, run
  * on the task [standIn] when the task itself cannot run with a script, as a D3 task on `:testapp`'s fixtures. [restarts]
  * are the scripts that the scripted model gets after each [Turn.Restart], in their order, because it ends with Kestrel's
- * process (design 15.3 of sub-project 7).
+ * process (design 15.3 of sub-project 7). [checks] hold only for a run without a model, with the task's own checks,
+ * such as that the script's requests held what its replies require ([EndedOtherThan]).
  */
-data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList()) {
+data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList(), val checks: List<Check> = emptyList()) {
     /** Every script that a run of the task installs: [script], then [restarts]. */
     val scripts: List<String> get() = listOf(script) + restarts
 }

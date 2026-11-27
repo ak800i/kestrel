@@ -164,6 +164,12 @@ class Hooks(private val client: HookClient) {
      */
     fun crash(text: String): HookAnswer = act("crash", Extra.Text("text", text))
 
+    /**
+     * voice-restore (plan 7G): `restoredAgo=<seconds>|none`, how long ago the restore at the start of Kestrel's process
+     * turned it on, and `guard=<seconds>`, the guard against a crash loop (main spec 8.5), within which a crash keeps Kestrel off.
+     */
+    fun voiceRestore(): HookAnswer = read("voice-restore")
+
     /** provider-standin: whether the stand-in runs, and the default profile's kind, ID and credential ([ProviderState]). */
     fun providerStandin(): ProviderState = ProviderState.from(read("provider-standin"))
 

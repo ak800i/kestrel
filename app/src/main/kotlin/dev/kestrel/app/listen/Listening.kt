@@ -85,6 +85,12 @@ internal interface FeedbackBar {
 /** A mode that Kestrel stored, with the wall-clock times of [ListeningSetting]; a time is null when it is not known. */
 internal data class StoredMode(val mode: Mode, val writtenAt: Long? = null, val restoredAt: Long? = null)
 
+/**
+ * Section 8.5: a crash within this time after a restore keeps Kestrel off, so that a start that crashes does not come
+ * back after every crash. The debug hook voice-restore answers it (plan 7G).
+ */
+internal const val CRASH_AFTER_RESTORE_MILLIS = 120_000L
+
 /** Keeps Kestrel's listening mode across restarts of its process (design spec, sections 8.5 and 14.4). */
 internal interface ModeMemory {
     /** The mode that Kestrel stored last, or [Mode.OFF] without times when it stored none. */
@@ -1577,10 +1583,6 @@ class Listening internal constructor(
 
         // A failure within this time after a restart turns Kestrel off.
         const val MICROPHONE_FAILURES_MILLIS = 60_000L
-
-        // Section 8.5: a crash within this time after a restore keeps Kestrel off, so that a start that crashes does
-        // not come back after every crash.
-        const val CRASH_AFTER_RESTORE_MILLIS = 120_000L
 
         // How often a countdown looks at its hold, and how long the holds may last in all before it gives up, so that
         // speech in the background cannot hold a call for ever (design D2 of sub-project 3).

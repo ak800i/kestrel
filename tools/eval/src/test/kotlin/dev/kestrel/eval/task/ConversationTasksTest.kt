@@ -1,6 +1,9 @@
 package dev.kestrel.eval.task
 
+import dev.kestrel.eval.run.KestrelRestart
 import dev.kestrel.eval.run.Reason
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -121,5 +124,100 @@ class ConversationTasksTest {
         // The run's last restore closed the continued conversation, which held both commands.
         assertEquals(2, past.closed)
         switching.assertPutBack()
+    }
+
+    /** kestrel-api37 with `:testapp`'s messenger, whose fixtures record Kestrel's send once the returned function runs. */
+    private fun messengerBench(): Pair<TaskBench, () -> Unit> {
+        val bench = TaskBench()
+        bench.adb.hook("SCREEN_HAS") { "count=1 app=dev.kestrel.testapp" }
+        var presses = ""
+        bench.adb.on("^run-as dev.kestrel.testapp sh -c") { presses }
+        return bench to { presses = "send 1795086000000" }
+    }
+
+    @Test
+    fun steerWhileRunningSteersTheAlarmThatActsAndLeavesOneAlarmAtTheNewTime() {
+        val bench = TaskBench()
+        val phone = ClockPhone(bench.run)
+        val kestrel = FakeConversation(bench.adb)
+        kestrel.planned += FakeConversation.Command(until = FakeConversation.Until.STEERED)
+        kestrel.onInput = { input -> if (input == "steered:make it 7:30 instead") phone.alarmAt(7, 30) }
+
+        assertEquals(Reason.OK, bench.run(ConversationTasks.STEER_WHILE_RUNNING).reason)
+
+        assertEquals(listOf("spoken:set an alarm for 7:00 tomorrow morning", "steered:make it 7:30 instead"), kestrel.inputs)
+        assertEquals("Kestrel, make it 7:30 instead", bench.adb.hookCalls("VOICE")[1]["text"])
+        assertEquals(0, phone.clocks())
+        bench.assertPutBack()
+    }
+
+    @Test
+    fun limitContinueSaysYesThenLetsTheRoundPauseAndInterruptContinueTouchesTheGoalThatActs() {
+        val (bench, _) = messengerBench()
+        val kestrel = FakeConversation(bench.adb)
+        val limit = "asking=yes-no confirming=none question=limit"
+        kestrel.planned += FakeConversation.Command(end = FakeConversation.line("PAUSED_AT_LIMIT"), asks = listOf(limit, limit))
+
+        assertEquals(Reason.OK, bench.run(ConversationTasks.LIMIT_CONTINUE).reason)
+        assertEquals(listOf("spoken:turn on hotspot", "spoken:continue"), kestrel.inputs)
+        assertEquals(listOf("yes"), kestrel.answers)
+        assertEquals(listOf(mapOf("do" to "limits"), mapOf("do" to "limits", "limits" to "500/60/1000")), bench.adb.hookCalls("CONVERSATION_CONTROL").filter { it["do"] == "limits" })
+        bench.assertPutBack()
+
+        val (touched, sendTouched) = messengerBench()
+        val interrupted = FakeConversation(touched.adb)
+        interrupted.planned += FakeConversation.Command(end = FakeConversation.line("INTERRUPTED"), until = FakeConversation.Until.TOUCHED, checklist = "1/2")
+        interrupted.planned += FakeConversation.Command(end = FakeConversation.line(confirmed = 1), asks = listOf("asking=confirm confirming=sending question=none"))
+        interrupted.onInput = { input -> if (input == "spoken:continue") sendTouched() }
+
+        assertEquals(Reason.OK, touched.run(ConversationTasks.INTERRUPT_CONTINUE).reason)
+        assertEquals(listOf("spoken:send Ana a Telegram message that I'm 10 minutes late for maple heron", "spoken:continue"), interrupted.inputs)
+        assertEquals(listOf(mapOf("do" to "touch")), touched.adb.hookCalls("GOAL_CONTROL"))
+        assertEquals(listOf("confirm"), interrupted.answers)
+        touched.assertPutBack()
+    }
+
+    @Test
+    fun resumeAfterDeathEndsKestrelsProcessWhileTheGoalActsAndContinuesTheHeldGoalWithTheNextScript() {
+        val (bench, send) = messengerBench()
+        val kestrel = FakeConversation(bench.adb)
+        kestrel.planned += FakeConversation.Command(until = FakeConversation.Until.CRASHED, checklist = "1/2")
+        kestrel.planned += FakeConversation.Command(end = FakeConversation.line(confirmed = 1), reads = 2, checklist = "1/2", asks = listOf("asking=confirm confirming=sending question=none"))
+        kestrel.onInput = { input -> if (input == "spoken:continue") send() }
+
+        assertEquals(Reason.OK, bench.run(ConversationTasks.RESUME_AFTER_DEATH).reason)
+
+        assertEquals(4101, kestrel.pid)
+        assertEquals(mapOf("text" to KestrelRestart.CRASH_TEXT), bench.adb.hookCalls("CRASH").single())
+        assertEquals(listOf(mapOf("file" to "task.json"), mapOf("file" to "task.json"), mapOf("clear" to "true")), bench.adb.hookCalls("AGENT_SCRIPT"))
+        assertEquals(1, bench.adb.hookCalls("CONVERSATION_CONTROL").count { it["do"] == "restore-check" })
+        // The self-chat aliases were gone with the process, and the restart set them again (ProcessSetup).
+        assertEquals(2, bench.adb.hookCalls("AGENT_SETTINGS").count { it["selfChatAliases"] == "dev.kestrel.testapp=org.telegram.messenger" })
+        assertEquals(listOf("confirm"), kestrel.answers)
+        // The notes of the hooks' own conversations outlived the process, so the run's conversation was deleted.
+        assertEquals(listOf(1), kestrel.deleted)
+        bench.assertPutBack()
+    }
+
+    // Kestrel's guard (main spec 8.5) keeps it off after a crash soon after a restore turned it on, so the run waits it out first.
+    @Test
+    fun resumeAfterDeathWaitsOutKestrelsGuardAgainstACrashLoopBeforeItsFirstCommand() {
+        val (bench, send) = messengerBench()
+        val clock = bench.run.clock
+        val kestrel = FakeConversation(bench.adb, clock::elapsed)
+        val restored = clock.elapsed()
+        kestrel.restoredAt = restored
+        kestrel.planned += FakeConversation.Command(until = FakeConversation.Until.CRASHED, checklist = "1/2")
+        kestrel.planned += FakeConversation.Command(end = FakeConversation.line(confirmed = 1), reads = 2, checklist = "1/2", asks = listOf("asking=confirm confirming=sending question=none"))
+        var first: Duration? = null
+        kestrel.onInput = { input ->
+            if (first == null) first = clock.elapsed()
+            if (input == "spoken:continue") send()
+        }
+
+        assertEquals(Reason.OK, bench.run(ConversationTasks.RESUME_AFTER_DEATH).reason)
+
+        assertTrue(checkNotNull(first) - restored >= FakeConversation.GUARD_SECONDS.seconds + CrashGuardPassed.MARGIN)
+        bench.assertPutBack()
     }
 }

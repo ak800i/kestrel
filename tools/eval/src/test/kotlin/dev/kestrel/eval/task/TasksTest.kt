@@ -71,12 +71,14 @@ class TasksTest {
         assertTrue(listOf(true, false).all { live -> Catalogue.suite(DeviceKind.EMULATOR, live).none { it.kind == TaskKind.CONVERSATION } })
         assertEquals(listOf("followup-settings", "quiet-time-ends", "search-past", "continue-past"), Catalogue.multiTurn(DeviceKind.EMULATOR, live = true).map { it.name })
         assertEquals(listOf("followup-settings", "quiet-time-ends", "typed-contact-then-message"), Catalogue.multiTurn(DeviceKind.A71, live = true).map { it.name })
+        // The tasks that need the scripted model's timing and costs run only without a model.
+        val scripted = listOf("steer-while-running", "limit-continue", "interrupt-continue", "resume-after-death")
         assertEquals(
-            listOf("followup-settings", "quiet-time-ends", "stand-in-typed-contact-then-message", "search-past", "continue-past"),
+            listOf("followup-settings", "quiet-time-ends", "stand-in-typed-contact-then-message", "search-past", "continue-past") + scripted,
             Catalogue.multiTurn(DeviceKind.EMULATOR, live = false).map { it.name },
         )
         assertEquals(emptyList<String>(), Catalogue.multiTurn(DeviceKind.A71, live = false).map { it.name })
-        assertEquals(listOf("stand-in-typed-contact-then-message"), Catalogue.ALL.filter { !it.runsLive }.map { it.name })
+        assertEquals(listOf("stand-in-typed-contact-then-message") + scripted, Catalogue.ALL.filter { !it.runsLive }.map { it.name })
     }
 
     @Test

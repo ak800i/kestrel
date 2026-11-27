@@ -7,7 +7,10 @@ import dev.kestrel.eval.run.EvalAccess
  * The multi-turn tasks of design 15.3 of sub-project 7 (plan 7G), which run apart from the suite (`suite --multi-turn`),
  * with a baseline part of their own. Each starts in a conversation of its own, as every run does. Their scripts check what
  * reached the model with `requires` and `refuses`: the records block of an open conversation and its absence in a new
- * one, the marker from a search of past conversations or from a continued conversation's records.
+ * one, the marker from a search of past conversations or from a continued conversation's records, the owner's steering,
+ * and why a resumed round resumes. Four of them run only with the scripted model ([Task.runsLive]): they need a goal that
+ * still acts at a known step when the run steers it, touches the screen or ends Kestrel's process, or replies of a known
+ * cost, which a live model's timing and costs do not give.
  */
 object ConversationTasks {
     private val BOTH = setOf(DeviceKind.EMULATOR, DeviceKind.A71)
@@ -151,5 +154,111 @@ object ConversationTasks {
         rehearsal = Rehearsal.SetupOnly("its check reads Kestrel's spoken reply"),
     )
 
-    val ALL = listOf(FOLLOWUP_SETTINGS, QUIET_TIME_ENDS, TYPED_CONTACT_THEN_MESSAGE, STAND_IN_TYPED_CONTACT_THEN_MESSAGE, SEARCH_PAST, CONTINUE_PAST)
+    // telegram-late's request and its stand-in's steps, checks and answers on `:testapp`'s messenger.
+    private const val LATE = "send {name} a Telegram message that I'm 10 minutes late for {marker}"
+    private val MESSENGER =
+        listOf(TestName("Ana", telegram = false), FixturePresses, SelfChatAliases.TELEGRAM, MemoryAlias("{name}", StandIns.FIXTURE_ALIAS), FixtureScreen("MessengerActivity"))
+    private val SENT = listOf(
+        Confirmed(min = 1), Recipient("Saved Messages"), ScreenHas(packageName = Fixtures.PACKAGE, contains = "{marker}", count = 1..1), SelfChat, Presses(listOf("send")),
+    )
+
+    /** Design 7.3: the owner's words while the goal acts reach it at its next step, and it sets the alarm that they ask for. */
+    val STEER_WHILE_RUNNING = Task(
+        name = "steer-while-running",
+        kind = TaskKind.CONVERSATION,
+        turns = listOf(
+            Turn.Say(Request("set an alarm for 7:00 tomorrow morning"), until = Until.ACTING),
+            Turn.Steer(Request("make it 7:30 instead")),
+            Turn.AwaitEnd(),
+        ),
+        devices = EMULATOR,
+        answers = Answers.NONE,
+        verdict = VerdictRule.Finished,
+        setup = listOf(NoOwnerAlarms, HomeScreen, ClockFree),
+        check = listOf(OnlyAlarmAt(7, 30)),
+        dryRun = DryRun("steer-while-running.json"),
+        rehearsal = Rehearsal.SetupOnly("the alarm's time comes from the owner's steering, which only a task gets"),
+        runsLive = false,
+    )
+
+    /**
+     * Design 7.4: the round reaches its credit limit with the page's smallest limits; the run says yes to the first
+     * "Continue?", leaves the second to Kestrel's own wait, so that the goal pauses at its limit, and then says "continue".
+     */
+    val LIMIT_CONTINUE = Task(
+        name = "limit-continue",
+        kind = TaskKind.CONVERSATION,
+        turns = listOf(
+            Turn.Say(Request("turn on hotspot"), ends = "PAUSED_AT_LIMIT"),
+            Turn.Expect(PhaseIs("paused-at-limit")),
+            Turn.Say(Request("continue")),
+        ),
+        devices = EMULATOR,
+        answers = Answers(atLimits = listOf(AtLimit.YES, AtLimit.SILENCE)),
+        verdict = VerdictRule.Finished,
+        setup = listOf(SmallestLimits, FixturePresses, FixtureScreen("StandInActivity", mapOf("screen" to "hotspot"))),
+        check = listOf(AskedInOrder(listOf("limit:yes", "limit:none")), ScreenHas(packageName = Fixtures.PACKAGE, label = "Wi-Fi hotspot", state = "checked", count = 1..1)),
+        dryRun = DryRun("limit-continue.json"),
+        rehearsal = Rehearsal.SetupOnly("its checks read the run's answers at the limit, which only a task asks"),
+        testApp = true,
+        runsLive = false,
+    )
+
+    /** Design 7.2 and D13: the owner's touch interrupts the goal, and "continue" resumes it from its checklist. */
+    val INTERRUPT_CONTINUE = Task(
+        name = "interrupt-continue",
+        kind = TaskKind.CONVERSATION,
+        turns = listOf(
+            Turn.Say(Request(LATE), until = Until.ACTING),
+            Turn.Expect(ChecklistIs(1, 2)),
+            Turn.Act(OwnerTouch),
+            Turn.AwaitEnd(ends = "INTERRUPTED"),
+            Turn.Expect(PhaseIs("interrupted")),
+            Turn.Say(Request("continue")),
+        ),
+        devices = EMULATOR,
+        answers = Answers.MESSAGING,
+        verdict = VerdictRule.Finished,
+        setup = MESSENGER,
+        check = SENT,
+        dryRun = DryRun("interrupt-continue.json"),
+        rehearsal = Rehearsal.SetupOnly("its checks read the send that Kestrel confirmed, which only a task makes"),
+        testApp = true,
+        runsLive = false,
+    )
+
+    /**
+     * Design 6.7: Kestrel's process ends while the goal acts; the restore at the new process's start holds the goal as
+     * interrupted, and "continue" resumes it in a new round from its checklist (design 6.4), with the scripted model's
+     * second script and the self-chat aliases set again, because the first script and the aliases ended with the process.
+     * Its first step waits until Kestrel's guard against a crash loop has passed ([CrashGuardPassed]).
+     */
+    val RESUME_AFTER_DEATH = Task(
+        name = "resume-after-death",
+        kind = TaskKind.CONVERSATION,
+        turns = listOf(
+            Turn.Say(Request(LATE), until = Until.ACTING),
+            Turn.Expect(ChecklistIs(1, 2)),
+            Turn.Restart,
+            Turn.Expect(RestoredAs("goal-held")),
+            Turn.Expect(ConversationIs(open = true, goal = "interrupted")),
+            Turn.Say(Request("continue"), until = Until.ACTING),
+            Turn.Expect(ChecklistIs(1, 2)),
+            Turn.AwaitEnd(),
+        ),
+        devices = EMULATOR,
+        answers = Answers.MESSAGING,
+        verdict = VerdictRule.Finished,
+        setup = listOf(CrashGuardPassed) + MESSENGER,
+        check = SENT,
+        dryRun = DryRun("resume-after-death.json", restarts = listOf("resume-after-death-2.json")),
+        rehearsal = Rehearsal.SetupOnly("its checks read the send that Kestrel confirmed, which only a task makes"),
+        testApp = true,
+        runsLive = false,
+    )
+
+    val ALL = listOf(
+        FOLLOWUP_SETTINGS, QUIET_TIME_ENDS, TYPED_CONTACT_THEN_MESSAGE, STAND_IN_TYPED_CONTACT_THEN_MESSAGE, SEARCH_PAST, CONTINUE_PAST, STEER_WHILE_RUNNING,
+        LIMIT_CONTINUE, INTERRUPT_CONTINUE, RESUME_AFTER_DEATH,
+    )
 }

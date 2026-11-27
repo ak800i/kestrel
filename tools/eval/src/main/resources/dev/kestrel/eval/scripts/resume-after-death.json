@@ -1,0 +1,8 @@
+[
+  {"tool": "update_checklist", "arguments": {"items": [{"text": "Write the message in Saved Messages", "state": "doing"}, {"text": "Send the message", "state": "todo"}]}},
+  {"tool": "tap", "target": {"label": "Saved Messages · Bread and milk"}, "arguments": {"reason": "open the chat", "category": "reading"}},
+  {"tool": "wait", "arguments": {"seconds": 3, "reason": "let the chat open"}},
+  {"tool": "type_text", "target": {"label": "Message"}, "arguments": {"text": "I'm 10 minutes late for {marker}", "reason": "write the message", "category": "typing_request"}},
+  {"tool": "update_checklist", "arguments": {"items": [{"id": "c1", "text": "Write the message in Saved Messages", "state": "done", "step": 4}, {"id": "c2", "text": "Send the message", "state": "doing"}]}},
+  {"tool": "wait", "arguments": {"seconds": 10, "reason": "let the message settle"}}
+]

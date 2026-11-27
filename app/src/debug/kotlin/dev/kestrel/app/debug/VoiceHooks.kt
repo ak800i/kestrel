@@ -40,6 +40,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
         }
         "VOICE_CALL_COMMANDS" -> callCommands(intent)
         "VOICE_CHOICE" -> voiceChoice(intent)
+        "VOICE_RESTORE" -> VoiceRestore.answer(graph.settings.get(SettingKeys.LISTENING).restoredAt, System.currentTimeMillis())
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -250,7 +251,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
     private fun text(intent: Intent): String = intent.getStringExtra(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
 
     companion object {
-        val COMMANDS = setOf("VOICE", "VOICE_STATE", "VOICE_CLIP", "VOICE_CALL_COMMANDS", "VOICE_CHOICE")
+        val COMMANDS = setOf("VOICE", "VOICE_STATE", "VOICE_CLIP", "VOICE_CALL_COMMANDS", "VOICE_CHOICE", "VOICE_RESTORE")
 
         /** The microphone that VOICE_CLIP says its texts into, one for the whole process. */
         val microphone: ClipMicrophone by lazy { ClipMicrophone() }
