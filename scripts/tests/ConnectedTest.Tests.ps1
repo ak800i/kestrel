@@ -87,7 +87,7 @@ Describe 'connected-test.ps1' {
         Remove-Item -LiteralPath $arguments, $gradleSerial -ErrorAction SilentlyContinue
         $env:ANDROID_SERIAL = 'caller-serial'
         Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' } }
-        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 1.2; Load = 0.5; Cpus = 4; Seconds = 10.0 } }
+        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 1.2; BusyCpus = 0.05; Cpus = 4; Seconds = 10.0 } }
         Mock Write-Host {}
     }
 
@@ -211,7 +211,7 @@ Describe 'connected-test.ps1' {
     }
 
     It 'stops before Gradle runs, with the advice to cold-boot, when kestrel-api37 has degraded' {
-        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 47.5; Load = 2.1; Cpus = 4; Seconds = 10.0 } }
+        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 47.5; BusyCpus = 2.4; Cpus = 4; Seconds = 10.0 } }
 
         { & $connectedTest -Serial emulator-5554 ':app:connectedDebugAndroidTest' } |
             Should -Throw -ExpectedMessage 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL*scripts\cold-boot.ps1 -Serial emulator-5554*'

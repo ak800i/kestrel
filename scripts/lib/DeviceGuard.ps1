@@ -445,36 +445,45 @@ function Compare-OwnerData([string]$Serial, $Before, [string]$During) {
 # part 2, Finding 5): the sensors HAL climbs to 90 % of one CPU, system_server blocks for up to 87 s, apps get ANRs and
 # system_server restarts, and the tests then fail for reasons that are not Kestrel's. Only a cold boot brings it back,
 # because the Quick Boot snapshot would bring the degraded state back too. So each gate reads two measures on
-# kestrel-api37 before it starts (Assert-EmulatorHealthy), in Android, through adb, as that debugging measured them:
+# kestrel-api37 before it starts (Assert-EmulatorHealthy), in Android, through adb:
 #   - the CPU use of the sensors HAL, $EmulatorSensorsProcess, over $EmulatorHealthSampleSeconds seconds, in % of one
-#     CPU. Healthy, it used 1 to 6 % (about 6 % in the first minutes after a cold boot, then about 1.2 % while idle);
+#     CPU. Healthy, it used 1 to 6 % (about 6 % in the first minutes after a cold boot, then about 1.2 % while idle,
+#     and 5 % during a suite of the :app device tests, as debug-emu-load-report.md measured again);
 #     degraded, 8 to 52 % from the 13th minute of test runs on, and up to 90 % when the tests failed. The limit,
 #     $EmulatorSensorsCpuLimit = 30 %, is five times the healthy maximum. Under a gate's own test activity the HAL can
 #     pass it briefly, so it holds only for the reading before a gate starts, when no test runs.
-#   - the load average over 5 minutes per CPU of the guest (4 CPUs on kestrel-api37). Healthy, it was 0.25 to 0.45 per
-#     CPU during test runs and up to 1.15 in the first two minutes after a cold boot; degraded, 1.3 to 2.6. The limit,
-#     $EmulatorLoadPerCpuLimit = 1.5, lets a gate start right after a cold boot and refuses the emulator that failed.
-#     The 1-minute average is no measure, because it reaches 17 in the first minute after a cold boot.
+#   - the CPU use of all of Android over the same window, from the 'cpu' line of /proc/stat: the time that its CPUs
+#     were neither idle nor waiting for I/O, in CPUs (4 on kestrel-api37). The debugging of the emulator's load
+#     (debug-emu-load-report.md) measured it: at rest, 0.5 to 1.4 % of the 4 CPUs (0.02 to 0.06 CPUs), both 2 minutes
+#     after a cold boot and minutes after a suite; 86 to 99 % in the boot's first minute, 12 % at 72 s and under 1 %
+#     from about 100 s on; 60 % (2.4 CPUs) during a suite of the :app device tests. The limit,
+#     $EmulatorBusyCpusLimit = 1 CPU, is about 18 times the use at rest and twice the boot's tail at 72 s, so a gate
+#     starts on an emulator that has settled, and well below a running suite's 2.4 CPUs, so a gate refuses an emulator
+#     that something still keeps busy. The load averages are no measure: the averages over 5 and 15 minutes still hold
+#     the cold boot (whose 1-minute average reaches 16) or the last suite for minutes after they end, so they refuse a
+#     healthy emulator after a boot or pass a busy one whose load has only just begun.
 # The host's process list cannot tell the sensors HAL from the rest of the emulator, because one qemu process runs all
 # of Android, so the reading comes from Android's /proc.
 $EmulatorSensorsProcess = 'android.hardware.sensors-service.multihal'
 $EmulatorHealthSampleSeconds = 10
 $EmulatorSensorsCpuLimit = 30
-$EmulatorLoadPerCpuLimit = 1.5
+$EmulatorBusyCpusLimit = 1
 
 # The device shell's command that reads the measures: the sensors HAL's process ID, the clock ticks per second, the
-# number of CPUs, then /proc/uptime and the HAL's /proc/<pid>/stat twice, $Seconds apart, and last /proc/loadavg. Each
-# line starts with its name and '='. It has no double quotes, which Windows PowerShell 5.1 would not pass on to adb.
+# number of CPUs, then twice, $Seconds apart, /proc/uptime with the HAL's /proc/<pid>/stat, and the 'cpu' line of
+# /proc/stat. Each line starts with its name and '='. It has no double quotes, which Windows PowerShell 5.1 would not
+# pass on to adb.
 function Format-EmulatorHealthCommand([int]$Seconds = $EmulatorHealthSampleSeconds) {
     'p=$(pidof ' + $EmulatorSensorsProcess + '); echo pid=$p; echo ticks=$(getconf CLK_TCK); echo cpus=$(nproc); ' +
-    'echo first=$(cat /proc/uptime) $(cat /proc/$p/stat); sleep ' + $Seconds + '; ' +
-    'echo second=$(cat /proc/uptime) $(cat /proc/$p/stat); echo load=$(cat /proc/loadavg)'
+    'echo first=$(cat /proc/uptime) $(cat /proc/$p/stat); echo firstcpu=$(head -n 1 /proc/stat); sleep ' + $Seconds + '; ' +
+    'echo second=$(cat /proc/uptime) $(cat /proc/$p/stat); echo secondcpu=$(head -n 1 /proc/stat)'
 }
 
 # Reads the answer of Format-EmulatorHealthCommand's command: the sensors HAL's CPU use in % of one CPU between the two
-# samples (SensorsCpuPercent), the load average over 5 minutes (Load), the number of CPUs (Cpus) and the seconds
-# between the samples (Seconds). Throws System.IO.InvalidDataException that names what is missing when the answer cannot
-# be read, for example when the HAL does not run, or ran under another process ID at the second sample.
+# samples (SensorsCpuPercent), the CPUs' worth of time that all of Android used between them (BusyCpus), the number of
+# CPUs (Cpus) and the seconds between the samples (Seconds). Throws System.IO.InvalidDataException that names what is
+# missing when the answer cannot be read, for example when the HAL does not run, or ran under another process ID at the
+# second sample.
 function ConvertFrom-EmulatorHealthAnswer([string[]]$Lines) {
     $values = @{}
     foreach ($line in $Lines) {
@@ -497,12 +506,20 @@ function ConvertFrom-EmulatorHealthAnswer([string[]]$Lines) {
     }
     $seconds = $samples[1].Uptime - $samples[0].Uptime
     if ($seconds -le 0) { & $fail 'no time between the two samples' }
-    if ("$($values['load'])" -notmatch '^\d+(?:\.\d+)? (\d+(?:\.\d+)?) ') { & $fail 'no load average' }
-    $load = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+    $cpuSamples = foreach ($name in 'firstcpu', 'secondcpu') {
+        # The CPUs' times since the boot: user, nice, system, idle, iowait, irq, softirq and steal; the guest times
+        # after them are already part of user and nice.
+        if ("$($values[$name])" -notmatch '^cpu ((?:\d+ ){7}\d+)(?: |$)') { & $fail "no $name sample of /proc/stat" }
+        $times = [long[]]($Matches[1] -split ' ')
+        [pscustomobject]@{ Total = ($times | Measure-Object -Sum).Sum; Idle = $times[3] + $times[4] }
+    }
+    $total = $cpuSamples[1].Total - $cpuSamples[0].Total
+    if ($total -le 0) { & $fail 'no CPU time between the two samples of /proc/stat' }
+    $cpus = [int]$values['cpus']
     [pscustomobject]@{
         SensorsCpuPercent = ($samples[1].Ticks - $samples[0].Ticks) / [double]$values['ticks'] / $seconds * 100
-        Load = $load
-        Cpus = [int]$values['cpus']
+        BusyCpus = ($total - ($cpuSamples[1].Idle - $cpuSamples[0].Idle)) / [double]$total * $cpus
+        Cpus = $cpus
         Seconds = $seconds
     }
 }
@@ -515,19 +532,24 @@ function Get-EmulatorHealthProblems($Reading) {
         "the sensors HAL ($EmulatorSensorsProcess) used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
         "$($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of $EmulatorSensorsCpuLimit %"
     }
-    $loadLimit = $EmulatorLoadPerCpuLimit * $Reading.Cpus
-    if ($Reading.Load -gt $loadLimit) {
-        "the load average over 5 minutes was $($Reading.Load.ToString('0.00', $invariant)) on $($Reading.Cpus) CPUs, above the " +
-        "limit of $($loadLimit.ToString('0.##', $invariant))"
+    if ($Reading.BusyCpus -gt $EmulatorBusyCpusLimit) {
+        "Android used $(Format-EmulatorBusy $Reading) over $($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of " +
+        "$EmulatorBusyCpusLimit CPU"
     }
+}
+
+# Describes the CPU use of all of Android in a reading, in CPUs and in % of all of them.
+function Format-EmulatorBusy($Reading) {
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    "$($Reading.BusyCpus.ToString('0.00', $invariant)) of its $($Reading.Cpus) CPUs " +
+    "($(($Reading.BusyCpus / $Reading.Cpus * 100).ToString('0.0', $invariant)) %)"
 }
 
 # Describes a reading in one line.
 function Format-EmulatorHealth($Reading) {
     $invariant = [Globalization.CultureInfo]::InvariantCulture
-    "the sensors HAL used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
-    "$($Reading.Seconds.ToString('0.0', $invariant)) s, and the load average over 5 minutes was " +
-    "$($Reading.Load.ToString('0.00', $invariant)) on $($Reading.Cpus) CPUs"
+    "over $($Reading.Seconds.ToString('0.0', $invariant)) s, the sensors HAL used " +
+    "$($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU, and Android used $(Format-EmulatorBusy $Reading)"
 }
 
 # Reads the measures on the device, which takes $EmulatorHealthSampleSeconds seconds (ConvertFrom-EmulatorHealthAnswer).
@@ -568,11 +590,11 @@ function Assert-EmulatorHealthy([string]$Serial) {
 
 # The cold boot of kestrel-api37 ------------------------------------------------------------------------------------
 
-# After a cold boot, the 5-minute load average still holds the boot's load (the 1-minute average reaches 17), so the
-# cold boot reads the health right after the boot and again after each pause of $ColdBootHealthPauseSeconds, until a
-# reading passes, all within $ColdBootHealthSeconds from the start of the first reading: it starts no pause after which
-# the next reading could end later. A reading takes $EmulatorHealthSampleSeconds on the device; $ColdBootHealthReadSeconds
-# allows for adb around it.
+# Android stays busy for the first minute or two after a cold boot (86 to 99 % of its CPUs in the first minute, 12 % at
+# 72 s, under 1 % from about 100 s on), so the cold boot reads the health right after the boot and again after each
+# pause of $ColdBootHealthPauseSeconds, until a reading passes, all within $ColdBootHealthSeconds from the start of the
+# first reading: it starts no pause after which the next reading could end later. A reading takes
+# $EmulatorHealthSampleSeconds on the device; $ColdBootHealthReadSeconds allows for adb around it.
 $ColdBootHealthSeconds = 300
 $ColdBootHealthPauseSeconds = 30
 $ColdBootHealthReadSeconds = $EmulatorHealthSampleSeconds + 5
