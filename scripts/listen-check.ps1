@@ -48,9 +48,9 @@
 #             back afterwards.
 #   reboot    with -Reboot: listening comes back after a reboot. On a phone, the script runs 'adb reboot'. On an emulator,
 #             'adb reboot' has crashed or frozen this computer's emulator in about half of the runs, also soon after a
-#             cold boot, so the script instead runs 'sync' on it, closes it with 'adb emu kill', waits until its qemu
-#             process has ended, and starts it again with scripts\start-emulator.ps1 -ColdBoot, which must give it the
-#             same serial. For Kestrel, both end its process with the device and connect its accessibility service after
+#             cold boot, so the script instead closes it through Stop-KestrelEmulator ('sync' in Android, then 'adb
+#             emu kill', and the wait until its qemu process has ended), and starts it again with
+#             scripts\start-emulator.ps1 -ColdBoot, which must give it the same serial and Kestrel's APK. For Kestrel, both end its process with the device and connect its accessibility service after
 #             the start. Start a run with -Reboot on an emulator from a cold boot too: run
 #             scripts\cold-boot.ps1 -Serial $serial first. When the
 #             device does not come back ('adb reboot' or 'adb emu kill' has not returned within its limit, or the device
@@ -362,11 +362,10 @@ function Get-RestoreTime {
 
 # Closes the emulator kestrel-api37 and starts it again from a cold boot, in place of a reboot inside the emulator,
 # which has crashed or frozen this computer's emulator. Kestrel stores each mode when it changes, so its process ends as
-# in a reboot. It comes back without a window, as scripts\start-emulator.ps1 starts it. Returns nothing when the emulator
+# in a reboot; Stop-KestrelEmulator writes Android's disk before it closes the emulator, so the stored mode survives the
+# cold boot. It comes back without a window, as scripts\start-emulator.ps1 starts it. Returns nothing when the emulator
 # answers again with the same serial, and otherwise why the check fails.
 function Restart-Emulator {
-    # Kestrel's stored mode must be on the emulator's disk, and not only in Android's memory, when the emulator ends.
-    Invoke-Checked 'sync' | Out-Null
     Restart-KestrelEmulator -Serial $Serial -Window $false -ColdBoot
 }
 

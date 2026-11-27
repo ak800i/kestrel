@@ -923,7 +923,8 @@ function Invoke-OwnerItem([string]$Name, [scriptblock]$Body) {
 }
 
 # Restarts kestrel-api37 with its window ($Window) or without one, through Restart-KestrelEmulator, which closes it only
-# after its console named kestrel-api37 and brings Android back from its Quick Boot snapshot. The owner's data on it (the
+# after its console named kestrel-api37 and Android wrote its disk (Stop-KestrelEmulator), and brings Android back from
+# its Quick Boot snapshot. The owner's data on it (the
 # Google accounts and Kestrel's profiles, AGENTS.md) is read just before and compared just after, so that only the
 # restart is checked, not the owner's item between two restarts. Every failure stops the sitting (New-SittingStop): a
 # failed restart, an error while the data or the window type is read, because the emulator's window state is then
@@ -944,7 +945,7 @@ function Switch-EmulatorWindow([string]$StepName, [bool]$Window) {
     }
     if ($changes) {
         $after = if ($Window) {
-            " kestrel-api37 keeps its window. Once you have checked your data there, close it with & '$adb' -s $EmulatorSerial emu kill and start it without a window with scripts\start-emulator.ps1."
+            " kestrel-api37 keeps its window. Once you have checked your data there, close it with scripts\stop-emulator.ps1 -Serial $EmulatorSerial and start it without a window with scripts\start-emulator.ps1."
         } else { '' }
         throw (New-SittingStop "The owner's data on kestrel-api37 changed in its restart $how, so the sitting stops and does not restart it again; the restores at its end still run there, and none of them touches the Google accounts or Kestrel's profiles: $($changes -join ' ')$after")
     }

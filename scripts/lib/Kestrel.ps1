@@ -656,17 +656,52 @@ function Start-KestrelEmulator([bool]$Window, [switch]$ColdBoot) {
     "$(& "$PSScriptRoot\..\start-emulator.ps1" -ColdBoot:$ColdBoot -Window:$Window | Select-Object -Last 1)".Trim()
 }
 
-# Closes the emulator kestrel-api37 on $Serial and starts it again through scripts\start-emulator.ps1, with its window
-# when $Window, and from a cold boot when $ColdBoot. It closes nothing unless the console names kestrel-api37. A start
-# that is not cold brings Android back from the Quick Boot snapshot that the emulator saves when it closes, so its apps
-# and settings are as they were. Returns nothing when kestrel-api37 answers again with the same serial and the asked
-# window type, and otherwise why not.
-function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBoot) {
+# Whether the console of the emulator on $Serial answers 'avd name' with exactly kestrel-api37 within 30 s.
+function Test-KestrelEmulatorConsole([string]$Serial) {
+    $name = Invoke-TimedProcess -FilePath (Get-Adb) -ArgumentList '-s', $Serial, 'emu', 'avd', 'name' -TimeoutSeconds 30
+    $name.Completed -and (Test-KestrelAvdAnswer $name.Output)
+}
+
+# Whether the answer of 'pm path dev.kestrel; echo kestrel-end' names an APK of Kestrel's package, as in
+# 'package:/data/app/~~x/dev.kestrel-y/base.apk'. A package that Android does not know, also one that it dropped at boot
+# because its APK was missing, gives no such line. Throws when the answer lacks the marker, so the command did not run.
+function ConvertFrom-PackagePathAnswer([string]$Output) {
+    $lines = @("$Output" -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($lines.Count -eq 0 -or $lines[-1] -ne 'kestrel-end') { throw "Not an answer of 'pm path dev.kestrel': '$($lines -join ' ')'" }
+    @($lines | Where-Object { $_ -match '^package:\S+\.apk$' }).Count -gt 0
+}
+
+# Whether Kestrel's package on $Serial has its APK ('pm path dev.kestrel'). Throws when the device did not answer
+# within 30 s or answered something else.
+function Test-KestrelApk([string]$Serial) {
+    $answer = Invoke-TimedProcess -FilePath (Get-Adb) -ArgumentList '-s', $Serial, 'shell', 'pm path dev.kestrel; echo kestrel-end' -TimeoutSeconds 30
+    if (-not $answer.Completed) { throw "'pm path dev.kestrel' did not return within 30 s" }
+    ConvertFrom-PackagePathAnswer $answer.Output
+}
+
+# The longest that Android's 'sync' may take before Stop-KestrelEmulator gives up; it took 0.07 s on an idle
+# kestrel-api37, and a large install leaves more to write.
+$EmulatorSyncSeconds = 120
+
+# Closes the emulator kestrel-api37 on $Serial: every script closes it only through this function, and
+# scripts\stop-emulator.ps1 is the operator's way to it. It closes nothing unless the console names kestrel-api37.
+# It first runs 'sync' in Android, which writes every file that Android still holds in its memory to the emulator's disk
+# and waits until the disk has it, and only then closes the emulator with 'adb emu kill'. A cold boot starts from the disk
+# alone, so without the sync it loses what was not written yet: a cold boot about 1 minute after an install left
+# Kestrel's package without its APK (debug-7g-multiturn-report.md). A shutdown of Android would be cleaner, but the
+# emulator offers none that the rules allow: its console's 'kill' (emulator 37.2) ends the emulator without telling
+# Android, after it saves the Quick Boot snapshot; the console has no shutdown or power-off command; and Android's own
+# reboot ('adb reboot') has crashed or frozen this computer's emulator in about half of the runs
+# (scripts\listen-check.ps1), so its power-off ('reboot -p'), which takes the same way through Android, is not used
+# either. When the sync fails or does not return, the emulator stays open, because closing it could lose the owner's
+# data. Returns nothing when the emulator's process has ended, and otherwise why not.
+function Stop-KestrelEmulator([string]$Serial) {
+    if (-not (Test-KestrelEmulatorConsole -Serial $Serial)) { return "$Serial is not the emulator kestrel-api37, so it was not closed" }
     $adb = Get-Adb
-    $name = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'avd', 'name' -TimeoutSeconds 30
-    if (-not $name.Completed -or -not (Test-KestrelAvdAnswer $name.Output)) {
-        return "$Serial is not the emulator kestrel-api37, so it was not closed"
-    }
+    $sync = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'shell', 'sync' -TimeoutSeconds $EmulatorSyncSeconds
+    $unsynced = 'so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost'
+    if (-not $sync.Completed) { return "'adb shell sync' did not return within $EmulatorSyncSeconds s, $unsynced" }
+    if ($sync.ExitCode -ne 0) { return "'adb shell sync' ended with exit code $($sync.ExitCode), $unsynced" }
     $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30
     if (-not $kill.Completed) { return "'adb emu kill' did not return within 30 s, so the emulator may have frozen" }
     # The emulator saves its Quick Boot snapshot before it ends.
@@ -674,6 +709,24 @@ function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBo
     while ((Get-EmulatorProcess 'kestrel-api37') -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 2 }
     $left = @(Get-EmulatorProcess 'kestrel-api37')
     if ($left) { return "kestrel-api37 did not close within 2 minutes of 'adb emu kill' (its qemu process has the ID $($left[0].ProcessId))" }
+}
+
+# Closes the emulator kestrel-api37 on $Serial (Stop-KestrelEmulator) and starts it again through
+# scripts\start-emulator.ps1, with its window when $Window, and from a cold boot when $ColdBoot. It reads and closes
+# nothing unless the console names kestrel-api37. A start that is not cold brings Android back from the Quick Boot
+# snapshot that the emulator saves when it closes, so its apps and settings are as they were. When Kestrel's package had
+# its APK before, it must have it after the start too: no script installs Kestrel again by itself, because that is the
+# operator's decision. Returns nothing when kestrel-api37 answers again with the same serial, Kestrel's APK and the asked
+# window type, and otherwise why not.
+function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBoot) {
+    if (-not (Test-KestrelEmulatorConsole -Serial $Serial)) { return "$Serial is not the emulator kestrel-api37, so it was not closed" }
+    try {
+        $hadApk = Test-KestrelApk -Serial $Serial
+    } catch {
+        return "Kestrel's APK on $Serial could not be read before the restart ($($_.Exception.Message)), so kestrel-api37 was not closed"
+    }
+    $stopped = Stop-KestrelEmulator -Serial $Serial
+    if ($stopped) { return $stopped }
     try {
         $started = Start-KestrelEmulator -Window $Window -ColdBoot:$ColdBoot
     } catch {
@@ -682,6 +735,15 @@ function Restart-KestrelEmulator([string]$Serial, [bool]$Window, [switch]$ColdBo
     if ($started -ne $Serial) { return "kestrel-api37 started again as '$started', not as $Serial" }
     # The serial now names a new emulator, so the device check runs again before any other command.
     try { Assert-TestDevice -Serial $Serial } catch { return $_.Exception.Message }
+    if ($hadApk) {
+        $hasApk = try { Test-KestrelApk -Serial $Serial } catch { return "Kestrel's APK on $Serial could not be read after the restart ($($_.Exception.Message))" }
+        if (-not $hasApk) {
+            return ("Kestrel's package dev.kestrel on $Serial has no APK after the restart ('pm path dev.kestrel' names none), " +
+                'although it had one before: Android dropped the package when it started, because its APK had not reached the ' +
+                "emulator's disk. Kestrel's data may still be there. No script installs Kestrel again by itself: whether to run " +
+                "scripts\install.ps1 -Serial $Serial is the operator's decision")
+        }
+    }
     try { $type = Get-EmulatorWindowType $Serial } catch { return "kestrel-api37's window type could not be read: $($_.Exception.Message)" }
     $wanted = if ($Window) { 'qtwindow' } else { 'headless' }
     if ($type -ne $wanted) { return "kestrel-api37 started again as $type, not as $wanted" }

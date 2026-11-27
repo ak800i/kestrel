@@ -2,7 +2,8 @@
 # The emulator keeps running after this script ends.
 # -ColdBoot starts Android afresh instead of from the emulator's Quick Boot snapshot. Use it after closing a slow
 # emulator, because the snapshot would bring the slow state back. scripts\cold-boot.ps1 does both for a running
-# kestrel-api37, with the owner's data checked around the boot.
+# kestrel-api37, with the owner's data checked around the boot. Close kestrel-api37 with scripts\stop-emulator.ps1, which
+# lets Android write its disk first, so that a cold boot does not lose what was installed last.
 # The emulator runs without a window (-no-window), because only its window links Android's clipboard to Windows'
 # clipboard. The window does so while the emulator's setting "Enable clipboard sharing" is on, and that setting is one
 # for every AVD of this Windows user (zoran too); the emulator has no command-line option, feature or AVD setting for it.
@@ -20,7 +21,7 @@ $name = 'kestrel-api37'
 $adb = Get-Adb
 $deadline = (Get-Date).AddMinutes(5)
 $serial = Find-EmulatorSerial $name
-if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: & '$adb' -s $serial emu kill" }
+if ($ColdBoot -and $serial) { Write-Warning "$name is already running, so -ColdBoot does nothing. Close it first: scripts\stop-emulator.ps1 -Serial $serial" }
 $started = $null
 if (-not $serial) {
     # While the emulator boots, adb lists it as offline. Look for its process before starting a second copy.
@@ -51,7 +52,7 @@ if (-not $serial) {
 # An emulator that this script did not start may run otherwise than asked, also one that was still booting.
 if (-not $started) {
     $warning = Get-EmulatorWindowWarning -AvdName $name -WindowType (Get-EmulatorWindowType $serial) -Window $Window.IsPresent `
-        -ClipboardSharing (Test-EmulatorClipboardSharing) -CloseCommand "& '$adb' -s $serial emu kill"
+        -ClipboardSharing (Test-EmulatorClipboardSharing) -CloseCommand "scripts\stop-emulator.ps1 -Serial $serial"
     if ($warning) { Write-Warning $warning }
 }
 # Windows PowerShell 5.1 would stop at adb's first error line, such as "device offline" while Android starts.

@@ -669,8 +669,10 @@ function Wait-EmulatorHealthy([string]$Serial) {
 #      profile keeps its kind, its ID and its stored credential through a run on kestrel-api37, and a check after the
 #      boot alone could not tell the owner's profile from one that replaced it. Refusing changes nothing on the device;
 #   3. Restart-KestrelEmulator -ColdBoot without a window, which closes nothing unless the emulator's console answers
-#      exactly kestrel-api37, closes it with 'adb emu kill', starts it from a cold boot with
-#      scripts\start-emulator.ps1 -ColdBoot, and checks that it came back headless under the same serial;
+#      exactly kestrel-api37, closes it through Stop-KestrelEmulator ('sync' in Android, then 'adb emu kill'), starts
+#      it from a cold boot with scripts\start-emulator.ps1 -ColdBoot, checks that Kestrel's package still has its APK
+#      ('pm path dev.kestrel'; it installs nothing when it does not), and checks that it came back headless under the
+#      same serial;
 #   4. the owner's data after the boot, compared with the data before it (Compare-OwnerData);
 #   5. the wait until the emulator passes the gates' health check (Wait-EmulatorHealthy), so that a gate that starts
 #      after the cold boot accepts it.

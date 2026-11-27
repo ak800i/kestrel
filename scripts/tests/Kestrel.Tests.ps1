@@ -803,9 +803,9 @@ Describe 'The emulator''s window and clipboard sharing' {
 
     It 'warns when the emulator runs with its window while the clipboard sharing is on and no window was asked for' {
         $warning = Get-EmulatorWindowWarning -AvdName kestrel-api37 -WindowType qtwindow -Window $false `
-            -ClipboardSharing $true -CloseCommand 'adb emu kill'
+            -ClipboardSharing $true -CloseCommand 'scripts\stop-emulator.ps1 -Serial emulator-5554'
         $warning | Should -Match "^kestrel-api37 runs with its window while the emulator's setting 'Enable clipboard sharing' is on"
-        $warning | Should -Match 'Close it with adb emu kill and run scripts\\start-emulator\.ps1 without -Window\.$'
+        $warning | Should -Match 'Close it with scripts\\stop-emulator\.ps1 -Serial emulator-5554 and run scripts\\start-emulator\.ps1 without -Window\.$'
     }
 
     It 'warns when a window was asked for and the emulator runs without one' {
@@ -849,6 +849,7 @@ Describe 'The emulator''s window and clipboard sharing' {
     It 'returns why, and throws nothing, when the restarted emulator''s window type cannot be read' {
         Mock Get-Adb { 'adb' }
         Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "kestrel-api37`r`nOK" } }
+        Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "package:/data/app/~~a/dev.kestrel-b/base.apk`nkestrel-end" } } -ParameterFilter { $ArgumentList -contains 'pm path dev.kestrel; echo kestrel-end' }
         Mock Get-EmulatorProcess { }
         Mock Start-KestrelEmulator { 'emulator-5554' }
         Mock Assert-TestDevice { }
@@ -857,6 +858,87 @@ Describe 'The emulator''s window and clipboard sharing' {
         $reason = Restart-KestrelEmulator -Serial 'emulator-5554' -Window $false
 
         $reason | Should -BeExactly "kestrel-api37's window type could not be read: Not an answer of the emulator's console to 'avd windowtype': 'KO'"
+    }
+}
+
+Describe 'Stopping kestrel-api37 after Android wrote its disk' {
+    BeforeAll {
+        . "$PSScriptRoot\..\lib\Kestrel.ps1"
+    }
+
+    BeforeEach {
+        $calls = [System.Collections.Generic.List[string]]::new()
+        $device = @{ Apk = "package:/data/app/~~a/dev.kestrel-b/base.apk`nkestrel-end"; Sync = [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = '' } }
+        Mock Get-Adb { 'adb' }
+        Mock Invoke-TimedProcess {
+            $words = $ArgumentList | Select-Object -Skip 2
+            $calls.Add("$words")
+            switch ("$words") {
+                'emu avd name' { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "kestrel-api37`r`nOK" } }
+                'shell sync' { $device.Sync }
+                'shell pm path dev.kestrel; echo kestrel-end' { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = $device.Apk } }
+                default { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = '' } }
+            }
+        }
+        Mock Get-EmulatorProcess { }
+        Mock Start-KestrelEmulator { $calls.Add('start'); 'emulator-5554' }
+        Mock Assert-TestDevice { }
+        Mock Get-EmulatorWindowType { 'headless' }
+    }
+
+    It 'runs sync in Android before it closes the emulator with emu kill' {
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeNullOrEmpty
+
+        @($calls) | Should -BeExactly @('emu avd name', 'shell sync', 'emu kill')
+    }
+
+    It 'leaves the emulator open when sync fails or does not return' {
+        $device.Sync = [pscustomobject]@{ Completed = $true; ExitCode = 1; Output = '' }
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' ended with exit code 1, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost"
+
+        $device.Sync = [pscustomobject]@{ Completed = $false; ExitCode = $null; Output = '' }
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' did not return within 120 s, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost"
+
+        @($calls) | Should -Not -Contain 'emu kill'
+    }
+
+    It 'closes nothing, and does not sync, on an emulator whose console does not name kestrel-api37' {
+        Mock Invoke-TimedProcess { $calls.Add("$($ArgumentList | Select-Object -Skip 2)"); [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "zoran`r`nOK" } }
+
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly 'emulator-5554 is not the emulator kestrel-api37, so it was not closed'
+
+        @($calls) | Should -BeExactly @('emu avd name')
+    }
+
+    It 'restarts through the same stop: Kestrel''s APK read, sync, kill, the start, and the APK read again' {
+        Restart-KestrelEmulator -Serial 'emulator-5554' -Window $false -ColdBoot | Should -BeNullOrEmpty
+
+        @($calls) | Should -BeExactly @('emu avd name', 'shell pm path dev.kestrel; echo kestrel-end', 'emu avd name', 'shell sync', 'emu kill', 'start',
+            'shell pm path dev.kestrel; echo kestrel-end')
+    }
+
+    It 'stops with the reason, and installs nothing, when Kestrel''s package lost its APK in the boot' {
+        Mock Start-KestrelEmulator { $device.Apk = 'kestrel-end'; 'emulator-5554' }
+
+        $reason = Restart-KestrelEmulator -Serial 'emulator-5554' -Window $false -ColdBoot
+
+        $reason | Should -Match "^Kestrel's package dev\.kestrel on emulator-5554 has no APK after the restart \('pm path dev\.kestrel' names none\)"
+        $reason | Should -Match "whether to run scripts\\install\.ps1 -Serial emulator-5554 is the operator's decision$"
+        Should -Invoke Get-EmulatorWindowType -Times 0 -Exactly
+    }
+
+    It 'does not ask for the APK after the boot when Kestrel was not installed before' {
+        $device.Apk = 'kestrel-end'
+
+        Restart-KestrelEmulator -Serial 'emulator-5554' -Window $false -ColdBoot | Should -BeNullOrEmpty
+
+        @($calls | Where-Object { $_ -like 'shell pm path*' }).Count | Should -Be 1
+    }
+
+    It 'reads the APK from the answer of pm path, and refuses an answer without its end marker' {
+        ConvertFrom-PackagePathAnswer "package:/data/app/~~a/dev.kestrel-b/base.apk`r`nkestrel-end`r`n" | Should -BeTrue
+        ConvertFrom-PackagePathAnswer "`nkestrel-end" | Should -BeFalse
+        { ConvertFrom-PackagePathAnswer 'error: device offline' } | Should -Throw "Not an answer of 'pm path dev.kestrel': 'error: device offline'"
     }
 }
 

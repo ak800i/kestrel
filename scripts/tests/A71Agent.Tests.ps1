@@ -1202,7 +1202,7 @@ Describe 'The owner''s decisions for the sittings (fix-5c-owner)' {
 
         Test-SittingStop $caught | Should -BeTrue
         $caught.Exception.Message | Should -Match "^The owner's data on kestrel-api37 changed in its restart with its window, so the sitting stops and does not restart it again; the restores at its end still run there, and none of them touches the Google accounts or Kestrel's profiles: emulator-5554: 0 Google accounts, not 1 "
-        $caught.Exception.Message | Should -Match "close it with & 'adb\.exe' -s emulator-5554 emu kill and start it without a window with scripts\\start-emulator\.ps1\.$"
+        $caught.Exception.Message | Should -Match "close it with scripts\\stop-emulator\.ps1 -Serial emulator-5554 and start it without a window with scripts\\start-emulator\.ps1\.$"
         Should -Invoke Restart-KestrelEmulator -Times 1 -Exactly
         Should -Invoke Request-OwnerItem -Times 0 -Exactly
     }
