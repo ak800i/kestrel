@@ -156,10 +156,10 @@ class ConversationEngine(
         class EndQuietTimeIf(val open: (ConversationId) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
 
         /**
-         * The "stop" [input], only when a goal is open and [open] holds for its conversation's id at this step of the loop;
-         * [done] gets whether it was given (plan 7G).
+         * The "stop" [input], only when a goal is open or Kestrel's own request runs and [open] holds for the open
+         * conversation's id, null while none is open, at this step of the loop; [done] gets whether it was given (plan 7G).
          */
-        class StopGoalIf(val input: OwnerInput, val open: (ConversationId) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
+        class StopIf(val input: OwnerInput, val open: (ConversationId?) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
 
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
@@ -371,15 +371,18 @@ class ConversationEngine(
     }
 
     /**
-     * The hook `goal-control do=stop-typed` (plan 7G): gives the conversation [input], a "stop", but only while a goal is
-     * open and [open] holds for its conversation's id. The loop checks both between the machine's steps, as
-     * [endQuietTimeIf] does, so the goal of a conversation that the owner opened or continued is never stopped. Returns
-     * whether the input was given. Waits for [restore].
+     * The hook `goal-control do=stop-typed` (plan 7G): gives the conversation [input], a "stop", but only while there is
+     * work for it to end, a goal or Kestrel's own request (remember, forget, "save that as", delete history or a switch
+     * with its question), and [open] holds for the open conversation's id, or for null while none is open, as while a
+     * switch asks before it moves into a past conversation. The loop checks both between the machine's steps, as
+     * [endQuietTimeIf] does, so the work of a conversation that the owner opened or continued is never stopped. The machine
+     * gives the stop to the request first, as to the owner's "stop". Returns whether the input was given. Waits for
+     * [restore].
      */
-    suspend fun stopGoalIf(input: OwnerInput, open: (ConversationId) -> Boolean): Boolean {
+    suspend fun stopIf(input: OwnerInput, open: (ConversationId?) -> Boolean): Boolean {
         require(input.intent == InputIntent.Stop) { "Only a stop is given this way" }
         val done = CompletableDeferred<Boolean>()
-        inbox.send(Message.StopGoalIf(input, open, done))
+        inbox.send(Message.StopIf(input, open, done))
         return done.await()
     }
 
@@ -477,7 +480,7 @@ class ConversationEngine(
                 is Message.Reopened -> reopened(message)
                 is Message.DeletePast -> deletion(message)
                 is Message.EndQuietTimeIf -> endQuietTimeIf(message)
-                is Message.StopGoalIf -> stopGoalIf(message)
+                is Message.StopIf -> stopIf(message)
                 is Message.DeleteHistory -> deleteHistory(message.done)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
             }
@@ -711,9 +714,9 @@ class ConversationEngine(
         message.done.complete(true)
     }
 
-    private fun stopGoalIf(message: Message.StopGoalIf) {
-        val id = state.id
-        if (id == null || state.goal == null || !message.open(id)) {
+    private fun stopIf(message: Message.StopIf) {
+        val works = state.goal != null || state.local?.cancelled == false
+        if (!works || !message.open(state.id)) {
             message.done.complete(false)
             return
         }
@@ -836,7 +839,7 @@ class ConversationEngine(
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
                 is Message.DeletePast -> message.done.complete(PastDeletion.FAILED)
                 is Message.EndQuietTimeIf -> message.done.complete(false)
-                is Message.StopGoalIf -> message.done.complete(false)
+                is Message.StopIf -> message.done.complete(false)
                 else -> Unit
             }
         } catch (e: CancellationException) {

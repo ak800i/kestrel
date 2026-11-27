@@ -37,13 +37,18 @@ class ConversationHookAnswersTest {
         val state = ConversationHookAnswers.state(open, settings, now, typed = true)
 
         assertEquals(
-            "open=yes continued=yes commands=2 goal=paused-at-limit quiet=running quietLeft=40 replyChannel=text testMode=off typed=yes",
+            "open=yes continued=yes commands=2 goal=paused-at-limit request=none quiet=running quietLeft=40 replyChannel=text testMode=off typed=yes",
             state,
         )
         assertFalse(state, state.contains("secret"))
         assertEquals(
-            "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no",
+            "open=no continued=no commands=0 goal=none request=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no",
             ConversationHookAnswers.state(ConversationView(), settings, now, typed = false),
+        )
+        // Kestrel's own request that runs, as a switch that asks while no conversation is open (plan 7G).
+        assertEquals(
+            "open=no continued=no commands=0 goal=none request=running quiet=off quietLeft=none replyChannel=voice testMode=on typed=yes",
+            ConversationHookAnswers.state(ConversationView(ownRequest = true), settings, now, typed = true),
         )
         val held = open.copy(quiet = QuietClock.Held(HoldReason.REPLYING))
         assertTrue(ConversationHookAnswers.state(held, settings, now, typed = false).contains(" quiet=held quietLeft=none "))

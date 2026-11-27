@@ -11,9 +11,12 @@ import kotlin.time.Duration
  * `typed:<words>`, `steered:<words>`, `stop` or `unheard:<text>`, and [onInput] gets each one; [answers] holds the run's
  * answers as `<answer>` or `<answer>/<channel>`. As plan 7F's hook does, agent-answer on the text channel refuses a
  * confirmation, a hand-over and a pick, which only the card over the app answers (`channel=card`, plan 7F's Task 13a).
- * conversation-state counts the open conversation's commands (a "continue" adds none) and says whether a hook's input
- * opened it (`typed=`), conversation-control do=expire closes it while no goal is open, do=expire-typed does so only for
- * one that a hook's input opened (plan 7G), goal-control do=stop-typed stops the goal only of such a conversation, do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
+ * conversation-state counts the open conversation's commands (a "continue" adds none), says whether Kestrel's own request
+ * runs (`request=`, a command that [Command.continues]) and whether the work there carries the hooks' mark (`typed=`: the
+ * open conversation that a hook's input opened, or while none is open, the request, which every command of the fake is
+ * the hooks'), conversation-control do=expire closes it while no goal is open, do=expire-typed does so only for one that
+ * a hook's input opened (plan 7G), goal-control do=stop-typed stops the goal or the request only where that mark is, as
+ * the owner's "stop" ends it, do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
  * outlive a restart, as plan 7F keeps them in a file ([deleted]), never one that a switch moved into, and
  * voice-state's followUp= is open from the end of a spoken command until the next input, unless [windows] is false. The
  * hook crash answers `crashing` and ends the process: `pidof` then gives a new process, the command that ran is lost with
@@ -26,8 +29,9 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
      * (`asking=`, `confirming=` and `question=`, or `handOver=` for a hand-over), which the run's answer closes, or
      * Kestrel's own wait after [WAIT_READS] reads without one; its goal acts while [until] has not happened and for [reads]
      * more reads of its agent-task; then it ends with [end]. agent-state shows its [checklist] while the command is the
-     * newest. A command that [continues] continues the conversation that the quiet time closed last (design 9.6), as a
-     * local request without a goal.
+     * newest. A command that [continues] continues the conversation that the quiet time closed last (design 9.6), as
+     * Kestrel's own request without a goal: with a question in [asks], the switch's, it moves into that conversation only
+     * when the run answers it yes, and runs while no conversation is open until then, as Kestrel's switch does.
      */
     data class Command(
         val end: String = FINISHED,
@@ -80,6 +84,8 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
     private var followUp = false
     private var restored = "nothing"
     private var running: String? = null
+    // A command that continues the conversation that the quiet time closed, whose switch waits for its question's yes.
+    private var switching = false
     private var waiting = Until.NOTHING
     private var reads = 0
     private var unanswered = 0
@@ -111,7 +117,8 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         adb.hook("VOICE_RESTORE") { "restoredAgo=${restoredAt?.let { (clock() - it).inWholeSeconds } ?: "none"} guard=$GUARD_SECONDS" }
         adb.hook("CONVERSATION_STATE") {
             val quiet = if (open && running == null && goal == "none") "running" else "off"
-            "open=${yesNo(open)} continued=${yesNo(continued)} commands=$commands goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${yesNo(open && conversation in own)}"
+            "open=${yesNo(open)} continued=${yesNo(continued)} commands=$commands goal=$goal request=${if (requestRuns()) "running" else "none"} quiet=$quiet " +
+                "quietLeft=none replyChannel=voice testMode=on typed=${yesNo(typed())}"
         }
         adb.hook("CONVERSATION_CONTROL") { extras -> control(extras) }
         adb.hook("CRASH") {
@@ -123,8 +130,8 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         adb.hook("GOAL_CONTROL") { extras ->
             when (extras["do"]) {
                 "touch" -> if (waiting == Until.TOUCHED) waiting = Until.NOTHING
-                // Plan 7G: only a goal of the hooks' own conversation, as Kestrel checks their mark when it takes the stop.
-                "stop-typed" -> return@hook if (open && goal != "none" && conversation in own) {
+                // Plan 7G: only work that carries the hooks' mark, as Kestrel checks it when it takes the stop.
+                "stop-typed" -> return@hook if ((goal != "none" || requestRuns()) && typed()) {
                     stop()
                     "stop=sent"
                 } else {
@@ -157,10 +164,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         val id = checkNotNull(tag) { "a command without a tag" }
         val plan = planned.removeFirstOrNull() ?: Command()
         if (plan.continues) {
-            open = true
-            continued = true
-            commands = closed
-            conversation = closedConversation
+            if (plan.asks.isEmpty()) switchBack() else switching = true
         } else {
             if (!open) {
                 open = true
@@ -186,9 +190,27 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         if (waiting == Until.STEERED) waiting = Until.NOTHING
     }
 
+    // The switch into the conversation that the quiet time closed last.
+    private fun switchBack() {
+        switching = false
+        open = true
+        continued = true
+        commands = closed
+        conversation = closedConversation
+    }
+
+    // Kestrel's own request runs: a command that continues a past conversation, until it ends.
+    private fun requestRuns(): Boolean = running?.let { plans[it]?.continues } == true
+
+    // The hooks' mark of the work: the open conversation's, or while none is open, the request's, which is the hooks'.
+    private fun typed(): Boolean = if (open) conversation in own else requestRuns()
+
+    // As the owner's "stop": it cancels the request with its question, or ends the goal.
     private fun stop() {
         add("stop")
+        running?.let { questions[it]?.clear() }
         running = null
+        switching = false
         waiting = Until.NOTHING
         goal = "none"
     }
@@ -199,6 +221,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         restoredAt = clock()
         running?.let { lost += it }
         running = null
+        switching = false
         waiting = Until.NOTHING
         if (goal != "none") {
             goal = "interrupted"
@@ -216,6 +239,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         if (tag != running) return -1 to plan.end
         if (waiting != Until.NOTHING || questions.getValue(tag).isNotEmpty() || reads-- > 0) return -1 to "state=running"
         running = null
+        switching = false
         goal = when {
             "end=PAUSED_AT_LIMIT" in plan.end -> "paused-at-limit"
             "end=INTERRUPTED" in plan.end -> "interrupted"
@@ -233,10 +257,11 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             else -> "ended"
         }
         val question = questions[tag]?.firstOrNull()?.takeIf { tag == running }
-        // Kestrel's own wait ends a question that the run leaves open.
+        // Kestrel's own wait ends a question that the run leaves open; a switch's then never happens.
         if (question != null && ++unanswered >= WAIT_READS) {
             questions.getValue(tag).removeFirst()
             unanswered = 0
+            switching = false
         }
         val checklist = if (phase == "ended") "none" else plan.checklist
         return -1 to "phase=$phase work=idle handOver=none ${question ?: "asking=none confirming=none question=none"} checklist=$checklist " +
@@ -252,6 +277,9 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         }
         questions[tag]?.removeFirstOrNull()
         unanswered = 0
+        if (tag == running && switching) {
+            if (extras["answer"] == "yes") switchBack() else switching = false
+        }
         answers += extras.getValue("answer") + (channel?.let { "/$it" } ?: "")
         return -1 to "answered tag=$tag" + (channel?.let { " channel=$it" } ?: "")
     }

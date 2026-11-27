@@ -17,18 +17,22 @@ class ConversationGuardTest {
     private var open = true
     private var quiet = "held"
     private var goal = "none"
+
+    // Whether Kestrel's own request runs (request=), which may run while no conversation is open, as a switch that asks.
+    private var request = "none"
     private var left = "none"
 
-    // Whether the open conversation carries the hooks' mark (typed=), which Kestrel checks again at expire-typed and stop-typed.
+    // Whether the work carries the hooks' mark (typed=): the open conversation, or while none is open, the request that runs.
+    // Kestrel checks it again at expire-typed and stop-typed.
     private var typed = true
 
-    // Whether a stop that Kestrel takes ends the goal.
+    // Whether a stop that Kestrel takes ends the goal or the request.
     private var stopEnds = true
 
     init {
         run.adb.hook("CONVERSATION_STATE") {
-            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=$quiet quietLeft=$left replyChannel=voice testMode=on " +
-                "typed=${if (open && typed) "yes" else "no"}"
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal request=$request quiet=$quiet quietLeft=$left replyChannel=voice " +
+                "testMode=on typed=${if (marked()) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
             when (extras["do"]) {
@@ -38,14 +42,19 @@ class ConversationGuardTest {
             }
         }
         run.adb.hook("GOAL_CONTROL") { extras ->
-            if (extras["do"] == "stop-typed" && open && typed && goal != "none") {
-                if (stopEnds) goal = "none"
+            if (extras["do"] == "stop-typed" && marked() && (goal != "none" || request == "running")) {
+                if (stopEnds) {
+                    goal = "none"
+                    request = "none"
+                }
                 "stop=sent"
             } else {
                 "stop=none"
             }
         }
     }
+
+    private fun marked(): Boolean = (open || request == "running") && typed
 
     private fun expire(): String {
         if (quiet == "running") open = false
@@ -74,6 +83,12 @@ class ConversationGuardTest {
         goal = "none"
         assertEquals("Kestrel's conversation did not close within 60 s.", assertThrows(SetupFailed::class.java) { guard.close() }.message)
         assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
+
+        // The hooks' own request, a switch that asks while no conversation is open: no step's to end, but the restore's.
+        open = false
+        request = "running"
+        assertEquals("Kestrel's conversation has its own request running; say 'Kestrel, stop' first.", assertThrows(SetupFailed::class.java) { guard.close() }.message)
+        assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
     }
 
     // One rule for every close (plan 7G): before a run, the owner's open conversation, which has no mark, is never ended; the
@@ -179,18 +194,18 @@ class ConversationGuardTest {
     // Kestrel checks again on its loop; a goal of the owner's conversation never does, also when the owner's words reach
     // the hooks' conversation between the guard's read and its stop.
     @Test
-    fun stopGoalStopsOnlyTheGoalOfTheHooksOwnConversation() {
-        assertEquals(GoalStop.ENDED, guard.stopGoal())
+    fun stopWorkStopsOnlyTheGoalOfTheHooksOwnConversation() {
+        assertEquals(WorkStop.ENDED, guard.stopWork())
         assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
 
         goal = "paused-at-limit"
-        assertEquals(GoalStop.ENDED, guard.stopGoal())
+        assertEquals(WorkStop.ENDED, guard.stopWork())
         assertEquals(listOf(mapOf("do" to "stop-typed")), run.adb.hookCalls("GOAL_CONTROL"))
 
         // The owner's conversation: its goal goes on, and no stop is sent.
         goal = "acting"
         typed = false
-        assertEquals(GoalStop.OWNERS, guard.stopGoal())
+        assertEquals(WorkStop.OWNERS, guard.stopWork())
         assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").size)
         assertEquals("acting", goal)
 
@@ -200,11 +215,40 @@ class ConversationGuardTest {
         run.adb.hook("CONVERSATION_STATE") {
             val shown = typed
             typed = false
-            "open=yes continued=no commands=1 goal=$goal quiet=held quietLeft=none replyChannel=voice testMode=on typed=${if (shown) "yes" else "no"}"
+            "open=yes continued=no commands=1 goal=$goal request=none quiet=held quietLeft=none replyChannel=voice testMode=on typed=${if (shown) "yes" else "no"}"
         }
-        assertEquals(GoalStop.OWNERS, guard.stopGoal())
+        assertEquals(WorkStop.OWNERS, guard.stopWork())
         assertEquals("acting", goal)
         assertEquals(2, run.adb.hookCalls("GOAL_CONTROL").size)
+    }
+
+    // The same rule for Kestrel's own request (plan 7G): the hooks' own request gets the stop, in their conversation or, as a
+    // switch that asks before it moves into a past conversation, while none is open, and so does it in the series' cleanup;
+    // the owner's request, without the mark, never does.
+    @Test
+    fun stopWorkStopsTheHooksOwnRequestAlsoWithNoConversationOpenAndLeavesTheOwners() {
+        request = "running"
+        assertEquals(WorkStop.ENDED, guard.stopWork())
+        assertEquals("none", request)
+
+        open = false
+        request = "running"
+        assertEquals(WorkStop.ENDED, guard.stopWork())
+        assertEquals("none", request)
+        assertEquals(2, run.adb.hookCalls("GOAL_CONTROL").size)
+
+        request = "running"
+        guard.gave("t1")
+        guard.deleteLeft()
+        assertEquals("none", request)
+        assertEquals(3, run.adb.hookCalls("GOAL_CONTROL").size)
+
+        request = "running"
+        typed = false
+        assertEquals(WorkStop.OWNERS, guard.stopWork())
+        guard.deleteLeft()
+        assertEquals("running", request)
+        assertEquals(3, run.adb.hookCalls("GOAL_CONTROL").size)
     }
 
     // A stop that Kestrel took is not sent again; a goal that it does not end leaves the wait at its 15 s.
@@ -213,7 +257,7 @@ class ConversationGuardTest {
         goal = "interrupted"
         stopEnds = false
 
-        assertEquals(GoalStop.OPEN, guard.stopGoal())
+        assertEquals(WorkStop.OPEN, guard.stopWork())
 
         assertEquals(1, run.adb.hookCalls("GOAL_CONTROL").size)
         assertEquals("interrupted", goal)
@@ -232,7 +276,9 @@ class ConversationGuardTest {
         run.adb.hook("CONVERSATION_CONTROL") { "deleted=2 open=0 failed=0" }
         guard.deleteLeft()
         assertEquals(listOf(mapOf("do" to "delete-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
-        assertTrue(run.adb.hookCalls("CONVERSATION_STATE").isEmpty())
+        // One read, which finds no work of the hooks' to stop.
+        assertEquals(1, run.adb.hookCalls("CONVERSATION_STATE").size)
+        assertTrue(run.adb.hookCalls("GOAL_CONTROL").isEmpty())
         assertTrue(open)
     }
 
@@ -245,9 +291,9 @@ class ConversationGuardTest {
         guard.gave("t1")
         var reads = 0
         run.adb.hook("CONVERSATION_STATE") {
-            // The owner speaks after the first read.
+            // The owner speaks after the first read, which finds no work of the hooks' to stop.
             if (++reads == 2) typed = false
-            "open=yes continued=no commands=2 goal=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${if (typed) "yes" else "no"}"
+            "open=yes continued=no commands=2 goal=none request=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${if (typed) "yes" else "no"}"
         }
 
         guard.deleteLeft()
@@ -259,13 +305,14 @@ class ConversationGuardTest {
         typed = true
         quiet = "running"
         reads = 0
+        // The first read is the stop's, which finds no work; the second is the wait's.
         run.adb.hook("CONVERSATION_STATE") {
             reads++
-            "open=yes continued=no commands=2 goal=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=${if (reads == 1) "yes" else "no"}"
+            "open=yes continued=no commands=2 goal=none request=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=${if (reads <= 2) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
             when (extras["do"]) {
-                "delete-typed" -> if (reads == 0) "deleted=0 open=1 failed=0" else "deleted=0 open=0 failed=0"
+                "delete-typed" -> if (reads <= 1) "deleted=0 open=1 failed=0" else "deleted=0 open=0 failed=0"
                 else -> "expire=not-typed"
             }
         }
@@ -296,7 +343,7 @@ class ConversationGuardTest {
     }
 
     // The waits measure the clock, so a slow adb cannot stretch them: on a device whose every command takes 7 s, or that
-    // never answers, close ends at its 60 s, the series' cleanup at its 300 s and stopGoal's wait at its 15 s.
+    // never answers, close ends at its 60 s, the series' cleanup at its 300 s and stopWork's wait at its 15 s.
     @Test
     fun theWaitsEndAtTheirLimitsHoweverSlowAdbIs() {
         for (latency in listOf(7.seconds, 2.minutes)) {
@@ -313,7 +360,7 @@ class ConversationGuardTest {
         goal = "interrupted"
         stopEnds = false
         val start = run.clock.time
-        assertEquals(GoalStop.OPEN, guard.stopGoal())
+        assertEquals(WorkStop.OPEN, guard.stopWork())
         // A read and the stop take 7 s each; then a pause of a second no longer fits before the 15 s.
         assertEquals(14.seconds, run.clock.time - start)
     }

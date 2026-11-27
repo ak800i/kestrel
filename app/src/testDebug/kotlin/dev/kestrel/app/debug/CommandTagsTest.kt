@@ -11,6 +11,7 @@ import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
+import dev.kestrel.conversation.machine.LocalRun
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
@@ -240,6 +241,42 @@ class CommandTagsTest {
         tags.onConversationStep(ConversationEvent.Input(hooks), his, MachineStep(his, listOf(ConversationEffect.RunLocal(16, null, LocalRequest.ContinuePast("the bus"), hooks))))
         tags.onConversationStep(ConversationEvent.LocalEnded(16, LocalOutcome.Switch(marked)), his, MachineStep(his, listOf(ConversationEffect.SwitchTo(16, marked, hooks))))
         assertEquals(emptyList<ConversationId>(), gone)
+    }
+
+    // Plan 7G: Kestrel's own request that runs while no conversation is open carries the hooks' mark itself, while only the
+    // hooks' inputs reached it. A hook's switch from the quiet is theirs until the owner's answer reaches it, and stays his
+    // after that; the owner's own request is never theirs, nor one in an open conversation, whose mark is the conversation's,
+    // nor a cancelled one.
+    @Test
+    fun aRequestThatRunsWhileNoConversationIsOpenIsTheHooksOnlyWhileOnlyTheirInputsReachedIt() {
+        val owned = mutableListOf<Boolean>()
+        tags.ownRequest = { owned += it }
+        val quiet = ConversationState()
+        val hooks = OwnerInput(71, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
+        tags.untagged(hooks)
+        val asking = ConversationState(local = LocalRun(19, null, hooks))
+        tags.onConversationStep(ConversationEvent.Input(hooks), quiet, MachineStep(asking, listOf(ConversationEffect.RunLocal(19, null, LocalRequest.ContinuePast("the bus"), hooks))))
+        val hooksAnswer = OwnerInput(72, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Text("the red one")), 0)
+        tags.untagged(hooksAnswer)
+        tags.onConversationStep(ConversationEvent.Input(hooksAnswer), asking, MachineStep(asking, emptyList()))
+        val owners = OwnerInput(73, InputChannel.VOICE, InputIntent.Answer(ChannelAnswer.Text("the red one")), 0)
+        tags.onConversationStep(ConversationEvent.Input(owners), asking, MachineStep(asking, emptyList()))
+        tags.onConversationStep(ConversationEvent.Input(hooksAnswer), asking, MachineStep(asking, emptyList()))
+        tags.onConversationStep(ConversationEvent.LocalEnded(19, LocalOutcome.Quiet), asking, MachineStep(quiet, emptyList()))
+        assertEquals(listOf(true, true, false, false, false), owned)
+
+        owned.clear()
+        val his = OwnerInput(74, InputChannel.VOICE, InputIntent.ContinuePast("the bus"), 0)
+        val hisRequest = ConversationState(local = LocalRun(20, null, his))
+        tags.onConversationStep(ConversationEvent.Input(his), quiet, MachineStep(hisRequest, listOf(ConversationEffect.RunLocal(20, null, LocalRequest.ContinuePast("the bus"), his))))
+        val inOpen = OwnerInput(75, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
+        tags.untagged(inOpen)
+        val open = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"), local = LocalRun(21, null, inOpen))
+        tags.onConversationStep(ConversationEvent.Input(inOpen), open, MachineStep(open, listOf(ConversationEffect.RunLocal(21, null, LocalRequest.ContinuePast("the bus"), inOpen))))
+        val cancelled = OwnerInput(76, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
+        tags.untagged(cancelled)
+        tags.onConversationStep(ConversationEvent.Input(cancelled), quiet, MachineStep(ConversationState(local = LocalRun(22, null, cancelled, cancelled = true)), emptyList()))
+        assertEquals(listOf(false, false, false), owned)
     }
 
     // Review M2 of Task 13a: a transcript that a hook sends without a tag, as agent-answer's spoken answer or voice heard's,

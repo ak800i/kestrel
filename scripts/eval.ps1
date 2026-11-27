@@ -1,6 +1,7 @@
 # Runs :tools:eval, the agent's task suite on the PC (design spec, section 16.5), with this script's own arguments, and
-# ends with the tool's exit code: 0 when every run passed or was skipped with a reason, 1 when a run failed, and 2 for a
-# refusal before any run (a device, the live gate, a missing configuration, or a build of the tool that failed).
+# ends with the tool's exit code: 0 when every run passed or was skipped with a reason, 1 when a run failed, 2 for a
+# refusal before any run (a device, the live gate, a missing configuration, or a build of the tool that failed), and 3
+# when the owner's open conversation with Kestrel stopped the runs (owner-busy).
 # It rebuilds the tool's installed copy (tools\eval\build\install\eval) with scripts\gradle.ps1 :tools:eval:installDist
 # only when a file of tools\eval (outside its build folder), of build-logic (outside its build output), or
 # gradle\libs.versions.toml or settings.gradle.kts is newer than the stamp tools\eval\build\eval-built.stamp, which it

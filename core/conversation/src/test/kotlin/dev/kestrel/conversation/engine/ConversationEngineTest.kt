@@ -1492,22 +1492,66 @@ class ConversationEngineTest {
     fun aStopReachesOnlyAnOpenGoalWhoseConversationTheCheckAccepts() = scope.runTest {
         val engine = engine(environment(ScriptedModel.call("ask_user", null, null, null, "question" to "Which one?"), fail))
         engine.restore()
-        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
+        assertFalse(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
         engine.submit(typed("Read my latest SMS"))
         runCurrent()
         assertEquals(GoalPhase.ASKING, engine.view.value.goal)
         val open = engine.view.value.id!!
-        val seen = mutableListOf<ConversationId>()
+        val seen = mutableListOf<ConversationId?>()
 
-        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; false })
+        assertFalse(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; false })
         runCurrent()
         assertEquals(GoalPhase.ASKING, engine.view.value.goal)
-        assertTrue(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; true })
+        assertTrue(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; true })
         runCurrent()
         assertNull(engine.view.value.goal)
         assertEquals(EndReason.CANCELLED, engine.view.value.records.single().end)
         assertEquals(listOf(open, open), seen)
-        assertFalse(engine.stopGoalIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
+        assertFalse(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
+    }
+
+    // Plan 7G's hook stop-typed ends Kestrel's own request too, as the owner's "stop" does: a switch whose question is open
+    // gets the stop only when the check accepts where it runs, the open conversation, or null while none is open; the stop
+    // cancels the request and takes its question away, and the conversation stays as it was.
+    @Test
+    fun aStopReachesKestrelsOwnRequestOnlyWhenTheCheckAcceptsWhereItRuns() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1), listSms, finish(1)))
+        engine.restore()
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        engine.endQuietTime()
+        runCurrent()
+        engine.submit(typed("Read it again"))
+        runCurrent()
+        val open = engine.view.value.id!!
+        val seen = mutableListOf<ConversationId?>()
+
+        engine.submit(input(InputChannel.VOICE, InputIntent.ContinuePast("latest SMS")))
+        runCurrent()
+        assertEquals(QuestionKind.SWITCH, engine.view.value.asking)
+        assertFalse(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; false })
+        runCurrent()
+        assertTrue(engine.view.value.ownRequest)
+        assertEquals(QuestionKind.SWITCH, engine.view.value.asking)
+        assertTrue(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; true })
+        runCurrent()
+        assertFalse(engine.view.value.ownRequest)
+        assertNull(engine.view.value.asking)
+        assertEquals(open, engine.view.value.id)
+
+        engine.endQuietTime()
+        runCurrent()
+        assertNull(engine.view.value.id)
+        engine.submit(input(InputChannel.VOICE, InputIntent.ContinuePast("latest SMS")))
+        runCurrent()
+        assertEquals(QuestionKind.SWITCH, engine.view.value.asking)
+        assertTrue(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { seen += it; true })
+        runCurrent()
+        assertFalse(engine.view.value.ownRequest)
+        assertNull(engine.view.value.asking)
+        assertNull(engine.view.value.id)
+        assertEquals(listOf(open, open, null), seen)
+        assertFalse(engine.stopIf(input(InputChannel.TEXT, InputIntent.Stop)) { true })
     }
 
     // Design 9.5 of sub-project 7: a past conversation is deleted, or all of them, and never the open one.

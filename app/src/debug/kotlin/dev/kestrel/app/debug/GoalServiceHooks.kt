@@ -31,8 +31,8 @@ import kotlinx.coroutines.withContext
  * refusal of its next start is armed, and the audio-focus requests. goal-control presses a button of the goal notification
  * in SystemUI's shade by its key, so that SystemUI sends the button's broadcast as it does for the owner's finger and
  * Android's rules for a start from a notification apply, says which collapsed rows it had to expand before the press, and
- * closes the shade again however the press ends; stops the goal of the hooks' own conversation, and only that one
- * (stop-typed; plan 7G); gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
+ * closes the shade again however the press ends; stops the goal or Kestrel's own request of the hooks' own conversation,
+ * and only that one (stop-typed; plan 7G); gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
  * asks Android for the audio focus with and without the speech's types (spike S9); arms or takes back a refusal of the
  * service's next start; or has a button's own PendingIntent sent a few seconds later, to a process that has ended
  * meanwhile. The answers never contain words.
@@ -74,12 +74,13 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         }
         "refuse-off" -> GoalServiceAnswers.refuseOff(GoalStartRefusal.of(graph).take())
         "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
-        // Only a goal of the hooks' own conversation (plan 7G): the conversation's loop checks their mark at the moment that
-        // it takes the stop, so the goal of a conversation that the owner opened or continued with his words is never
-        // stopped. `stop=none` when no goal is open in a conversation that carries the mark.
+        // Only the goal or Kestrel's own request of the hooks' own conversation, or the hooks' own request while no
+        // conversation is open (plan 7G): the conversation's loop checks their mark at the moment that it takes the stop, so
+        // the work of a conversation that the owner opened or continued with his words is never stopped. `stop=none` when
+        // no such work runs.
         "stop-typed" -> {
             val stop = VoiceHooks.untagged(graph, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Stop, System.currentTimeMillis()))
-            if (graph.conversations.stopGoalIf(stop, HookConversations::owns)) "stop=sent" else "stop=none"
+            if (graph.conversations.stopIf(stop, HookConversations::ownsWork)) "stop=sent" else "stop=none"
         }
         else -> throw HookError("add --es do with one of tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed")
     }

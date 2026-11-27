@@ -178,16 +178,17 @@ class Runner(
         }
         // The steps that hold state in Kestrel's process, which a restart of Kestrel applies again (plan 7G).
         val renewed = task.setup.filterIsInstance<ProcessSetup>() + listOfNotNull(scripted)
-        // Design 6.4 of sub-project 7: a command that still runs, or a goal that the run left open, held or not, would take
-        // the next run's command. Both end through the one rule of the guard, which stops only the hooks' own goal.
-        restores.push("the command and the goal of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
+        // Design 6.4 of sub-project 7: work that the run left running, a goal, held or not, or Kestrel's own request, such as
+        // a switch whose question is open, would take the next run's command. It ends through the one rule of the guard,
+        // which stops only the hooks' own work.
+        restores.push("the work of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
             state.current?.let { registered(it.tag, it.sent) }
-            when (conversations.stopGoal()) {
-                GoalStop.ENDED -> Unit
-                GoalStop.OWNERS -> console.warn(
-                    "Task ${task.name}, run $number: the goal that is open is in the owner's conversation, which the evaluation never stops; say 'Kestrel, stop' to end it.",
+            when (conversations.stopWork()) {
+                WorkStop.ENDED -> Unit
+                WorkStop.OWNERS -> console.warn(
+                    "Task ${task.name}, run $number: the goal or request that runs is the owner's, which the evaluation never stops; say 'Kestrel, stop' to end it.",
                 )
-                GoalStop.OPEN -> console.warn("Task ${task.name}, run $number: Kestrel's goal could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
+                WorkStop.OPEN -> console.warn("Task ${task.name}, run $number: Kestrel's goal or own request could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
             }
         }
         stopIfStopping()
@@ -237,7 +238,7 @@ class Runner(
     /**
      * Waits while Kestrel may still register the command of [tag]: once its words were [sent], Kestrel may register it
      * late, after Ctrl+C, so a tag that Kestrel does not know yet is read once a second for up to [EXISTS] by the clock,
-     * and the goal's stop that follows finds the command's goal open.
+     * and the stop that follows finds the command's work running.
      */
     private fun registered(tag: String, sent: Boolean) {
         if (!sent) return

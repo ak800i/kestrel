@@ -12,7 +12,8 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 
 /**
- * The conversation's hooks (design 14.4 of sub-project 7): conversation-state reads the open conversation,
+ * The conversation's hooks (design 14.4 of sub-project 7): conversation-state reads the open conversation and whether
+ * Kestrel's own request runs,
  * conversation-control starts a new one, ends the quiet time (with expire-typed only of the hooks' own conversation),
  * sets a round's limits or says what the restore found, and
  * conversation-type types words as the owner does on the conversation screen (plan 7F). The answers never contain words.
@@ -21,7 +22,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
         "CONVERSATION_STATE" -> {
             val view = graph.conversations.view.value
-            ConversationHookAnswers.state(view, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis(), HookConversations.owns(view.id))
+            ConversationHookAnswers.state(view, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis(), HookConversations.ownsWork(view.id))
         }
         "CONVERSATION_CONTROL" -> control(intent)
         "CONVERSATION_TYPE" -> type(intent)

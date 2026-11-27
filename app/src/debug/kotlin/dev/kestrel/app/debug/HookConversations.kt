@@ -16,10 +16,16 @@ internal typealias StepWatcher = (ConversationEvent, ConversationState, MachineS
  * input with his words or his choice, or his switch into it, clears it (`CommandTags.onConversationStep`; review M1 of
  * Task 13a). `conversation-control --es do delete-typed` deletes them and clears their marks. The marks are kept by id
  * only, in [file], a file of Kestrel's own storage in debug builds, so that they survive a restart of Kestrel; the rule
- * that clears them watches every step of every process from its start ([watch]; review I2 of plan 7F).
+ * that clears them watches every step of every process from its start ([watch]; review I2 of plan 7F). Kestrel's own
+ * request that runs while no conversation is open, as a switch that asks before it moves into a past conversation, carries
+ * the mark itself while only the hooks' inputs reached it ([ownsWork]; plan 7G); that mark is kept in memory only, because
+ * no request outlives its process.
  */
 internal class HookConversations(private val file: File) {
     private val ids = LinkedHashSet<ConversationId>()
+
+    @Volatile
+    private var request = false
 
     init {
         // A line that is no conversation's id is no mark.
@@ -42,6 +48,17 @@ internal class HookConversations(private val file: File) {
     fun forget(done: Collection<ConversationId>) {
         if (ids.removeAll(done.toSet())) save()
     }
+
+    /** Notes whether Kestrel's own request that runs while no conversation is open is the hooks'. */
+    fun requestOwned(owned: Boolean) {
+        request = owned
+    }
+
+    /**
+     * Whether the work that a stop would end now is the hooks' own: the mark of [open], the open conversation, or while none
+     * is open, the mark of Kestrel's own request that runs.
+     */
+    fun ownsWork(open: ConversationId?): Boolean = if (open != null) owns(open) else request
 
     private fun save() = file.writeText(ids.joinToString("\n") { it.value })
 
@@ -71,13 +88,20 @@ internal class HookConversations(private val file: File) {
             current = marks
             tags.ownConversation = marks::own
             tags.ownerConversation = { id -> marks.forget(listOf(id)) }
+            tags.ownRequest = marks::requestOwned
             install(tags::onConversationStep)
         }
 
         fun all(): List<ConversationId> = current?.all().orEmpty()
 
-        /** Whether [id] carries the hooks' mark in this process (plan 7G's `typed=` and `expire-typed`). */
+        /** Whether [id] carries the hooks' mark in this process (plan 7G's `expire-typed`). */
         fun owns(id: ConversationId?): Boolean = current?.owns(id) == true
+
+        /**
+         * Whether the work that a stop would end is the hooks' own in this process (plan 7G's `typed=` and `stop-typed`): the
+         * mark of [open], the open conversation, or while none is open (null), the mark of Kestrel's own request that runs.
+         */
+        fun ownsWork(open: ConversationId?): Boolean = current?.ownsWork(open) == true
 
         fun forget(done: Collection<ConversationId>) {
             current?.forget(done)

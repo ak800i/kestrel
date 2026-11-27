@@ -200,7 +200,7 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Get-StandInText 'Yes' | Should -BeExactly 'Yes'
     }
 
-    It 'runs a task through scripts\eval.ps1: live in a sitting, once without a model in a dry run, and throws on a refusal or a call without run lines (design D16 of sub-project 6)' {
+    It 'runs a task through scripts\eval.ps1: live in a sitting, once without a model in a dry run, and throws on a refusal, a call without run lines or the owner-busy stop (design D16 of sub-project 6, plan 7G)' {
         $EmulatorSerial = 'emulator-5554'
         $resultsFile = Join-Path $TestDrive "eval-$([guid]::NewGuid().ToString('N')).txt"
         [IO.File]::WriteAllText($resultsFile, '')
@@ -210,9 +210,9 @@ Describe 'The helpers of the sittings of sub-project 5' {
         Mock Invoke-EvalTool { $calls.Add($Arguments -join ' '); Add-Content -LiteralPath $resultsFile $line; 0 }
 
         $DryRun = $true
-        Invoke-Eval $EmulatorSerial 'hotspot' 1 @{}
+        Invoke-Eval emulator-runs $EmulatorSerial 'hotspot' 1 @{}
         $DryRun = $false
-        Invoke-Eval 'R58N66RVD7Z' 'telegram-late' 3 @{ Name = 'Mira'; Model = 'gemini-3.8-flash' }
+        Invoke-Eval a71-runs 'R58N66RVD7Z' 'telegram-late' 3 @{ Name = 'Mira'; Model = 'gemini-3.8-flash' }
 
         @($calls) | Should -Be @(
             "run --device emulator-5554 --task hotspot --runs 1 --results $resultsFile --dry-run",
@@ -221,11 +221,18 @@ Describe 'The helpers of the sittings of sub-project 5' {
 
         # Exit code 1 is a run that failed, which its line says; exit code 2 is a refusal, which writes no line.
         Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile $line.Replace('result=pass', 'result=fail'); 1 }
-        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Not -Throw
+        { Invoke-Eval emulator-runs $EmulatorSerial 'hotspot' 1 @{} } | Should -Not -Throw
         Mock Invoke-EvalTool { 2 }
-        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 refused to run hotspot on kestrel-api37.'
+        { Invoke-Eval emulator-runs $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 refused to run hotspot on kestrel-api37.'
         Mock Invoke-EvalTool { 0 }
-        { Invoke-Eval $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 wrote no run line for hotspot on kestrel-api37.'
+        { Invoke-Eval emulator-runs $EmulatorSerial 'hotspot' 1 @{} } | Should -Throw 'scripts\eval.ps1 wrote no run line for hotspot on kestrel-api37.'
+        # Exit code 3 is the owner-busy stop, whose runs are written as skipped: it stops the whole sitting.
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile $line.Replace('result=pass', 'result=skipped').Replace('reason=ok', 'reason=owner-busy'); 3 }
+        $stop = $null
+        try { Invoke-Eval emulator-runs $EmulatorSerial 'hotspot' 1 @{} } catch { $stop = $_ }
+        Test-SittingStop $stop | Should -BeTrue
+        $stop.Exception.Message | Should -BeExactly ('The owner was busy with Kestrel on kestrel-api37, so the runs of hotspot did not run (owner-busy). When he is done with Kestrel, ' +
+            'call sitting 2 again with -Step prepare,emulator-runs and the steps after it, which runs the tasks of emulator-runs again.')
     }
 }
 
@@ -557,6 +564,20 @@ Describe 'The live runs of sitting 2 (the fix round before the sittings)' {
         Invoke-TaskRuns a71-runs $A71 'hotspot' 1 | Out-Null
 
         $results | Should -Contain 'a71-runs: hotspot on the A71: 0 of 0 runs passed, 1 skipped (untestable); the sitting''s AI Credits so far: 0'
+    }
+
+    It 'stops the sitting at the owner-busy stop of :tools:eval after it counts and names the runs that did not run, before the credits'' stops (plan 7G)' {
+        $script:credits = 149.5
+        Mock Invoke-EvalTool { Add-Content -LiteralPath $resultsFile "2026-12-01 12:02:00`ttask`ttask=hotspot run=1 result=skipped end=none check=skipped steps=1 workMs=2000 credits=1.00 model=gpt-6-luna in=100 out=3 cacheRead=0 cacheWrite=0 reason=owner-busy"; 3 }
+        $stop = $null
+
+        try { Invoke-TaskRuns emulator-runs $EmulatorSerial 'hotspot' 1 | Out-Null } catch { $stop = $_ }
+
+        Test-SittingStop $stop | Should -BeTrue
+        $stop.Exception.Message | Should -BeLike 'The owner was busy with Kestrel on kestrel-api37, *-Step prepare,emulator-runs *'
+        $results | Should -Contain 'emulator-runs: hotspot on kestrel-api37: 0 of 0 runs passed, 1 skipped (owner-busy); the sitting''s AI Credits so far: 150.5'
+        (Read-AgentRecord $recordFile).sitting2Credits | Should -Be 150.5
+        Should -Invoke Invoke-EvalTool -Times 1 -Exactly
     }
 
     It 'gives look_closer no live task once the ceiling is reached (fix-5c-scripts-review I1)' {

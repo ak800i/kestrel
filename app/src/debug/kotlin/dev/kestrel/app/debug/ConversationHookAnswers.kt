@@ -14,9 +14,10 @@ import dev.kestrel.conversation.model.ConversationSettings
 internal object ConversationHookAnswers {
     /**
      * conversation-state: whether a conversation is open and was continued, how many commands it holds, its goal's phase,
-     * its quiet clock with the whole seconds left while the clock runs, the channel of the owner's latest input, the
-     * conversation's test mode, and whether it is one of the hooks' own ([typed], the mark of `HookConversations`; plan
-     * 7G). [now] is the wall clock.
+     * whether Kestrel's own request runs (remember, forget, "save that as", delete history or a switch; plan 7G), its quiet
+     * clock with the whole seconds left while the clock runs, the channel of the owner's latest input, the conversation's
+     * test mode, and whether the work that a stop would end is the hooks' own ([typed]: the open conversation's mark, or
+     * while none is open, that of the request that runs; `HookConversations.ownsWork`, plan 7G). [now] is the wall clock.
      */
     fun state(view: ConversationView, settings: ConversationSettings, now: Long, typed: Boolean): String {
         val (quiet, left) = when (val clock = view.quiet) {
@@ -25,7 +26,8 @@ internal object ConversationHookAnswers {
             is QuietClock.Running -> "running" to seconds(settings.quietMillis - (now - clock.sinceWall)).toString()
         }
         return "open=${yesNo(view.id != null)} continued=${yesNo(view.continuedAtWall != null)} commands=${view.records.size} " +
-            "goal=${view.goal?.let { it.name.lowercase().replace('_', '-') } ?: "none"} quiet=$quiet quietLeft=$left " +
+            "goal=${view.goal?.let { it.name.lowercase().replace('_', '-') } ?: "none"} request=${if (view.ownRequest) "running" else "none"} " +
+            "quiet=$quiet quietLeft=$left " +
             "replyChannel=${view.replyChannel.name.lowercase()} testMode=${if (view.testMode) "on" else "off"} typed=${yesNo(typed)}"
     }
 

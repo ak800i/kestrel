@@ -25,7 +25,8 @@ import dev.kestrel.eval.run.Stopping
  * command that Ctrl+C ends ([Stopping]) prints no error: it ends with 1 when run lines were written (the shutdown hook
  * writes `reason=stopped` for the runs that did not end), and with 2 when none was. On a real Ctrl+C the JVM is already
  * shutting down, so the process ends with the JVM's own exit code instead. A command that the owner's open conversation
- * stops ([OwnerBusy]) prints `STOPPED:` with the reason `owner-busy` and ends with 1; the runs that it did not run have
+ * stops ([OwnerBusy]) prints `STOPPED:` with the reason `owner-busy` and ends with 3, a code of its own, so that a caller
+ * that runs the tool once per task, as scripts\a71-agent.ps1 does, stops too; the runs that it did not run have
  * `result=skipped reason=owner-busy`, which a resumed suite runs. An error that came after the first one, such
  * as a change of kestrel-api37's accounts after a failed command, is printed after it, and makes a refusal an error (1).
  */
@@ -64,7 +65,7 @@ class Cli(private val environment: Environment) {
         } catch (e: OwnerBusy) {
             out.println("STOPPED: ${redactions.forConsole(e.message.orEmpty())}")
             errors(e, redactions)
-            EXIT_FAILED
+            EXIT_OWNER_BUSY
         } catch (e: Refusal) {
             out.println("REFUSED: ${redactions.forConsole(e.message.orEmpty())}")
             errors(e, redactions)
@@ -113,6 +114,7 @@ class Cli(private val environment: Environment) {
         const val EXIT_PASSED = 0
         const val EXIT_FAILED = 1
         const val EXIT_REFUSED = 2
+        const val EXIT_OWNER_BUSY = 3
 
         val USAGE: String = """
             |Usage: scripts\eval.ps1 <command> [options]

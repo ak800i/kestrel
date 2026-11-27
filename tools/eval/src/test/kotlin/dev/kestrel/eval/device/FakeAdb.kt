@@ -75,8 +75,8 @@ class FakeAdb(
     private var lagLeft = 0
     val files = mutableMapOf<String, String>()
     private val handlers = mutableListOf<Pair<Regex, (MatchResult) -> String?>>()
-    // By default no conversation is open, none of the hooks' own is left, and so no goal of theirs is open to stop (design
-    // 14.4 of sub-project 7; plan 7G).
+    // By default no conversation is open, none of the hooks' own is left, and so no goal or request of theirs runs to stop
+    // (design 14.4 of sub-project 7; plan 7G).
     private val hooks = mutableMapOf<String, (Map<String, String>) -> Pair<Int, String>>(
         "CONVERSATION_STATE" to { _ -> -1 to NO_CONVERSATION },
         "CONVERSATION_CONTROL" to { _ -> -1 to NOTHING_DELETED },
@@ -263,7 +263,7 @@ class FakeAdb(
 
     companion object {
         /** conversation-state's answer while no conversation is open (design 14.4 of sub-project 7). */
-        const val NO_CONVERSATION = "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no"
+        const val NO_CONVERSATION = "open=no continued=no commands=0 goal=none request=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no"
 
         /** conversation-control do=delete-typed's answer when none of the hooks' own conversations is left (plan 7F). */
         const val NOTHING_DELETED = "deleted=0 open=0 failed=0"

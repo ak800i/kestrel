@@ -22,7 +22,8 @@
 # named steps, also as one text separated by commas. A sitting 2 that stopped goes on with a call with -Step and the
 # steps that remain, with prepare first (only prepare opens the live sessions); such a call counts on from the AI
 # Credits of the earlier calls and reads their results too, and starts no run when the record lists no earlier call or
-# a results file that it lists is gone. Only the step end enables the emulator's Play Store again, turns Gmail's
+# a results file that it lists is gone. A sitting 2 stops when :tools:eval stops because the owner is busy with Kestrel
+# (owner-busy, its exit code 3), and names the call that runs that step's tasks again. Only the step end enables the emulator's Play Store again, turns Gmail's
 # notifications on there again and removes a test account (one whose address is not gmailAddress) and the apps that
 # sitting 1 installed there, never Gmail; -Step end alone ends a sitting 2 that will not go on. A new sitting 2
 # is a call without -Step. Before and after each step the script reads both devices' call state, and ends a call with
@@ -348,8 +349,9 @@ function Invoke-Device([string]$Device, [string]$Command) { Invoke-SettingsComma
 
 # A stop of the whole sitting, which no item or step catches, so that the sitting runs no further item or step and goes
 # straight to its end, whose finally block still runs the restores registered by then, puts back "Stay awake" and, in
-# sitting 2, closes the live sessions: the owner's q, or a restart of kestrel-api37 that failed, that left its window
-# state unknown, or after which the owner's data there differed. Test-SittingStop tells it from any other error.
+# sitting 2, closes the live sessions: the owner's q, a restart of kestrel-api37 that failed, that left its window state
+# unknown, or after which the owner's data there differed, or the owner-busy stop of :tools:eval (Invoke-Eval).
+# Test-SittingStop tells it from any other error.
 function New-SittingStop([string]$Message) {
     $stop = [System.Exception]::new($Message)
     $stop.Data['KestrelSittingStop'] = $true
@@ -1619,14 +1621,20 @@ function Invoke-EvalTool([string[]]$Arguments) {
 # that no request reaches a provider; -Model and -Name of $With become --model and --name, and the tool reads the owner's
 # addresses itself. The tool appends the runs' lines to this sitting's results file. A refusal (exit code 2) writes no run
 # line, and a call that should have runs but left none is an error too, so both throw, and Invoke-TaskRuns records them
-# as a task that failed; exit code 1 is a run that failed, which its lines name.
-function Invoke-Eval([string]$Device, [string]$Task, [int]$Runs, [hashtable]$With) {
+# as a task that failed; exit code 1 is a run that failed, which its lines name. Exit code 3 is the owner-busy stop (plan
+# 7G): the owner's conversation with Kestrel stayed open past its quiet time, which the evaluation never ends, so the tool
+# wrote the runs that it did not run as skipped (owner-busy) and stopped. The sitting stops too (New-SittingStop), rather
+# than wait for him again at each later task, and says how to go on: a later call with -Step runs the step $StepName again.
+function Invoke-Eval([string]$StepName, [string]$Device, [string]$Task, [int]$Runs, [hashtable]$With) {
     $arguments = @('run', '--device', $Device, '--task', $Task, '--runs', "$Runs", '--results', $resultsFile, $(if ($DryRun) { '--dry-run' } else { '--live' }))
     if ($With.Model) { $arguments += @('--model', $With.Model) }
     if ($With.Name) { $arguments += @('--name', $With.Name) }
     $before = @(Get-Content -LiteralPath $resultsFile).Count
     $code = Invoke-EvalTool $arguments
     if ($code -eq 2) { throw "scripts\eval.ps1 refused to run $Task on $(Get-DeviceName $Device)." }
+    if ($code -eq 3) {
+        throw (New-SittingStop "The owner was busy with Kestrel on $(Get-DeviceName $Device), so the runs of $Task did not run (owner-busy). When he is done with Kestrel, call sitting 2 again with -Step prepare,$StepName and the steps after it, which runs the tasks of $StepName again.")
+    }
     if (-not @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | Where-Object { ConvertFrom-TaskLine $_ })) {
         throw "scripts\eval.ps1 wrote no run line for $Task on $(Get-DeviceName $Device)."
     }
@@ -1642,10 +1650,16 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     $before = @(Get-Content -LiteralPath $resultsFile).Count
     # A task whose setup or check fails is recorded, and the step goes on with its next task (design D27). Its error can
     # hold the owner's address, as read-email's mailto: command does, so only its class is written (task-5c-10-review M1).
+    # The owner-busy stop ends the sitting, after the runs' lines below are counted.
+    $stop = $null
     try {
-        Invoke-Eval $Device $Task $count $With
+        Invoke-Eval $StepName $Device $Task $count $With
     } catch {
-        Add-Result $StepName "${Task} on $(Get-DeviceName $Device): failed: eval.ps1 stopped with $($_.Exception.GetType().Name) before its runs ended"
+        if (Test-SittingStop $_) {
+            $stop = $_.Exception
+        } else {
+            Add-Result $StepName "${Task} on $(Get-DeviceName $Device): failed: eval.ps1 stopped with $($_.Exception.GetType().Name) before its runs ended"
+        }
     }
     # PowerShell's names ignore case, so this list may not be called $runs, which is the parameter -Runs.
     $lines = @(Get-Content -LiteralPath $resultsFile | Select-Object -Skip $before | ForEach-Object { ConvertFrom-TaskLine $_ } | Where-Object { $_ })
@@ -1657,6 +1671,9 @@ function Invoke-TaskRuns([string]$StepName, [string]$Device, [string]$Task, [int
     $skipped = @($lines | Where-Object { $_['result'] -eq 'skipped' })
     $skippedText = if ($skipped) { ", $($skipped.Count) skipped ($(@($skipped | ForEach-Object { $_['reason'] } | Select-Object -Unique) -join ', '))" }
     Add-Result $StepName "$Task on $(Get-DeviceName $Device): $(@($ran | Where-Object { $_['result'] -eq 'pass' }).Count) of $($ran.Count) runs passed$skippedText; the sitting's AI Credits so far: $(Format-Number $script:credits 2)$(if ($unknown) { ", and $unknown runs' AI Credits are unknown" })"
+    # Before the credits' stops, which would run the step end: the call with -Step that goes on runs it, and checks the
+    # credits again before its first run.
+    if ($stop) { throw $stop }
     if ($unknown) { throw $unknownMessage }
     if ($script:credits -ge $creditCeiling) { throw $ceilingMessage }
     $lines

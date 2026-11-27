@@ -184,9 +184,35 @@ class RunnerTest {
         assertTrue(open)
         assertTrue(
             run.console.warnings.contains(
-                "Task stand-in-hotspot, run 1: the goal that is open is in the owner's conversation, which the evaluation never stops; say 'Kestrel, stop' to end it.",
+                "Task stand-in-hotspot, run 1: the goal or request that runs is the owner's, which the evaluation never stops; say 'Kestrel, stop' to end it.",
             ),
         )
+    }
+
+    // Plan 7G: the run's restore stops Kestrel's own request too, by the same rule. The run's command continues a past
+    // conversation from the quiet, a switch that asks before it moves there and runs while no conversation is open, and the
+    // device stops answering the run's reads while the switch's question is open, so the run stalls. The restore stops the
+    // hooks' own request, which takes its question away, so nothing stays open, and the next run's setup passes.
+    @Test
+    fun aRunThatStallsAtASwitchsQuestionLeavesNothingOpenAndTheNextRunsSetupPasses() {
+        val kestrel = FakeConversation(run.adb)
+        kestrel.planned += FakeConversation.Command(continues = true, asks = listOf("asking=yes-no confirming=none question=switch"))
+        var stalling = true
+        kestrel.onInput = { if (it == "stop") stalling = false }
+        run.adb.slow(run.clock, 2.minutes) { stalling && ("hook.AGENT_TASK" in it || "hook.AGENT_STATE" in it) }
+        val switch = task(answers = Answers(switches = true)).copy(turns = listOf(Turn.Say(Request("continue the conversation about my latest SMS"))))
+
+        val failures = runner().runAll(switch, "[]", 2)
+
+        assertEquals(1, failures)
+        assertEquals(listOf("1 fail stalled", "2 pass ok"), writer.lines.map { "${it.run} ${it.result.wire} ${it.reason.wire}" })
+        assertEquals(
+            listOf("spoken:continue the conversation about my latest SMS", "stop", "spoken:continue the conversation about my latest SMS"),
+            kestrel.inputs,
+        )
+        assertEquals(listOf(mapOf("do" to "stop-typed")), run.adb.hookCalls("GOAL_CONTROL"))
+        assertTrue(kestrel.answers.isEmpty())
+        assertFalse(kestrel.open)
     }
 
     // The task's setup decides whether the device can run it before the run's conversation is closed, so that a run that

@@ -72,6 +72,16 @@ internal class CommandTags {
     @Volatile
     var ownerConversation: (ConversationId) -> Unit = {}
 
+    /**
+     * Gets, after each of the conversation's steps, whether Kestrel's own request that runs while no conversation is open
+     * is the hooks' (plan 7G): [HookConversations.watch] sets it at the process's start. It runs under this object's lock.
+     */
+    @Volatile
+    var ownRequest: (Boolean) -> Unit = {}
+
+    // Kestrel's own request that runs while no conversation is open, by its command's number, and whether it is the hooks'.
+    private var request: Pair<Int, Boolean>? = null
+
     // The inputs that the hooks gave the conversation, tagged or not: never the owner's (review M2 of Task 13a). They stay
     // noted after the step that started their work, because a local request's switch names its input again later.
     private val hookInputs = LinkedHashSet<Long>()
@@ -250,6 +260,15 @@ internal class CommandTags {
         val given = (event as? ConversationEvent.Input)?.input
         val brought = (listOfNotNull(given) + step.effects.mapNotNull { work(it)?.second }).distinctBy { it.id }.filter(::owners)
         brought.mapNotNull { reached(it, step) }.distinct().forEach(ownerConversation)
+        // A request that runs while no conversation is open, as a switch that asks before it moves into a past conversation,
+        // has no conversation to carry the mark, so it carries the mark itself (plan 7G): the request that a hook's input
+        // started, until an input of the owner's with his words or his choice reaches it.
+        val running = step.state.local?.takeIf { !it.cancelled && step.state.id == null }
+        request = running?.let { local ->
+            val hooks = request?.takeIf { it.first == local.command }?.second ?: (local.input.id in hookInputs)
+            local.command to (hooks && brought.isEmpty())
+        }
+        ownRequest(request?.second == true)
         val started = mutableSetOf<Long>()
         for (effect in step.effects) {
             if (effect is ConversationEffect.StartGoal) lastGoalWords = effect.text.split(WHITESPACE).count { it.isNotEmpty() }

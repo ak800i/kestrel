@@ -43,14 +43,14 @@ class ConversationHooksTest {
         check(VoiceTests.waitUntil(30_000) { conversations.view.value.quiet is QuietClock.Running }) { "The quiet time did not run" }
 
         val open = hook("CONVERSATION_STATE")
-        assertTrue(open, Regex("open=yes continued=no commands=1 goal=none quiet=running quietLeft=\\d+ replyChannel=voice testMode=(on|off) typed=no").matches(open))
+        assertTrue(open, Regex("open=yes continued=no commands=1 goal=none request=none quiet=running quietLeft=\\d+ replyChannel=voice testMode=(on|off) typed=no").matches(open))
         // No hook's input opened this conversation, so expire-typed leaves it open (plan 7G).
         assertEquals("expire=not-typed", hook("CONVERSATION_CONTROL", "do" to "expire-typed"))
         assertTrue(conversations.view.value.id != null)
         assertEquals("expire=sent", hook("CONVERSATION_CONTROL", "do" to "expire"))
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
         val closed = hook("CONVERSATION_STATE")
-        assertTrue(closed, Regex("open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=(voice|text) testMode=(on|off) typed=no").matches(closed))
+        assertTrue(closed, Regex("open=no continued=no commands=0 goal=none request=none quiet=off quietLeft=none replyChannel=(voice|text) testMode=(on|off) typed=no").matches(closed))
     }
 
     @Test

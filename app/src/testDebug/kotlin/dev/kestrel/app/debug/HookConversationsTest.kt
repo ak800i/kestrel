@@ -1,8 +1,11 @@
 package dev.kestrel.app.debug
 
+import dev.kestrel.conversation.local.LocalOutcome
+import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
 import dev.kestrel.conversation.machine.ConversationState
+import dev.kestrel.conversation.machine.LocalRun
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
@@ -84,5 +87,29 @@ class HookConversationsTest {
         val words = OwnerInput(1, InputChannel.TEXT, InputIntent.Command("and the prices"), 0)
         checkNotNull(steps)(ConversationEvent.Input(words), open, MachineStep(open, listOf(ConversationEffect.StartGoal(2, 2, words, "and the prices"))))
         assertFalse(HookConversations.owns(marked))
+    }
+
+    // Plan 7G's typed= and stop-typed: the work that a stop would end is the hooks' own by the open conversation's mark, or
+    // while none is open, by the mark of Kestrel's own request that runs, which the watched steps keep until it ends.
+    @Test
+    fun theWorkIsTheHooksOwnByTheOpenConversationsMarkOrWithNoneOpenByTheRequestsMark() {
+        val marked = ConversationId("1".repeat(32))
+        val owners = ConversationId("2".repeat(32))
+        HookConversations(folder.root.resolve(HookConversations.FILE)).own(marked)
+        val tags = CommandTags()
+        var steps: StepWatcher? = null
+        HookConversations.watch(folder.root, tags) { steps = it }
+        assertTrue(HookConversations.ownsWork(marked))
+        assertFalse(HookConversations.ownsWork(owners))
+        assertFalse(HookConversations.ownsWork(null))
+
+        val hooks = OwnerInput(1, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
+        tags.untagged(hooks)
+        val asking = ConversationState(local = LocalRun(3, null, hooks))
+        checkNotNull(steps)(ConversationEvent.Input(hooks), ConversationState(), MachineStep(asking, listOf(ConversationEffect.RunLocal(3, null, LocalRequest.ContinuePast("the bus"), hooks))))
+        assertTrue(HookConversations.ownsWork(null))
+        assertFalse(HookConversations.ownsWork(owners))
+        checkNotNull(steps)(ConversationEvent.LocalEnded(3, LocalOutcome.Quiet), asking, MachineStep(ConversationState(), emptyList()))
+        assertFalse(HookConversations.ownsWork(null))
     }
 }

@@ -112,8 +112,11 @@ class Preflight(
         // The series' cleanup ends only the hooks' own conversation: it reads their mark (typed=) and ends the quiet time
         // with do=expire-typed, which Kestrel's build of plan 7G gives with it.
         if (state["typed"] == null) refuse("conversation-state's typed= and conversation-control do=expire-typed", "plan 7G of sub-project 7")
-        // A run's restore stops only the hooks' own goal, through goal-control do=stop-typed, which Kestrel checks on the
-        // conversation's loop. Here it stops nothing, unless an earlier series left a goal of the hooks' open.
+        // A run's restore stops the hooks' own request too, which only a build that answers request= shows.
+        if (state["request"] == null) refuse("conversation-state's request=", "plan 7G of sub-project 7")
+        // A run's restore stops only the hooks' own work, a goal or Kestrel's own request, through goal-control
+        // do=stop-typed, which Kestrel checks on the conversation's loop. Here it stops nothing, unless an earlier series
+        // left work of the hooks' running.
         val stop = try {
             hooks.stopTyped()["stop"]
         } catch (e: HookError) {

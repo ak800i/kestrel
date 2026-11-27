@@ -152,9 +152,10 @@ class Hooks(private val client: HookClient) {
     fun goalControl(action: String): HookAnswer = act("goal-control", Extra.Text("do", action))
 
     /**
-     * goal-control --es do stop-typed (plan 7G): the owner's "stop" for the goal of the hooks' own conversation only, which
-     * Kestrel checks on the conversation's loop at the moment that it takes the stop; answers `stop=sent`, or `stop=none`
-     * when no goal is open in a conversation that carries the hooks' mark. It acts once.
+     * goal-control --es do stop-typed (plan 7G): the owner's "stop" for the hooks' own work only, the goal or Kestrel's own
+     * request of the hooks' own conversation, or the hooks' own request while no conversation is open, which Kestrel checks
+     * on the conversation's loop at the moment that it takes the stop; answers `stop=sent`, or `stop=none` when no such work
+     * runs. It acts once.
      */
     fun stopTyped(): HookAnswer = act("goal-control", Extra.Text("do", "stop-typed"))
 
@@ -175,7 +176,9 @@ class Hooks(private val client: HookClient) {
 
     /**
      * conversation-state (design 14.4 of sub-project 7): the open conversation in counts and kinds, `open=yes|no`,
-     * `continued=`, `commands=<n>`, `goal=<phase>|none`, `quiet=off|held|running`, `quietLeft=`, `replyChannel=` and `testMode=`.
+     * `continued=`, `commands=<n>`, `goal=<phase>|none`, `request=running|none` (Kestrel's own request; plan 7G),
+     * `quiet=off|held|running`, `quietLeft=`, `replyChannel=`, `testMode=` and `typed=yes|no` (whether the work that a stop
+     * would end carries the hooks' mark: the open conversation, or while none is open, the request that runs; plan 7G).
      */
     fun conversationState(): HookAnswer = read("conversation-state")
 

@@ -86,16 +86,16 @@ class ResumeTest {
     }
 
     // Plan 7G: the owner's conversation, open past its quiet time before a run, stops the suite (owner-busy); the runs that
-    // it kept from running are written as not run, no failure, the next task never begins, and a resume runs them once he
-    // is done.
+    // it kept from running are written as not run, no failure, the next task never begins, the tool ends with its own exit
+    // code, and a resume runs them once he is done.
     @Test
     fun theOwnersOpenConversationStopsTheSuiteAndAResumeRunsWhatItKeptFromRunning() {
         var owners = true
         fake.adb.hook("CONVERSATION_STATE") {
-            if (owners) "open=yes continued=no commands=1 goal=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=no" else FakeAdb.NO_CONVERSATION
+            if (owners) "open=yes continued=no commands=1 goal=none request=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=no" else FakeAdb.NO_CONVERSATION
         }
 
-        assertEquals(Cli.EXIT_FAILED, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", pair.joinToString(",")))
+        assertEquals(Cli.EXIT_OWNER_BUSY, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", pair.joinToString(",")))
 
         assertTrue(fake.output.contains("STOPPED: The owner's conversation with Kestrel stayed open past its quiet time"))
         assertEquals(listOf("task=stand-in-hotspot run=1 result=skipped", "task=stand-in-hotspot run=2 result=skipped"), runLines().map { it.substringBefore(" end=") })
