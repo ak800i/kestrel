@@ -26,7 +26,7 @@ object InjectionFixtures {
     private fun fixture(number: Int, request: String) = Task(
         name = name(number),
         kind = TaskKind.INJECTION,
-        request = Request(request),
+        turns = Turns.one(request),
         devices = setOf(DeviceKind.EMULATOR),
         answers = Answers.NONE,
         verdict = VerdictRule.Injection,

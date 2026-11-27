@@ -4,23 +4,15 @@ import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.Clock
 import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.device.DeviceChanged
-import dev.kestrel.eval.device.DeviceCommandFailed
-import dev.kestrel.eval.hook.HookAnswer
-import dev.kestrel.eval.hook.HookError
-import dev.kestrel.eval.hook.HookLost
-import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.Hooks
-import dev.kestrel.eval.task.Answers
-import dev.kestrel.eval.task.PutBack
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
 import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupResult
 import dev.kestrel.eval.task.Task
-import dev.kestrel.eval.task.TaskKind
 import java.nio.file.Path
+import java.util.Locale
 import java.util.UUID
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -31,15 +23,14 @@ data class RunOptions(val live: Boolean, val model: String? = null, val name: St
 class RestoreFailed(message: String) : Exception(message)
 
 /**
- * One run of a task, and the runs of a task (design D5 of sub-project 6), in task-check.ps1's order and limits: the call
- * state, the device rule, the setup (whose failure fails only this run, `reason=setup`), the scripted model of a run
- * without a model, the task given with a new tag, the poll of agent-task every 2 s up to 10 minutes, the answers to its
- * questions with 3 s of quiet after an answer, the stall after 30 s without an answer of the hooks, the checks, and the
- * end however the run ends: the run's restores (the stop of a task that has not ended, the scripted model removed, and
- * the setup's restores, in that order), the call state again, the credits and the line. The stop and the removal are
- * restores, so that the shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening]
- * waits until Kestrel listens, before each run. Once the shutdown hook began ([Restores.stopping]), no run and no task
- * starts: the runner throws [Stopping].
+ * One run of a task, and the runs of a task (design D5 of sub-project 6), in task-check.ps1's order: the call state, the
+ * device rule, a conversation of the run's own and the setup (whose failure fails only this run, `reason=setup`), the
+ * scripted model of a run without a model, the task's turns ([TurnRunner]; design 14.4 of sub-project 7), the checks, and
+ * the end however the run ends: the run's restores (the stop of a command whose end the run did not read, the stop of a
+ * goal that the run left open, the scripted model removed, and the setup's restores, in that order), the call state
+ * again, the credits and the line. The stops and the removal are restores, so that the shutdown hook runs them after
+ * Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel listens, before each run. Once the
+ * shutdown hook began ([Restores.stopping]), no run and no command starts: the runner throws [Stopping].
  */
 class Runner(
     private val device: Device,
@@ -173,33 +164,18 @@ class Runner(
                 console.warn("Task ${task.name}, run $number: Kestrel's goal could not be stopped; say 'Kestrel, stop'.")
             }
         }
-        val tag = tags()
-        state.tag = tag
-        scope.tag = tag
-        restores.push("the task of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
-            if (state.answer == null) state.tag?.let { stop(task, number, it, state.sent) }
+        restores.push("the command of ${task.name}, run $number, stopped", "Say 'Kestrel, stop', or turn Kestrel off.") {
+            state.current?.let { stop(task, number, it.tag, it.sent) }
         }
         stopIfStopping()
-        try {
-            state.sent = true
-            hooks.voiceHeard("Kestrel, " + task.request.fill(scope.values), tag, options.live, options.model, scope.values.marker)
-        } catch (e: HookLost) {
-            // A lost transcript is read back: the task with the tag exists, or the run stops without one.
-            if (!exists(tag)) {
-                state.tag = null
-                console.warn("Task ${task.name}, run $number: the task did not reach Kestrel.")
-                return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
-            }
+        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping).run() == TurnsEnd.UNDELIVERED) {
+            return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
         }
-        await(task, tag, state)
         val answer = state.answer
-        // For the detail line: whether a say text and a data tool's result held the run's marker.
-        if (answer != null) state.markers = quietly { hooks.agentTask(tag, marker = scope.values.marker) }
-        var checked = false
-        if (answer != null) {
-            if (answer["end"] in Refusals.ENDS) state.refusal = Refusals.kind(hooks, tag)
-            checked = task.check.all { it.passes(scope, answer) }
-        }
+        // For the detail line: whether a say text and a data tool's result of the newest command held the run's marker.
+        val newest = state.tag
+        if (answer != null && newest != null) state.markers = quietly { hooks.agentTask(newest, marker = scope.values.marker) }
+        val checked = answer != null && task.check.all { it.passes(scope, answer) }
         if (state.stalled) {
             console.warn("Task ${task.name}, run $number: the device did not answer for ${STALL.inWholeSeconds} s while the task ran, so the run stopped waiting.")
         }
@@ -214,85 +190,9 @@ class Runner(
         return Verdicts.judge(task.verdict, answer, state.timedOut, checked, state.refusal, state.refused, state.stalled, state.declined, cancelled.isNotEmpty())
     }
 
-    /** The shutdown hook began, so no run and no task may start; the hook writes the lines of the runs left. */
+    /** The shutdown hook began, so no run and no command may start; the hook writes the lines of the runs left. */
     private fun stopIfStopping() {
         if (restores.stopping) throw Stopping("The restores are running because :tools:eval is stopping; no run may start.")
-    }
-
-    /** Polls the task until it ends, answers its questions, and notes a timeout or a stall. */
-    private fun await(task: Task, tag: String, state: RunState) {
-        val start = clock.elapsed()
-        fun elapsed(): Duration = clock.elapsed() - start
-        var heard = Duration.ZERO
-        var quietUntil = Duration.ZERO
-        while (elapsed() < LIMIT) {
-            clock.sleep(POLL)
-            val pairs = quietly { hooks.agentTask(tag) }
-            if (pairs == null) {
-                if (elapsed() - heard > STALL) {
-                    state.stalled = true
-                    return
-                }
-                continue
-            }
-            heard = elapsed()
-            if (pairs["state"] == "done") {
-                state.answer = pairs
-                state.record.ended()
-                return
-            }
-            if (elapsed() < quietUntil) continue
-            val asked = quietly { hooks.agentState(tag) } ?: continue
-            val kind = Answers.kind(asked)
-            state.record.saw(kind)
-            if (kind == null) continue
-            val reply = task.answers.reply(asked)
-            if (reply == null) {
-                // "Which number should I use?" stays unanswered (the owner's decision P1).
-                if (kind == Answers.PICK_NUMBER) state.record.keepOpen()
-                continue
-            }
-            val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
-            // A confirmation that the task does not name was cancelled; outside the injection fixtures, whose defence it is, the run fails.
-            if (confirming != null && reply == "cancel" && task.kind != TaskKind.INJECTION) state.refused = confirming
-            if (confirming != null && reply == "no") state.declined.add(confirming)
-            // A lost or refused answer is not sent again: the next poll answers only if the same question is still open.
-            when (send { hooks.agentAnswer(tag, reply, confirming) }) {
-                Delivery.DELIVERED -> state.record.answered(reply)
-                Delivery.LOST -> state.record.lost(reply)
-                Delivery.REFUSED -> Unit
-            }
-            quietUntil = elapsed() + QUIET
-        }
-        state.timedOut = true
-    }
-
-    /**
-     * Sends an answer that acts once: [Delivery.REFUSED] when Kestrel answered with an error, such as "the task asks
-     * nothing"; [Delivery.LOST] when its reply did not come back, after which Kestrel may have received it or not.
-     */
-    private fun send(answer: () -> HookAnswer): Delivery = try {
-        answer()
-        Delivery.DELIVERED
-    } catch (e: HookError) {
-        Delivery.REFUSED
-    } catch (e: HookSilent) {
-        Delivery.LOST
-    } catch (e: HookLost) {
-        Delivery.LOST
-    } catch (e: DeviceCommandFailed) {
-        Delivery.LOST
-    }
-
-    private enum class Delivery { DELIVERED, REFUSED, LOST }
-
-    /** Whether Kestrel has a task with [tag], read for up to 10 s after the transcript's answer was lost. */
-    private fun exists(tag: String): Boolean {
-        repeat(EXISTS_TRIES) {
-            if (quietly { hooks.agentTask(tag) } != null) return true
-            clock.sleep(1.seconds)
-        }
-        return false
     }
 
     private fun close(task: Task, number: Int, state: RunState, mark: Int): End {
@@ -304,8 +204,8 @@ class Runner(
     }
 
     /**
-     * Stops the task of [tag] as the owner's "stop" would, only while it runs: a plain "stop" with no task would be an
-     * instant command. Once its transcript was [sent], Kestrel may register the task late, after Ctrl+C, so a tag that
+     * Stops the command of [tag] as the owner's "stop" would, only while it runs: a plain "stop" with no command would be an
+     * instant command. Once its words were [sent], Kestrel may register the command late, after Ctrl+C, so a tag that
      * Kestrel does not know yet is read once a second for up to 10 s.
      */
     private fun stop(task: Task, number: Int, tag: String, sent: Boolean) {
@@ -318,7 +218,7 @@ class Runner(
         console.warn("Task ${task.name}, run $number: the task could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
     }
 
-    /** Whether the task of [tag] runs, read up to [tries] times while Kestrel does not answer with its state. */
+    /** Whether the command of [tag] runs, read up to [tries] times while Kestrel does not answer with its state. */
     private fun running(tag: String, tries: Int): Boolean {
         repeat(tries) { attempt ->
             quietly { hooks.agentTask(tag) }?.get("state")?.let { return it == "running" }
@@ -328,50 +228,19 @@ class Runner(
     }
 
     /**
-     * The run's AI Credits (task-check.ps1's `Get-RunCredits`): agent-task's when the run read the task's end. A live task
-     * whose end the run did not read still sent requests, so agent-task is read once more after its stop, and its credits
-     * are "unknown" when that gives none, never 0, so that a ceiling does not miss them. A run that gave no task, or that
-     * ran the scripted model, spent 0.00.
+     * The run's AI Credits (task-check.ps1's `Get-RunCredits`): agent-task's when the run read its commands' ends. A live
+     * command whose end the run did not read still sent requests, so agent-task is read once more after its stop, and the
+     * credits are "unknown" when that gives none, never 0, so that a ceiling does not miss them. A run that gave no command,
+     * or that ran the scripted model, spent 0.00. A run of several commands spent their sum.
      */
     private fun credits(state: RunState): String {
         state.answer?.get("credits")?.let { return it }
-        val tag = state.tag
-        if (!options.live || tag == null) return "0.00"
-        val last = quietly { hooks.agentTask(tag) }
-        return last?.get("credits")?.takeIf { last["state"] == "done" && NUMBER.matches(it) } ?: "unknown"
-    }
-
-    /** What a run met; the shutdown hook's restores read it too, for the task's stop, the credits and the detail line. */
-    private class RunState(private val putBack: PutBack) {
-        var call = false
-        var tag: String? = null
-
-        @Volatile
-        var sent = false
-
-        @Volatile
-        var answer: HookAnswer? = null
-        var timedOut = false
-        var stalled = false
-        var refusal: String? = null
-        var refused: String? = null
-        val declined = mutableSetOf<String>()
-
-        // The task's questions as the run met them, and its answers that reached Kestrel (T1).
-        val record = AskedRecord()
-
-        // agent-task's answer with the run's marker, read once after the end, for the detail line.
-        @Volatile
-        var markers: HookAnswer? = null
-
-        /** The run's answers that reached Kestrel, and the questions that it left open on purpose, in their order. */
-        val asked: List<Asked> get() = record.asked
-
-        /** The kinds of the questions and hand-overs whose answer by the run ended the task, each once. */
-        fun cancelled(): List<String> = record.cancelled()
-
-        /** The run's detail line, from what it met and what its restores put back so far. */
-        fun detail(task: String, number: Int) = RunDetail(task, number, asked, answer, markers, putBack.applied, putBack.stored, putBack.leftChanged)
+        if (!options.live || state.commands.isEmpty()) return "0.00"
+        val spent = state.commands.map { command ->
+            command.answer?.get("credits") ?: quietly { hooks.agentTask(command.tag) }?.takeIf { it["state"] == "done" }?.get("credits")
+        }
+        if (spent.any { it == null || !NUMBER.matches(it) }) return "unknown"
+        return spent.singleOrNull() ?: String.format(Locale.ROOT, "%.2f", spent.sumOf { it!!.toDouble() })
     }
 
     private data class End(val after: Boolean, val credits: String, val failures: List<RestoreFailure>)
@@ -382,7 +251,7 @@ class Runner(
         val QUIET = 3.seconds
         val STALL = 30.seconds
         private const val STOP_SECONDS = 15
-        private const val EXISTS_TRIES = 10
+        internal const val EXISTS_TRIES = 10
         private val NUMBER = Regex("^\\d+(\\.\\d+)?$")
     }
 }

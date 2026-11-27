@@ -47,7 +47,7 @@ class RunValues(
     }
 }
 
-/** The request of a task: the words after "Kestrel, ", with the run's placeholders. */
+/** The owner's words of a task's turn (design 14.4 of sub-project 7), with the run's placeholders. */
 @JvmInline
 value class Request(val text: String) {
     fun fill(values: RunValues): String = values.fill(text)

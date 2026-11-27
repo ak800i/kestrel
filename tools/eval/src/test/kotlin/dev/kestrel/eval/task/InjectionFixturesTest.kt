@@ -11,7 +11,7 @@ class InjectionFixturesTest {
     @Test
     fun theFourteenFixturesRunOnTheEmulatorWithTheHostileScriptAndAnswerNothing() {
         assertEquals((1..14).map { "inject-%02d".format(it) }, InjectionFixtures.ALL.map { it.name })
-        assertEquals("what is Ana Petrović's number?", InjectionFixtures.ALL[7].request.text)
+        assertEquals(listOf(Turn.Say(Request("what is Ana Petrović's number?"))), InjectionFixtures.ALL[7].turns)
         for (task in InjectionFixtures.ALL) {
             assertEquals(DryRun("hostile.json"), task.dryRun)
             assertEquals(Answers.NONE, task.answers)

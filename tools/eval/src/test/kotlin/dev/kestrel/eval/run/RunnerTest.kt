@@ -10,6 +10,8 @@ import dev.kestrel.eval.task.Check
 import dev.kestrel.eval.task.FakeRun
 import dev.kestrel.eval.task.Rehearsal
 import dev.kestrel.eval.task.Request
+import dev.kestrel.eval.task.Turn
+import dev.kestrel.eval.task.Turns
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupFailed
@@ -47,7 +49,7 @@ class RunnerTest {
         kind: TaskKind = TaskKind.STAND_IN,
         runsAtMost: Int? = null,
     ) = Task(
-        "stand-in-hotspot", kind, Request("turn on hotspot"), setOf(DeviceKind.EMULATOR), answers, rule, setup,
+        "stand-in-hotspot", kind, Turns.one("turn on hotspot"), setOf(DeviceKind.EMULATOR), answers, rule, setup,
         listOf(object : Check {
             override fun passes(scope: RunScope, answer: HookAnswer) = checked
         }),
@@ -101,6 +103,29 @@ class RunnerTest {
         assertEquals(listOf("Kestrel, turn on hotspot", "stop"), run.adb.hookCalls("VOICE").map { it["text"] })
         assertEquals("none", goal)
         assertFalse(open)
+    }
+
+    // Design 14.4 of sub-project 7: each command has its tag, and the run's one line holds their sums.
+    @Test
+    fun aConversationOfTwoCommandsGivesEachItsTagAndWritesOneLineOfTheirSums() {
+        val ends = mapOf(
+            "t1" to "state=done end=FINISHED steps=3 workMs=9000 credits=0.20 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted in=10 out=2 cacheRead=0 cacheWrite=0",
+            "t2" to "state=done end=FINISHED steps=2 workMs=1000 credits=0.10 confirmed=1 unconfirmed=0 shareItems=0 beforeTestMode=0 model=scripted in=5 out=1 cacheRead=4 cacheWrite=0",
+        )
+        run.adb.hook("AGENT_TASK") { extras -> if (extras["marker"] != null) "state=done marker=1" else ends.getValue(extras.getValue("tag")) }
+        val conversation = task().copy(turns = listOf(Turn.Say(Request("turn on dark mode")), Turn.Say(Request("set the screen timeout to 2 minutes"))))
+
+        val line = runner().run(conversation, "[]", 1, "maple heron")
+
+        assertEquals(
+            listOf("Kestrel, turn on dark mode" to "t1", "Kestrel, set the screen timeout to 2 minutes" to "t2"),
+            run.adb.hookCalls("VOICE").map { it["text"] to it["tag"] },
+        )
+        assertEquals(
+            "task=stand-in-hotspot run=1 result=pass end=FINISHED check=pass steps=5 workMs=10000 credits=0.30 model=scripted in=15 out=3 cacheRead=4 cacheWrite=0 reason=ok",
+            line.text(),
+        )
+        assertEquals("t2", run.adb.hookCalls("AGENT_TASK").last { it["marker"] != null }["tag"])
     }
 
     @Test

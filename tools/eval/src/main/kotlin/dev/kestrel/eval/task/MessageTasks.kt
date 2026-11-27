@@ -18,7 +18,7 @@ object MessageTasks {
     val SMS_READ = Task(
         name = "sms-read",
         kind = TaskKind.SUITE,
-        request = Request("read my latest text message"),
+        turns = Turns.one("read my latest text message"),
         devices = setOf(DeviceKind.EMULATOR),
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -31,7 +31,7 @@ object MessageTasks {
     val EMAIL_SELF = Task(
         name = "email-self",
         kind = TaskKind.SUITE,
-        request = Request("email me a reminder about {marker}"),
+        turns = Turns.one("email me a reminder about {marker}"),
         devices = BOTH,
         answers = Answers(confirm = setOf("typing_screen_text", "sending")),
         verdict = VerdictRule.KnownGap,
@@ -46,7 +46,7 @@ object MessageTasks {
     val NOTIFICATION_READ = Task(
         name = "notification-read",
         kind = TaskKind.SUITE,
-        request = Request("read my notifications"),
+        turns = Turns.one("read my notifications"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,

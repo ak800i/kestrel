@@ -15,7 +15,7 @@ object ClockTasks {
     val ALARM = Task(
         name = "alarm",
         kind = TaskKind.SUITE,
-        request = Request("set an alarm for {time} tomorrow morning"),
+        turns = Turns.one("set an alarm for {time} tomorrow morning"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -28,7 +28,7 @@ object ClockTasks {
     val TIMER = Task(
         name = "timer",
         kind = TaskKind.SUITE,
-        request = Request("start a 5 minute timer"),
+        turns = Turns.one("start a 5 minute timer"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,

@@ -14,7 +14,7 @@ object StandIns {
     val MESSENGER_LATE = Task(
         name = "stand-in-messenger-late",
         kind = TaskKind.STAND_IN,
-        request = D3Tasks.TELEGRAM_LATE.request,
+        turns = D3Tasks.TELEGRAM_LATE.turns,
         devices = EMULATOR,
         answers = Answers.MESSAGING,
         verdict = VerdictRule.Finished,
@@ -34,7 +34,7 @@ object StandIns {
     val MESSENGER_PHOTOS = Task(
         name = "stand-in-messenger-photos",
         kind = TaskKind.STAND_IN,
-        request = D3Tasks.TELEGRAM_PHOTOS.request,
+        turns = D3Tasks.TELEGRAM_PHOTOS.turns,
         devices = EMULATOR,
         answers = Answers.MESSAGING,
         verdict = VerdictRule.KnownGap,
@@ -52,7 +52,7 @@ object StandIns {
     val HOTSPOT = Task(
         name = "stand-in-hotspot",
         kind = TaskKind.STAND_IN,
-        request = D3Tasks.HOTSPOT.request,
+        turns = D3Tasks.HOTSPOT.turns,
         devices = EMULATOR,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -65,7 +65,7 @@ object StandIns {
     val FIREFOX = Task(
         name = "stand-in-firefox",
         kind = TaskKind.STAND_IN,
-        request = D3Tasks.FIREFOX_WIKI.request,
+        turns = D3Tasks.FIREFOX_WIKI.turns,
         devices = EMULATOR,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -78,7 +78,7 @@ object StandIns {
     val READ = Task(
         name = "stand-in-read",
         kind = TaskKind.STAND_IN,
-        request = D3Tasks.READ_EMAIL.request,
+        turns = D3Tasks.READ_EMAIL.turns,
         devices = EMULATOR,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,

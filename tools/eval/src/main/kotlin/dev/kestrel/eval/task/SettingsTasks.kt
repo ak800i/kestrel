@@ -18,7 +18,7 @@ object SettingsTasks {
     private fun task(name: String, request: String, setup: List<Setup>, check: List<Check>, rehearsal: Rehearsal, guards: List<Setup> = emptyList()) = Task(
         name = name,
         kind = TaskKind.SUITE,
-        request = Request(request),
+        turns = Turns.one(request),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,

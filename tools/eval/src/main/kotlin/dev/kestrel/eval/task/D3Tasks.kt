@@ -20,7 +20,7 @@ object D3Tasks {
     val TELEGRAM_LATE = Task(
         name = "telegram-late",
         kind = TaskKind.D3,
-        request = Request("send {name} a Telegram message that I'm 10 minutes late for {marker}"),
+        turns = Turns.one("send {name} a Telegram message that I'm 10 minutes late for {marker}"),
         devices = A71,
         answers = Answers.MESSAGING,
         verdict = VerdictRule.Finished,
@@ -33,7 +33,7 @@ object D3Tasks {
     val HOTSPOT = Task(
         name = "hotspot",
         kind = TaskKind.D3,
-        request = Request("turn on hotspot"),
+        turns = Turns.one("turn on hotspot"),
         devices = EMULATOR,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -46,7 +46,7 @@ object D3Tasks {
     val WAZE_HOME = Task(
         name = "waze-home",
         kind = TaskKind.D3,
-        request = Request("start Waze navigation to home"),
+        turns = Turns.one("start Waze navigation to home"),
         devices = A71,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -59,7 +59,7 @@ object D3Tasks {
     val FIREFOX_WIKI = Task(
         name = "firefox-wiki",
         kind = TaskKind.D3,
-        request = Request("open en.wikipedia.org in Firefox and search for common kestrel"),
+        turns = Turns.one("open en.wikipedia.org in Firefox and search for common kestrel"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -72,7 +72,7 @@ object D3Tasks {
     val TELEGRAM_PHOTOS = Task(
         name = "telegram-photos",
         kind = TaskKind.D3,
-        request = Request("send yesterday's photos to {name} on Telegram"),
+        turns = Turns.one("send yesterday's photos to {name} on Telegram"),
         devices = A71,
         answers = Answers.MESSAGING,
         verdict = VerdictRule.KnownGap,
@@ -87,7 +87,7 @@ object D3Tasks {
     val READ_EMAIL = Task(
         name = "read-email",
         kind = TaskKind.D3,
-        request = Request("read my latest email back to me"),
+        turns = Turns.one("read my latest email back to me"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,

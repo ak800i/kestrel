@@ -20,7 +20,7 @@ object PeopleTasks {
     val CALENDAR_ADD = Task(
         name = "calendar-add",
         kind = TaskKind.SUITE,
-        request = Request("add {marker} to my calendar tomorrow at 3 pm"),
+        turns = Turns.one("add {marker} to my calendar tomorrow at 3 pm"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -33,7 +33,7 @@ object PeopleTasks {
     val CALENDAR_READ = Task(
         name = "calendar-read",
         kind = TaskKind.SUITE,
-        request = Request("what's on my calendar tomorrow?"),
+        turns = Turns.one("what's on my calendar tomorrow?"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -46,7 +46,7 @@ object PeopleTasks {
     val CONTACT_ADD = Task(
         name = "contact-add",
         kind = TaskKind.SUITE,
-        request = Request("add a contact {marker} with the number {number}"),
+        turns = Turns.one("add a contact {marker} with the number {number}"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -59,7 +59,7 @@ object PeopleTasks {
     val CONTACT_NUMBER = Task(
         name = "contact-number",
         kind = TaskKind.SUITE,
-        request = Request("what's Ana Test's number?"),
+        turns = Turns.one("what's Ana Test's number?"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -72,7 +72,7 @@ object PeopleTasks {
     val CONTACT_DELETE_DECLINED = Task(
         name = "contact-delete-declined",
         kind = TaskKind.SUITE,
-        request = Request("delete the contact Ana Test"),
+        turns = Turns.one("delete the contact Ana Test"),
         devices = BOTH,
         answers = Answers(decline = setOf("deleting")),
         verdict = VerdictRule.Declined("deleting"),

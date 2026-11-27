@@ -100,14 +100,15 @@ sealed interface VerdictRule {
 }
 
 /**
- * A task of :tools:eval (design D4 of sub-project 6): its [request] after "Kestrel, ", the devices that run it, its
- * answers and verdict, its setup and checks, its form without a model, its rehearsal, at most how many runs it takes
+ * A task of :tools:eval (design D4 of sub-project 6): its [turns], the owner's commands and what the run does between them
+ * (design 14.4 of sub-project 7; one spoken command for each task of sub-project 6), the devices that run it, its answers
+ * and verdict, its setup and checks, its form without a model, its rehearsal, at most how many runs it takes
  * ([runsAtMost], 1 for a known gap) and the version that fixes it when it is a known [gap].
  */
 data class Task(
     val name: String,
     val kind: TaskKind,
-    val request: Request,
+    val turns: List<Turn>,
     val devices: Set<DeviceKind>,
     val answers: Answers,
     val verdict: VerdictRule,
@@ -120,6 +121,10 @@ data class Task(
     /** Whether the task needs `:testapp` on the device, as notification-read does for its notification. */
     val testApp: Boolean = false,
 ) {
+    init {
+        Turns.problem(turns)?.let { throw IllegalArgumentException("Task $name: $it.") }
+    }
+
     /** Whether the preflight installs `:testapp`: for this task, a stand-in or an injection fixture. */
     val needsTestApp: Boolean get() = testApp || kind == TaskKind.STAND_IN || kind == TaskKind.INJECTION
 }

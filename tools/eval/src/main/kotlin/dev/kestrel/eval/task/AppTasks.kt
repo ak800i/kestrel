@@ -20,7 +20,7 @@ object AppTasks {
     val FIREFOX_URL = Task(
         name = "firefox-url",
         kind = TaskKind.SUITE,
-        request = Request("open github.com/ak800i/kestrel in Firefox"),
+        turns = Turns.one("open github.com/ak800i/kestrel in Firefox"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -33,7 +33,7 @@ object AppTasks {
     val YOUTUBE_SEARCH = Task(
         name = "youtube-search",
         kind = TaskKind.SUITE,
-        request = Request("search YouTube for kestrel hovering"),
+        turns = Turns.one("search YouTube for kestrel hovering"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -46,7 +46,7 @@ object AppTasks {
     val MAPS_PLACE = Task(
         name = "maps-place",
         kind = TaskKind.SUITE,
-        request = Request("show Ada Ciganlija on Google Maps"),
+        turns = Turns.one("show Ada Ciganlija on Google Maps"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
@@ -59,7 +59,7 @@ object AppTasks {
     val PHOTO_LATEST = Task(
         name = "photo-latest",
         kind = TaskKind.SUITE,
-        request = Request("show me my latest photo"),
+        turns = Turns.one("show me my latest photo"),
         devices = BOTH,
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
