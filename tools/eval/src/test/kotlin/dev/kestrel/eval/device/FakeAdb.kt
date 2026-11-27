@@ -91,6 +91,11 @@ class FakeAdb(
         hooks[action] = { extras -> -1 to answer(extras) }
     }
 
+    /** Answers the debug hook [action] with a result code and its data: -1 and the answer, or an error's code and its reason. */
+    fun hookWith(action: String, answer: (Map<String, String>) -> Pair<Int, String>) {
+        hooks[action] = answer
+    }
+
     /** Answers the debug hook [action] with an error code and its reason. */
     fun hookFails(action: String, reason: String) {
         hooks[action] = { _ -> 1 to reason }

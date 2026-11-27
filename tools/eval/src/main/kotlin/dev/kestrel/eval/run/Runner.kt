@@ -6,6 +6,7 @@ import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.Hooks
+import dev.kestrel.eval.task.ProcessSetup
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
 import dev.kestrel.eval.task.SetupResult
@@ -51,6 +52,7 @@ class Runner(
 ) {
     private val calls = CallGuard(device, console, clock)
     private val scripts = ScriptInstaller(device, hooks, work)
+    private val restarter = KestrelRestart(device, hooks, clock, listening)
 
     // The run that is under way, which the bottom restore of runAll reads for its credits when Ctrl+C ends it.
     @Volatile
@@ -158,10 +160,9 @@ class Runner(
                 return Verdict(RunResult.SKIPPED, CheckResult.SKIPPED, Reason.UNTESTABLE)
             }
         }
-        if (!options.live) {
-            restores.push("the scripted model removed", "Run: scripts\\hook.ps1 -Serial ${device.serial} agent-script -Clear") { scripts.remove() }
-            scripts.install(scope.values.fill(script!!, json = true))
-        }
+        // The steps that hold state in Kestrel's process, which a restart of Kestrel applies again (plan 7G).
+        val renewed = task.setup.filterIsInstance<ProcessSetup>().toMutableList<ProcessSetup>()
+        if (!options.live) renewed += ScriptedModelSetup(scripts, task, script!!).also { it.apply(scope) }
         // Design 6.4 of sub-project 7: a goal that the run left open, held or not, would take the next run's command.
         restores.push("the goal of ${task.name}, run $number, ended", "Say 'Kestrel, stop'.") {
             if (!conversations.stopGoal { quietly { hooks.voiceHeard("stop", tags()) } }) {
@@ -172,14 +173,17 @@ class Runner(
             state.current?.let { stop(task, number, it.tag, it.sent) }
         }
         stopIfStopping()
-        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations).run() == TurnsEnd.UNDELIVERED) {
+        if (TurnRunner(task, number, scope, state, options, tags, ::stopIfStopping, conversations, restarter, renewed).run() == TurnsEnd.UNDELIVERED) {
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.STOPPED)
         }
+        // A restart or a step between turns that failed left the rest of the turns unrun, as a failed setup does.
+        if (state.stepFailed) return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.SETUP)
         val answer = state.answer
         // For the detail line: whether a say text and a data tool's result of the newest command held the run's marker.
         val newest = state.tag
         if (answer != null && newest != null) state.markers = quietly { hooks.agentTask(newest, marker = scope.values.marker) }
-        val checked = answer != null && task.check.all { it.passes(scope, answer) }
+        // A check between turns that did not hold left the rest of the turns unrun, so the task's checks would judge nothing.
+        val checked = answer != null && state.unmet == null && task.check.all { it.passes(scope, answer) }
         if (state.stalled) {
             console.warn("Task ${task.name}, run $number: the device did not answer for ${STALL.inWholeSeconds} s while the task ran, so the run stopped waiting.")
         }
@@ -191,7 +195,10 @@ class Runner(
         if (answer?.get("end") == "CANCELLED" && cancelled.isNotEmpty()) {
             console.warn("Task ${task.name}, run $number: the run's own answer to ${cancelled.joinToString(", ")} ended the task, which ended CANCELLED.")
         }
-        return Verdicts.judge(task.verdict, answer, state.timedOut, checked, state.refusal, state.refused, state.stalled, state.declined, cancelled.isNotEmpty())
+        return Verdicts.judge(
+            task.verdict, answer, state.timedOut, checked, state.refusal, state.refused, state.stalled, state.declined, cancelled.isNotEmpty(),
+            unmet = state.unmet != null,
+        )
     }
 
     /** The shutdown hook began, so no run and no command may start; the hook writes the lines of the runs left. */

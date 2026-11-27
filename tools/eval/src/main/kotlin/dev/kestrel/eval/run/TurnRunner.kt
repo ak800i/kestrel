@@ -1,5 +1,6 @@
 package dev.kestrel.eval.run
 
+import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookAnswer
@@ -7,21 +8,31 @@ import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.task.Answers
+import dev.kestrel.eval.task.ProcessSetup
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Task
 import dev.kestrel.eval.task.TaskKind
 import dev.kestrel.eval.task.Turn
+import dev.kestrel.eval.task.TurnChannel
+import dev.kestrel.eval.task.Until
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
-/** How a run's turns ended: all of them ran, a command did not reach Kestrel, or a command cut the rest short. */
+/** How a run's turns ended: all of them ran, a command did not reach Kestrel, or a turn cut the rest short. */
 internal enum class TurnsEnd { DONE, UNDELIVERED, CUT }
 
 /**
- * The run's way through a task's turns (design 14.4 of sub-project 7), with task-check.ps1's limits for each command
- * (design D5 of sub-project 6): each [Turn.Say] gives Kestrel a new command with a tag of its own, and the run polls
- * agent-task every 2 s for up to 10 minutes, answers the command's questions as the task says with 3 s of quiet after an
- * answer, and stops waiting after 30 s without an answer of the hooks. A command that timed out or stalled, or that
- * Kestrel refused before it ran, ends the turns, because nothing after it would test what the task names.
+ * The run's way through a task's turns (design 14.4 and 15.3 of sub-project 7), with task-check.ps1's limits for each
+ * command (design D5 of sub-project 6). A [Turn.Say] gives Kestrel a new command with a tag of its own: spoken after
+ * "Kestrel, ", spoken without the name once Kestrel's follow-up window is open, or typed as on its conversation screen. The
+ * run follows the command to its end, or until its goal acts: it polls agent-task every 2 s for up to 10 minutes, answers
+ * the command's questions as the task says on the channel of the owner's latest input, with 3 s of quiet after an answer,
+ * and stops after 30 s without an answer of the hooks. A [Turn.Steer] gives the goal that acts the owner's words, a
+ * [Turn.AwaitEnd] follows the current command to its end, a [Turn.Restart] ends Kestrel's process, waits for the new one
+ * and applies the run's [renewed] steps again, a [Turn.Act] runs a step, and a [Turn.Expect] reads a check until it holds. A command that timed out or stalled, one
+ * that Kestrel refused before it ran, a check that did not hold and a step that failed end the turns, because nothing
+ * after them would test what the task names.
  */
 internal class TurnRunner(
     private val task: Task,
@@ -32,15 +43,26 @@ internal class TurnRunner(
     private val tags: () -> String,
     private val stopIfStopping: () -> Unit,
     private val conversations: ConversationGuard,
+    private val restarter: KestrelRestart,
+    private val renewed: List<ProcessSetup>,
 ) {
     private val hooks = scope.hooks
     private val clock = scope.clock
+    private val console = scope.console
 
     fun run(): TurnsEnd {
-        for (turn in task.turns) {
+        for ((index, turn) in task.turns.withIndex()) {
             stopIfStopping()
             val end = when (turn) {
                 is Turn.Say -> say(turn)
+                is Turn.Steer -> steer(turn)
+                is Turn.AwaitEnd -> state.current?.let { command ->
+                    command.expected = turn.ends
+                    follow(command, acting = false)
+                }
+                Turn.Restart -> step(index, "the restart of Kestrel") { restart() }
+                is Turn.Act -> step(index, turn.action.toString()) { turn.action.run(scope) }
+                is Turn.Expect -> expect(index, turn)
             }
             if (end != null) return end
         }
@@ -48,11 +70,39 @@ internal class TurnRunner(
     }
 
     private fun say(turn: Turn.Say): TurnsEnd? {
-        val words = "Kestrel, " + turn.words.fill(scope.values)
-        val command = give(turn.ends) { tag -> hooks.voiceHeard(words, tag, options.live, options.model, scope.values.marker) }
-            ?: return TurnsEnd.UNDELIVERED
-        return follow(command)
+        val words = turn.words.fill(scope.values)
+        if (turn.channel == TurnChannel.FOLLOW_UP && !followUpOpen()) {
+            state.unmet = "the follow-up window"
+            console.warn("Task ${task.name}, run $number: Kestrel's follow-up window did not open within ${FOLLOW_UP.inWholeSeconds} s.")
+            return TurnsEnd.CUT
+        }
+        state.channel = turn.channel
+        val command = give(turn.ends) { tag ->
+            when (turn.channel) {
+                TurnChannel.SPOKEN -> hooks.voiceHeard("Kestrel, $words", tag, options.live, options.model, scope.values.marker)
+                TurnChannel.FOLLOW_UP -> hooks.voiceHeard(words, tag, options.live, options.model, scope.values.marker)
+                TurnChannel.TYPED -> hooks.conversationType(words, tag, options.live, options.model, scope.values.marker)
+            }
+        } ?: return TurnsEnd.UNDELIVERED
+        return follow(command, acting = turn.until == Until.ACTING)
     }
+
+    // Design 7.3 of sub-project 7: the owner's words reach the goal that acts at its next step. They give Kestrel no
+    // command, so the run reads no end of theirs and follows the steered command on.
+    private fun steer(turn: Turn.Steer): TurnsEnd? {
+        val words = turn.words.fill(scope.values)
+        state.channel = turn.channel
+        try {
+            if (turn.channel == TurnChannel.TYPED) hooks.conversationType(words, tags()) else hooks.voiceHeard("Kestrel, $words", tags())
+        } catch (e: HookLost) {
+            // Steering has no command to read back; the steered goal's end and the task's checks show whether it arrived.
+        }
+        return null
+    }
+
+    /** Waits up to [FOLLOW_UP] by the clock for Kestrel's follow-up window (design 6.6), which opens once its spoken final reply has ended. */
+    private fun followUpOpen(): Boolean =
+        clock.waitUntil(FOLLOW_UP, WINDOW_POLL) { deadline -> quietly { hooks.until(deadline).voiceState() }?.get("followUp") == "open" }
 
     /**
      * Gives Kestrel a new command through [send] with a new tag. A lost answer is read back: the command exists, or it did
@@ -71,15 +121,18 @@ internal class TurnRunner(
             if (!exists(command.tag)) {
                 state.commands.remove(command)
                 scope.tag = state.tag
-                scope.console.warn("Task ${task.name}, run $number: the task did not reach Kestrel.")
+                console.warn("Task ${task.name}, run $number: the task did not reach Kestrel.")
                 return null
             }
         }
         return command
     }
 
-    /** Follows [command] to its end and answers its questions; null when the turns go on. */
-    private fun follow(command: SentCommand): TurnsEnd? {
+    /**
+     * Follows [command] to its end, or with [acting] until its goal acts with no question open, and answers its questions;
+     * null when the turns go on.
+     */
+    private fun follow(command: SentCommand, acting: Boolean): TurnsEnd? {
         val start = clock.elapsed()
         fun elapsed(): Duration = clock.elapsed() - start
         var heard = Duration.ZERO
@@ -100,7 +153,11 @@ internal class TurnRunner(
             val asked = quietly { hooks.agentState(command.tag) } ?: continue
             val kind = Answers.kind(asked)
             command.record.saw(kind)
-            if (kind == null) continue
+            if (kind == null) {
+                // A later turn steers the goal, touches the screen or ends Kestrel's process while the goal acts.
+                if (acting && asked["phase"] == "running") return null
+                continue
+            }
             if (answer(command, asked, kind)) quietUntil = elapsed() + Runner.QUIET
         }
         state.timedOut = true
@@ -119,9 +176,9 @@ internal class TurnRunner(
     }
 
     /**
-     * Answers the open question of [kind] as the task says; true when an answer went to Kestrel, after which the run keeps
-     * quiet for a moment. A lost or refused answer is not sent again: the next poll answers only if the same question is
-     * still open.
+     * Answers the open question of [kind] as the task says, on the text channel's card after a typed input; true when an
+     * answer went to Kestrel, after which the run keeps quiet for a moment. A lost or refused answer is not sent again: the
+     * next poll answers only if the same question is still open.
      */
     private fun answer(command: SentCommand, asked: HookAnswer, kind: String): Boolean {
         val reply = task.answers.reply(asked)
@@ -134,12 +191,45 @@ internal class TurnRunner(
         // A confirmation that the task does not name was cancelled; outside the injection fixtures, whose defence it is, the run fails.
         if (confirming != null && reply == "cancel" && task.kind != TaskKind.INJECTION) state.refused = confirming
         if (confirming != null && reply == "no") state.declined.add(confirming)
-        when (deliver { hooks.agentAnswer(command.tag, reply, confirming) }) {
+        val channel = channelFor(kind)
+        when (deliver { hooks.agentAnswer(command.tag, reply, confirming, channel) }) {
             Delivery.DELIVERED -> command.record.answered(reply)
             Delivery.LOST -> command.record.lost(reply)
             Delivery.REFUSED -> Unit
         }
         return true
+    }
+
+    // Kestrel's process ends with the current command, which is lost with its tag; every step of the run that held state in
+    // the process applies its change again, the scripted model with the dry run's next script among them.
+    private fun restart() {
+        state.commands.filter { it.open }.forEach { it.lost = true }
+        restarter.restart()
+        renewed.forEach { it.renew(scope) }
+    }
+
+    // A restart or a step between turns that failed leaves the run unable to go on, as a failed setup does.
+    private fun step(index: Int, what: String, block: () -> Unit): TurnsEnd? = try {
+        block()
+        null
+    } catch (e: Exception) {
+        if (e is DeviceChanged || e is Stopping) throw e
+        state.stepFailed = true
+        console.warn("Task ${task.name}, run $number: turn ${index + 1}, $what, failed (${e.message ?: e.javaClass.simpleName}); the run fails, and the next run goes on.")
+        TurnsEnd.CUT
+    }
+
+    // Design 15.3 of sub-project 7: a check between turns, read every 2 s with the newest command's end until it holds, for
+    // up to its time by the clock; the check's own reads keep their timeouts.
+    private fun expect(index: Int, turn: Turn.Expect): TurnsEnd? {
+        val held = clock.waitUntil(turn.within, Runner.POLL) {
+            val answer = state.commands.lastOrNull { it.answer != null }?.answer ?: HookAnswer.EMPTY
+            quietly { turn.check.passes(scope, answer) } == true
+        }
+        if (held) return null
+        state.unmet = turn.check.toString()
+        console.warn("Task ${task.name}, run $number: turn ${index + 1}, ${turn.check}, did not hold within ${turn.within.inWholeSeconds} s.")
+        return TurnsEnd.CUT
     }
 
     /**
@@ -164,4 +254,23 @@ internal class TurnRunner(
     /** Whether Kestrel has a command with [tag], read once a second for up to 10 s by the clock after the command's answer was lost. */
     private fun exists(tag: String): Boolean =
         clock.waitUntil(Runner.EXISTS, Runner.REREAD) { deadline -> quietly { hooks.until(deadline).agentTask(tag) } != null }
+
+    // Design 10.3, 12.2 and 12.3 of sub-project 7: after a typed input, the owner answers a confirmation, a hand-over and a
+    // pick on the card over the app (plan 7F's Task 13a), and any other question on the text channel's card; after a
+    // spoken one, by voice. The run presses confirm, no, cancel or a number on the card over the app, never Continue, so
+    // the card desk answers at once or refuses the press (the question stays open, and the next poll answers again); it
+    // never holds the press until the phone's unlock (`held … until=unlock`), which only a Continue on the lock screen gets.
+    private fun channelFor(kind: String): String? = when {
+        state.channel != TurnChannel.TYPED -> null
+        Answers.overlayOnly(kind) -> CARD
+        else -> TEXT
+    }
+
+    companion object {
+        /** How long a run waits for Kestrel's follow-up window, which opens once the spoken final reply ended. */
+        val FOLLOW_UP = 60.seconds
+        private val WINDOW_POLL = 500.milliseconds
+        private const val TEXT = "text"
+        private const val CARD = "card"
+    }
 }

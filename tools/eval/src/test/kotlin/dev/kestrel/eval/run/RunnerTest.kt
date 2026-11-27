@@ -12,7 +12,13 @@ import dev.kestrel.eval.task.FakeRun
 import dev.kestrel.eval.task.Rehearsal
 import dev.kestrel.eval.task.Request
 import dev.kestrel.eval.task.Turn
+import dev.kestrel.eval.task.DryRun
+import dev.kestrel.eval.task.FakeConversation
+import dev.kestrel.eval.task.ProcessSetup
+import dev.kestrel.eval.task.TurnAction
+import dev.kestrel.eval.task.TurnChannel
 import dev.kestrel.eval.task.Turns
+import dev.kestrel.eval.task.Until
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupFailed
@@ -27,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /** The runner against a scripted device (design D5 and D18 of sub-project 6). */
 class RunnerTest {
@@ -165,6 +172,111 @@ class RunnerTest {
             line.text(),
         )
         assertEquals("t2", run.adb.hookCalls("AGENT_TASK").last { it["marker"] != null }["tag"])
+    }
+
+    // Design 6.6 of sub-project 7: the second command is spoken without the name once the first one's reply opened the window.
+    @Test
+    fun aFollowUpWaitsForTheWindowAndIsSpokenWithoutTheName() {
+        val kestrel = FakeConversation(run.adb)
+        val conversation = task().copy(
+            turns = listOf(Turn.Say(Request("turn on dark mode")), Turn.Say(Request("and set the screen timeout to 2 minutes"), TurnChannel.FOLLOW_UP)),
+        )
+
+        val line = runner().run(conversation, "[]", 1, "maple heron")
+
+        assertEquals(Reason.OK, line.reason)
+        assertEquals(listOf("spoken:turn on dark mode", "spoken:and set the screen timeout to 2 minutes"), kestrel.inputs)
+        assertEquals("and set the screen timeout to 2 minutes", run.adb.hookCalls("VOICE")[1]["text"])
+        // The run's last restore closed its conversation, which held both commands.
+        assertEquals(2, kestrel.closed)
+    }
+
+    // Design 10.3, 11 and 12.3 of sub-project 7: a typed command's questions are answered on the text channel's card, and a
+    // confirmation only on the card over the app, as the owner would (plan 7F's Task 13a).
+    @Test
+    fun aTypedCommandsQuestionGoesToTheTextChannelAndItsConfirmationToTheCardOverTheApp() {
+        val kestrel = FakeConversation(run.adb)
+        kestrel.planned += FakeConversation.Command(asks = listOf("asking=yes-no confirming=none question=none", "asking=confirm confirming=sending question=none"))
+        val typed = task(answers = Answers(confirm = setOf("sending"))).copy(turns = listOf(Turn.Say(Request("send it to me"), TurnChannel.TYPED)))
+
+        assertEquals(Reason.OK, runner().run(typed, "[]", 1, "maple heron").reason)
+
+        assertEquals(listOf("typed:send it to me"), kestrel.inputs)
+        assertEquals("t1", run.adb.hookCalls("CONVERSATION_TYPE").single()["tag"])
+        assertEquals(listOf("no/text", "confirm/card"), kestrel.answers)
+        assertEquals(listOf("text", "card"), run.adb.hookCalls("AGENT_ANSWER").map { it["channel"] })
+    }
+
+    // Design 7.3 of sub-project 7: the run steers the goal while it acts, and then follows the steered command to its end.
+    @Test
+    fun aSteerReachesTheGoalWhileItActsAndTheRunAwaitsTheSteeredCommandsEnd() {
+        val kestrel = FakeConversation(run.adb)
+        kestrel.planned += FakeConversation.Command(until = FakeConversation.Until.STEERED)
+        val steered = task().copy(
+            turns = listOf(Turn.Say(Request("set an alarm for 7:00"), until = Until.ACTING), Turn.Steer(Request("make it 7:30 instead")), Turn.AwaitEnd()),
+        )
+
+        assertEquals(Reason.OK, runner().run(steered, "[]", 1, "maple heron").reason)
+
+        assertEquals(listOf("spoken:set an alarm for 7:00", "steered:make it 7:30 instead"), kestrel.inputs)
+        assertEquals("Kestrel, make it 7:30 instead", run.adb.hookCalls("VOICE")[1]["text"])
+        // The run's last restore closed its conversation, which held the one steered command.
+        assertEquals(1, kestrel.closed)
+    }
+
+    // Design 6.7 and 15.3 of sub-project 7: the command that ran is lost with Kestrel's process, and every setup step that
+    // held state in the process is applied again, the scripted model with the dry run's next script.
+    @Test
+    fun aRestartLosesTheCommandThatRanAndAppliesTheProcessStepsAgain() {
+        val kestrel = FakeConversation(run.adb)
+        kestrel.planned += FakeConversation.Command(until = FakeConversation.Until.CRASHED)
+        var listened = 0
+        listening = { listened++ }
+        var renewed = 0
+        val held = object : ProcessSetup {
+            override fun apply(scope: RunScope) = SetupResult.Ready
+
+            override fun renew(scope: RunScope) {
+                renewed++
+            }
+        }
+        val restarted = task(setup = listOf(held)).copy(
+            turns = listOf(Turn.Say(Request("send it"), until = Until.ACTING), Turn.Restart, Turn.Say(Request("continue"))),
+            dryRun = DryRun("timer.json", restarts = listOf("timer.json")),
+        )
+
+        val line = runner().run(restarted, "[]", 1, "maple heron")
+
+        assertEquals(Reason.OK, line.reason)
+        assertEquals("FINISHED", line.answer?.get("end"))
+        assertEquals(4101, kestrel.pid)
+        assertEquals(1, listened)
+        assertEquals(1, renewed)
+        assertEquals(listOf(mapOf("file" to "task.json"), mapOf("file" to "task.json"), mapOf("clear" to "true")), run.adb.hookCalls("AGENT_SCRIPT"))
+        assertEquals(mapOf("text" to KestrelRestart.CRASH_TEXT), run.adb.hookCalls("CRASH").single())
+    }
+
+    @Test
+    fun aCheckBetweenTurnsThatDoesNotHoldFailsTheRunWithCheckAndAStepThatFailsWithSetup() {
+        FakeConversation(run.adb)
+        val never = object : Check {
+            override fun passes(scope: RunScope, answer: HookAnswer) = false
+
+            override fun toString() = "a check that never holds"
+        }
+        val unmet = task().copy(turns = listOf(Turn.Say(Request("turn on hotspot")), Turn.Expect(never, within = 10.seconds)))
+
+        assertEquals(Reason.CHECK, runner().run(unmet, "[]", 1, "maple heron").reason)
+        assertTrue(run.console.warnings.contains("Task stand-in-hotspot, run 1: turn 2, a check that never holds, did not hold within 10 s."))
+
+        val failing = object : TurnAction {
+            override fun run(scope: RunScope) = error("no window")
+
+            override fun toString() = "a step that fails"
+        }
+        val failed = runner().run(task().copy(turns = listOf(Turn.Say(Request("turn on hotspot")), Turn.Act(failing))), "[]", 2, "cedar otter")
+        assertEquals(Reason.SETUP, failed.reason)
+        assertTrue(run.console.warnings.contains("Task stand-in-hotspot, run 2: turn 2, a step that fails, failed (no window); the run fails, and the next run goes on."))
     }
 
     @Test

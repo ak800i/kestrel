@@ -97,6 +97,16 @@ interface Setup {
     fun probe(scope: RunScope): Map<String, String> = emptyMap()
 }
 
+/**
+ * A setup step whose change lives in Kestrel's process, such as the fixtures' self-chat aliases or the scripted model
+ * (design 6.7 of sub-project 7): the process forgets it when it ends, so after a [Turn.Restart] the run makes the change
+ * again ([renew]). The restore that [apply] pushed still puts it back after the run.
+ */
+interface ProcessSetup : Setup {
+    /** Makes the step's change again in Kestrel's new process. */
+    fun renew(scope: RunScope)
+}
+
 /** A check of a run's result on the device (design D4 of sub-project 6), which answers only pass or fail, never screen text. */
 interface Check {
     /** [answer] is agent-task's answer at the task's end, or [HookAnswer.EMPTY] in a rehearsal. */

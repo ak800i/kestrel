@@ -15,7 +15,8 @@ data class Verdict(val result: RunResult, val check: CheckResult, val reason: Re
  * [declined] are the categories that the run answered "no"; [cancelledByRun] is whether the run's own delivered answer
  * to a question or a hand-over ends the task ([dev.kestrel.eval.task.Answers.endsTask]), which makes a CANCELLED end
  * `reason=asked`. A run whose task ended at a round's limit and did not pass fails with the reason `limit` (plan 7A;
- * design 7.4 of sub-project 7).
+ * design 7.4 of sub-project 7). A check between the task's turns that did not hold ([unmet]) fails the run with the
+ * reason `check` (plan 7G).
  */
 object Verdicts {
     /** Kestrel's ends at a round's limit, which the hook `agent-task` answers by their names. */
@@ -31,6 +32,7 @@ object Verdicts {
         stalled: Boolean,
         declined: Set<String> = emptySet(),
         cancelledByRun: Boolean = false,
+        unmet: Boolean = false,
     ): Verdict {
         var verdict = Verdict(RunResult.FAIL, CheckResult.SKIPPED, if (timedOut) Reason.TIMEOUT else if (stalled) Reason.STALLED else Reason.END)
         if (answer != null) {
@@ -52,6 +54,7 @@ object Verdicts {
             // The run's own answer ended the task, not Kestrel (plan 6B-basefix T1).
             if (verdict.reason == Reason.END && cancelledByRun && answer["end"] == "CANCELLED") verdict = verdict.copy(reason = Reason.ASKED)
         }
+        if (unmet) verdict = Verdict(RunResult.FAIL, CheckResult.FAIL, Reason.CHECK)
         if (refusal != null) verdict = verdict.copy(result = RunResult.FAIL, reason = Reason.END)
         if (refused != null) verdict = verdict.copy(result = RunResult.FAIL, reason = Reason.CONFIRM)
         return verdict

@@ -41,26 +41,36 @@ data class MemoryAlias(val key: String, val text: String) : Setup {
     override fun probe(scope: RunScope): Map<String, String> = mapOf("memory-key" to if (scope.hooks.agentMemoryHas(scope.values.fill(key))) "yes" else "no")
 }
 
-/** The debug aliases that let test mode's self-chat rules take a fixture for an app (hook agent-settings -SelfChatAliases), cleared after the run. */
-data class SelfChatAliases(val aliases: String) : Setup {
+/**
+ * The debug aliases that let test mode's self-chat rules take a fixture for an app (hook agent-settings -SelfChatAliases),
+ * cleared after the run. Kestrel keeps them in its process's memory, so a restart of Kestrel sets them again ([renew]).
+ */
+data class SelfChatAliases(val aliases: String) : ProcessSetup {
     override fun apply(scope: RunScope): SetupResult {
-        val byHand = "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -SelfChatAliases ''"
-        scope.restores.push("the fixtures' self-chat aliases", byHand) {
+        scope.restores.push("the fixtures' self-chat aliases", byHand(scope)) {
             try {
                 scope.hooks.agentSettings(selfChatAliases = "")
             } catch (e: HookLost) {
                 if (scope.hooks.agentSettings().int("selfChatAliases") != 0) throw e
             }
         }
-        scope.restores.change("the fixtures' self-chat aliases set", byHand) {
+        set(scope)
+        return SetupResult.Ready
+    }
+
+    override fun renew(scope: RunScope) = set(scope)
+
+    private fun set(scope: RunScope) {
+        scope.restores.change("the fixtures' self-chat aliases set", byHand(scope)) {
             try {
                 scope.hooks.agentSettings(selfChatAliases = aliases)
             } catch (e: HookLost) {
                 if (scope.hooks.agentSettings().int("selfChatAliases") == 0) throw SetupFailed("The fixtures' self-chat aliases did not reach Kestrel.")
             }
         }
-        return SetupResult.Ready
     }
+
+    private fun byHand(scope: RunScope) = "Run: scripts\\hook.ps1 -Serial ${scope.device.serial} agent-settings -SelfChatAliases ''"
 
     companion object {
         /** The fixture app counts as Telegram for test mode's self-chat rules. */

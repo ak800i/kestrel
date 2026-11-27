@@ -27,9 +27,19 @@ class Hooks(private val client: HookClient) {
      */
     fun agentState(tag: String): HookAnswer = read("agent-state", Extra.Text("tag", tag))
 
-    /** agent-answer: the owner's answer to the task's open question; a confirmation's answer carries the category that agent-state read. */
-    fun agentAnswer(tag: String, answer: String, confirming: String?): HookAnswer =
-        act("agent-answer", Extra.Text("tag", tag), Extra.Text("answer", answer), confirming?.let { Extra.Text("confirming", it) })
+    /**
+     * agent-answer: the owner's answer to the task's open question; a confirmation's answer carries the category that
+     * agent-state read. On [channel] `text` (plan 7F) it is the button of the text channel's card that the answer names, as
+     * the owner's tap, or words typed on Kestrel's screen; on `card` (plan 7F's Task 13a) the button of the card over the app,
+     * the only place where a confirmation, a hand-over and a pick are answered, pressed through the card desk's one entry
+     * for taps as the owner's tap (it answers `answered … channel=card`, or `held … until=unlock` for a Continue pressed on
+     * the lock screen); without a channel it is his voice.
+     */
+    fun agentAnswer(tag: String, answer: String, confirming: String?, channel: String? = null): HookAnswer =
+        act(
+            "agent-answer", Extra.Text("tag", tag), Extra.Text("answer", answer), confirming?.let { Extra.Text("confirming", it) },
+            channel?.let { Extra.Text("channel", it) },
+        )
 
     /** agent-script -File: installs the scripted model from Kestrel's files/agent-scripts/[file]. */
     fun agentScript(file: String): HookAnswer = act("agent-script", Extra.Text("file", file))
@@ -111,6 +121,22 @@ class Hooks(private val client: HookClient) {
             model?.let { Extra.Text("model", it) },
             marker?.let { Extra.Text("marker", it) },
         )
+
+    /**
+     * conversation-type (plan 7F; design 14.4 of sub-project 7): [text] typed as on Kestrel's conversation screen, with
+     * [tag] as voice heard's, and a task's [live], [model] and [marker]; it answers `typed read=<kind> tag=<tag>`.
+     */
+    fun conversationType(text: String, tag: String, live: Boolean = false, model: String? = null, marker: String? = null): HookAnswer =
+        act(
+            "conversation-type", Extra.Text("text", text), Extra.Text("tag", tag), Extra.Flag("live", true).takeIf { live },
+            model?.let { Extra.Text("model", it) }, marker?.let { Extra.Text("marker", it) },
+        )
+
+    /**
+     * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the
+     * process ends half a second later.
+     */
+    fun crash(text: String): HookAnswer = act("crash", Extra.Text("text", text))
 
     /** provider-standin: whether the stand-in runs, and the default profile's kind, ID and credential ([ProviderState]). */
     fun providerStandin(): ProviderState = ProviderState.from(read("provider-standin"))

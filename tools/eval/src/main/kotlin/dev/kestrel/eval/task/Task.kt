@@ -8,9 +8,11 @@ enum class TaskKind { D3, SUITE, STAND_IN, INJECTION }
 
 /**
  * A task's run without a model: the scripted model's replies in [script], a resource of `dev/kestrel/eval/scripts`, run
- * on the task [standIn] when the task itself cannot run with a script, as a D3 task on `:testapp`'s fixtures.
+ * on the task [standIn] when the task itself cannot run with a script, as a D3 task on `:testapp`'s fixtures. [restarts]
+ * are the scripts that the scripted model gets after each [Turn.Restart], in their order, because it ends with Kestrel's
+ * process (design 15.3 of sub-project 7).
  */
-data class DryRun(val script: String, val standIn: String? = null)
+data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList())
 
 /** How a rehearsal makes a task's end state without Kestrel (design D7 of sub-project 6). */
 sealed interface Rehearsal {
@@ -78,6 +80,12 @@ data class Answers(val confirm: Set<String> = emptySet(), val decline: Set<Strin
         fun endsTask(kind: String, reply: String): Boolean = reply == "cancel" || (kind == CONTINUE && reply == "no")
 
         private const val CONTINUE = "continue"
+
+        /**
+         * Whether a typed conversation's question of [kind] is answered only on the card over the app (design 12.2 and 12.3
+         * of sub-project 7; plan 7F): a confirmation, a hand-over and a pick, which the conversation screen never answers.
+         */
+        fun overlayOnly(kind: String): Boolean = kind.startsWith("confirm/") || kind.startsWith("hand-over/") || kind == PICK_NUMBER
 
         /** The Telegram tasks: in Standard mode Kestrel asks before it types a text with words of the screen, then before the send. */
         val MESSAGING = Answers(confirm = setOf("typing_screen_text", "sending"))
