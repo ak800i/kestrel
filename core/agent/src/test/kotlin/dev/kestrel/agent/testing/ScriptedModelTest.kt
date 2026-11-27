@@ -8,6 +8,7 @@ import dev.kestrel.providers.profiles.ModelRole
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /** A scripted reply's texts that its request must hold or must not hold (plan 7G; design 15.3 of sub-project 7). */
@@ -47,5 +48,25 @@ class ScriptedModelTest {
         assertEquals("fail", refused.name)
         assertEquals(ScriptedModel.MISMATCH, reason(refused))
         assertEquals(ScriptedModel.USED_UP, reason(usedUp))
+    }
+
+    // Task 5's review M1: a reply's requires or refuses that is not a list of texts, or a key that the model does not read,
+    // would let a dry run's check pass without checking, so the script is refused when it is read, with an error that
+    // names the reply and the key and never a text.
+    @Test
+    fun aScriptWithAMalformedRequiresOrRefusesOrAnUnknownKeyIsRefusedWhenItIsRead() {
+        fun refusal(reply: String): String =
+            assertThrows(IllegalArgumentException::class.java) { ScriptedModel.fromJson("""{"replies": [{"tool": "wait"}, $reply]}""") }.message!!
+
+        assertEquals(
+            "Reply 2 of the script has a \"requires\" that is not a list of texts.",
+            refusal("""{"tool": "wait", "requires": "This conversation so far:"}"""),
+        )
+        assertEquals("Reply 2 of the script has a \"refuses\" that is not a list of texts.", refusal("""{"tool": "wait", "refuses": [{"secret": 1}]}"""))
+        assertEquals("Reply 2 of the script has a \"requires\" that is not a list of texts.", refusal("""{"tool": "wait", "requires": ["secret", 2]}"""))
+        assertEquals(
+            "Reply 2 of the script has keys that the scripted model does not know: require.",
+            refusal("""{"tool": "wait", "require": ["This conversation so far:"]}"""),
+        )
     }
 }

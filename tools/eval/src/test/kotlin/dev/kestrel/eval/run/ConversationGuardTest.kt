@@ -49,7 +49,7 @@ class ConversationGuardTest {
         guard.close()
 
         assertFalse(open)
-        assertEquals(listOf(mapOf("do" to "expire")), run.adb.hookCalls("CONVERSATION_CONTROL"))
+        assertEquals(listOf(mapOf("do" to "expire-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
         guard.close()
         assertEquals(1, run.adb.hookCalls("CONVERSATION_CONTROL").size)
     }
@@ -64,6 +64,65 @@ class ConversationGuardTest {
         assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
     }
 
+    // One rule for every close (plan 7G): before a run, the owner's open conversation, which has no mark, is never ended; the
+    // run waits until its own quiet time has closed it, and fails its setup when it stays open or holds the owner's goal.
+    @Test
+    fun aRunWaitsForTheOwnersConversationToCloseByItselfAndNeverEndsIt() {
+        typed = false
+        quiet = "running"
+        var sleeps = 0
+        // The owner's quiet time closes his conversation after five rounds.
+        run.clock.onSleep = { if (++sleeps == 5) open = false }
+
+        guard.close()
+
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
+        open = true
+        run.clock.onSleep = {}
+        assertEquals(
+            "The owner's conversation did not close by itself within 60 s; the evaluation never ends it.",
+            assertThrows(SetupFailed::class.java) { guard.close() }.message,
+        )
+        goal = "acting"
+        assertEquals(
+            "The owner's conversation has a goal open (acting), which the evaluation never ends.",
+            assertThrows(SetupFailed::class.java) { guard.close() }.message,
+        )
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").isEmpty())
+        assertTrue(open)
+    }
+
+    // A run's own restore closes only the hooks' conversation, as the series' cleanup does: when the owner continues the
+    // run's conversation with his words during the restore's wait, the mark goes and the conversation stays open; when the
+    // run's conversation closes by itself and the owner opens his own, his stays open too. Neither gets an expire.
+    @Test
+    fun aRunsRestoreLeavesTheConversationThatTheOwnerContinuedOrOpenedDuringItsWait() {
+        val warnings = mutableListOf<String>()
+        var sleeps = 0
+        // The run's final reply holds the quiet clock; the owner speaks after two rounds.
+        run.clock.onSleep = { if (++sleeps == 2) typed = false }
+
+        guard.deleteRun { warnings += it }
+
+        assertTrue(open)
+        assertEquals(listOf("delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
+
+        typed = true
+        sleeps = 0
+        // The run's conversation closes after two rounds, and the owner opens his own, whose quiet clock runs.
+        run.clock.onSleep = {
+            if (++sleeps == 2) {
+                typed = false
+                quiet = "running"
+            }
+        }
+        guard.deleteRun { warnings += it }
+
+        assertTrue(open)
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").none { it["do"]!!.startsWith("expire") })
+        assertEquals(emptyList<String>(), warnings)
+    }
+
     // Plan 7F's delete-typed, which deletes the conversations that any hook's input opened (its Task 13a and f23bd193): the
     // hooks' own conversations leave Kestrel's past conversations once the run's one is closed. One that a long final reply
     // keeps open is only warned about after a run, and the series' cleanup, which waits longer, fails when it is still open.
@@ -75,7 +134,7 @@ class ConversationGuardTest {
         guard.deleteRun { warnings += it }
 
         assertFalse(open)
-        assertEquals(listOf(mapOf("do" to "expire"), mapOf("do" to "delete-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
+        assertEquals(listOf(mapOf("do" to "expire-typed"), mapOf("do" to "delete-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
         assertEquals(emptyList<String>(), warnings)
 
         open = true

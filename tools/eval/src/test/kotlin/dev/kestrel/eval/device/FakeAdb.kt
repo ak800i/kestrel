@@ -28,7 +28,9 @@ class FakeAdb(
 
     /** The time that each call of adb got, in their order. */
     val timeouts = mutableListOf<Duration>()
-    private var slowness: Pair<FakeClock, Duration>? = null
+    private var slowness: Slowness? = null
+
+    private class Slowness(val clock: FakeClock, val latency: Duration, val only: (String) -> Boolean)
 
     /** The output of a host command other than `get-state` and `emu avd name`, such as `exec-out uiautomator dump /dev/tty`. */
     var hostOut: (List<String>) -> String = { "" }
@@ -107,11 +109,12 @@ class FakeAdb(
     }
 
     /**
-     * Makes adb slow, as on a busy device or a bad cable: each call takes [latency] on [clock], and one that would take
-     * longer than its timeout ends at the timeout without an answer, as [ProcessAdb] ends it, before it reaches the device.
+     * Makes adb slow, as on a busy device or a bad cable: each call, or with [only] each call whose command matches, takes
+     * [latency] on [clock], and one that would take longer than its timeout ends at the timeout without an answer, as
+     * [ProcessAdb] ends it, before it reaches the device.
      */
-    fun slow(clock: FakeClock, latency: Duration) {
-        slowness = clock to latency
+    fun slow(clock: FakeClock, latency: Duration, only: (String) -> Boolean = { true }) {
+        slowness = Slowness(clock, latency, only)
     }
 
     /** The extras of each broadcast of [action], in their order. */
@@ -120,7 +123,7 @@ class FakeAdb(
     // Synchronized, because a test's shutdown hook may run restores while the main thread still sends commands.
     @Synchronized
     override fun shell(command: String, timeout: Duration): ShellResult {
-        take(timeout)
+        take(timeout, command)
         val guard = GUARD.matchEntire(command)
         if (guard == null) {
             commands.add(command)
@@ -145,7 +148,7 @@ class FakeAdb(
 
     @Synchronized
     override fun host(args: List<String>, timeout: Duration): ShellResult {
-        take(timeout)
+        take(timeout, args.joinToString(" "))
         hostCommands.add(args)
         return when {
             args == listOf("get-state") -> ShellResult(0, "$state\n", "")
@@ -154,14 +157,14 @@ class FakeAdb(
         }
     }
 
-    private fun take(timeout: Duration) {
+    private fun take(timeout: Duration, command: String) {
         timeouts.add(timeout)
-        val (clock, latency) = slowness ?: return
-        if (latency > timeout) {
-            clock.time += timeout
+        val slow = slowness?.takeIf { it.only(command) } ?: return
+        if (slow.latency > timeout) {
+            slow.clock.time += timeout
             throw AdbException("adb did not end within $timeout.")
         }
-        clock.time += latency
+        slow.clock.time += slow.latency
     }
 
     /** Answers a guarded command, with Android's handler running around it as [busyHandler] says. */

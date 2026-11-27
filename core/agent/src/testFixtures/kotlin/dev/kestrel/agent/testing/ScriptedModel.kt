@@ -51,13 +51,19 @@ import kotlinx.serialization.json.put
  * request must hold, or must not hold, in its context, the owner's messages or the tools' results, so that a dry run
  * checks what reached the model (plan 7G; design 15.3 of sub-project 7). A reply whose request does not match fails the
  * task with [MISMATCH], which names no text. When the script is used up, the model fails the task with [USED_UP].
- * toString prints only counts.
+ * The model refuses a script with a key that it does not know, or with a `requires` or `refuses` that is not a list of
+ * texts, when it is made (an [IllegalArgumentException] that names the reply and the key, never a text), so that a typo
+ * stops a dry run before it starts rather than letting its check pass without checking. toString prints only counts.
  */
 class ScriptedModel(
     replies: List<JsonObject>,
     override val model: ModelInfo = INFO,
 ) : ModelPort {
     private val script = ArrayDeque(replies)
+
+    init {
+        replies.forEachIndexed(::validate)
+    }
     private val recorded = mutableListOf<Pair<ModelRole, ChatRequest>>()
 
     val requests: List<ChatRequest> get() = recorded.map { it.second }
@@ -87,6 +93,17 @@ class ScriptedModel(
         fun named(key: String): List<String> = (reply[key] as? JsonArray).orEmpty().map { it.jsonPrimitive.content }
         fun held(text: String) = texts.any { text in it }
         return if (named("requires").all(::held) && named("refuses").none(::held)) reply else fail(MISMATCH)
+    }
+
+    // A key that the model does not read, such as a misspelled "require", or texts that are not a list of texts would make a
+    // reply's check pass without checking anything.
+    private fun validate(index: Int, reply: JsonObject) {
+        val unknown = reply.keys - KEYS
+        require(unknown.isEmpty()) { "Reply ${index + 1} of the script has keys that the scripted model does not know: ${unknown.sorted().joinToString()}." }
+        for (key in TEXT_LISTS) {
+            val value = reply[key] ?: continue
+            require(value is JsonArray && value.all { it is JsonPrimitive && it.isString }) { "Reply ${index + 1} of the script has a \"$key\" that is not a list of texts." }
+        }
     }
 
     private fun fail(reason: String): JsonObject = buildJsonObject {
@@ -165,6 +182,9 @@ class ScriptedModel(
 
         /** The reason of the fail call that replaces a reply whose request lacks a text that it requires, or holds one that it refuses. */
         const val MISMATCH = "The request did not match the script."
+        // The keys of a reply that [call] and [matching] read.
+        private val KEYS = setOf("tool", "target", "arguments", "calls", "text", "invalid", "stop", "error", "status", "toolChoice", "credits", "requires", "refuses")
+        private val TEXT_LISTS = listOf("requires", "refuses")
         private val LINE = Regex("""(?m)^\[(\d+)]\*?\s+(\S+)\s+(?:hint |id |password |OCR )?"((?:[^"\\]|\\.)*)"""")
 
         val INFO = ModelInfo(

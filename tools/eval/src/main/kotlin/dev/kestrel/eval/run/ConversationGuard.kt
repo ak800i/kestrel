@@ -21,6 +21,11 @@ import kotlin.time.Duration.Companion.seconds
  * leaves a goal open for the next one ([stopGoal]), because a command at a held goal resumes it, and none leaves its own
  * conversations among the owner's past conversations ([deleteRun]). One guard serves a whole series: it knows the commands
  * that the series' runs gave Kestrel ([gave]), so that the series' cleanup ([deleteLeft]) ends only what they opened.
+ *
+ * One rule holds for every close (plan 7G): the evaluation ends only a conversation that carries the hooks' mark, which
+ * every round of a wait reads (conversation-state's `typed=`) and which Kestrel checks again on the conversation's loop
+ * when it ends the quiet time (conversation-control do=expire-typed). A conversation without the mark is the owner's, also
+ * one that he continued with his words or opened himself during a wait, and the evaluation never ends it.
  */
 class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     // The tags of the commands that the series' runs gave Kestrel; the shutdown hook's thread reads them too.
@@ -32,40 +37,57 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     }
 
     /**
-     * Closes the open conversation, if any. Its quiet clock runs once its final reply has ended, and conversation-control
-     * do=expire then ends the quiet time at once, so the guard reads the conversation once a second and ends the quiet time
-     * while it runs, until the conversation is closed, for at most [within] by the clock, however slow adb is ([waitUntil]).
-     * A goal that is open is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation that stays
-     * open. A read whose answer is lost is read again a second later.
+     * Leaves no conversation open, before a run's first command ([NewConversation]) and between its turns (the end of the
+     * quiet time): the hooks' own conversation is closed through Kestrel's check of their mark ([expire]) once its quiet
+     * clock runs, while the owner's, which has no mark, is waited for until its own quiet time has closed it, and is never
+     * ended. The guard reads the conversation once a second for at most [within] by the clock, however slow adb is
+     * ([waitUntil]). A goal that is open is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation
+     * that stays open. A read whose answer is lost is read again a second later.
      */
-    fun close(within: Duration = CLOSE) = closing(within, Ending.ANY)
+    fun close(within: Duration = CLOSE) = closing(within, Wait.NONE_OPEN)
 
     /**
-     * Closes the open conversation only while it is one of the hooks' own, for the series' cleanup (plan 7G): every round
-     * reads whether it carries the hooks' mark (conversation-state's `typed=`), and the wait is over once no conversation is
-     * open or the open one has no mark, because that one is the owner's and stays open, also when the owner continued the
-     * hooks' conversation with his words during the wait, or opened his own after it closed. While the quiet clock runs, it
-     * sends conversation-control do=expire-typed, with which Kestrel checks the mark again on the conversation's loop, at
-     * the moment that it ends the quiet time, and refuses (`expire=not-typed`) without it. A goal in the hooks' conversation
-     * fails it, and so does a conversation of theirs that stays open for [within].
+     * Closes the hooks' own conversation, for a run's restore ([deleteRun]) and the series' cleanup ([deleteLeft]): the wait
+     * is over once no conversation is open or the open one has no mark, because that one is the owner's and stays open, also
+     * when the owner continued the hooks' conversation with his words during the wait, or opened his own after it closed. A
+     * goal in the hooks' conversation fails it, and so does a conversation of theirs that stays open for [within].
      */
-    private fun closeTyped(within: Duration) = closing(within, Ending.TYPED)
+    private fun closeOwn(within: Duration) = closing(within, Wait.NONE_OF_THEIRS)
 
-    // The wait of [close] and [closeTyped], one round a second for at most [within] by the clock.
-    private fun closing(within: Duration, ending: Ending) {
+    // The wait of [close] and [closeOwn], one round a second for at most [within] by the clock.
+    private fun closing(within: Duration, wait: Wait) {
+        var owners = false
         val closed = clock.waitUntil(within, POLL) { deadline ->
             val hooks = hooks.until(deadline)
             val state = quietly { hooks.conversationState() } ?: return@waitUntil false
-            if (state["open"] != "yes" || !ending.ends(state)) return@waitUntil true
-            if (goalOpen(state)) throw SetupFailed("Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first.")
-            if (state["quiet"] == "running") expire(hooks, ending)
+            if (state["open"] != "yes") return@waitUntil true
+            val theirs = state["typed"] == "yes"
+            if (!theirs && wait == Wait.NONE_OF_THEIRS) return@waitUntil true
+            owners = !theirs
+            if (goalOpen(state)) {
+                throw SetupFailed(
+                    if (theirs) {
+                        "Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first."
+                    } else {
+                        "The owner's conversation has a goal open (${state["goal"]}), which the evaluation never ends."
+                    },
+                )
+            }
+            if (theirs && state["quiet"] == "running") expire(hooks)
             false
         }
-        if (!closed) throw SetupFailed("Kestrel's conversation did not close within ${within.inWholeSeconds} s.")
+        if (closed) return
+        throw SetupFailed(
+            if (owners) {
+                "The owner's conversation did not close by itself within ${within.inWholeSeconds} s; the evaluation never ends it."
+            } else {
+                "Kestrel's conversation did not close within ${within.inWholeSeconds} s."
+            },
+        )
     }
 
     /**
-     * After a run: closes the run's conversation ([close]) and deletes the hooks' own conversations (plan 7F's delete-typed,
+     * After a run: closes the run's conversation while it carries the hooks' mark ([closeOwn]) and deletes the hooks' own conversations (plan 7F's delete-typed,
      * which covers every input that a hook gives, tagged or not), so that no test conversation stays among the owner's past
      * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no input of
      * the owner's with his words or his choice has reached, never one of the owner's, and keeps its marks across a restart.
@@ -75,7 +97,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      */
     fun deleteRun(warn: (String) -> Unit) {
         try {
-            close()
+            closeOwn(CLOSE)
         } catch (e: SetupFailed) {
             warn("${e.message} It stays among the hooks' own conversations, which the next run or the series' cleanup deletes.")
         }
@@ -88,14 +110,14 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * untestable, opened nothing, so the cleanup sends nothing. Otherwise delete-typed deletes the hooks' own conversations
      * that are closed and counts the one that is open (`open=`). Only while one is, the cleanup closes the open conversation
      * as long as it carries the hooks' mark, checked on every round of its wait and by Kestrel itself when it ends the quiet
-     * time ([closeTyped]), waiting up to [CLEANUP] for a long final reply, and deletes it then. An open conversation without
+     * time ([closeOwn]), waiting up to [CLEANUP] for a long final reply, and deletes it then. An open conversation without
      * the mark is the owner's and stays open. A conversation of the hooks' that stays open, or a deletion that failed, fails
      * the cleanup, and the console says what to do by hand.
      */
     fun deleteLeft() {
         if (given.isEmpty()) return
         if (delete().int("open") == 0) return
-        closeTyped(CLEANUP)
+        closeOwn(CLEANUP)
         delete()
     }
 
@@ -120,29 +142,19 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
         }
     }
 
-    // An expire whose answer was lost may have reached Kestrel; a second one changes nothing, so the next read decides, as
-    // it does after expire-typed's refusal.
-    private fun expire(hooks: Hooks, ending: Ending) {
+    // The end of the quiet time of the hooks' own conversation only: Kestrel checks their mark on the conversation's loop,
+    // at the moment that it ends the quiet time, and refuses (`expire=not-typed`) without it. An expire whose answer was
+    // lost may have reached Kestrel; a second one changes nothing, so the next read decides, as it does after a refusal.
+    private fun expire(hooks: Hooks) {
         try {
-            hooks.conversationControl(ending.control)
+            hooks.conversationControl("expire-typed")
         } catch (e: HookLost) {
             // Read back by the next conversation-state.
         }
     }
 
-    // Which open conversation a wait ends, and the control that ends its quiet time: any, as a run's own restore must,
-    // which also closes a past conversation that the run continued, or only one of the hooks' own, as the cleanup must.
-    private enum class Ending(val control: String) {
-        ANY("expire") {
-            override fun ends(state: HookAnswer) = true
-        },
-        TYPED("expire-typed") {
-            override fun ends(state: HookAnswer) = state["typed"] == "yes"
-        },
-        ;
-
-        abstract fun ends(state: HookAnswer): Boolean
-    }
+    // When a wait is over: once no conversation is open, or once none of the hooks' own is.
+    private enum class Wait { NONE_OPEN, NONE_OF_THEIRS }
 
     private fun goalOpen(state: HookAnswer): Boolean = state["goal"].let { it != null && it != "none" }
 

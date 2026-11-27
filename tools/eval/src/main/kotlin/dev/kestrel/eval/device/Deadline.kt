@@ -11,6 +11,12 @@ class Deadline(private val clock: Clock, within: Duration) {
 
     /** The time until the deadline, zero once it has passed. */
     val left: Duration get() = (end - clock.elapsed()).coerceAtLeast(Duration.ZERO)
+
+    /** Whether the deadline has passed. */
+    val passed: Boolean get() = !left.isPositive()
+
+    /** The earlier of this deadline and [other], for a read that must end by both, as a wait's limit and its stall rule. */
+    fun earlier(other: Deadline): Deadline = if (other.end < end) other else this
 }
 
 /**

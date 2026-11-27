@@ -16,7 +16,10 @@ class ConversationStepsTest {
     @Test
     fun theEndOfTheQuietTimeClosesTheConversationAndTheOwnersTouchGoesThroughGoalControl() {
         var open = true
-        run.adb.hook("CONVERSATION_STATE") { "open=${if (open) "yes" else "no"} continued=no commands=1 goal=none quiet=running quietLeft=20 replyChannel=voice testMode=on" }
+        // The run's own conversation, which carries the hooks' mark, so the end of the quiet time goes through expire-typed.
+        run.adb.hook("CONVERSATION_STATE") {
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=none quiet=running quietLeft=20 replyChannel=voice testMode=on typed=${if (open) "yes" else "no"}"
+        }
         run.adb.hook("CONVERSATION_CONTROL") {
             open = false
             "expire=sent"
@@ -27,6 +30,7 @@ class ConversationStepsTest {
         OwnerTouch.run(scope)
 
         assertFalse(open)
+        assertEquals(listOf(mapOf("do" to "expire-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
         assertEquals(listOf(mapOf("do" to "touch")), run.adb.hookCalls("GOAL_CONTROL"))
         assertTrue(run.adb.commands.none { it.startsWith("input ") })
         assertEquals("the end of the quiet time", EndQuietTime.toString())

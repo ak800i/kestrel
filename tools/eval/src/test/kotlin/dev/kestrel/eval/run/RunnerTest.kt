@@ -85,10 +85,12 @@ class RunnerTest {
         var open = true
         var goal = "none"
         run.adb.hook("CONVERSATION_STATE") {
-            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=${if (goal == "none") "running" else "held"} quietLeft=none replyChannel=voice testMode=on"
+            // Both conversations, the earlier run's and this one's, are the hooks' own.
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=${if (goal == "none") "running" else "held"} quietLeft=none replyChannel=voice testMode=on " +
+                "typed=${if (open) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
-            if (extras["do"] == "expire") {
+            if (extras["do"] == "expire-typed") {
                 open = false
                 "expire=sent"
             } else {
@@ -110,7 +112,7 @@ class RunnerTest {
 
         assertEquals(Reason.OK, line.reason)
         assertEquals(
-            listOf(mapOf("do" to "expire"), mapOf("do" to "expire"), mapOf("do" to "delete-typed")),
+            listOf(mapOf("do" to "expire-typed"), mapOf("do" to "expire-typed"), mapOf("do" to "delete-typed")),
             run.adb.hookCalls("CONVERSATION_CONTROL"),
         )
         assertEquals(listOf("Kestrel, turn on hotspot", "stop"), run.adb.hookCalls("VOICE").map { it["text"] })
@@ -150,6 +152,38 @@ class RunnerTest {
         assertEquals("setup", order.first())
         assertEquals("conversation", order[1])
         assertEquals("fixture back", order.last())
+    }
+
+    // The turns' follow loop reads through the wait's deadline (plan 7G), the earlier of the command's 10 minutes and the
+    // stall rule's 30 s since the hooks' last answer, so no read outlives either. A device whose agent-task never answers
+    // stalls the run at 30 s: the first read, 2 s after the command, gets only the 28 s left, not adb's 60 s.
+    @Test
+    fun theFollowLoopsReadEndsAtTheStallRulesEnd() {
+        var first = -1
+        run.adb.hook("VOICE") {
+            first = run.adb.timeouts.size
+            run.adb.slow(run.clock, 2.minutes) { "hook.AGENT_TASK" in it }
+            "sent"
+        }
+
+        assertEquals(Reason.STALLED, runner().run(task(), "[]", 1, "maple heron").reason)
+
+        assertEquals(28.seconds, run.adb.timeouts[first])
+    }
+
+    // On a device whose every read of the command takes 7 s, the run polls in rounds of 16 s (a 2 s pause and two reads);
+    // the round that starts at 592 s gets only the 6 s left of the 10 minutes for its read, so the run times out at 600 s.
+    @Test
+    fun theFollowLoopsReadEndsAtTheCommandsLimitOnASlowDevice() {
+        run.adb.hook("VOICE") {
+            run.adb.slow(run.clock, 7.seconds) { "hook.AGENT_TASK" in it || "hook.AGENT_STATE" in it }
+            "sent"
+        }
+        run.adb.hook("AGENT_TASK") { "state=running" }
+
+        assertEquals(Reason.TIMEOUT, runner().run(task(), "[]", 1, "maple heron").reason)
+
+        assertTrue(run.adb.timeouts.toString(), 6.seconds in run.adb.timeouts)
     }
 
     // Design 14.4 of sub-project 7: each command has its tag, and the run's one line holds their sums.

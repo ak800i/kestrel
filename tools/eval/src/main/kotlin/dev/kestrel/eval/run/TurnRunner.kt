@@ -1,5 +1,6 @@
 package dev.kestrel.eval.run
 
+import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.waitUntil
@@ -7,6 +8,7 @@ import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
+import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.ProcessSetup
 import dev.kestrel.eval.task.Reply
@@ -152,28 +154,32 @@ internal class TurnRunner(
     private fun follow(command: SentCommand, acting: Boolean): TurnsEnd? {
         val start = clock.elapsed()
         fun elapsed(): Duration = clock.elapsed() - start
-        var heard = Duration.ZERO
+        // Every read and answer ends by the command's limit and by the stall rule's end, whichever comes first, so that no
+        // read outlives either ([Deadline]); the stall rule's end moves on with each answer of the hooks.
+        val limit = Deadline(clock, Runner.LIMIT)
+        var stall = Deadline(clock, Runner.STALL)
         var quietUntil = Duration.ZERO
-        while (elapsed() < Runner.LIMIT) {
-            clock.sleep(Runner.POLL)
-            val pairs = quietly { hooks.agentTask(command.tag) }
+        while (!limit.passed) {
+            clock.sleep(minOf(Runner.POLL, limit.left))
+            val reads = hooks.until(limit.earlier(stall))
+            val pairs = quietly { reads.agentTask(command.tag) }
             if (pairs == null) {
-                if (elapsed() - heard > Runner.STALL) {
+                if (stall.passed) {
                     state.stalled = true
                     return TurnsEnd.CUT
                 }
                 continue
             }
-            heard = elapsed()
+            stall = Deadline(clock, Runner.STALL)
             if (pairs["state"] == "done") {
-                return ended(command, pairs) ?: if (acting) {
+                return ended(command, pairs, reads) ?: if (acting) {
                     unmet("the goal acting", "the command ended before the run saw its goal act, so the turns after it would steer, await or restart no goal.")
                 } else {
                     null
                 }
             }
             if (elapsed() < quietUntil) continue
-            val asked = quietly { hooks.agentState(command.tag) } ?: continue
+            val asked = quietly { reads.agentState(command.tag) } ?: continue
             val kind = Answers.kind(asked)
             command.record.saw(kind)
             if (kind == null) {
@@ -181,18 +187,19 @@ internal class TurnRunner(
                 if (acting && asked["phase"] == "running") return null
                 continue
             }
-            if (answer(command, asked, kind)) quietUntil = elapsed() + Runner.QUIET
+            if (answer(command, asked, kind, reads)) quietUntil = elapsed() + Runner.QUIET
         }
         state.timedOut = true
         return TurnsEnd.CUT
     }
 
-    // The command's end; one that Kestrel refused before it ran ends the turns, because nothing was tested.
-    private fun ended(command: SentCommand, pairs: HookAnswer): TurnsEnd? {
+    // The command's end; one that Kestrel refused before it ran ends the turns, because nothing was tested. The refusal's
+    // kind is read through the wait's [reads].
+    private fun ended(command: SentCommand, pairs: HookAnswer, reads: Hooks): TurnsEnd? {
         command.answer = pairs
         command.record.ended()
         if (pairs["end"] in Refusals.ENDS) {
-            state.refusal = Refusals.kind(hooks, command.tag)
+            state.refusal = Refusals.kind(reads, command.tag)
             return TurnsEnd.CUT
         }
         return null
@@ -201,10 +208,10 @@ internal class TurnRunner(
     /**
      * Answers the open question of agent-state's [asked], of [kind], as the task says, after the run's questions before it
      * ([RunState.before]), on the card over the app or the text channel's card after a typed input; true when an answer
-     * went to Kestrel, after which the run keeps quiet for a moment. A lost or refused answer is not sent again: the next
-     * poll answers only if the same question is still open.
+     * went to Kestrel, after which the run keeps quiet for a moment. The answer goes through the wait's [hooks]. A lost or
+     * refused answer is not sent again: the next poll answers only if the same question is still open.
      */
-    private fun answer(command: SentCommand, asked: HookAnswer, kind: String): Boolean {
+    private fun answer(command: SentCommand, asked: HookAnswer, kind: String, hooks: Hooks): Boolean {
         val reply = when (val chosen = task.answers.reply(asked, state.before(command))) {
             null -> return false
             // "Which number should I use?" (the owner's decision P1) and a limit's "Continue?" that the task leaves to
