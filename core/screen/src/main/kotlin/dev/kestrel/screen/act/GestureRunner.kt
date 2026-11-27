@@ -38,8 +38,8 @@ class GestureRunner(private val service: AccessibilityService) {
      * the finger has lifted, so that nothing new acts on the screen before (design spec, section 7.3).
      *
      * [press] learns the moment that the first part goes to Android, in this runner's turn ([PressDispatch.dispatching]),
-     * and whether Android refused it ([PressDispatch.notDispatched]); a gesture that is cancelled while it waits for its
-     * turn tells it nothing.
+     * and whether Android refused it or its hand-over failed ([PressDispatch.notDispatched]); a gesture that is cancelled
+     * while it waits for its turn tells it nothing.
      */
     suspend fun perform(vararg parts: GestureDescription, press: PressDispatch? = null): GestureOutcome = mutex.withLock {
         require(parts.isNotEmpty()) { "A gesture needs at least one part" }
@@ -89,11 +89,19 @@ class GestureRunner(private val service: AccessibilityService) {
 
         /**
          * Hands a gesture to Android through [dispatch], which answers whether Android took it, and tells [press] right
-         * before, and again when Android refused it, so that only a gesture that Android took keeps what [press] did.
+         * before, and again when Android refused it or the hand-over threw, which it then throws on, so that only a gesture
+         * that Android took keeps what [press] did.
          */
         internal fun handedOver(press: PressDispatch?, dispatch: () -> Boolean): Boolean {
             press?.dispatching()
-            return dispatch().also { accepted -> if (!accepted) press?.notDispatched() }
+            val accepted = try {
+                dispatch()
+            } catch (e: Throwable) {
+                press?.notDispatched()
+                throw e
+            }
+            if (!accepted) press?.notDispatched()
+            return accepted
         }
 
         /**

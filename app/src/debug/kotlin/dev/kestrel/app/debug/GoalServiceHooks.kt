@@ -168,7 +168,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
      * tap on another app's notification. `send=scheduled`, or `send=none` when Kestrel's goal notification shows no such
      * button. USE_EXACT_ALARM in the debug manifest allows the exact alarm without a setting of the phone. On a phone
      * without a boot count, a button that gives an input is refused before the alarm, because its claim cannot reach the
-     * new process ([ButtonClaims.reachesNewProcesses]).
+     * new process ([ButtonClaims.armForNewProcess] refuses it).
      */
     private fun sendLater(name: String?): String {
         val action = actionOf(name)
@@ -187,11 +187,14 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         // it, so that the broadcast reaches Kestrel as the owner's tap does, without the exemptions of an alarm that is
         // allowed while idle; an alarm that Doze defers beyond the claim's life comes unclaimed, and counts as the owner's.
         val claims = ButtonClaims.current()
-        if (action.intent != null && !claims.reachesNewProcesses) {
-            throw HookError("this phone has no boot count, so send-later's press cannot be claimed in a new process")
-        }
         val due = SystemClock.elapsedRealtime() + SEND_LATER_MILLIS
-        val armed = action.intent?.let { claims.arm(action, goal, fromMillis = due) }
+        val armed = action.intent?.let {
+            when (val later = claims.armForNewProcess(action, goal, fromMillis = due)) {
+                is ButtonClaims.LaterClaim.Armed -> later.claim
+                ButtonClaims.LaterClaim.NoBootCount ->
+                    throw HookError("this phone has no boot count, so send-later's press cannot be claimed in a new process")
+            }
+        }
         try {
             alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, due, button)
         } catch (error: Exception) {

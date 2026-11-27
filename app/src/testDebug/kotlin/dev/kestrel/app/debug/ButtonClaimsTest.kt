@@ -210,7 +210,6 @@ class ButtonClaimsTest {
 
         val unbooted = claims(boot = null)
         assertFalse(file.exists())
-        assertFalse(unbooted.reachesNewProcesses)
         press(unbooted, GoalAction.CANCEL)
         assertEquals(listOf(marked.id), gone)
 
@@ -222,7 +221,25 @@ class ButtonClaimsTest {
         assertFalse(file.exists())
         press(claims(boot = null), GoalAction.CANCEL)
         assertEquals(listOf(marked.id, marked.id), gone)
-        assertTrue(claims().reachesNewProcesses)
+    }
+
+    // Re-check of round 13, Minor 2: a claim for a new process, as send-later's, needs the boot count. Without one, the
+    // arming refuses by itself and arms nothing, so the alarm's broadcast would count as the owner's and the hook refuses
+    // first; with one, it arms the claim from its due time in the file.
+    @Test
+    fun aClaimForANewProcessIsRefusedWithoutABootCount() {
+        val unbooted = claims(boot = null)
+        assertEquals(ButtonClaims.LaterClaim.NoBootCount, unbooted.armForNewProcess(GoalAction.CANCEL, goal, fromMillis = now))
+        assertFalse(file.exists())
+        press(unbooted, GoalAction.CANCEL)
+        assertEquals(listOf(marked.id), gone)
+
+        val armed = claims().armForNewProcess(GoalAction.CANCEL, goal, fromMillis = now + 5_000)
+        assertEquals(ButtonClaims.LaterClaim.Armed(ButtonClaims.Claim(GoalAction.CANCEL, goal, BOOT, now + 5_000)), armed)
+        assertTrue(file.isFile)
+        now += 5_000
+        press(claims(), GoalAction.CANCEL)
+        assertEquals(listOf(marked.id), gone)
     }
 
     // A claim counts only for its button and its goal, is used once, and expires.

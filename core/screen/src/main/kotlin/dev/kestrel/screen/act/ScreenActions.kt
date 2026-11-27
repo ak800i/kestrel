@@ -65,9 +65,9 @@ class ScreenActions internal constructor(
      * [dispatch] learns each moment that Kestrel hands the press to Android ([PressDispatch.dispatching]): right before the
      * node's action, on the caller's coroutine, or right before the fallback gesture, on the main thread in
      * [GestureRunner]'s turn. From then on the press may have reached the app, whatever the result says, also when the
-     * press is cancelled or throws later, except for a gesture that Android refused, which it is told of
-     * ([PressDispatch.notDispatched]). A press that stops before it hands anything to Android, as one that a check refuses
-     * or one that is cancelled while it waits for the gesture runner, tells it nothing.
+     * press is cancelled or throws later, except for a gesture that Android refused or whose hand-over failed, which it is
+     * told of ([PressDispatch.notDispatched]). A press that stops before it hands anything to Android, as one that a check
+     * refuses or one that is cancelled while it waits for the gesture runner, tells it nothing.
      */
     suspend fun tap(
         key: String,
@@ -657,7 +657,8 @@ class ScreenActions internal constructor(
     /**
      * Runs the gesture that [build] makes, after checking that its [points] lie on the screen: Android's gesture builder
      * throws for a negative point, and a gesture beyond the screen's edge reaches nothing. [dispatch] learns, in
-     * [GestureRunner]'s turn, the moment that the gesture goes to Android and whether Android refused it.
+     * [GestureRunner]'s turn, the moment that the gesture goes to Android and whether Android refused it or its hand-over
+     * failed.
      */
     private suspend fun gesture(points: List<ScreenPoint>, dispatch: PressDispatch? = null, build: () -> Array<GestureDescription>): ActionResult {
         cardOpen()?.let { return it }

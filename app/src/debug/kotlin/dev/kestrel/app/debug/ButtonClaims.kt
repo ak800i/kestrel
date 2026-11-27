@@ -33,8 +33,8 @@ import java.nio.file.StandardCopyOption
  * Without a boot count ([boot] null: a phone or an Android build that does not keep `Settings.Global.BOOT_COUNT`), no claim
  * in the file can be tied to this boot, so none is trusted: the file is deleted, and the claims live in this process's
  * memory only, where they stay exact, because the process's clock belongs to the current boot. A claim then never reaches
- * a new process ([reachesNewProcesses]), so `goal-control send-later` refuses, and `tap`, whose broadcast reaches this
- * process, keeps working; when this process ends before the broadcast, the press counts as the owner's.
+ * a new process, so [armForNewProcess], which `goal-control send-later` uses, refuses by itself, and `tap`, whose broadcast
+ * reaches this process, keeps working; when this process ends before the broadcast, the press counts as the owner's.
  *
  * One window remains, and nothing can close it: Kestrel's buttons are immutable PendingIntents (`GoalNotification`), so
  * neither SystemUI's send nor AlarmManager's can add a token, and the receiver cannot tell the hooks' broadcast from the
@@ -61,8 +61,12 @@ internal class ButtonClaims(
 
     private val claims = mutableListOf<Claim>()
 
-    /** Whether a claim reaches a new process of this boot through [file]: only with a boot count. */
-    val reachesNewProcesses: Boolean get() = boot != null
+    /** What [armForNewProcess] did: [Armed] its claim, or nothing, because the phone has [NoBootCount]. */
+    sealed interface LaterClaim {
+        data class Armed(val claim: Claim) : LaterClaim
+
+        data object NoBootCount : LaterClaim
+    }
 
     init {
         if (boot == null) {
@@ -114,6 +118,14 @@ internal class ButtonClaims(
         change(claims + armed)
         return armed
     }
+
+    /**
+     * Arms a claim, as [arm] does, whose broadcast may reach a new process of this boot, as `send-later`'s alarm does: only
+     * the file carries it there, so without a boot count it arms nothing and answers [LaterClaim.NoBootCount].
+     */
+    @Synchronized
+    fun armForNewProcess(action: GoalAction, goal: NoticeGoal, fromMillis: Long): LaterClaim =
+        if (boot == null) LaterClaim.NoBootCount else LaterClaim.Armed(arm(action, goal, fromMillis))
 
     /** Takes back [armed], whose broadcast was certainly never sent: a refused gesture, or an alarm that AlarmManager did not take. */
     @Synchronized

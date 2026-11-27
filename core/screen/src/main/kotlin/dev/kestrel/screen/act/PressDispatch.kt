@@ -15,8 +15,8 @@ interface PressDispatch {
     fun dispatching()
 
     /**
-     * Runs right after a [dispatching] whose press Android certainly did not take: a gesture that Android refused. A node's
-     * action that answers no never runs it, because some apps act all the same.
+     * Runs right after a [dispatching] whose press Android certainly did not take: a gesture that Android refused, or
+     * whose hand-over failed. A node's action that answers no never runs it, because some apps act all the same.
      */
     fun notDispatched()
 }

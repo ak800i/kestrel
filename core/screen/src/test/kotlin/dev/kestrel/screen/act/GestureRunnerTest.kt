@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -56,5 +57,27 @@ class GestureRunnerTest {
         assertFalse(GestureRunner.handedOver(press) { told += "Android"; false })
         assertEquals(listOf("dispatching", "Android", "not dispatched"), told)
         assertTrue(GestureRunner.handedOver(null) { true })
+    }
+
+    // Re-check of round 13, Minor 1: a hand-over that throws reached Android no more than a refused one, so the press learns
+    // that too, and the throw goes on to the caller.
+    @Test
+    fun aHandOverThatThrowsTellsThePressItWasNotDispatchedAndThrowsOn() {
+        val told = mutableListOf<String>()
+        val press = object : PressDispatch {
+            override fun dispatching() {
+                told += "dispatching"
+            }
+
+            override fun notDispatched() {
+                told += "not dispatched"
+            }
+        }
+        val failure = IllegalArgumentException("the gesture's steps")
+
+        val thrown = runCatching { GestureRunner.handedOver(press) { throw failure } }.exceptionOrNull()
+
+        assertSame(failure, thrown)
+        assertEquals(listOf("dispatching", "not dispatched"), told)
     }
 }
