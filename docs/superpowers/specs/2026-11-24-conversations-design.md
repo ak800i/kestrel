@@ -584,7 +584,7 @@ stateDiagram-v2
 **It runs** only while all of these hold: a conversation is open; no goal is open, in any phase; no question waits for the owner; none of Kestrel's own requests runs (such as a memory request or a switch to a past conversation); Kestrel is not speaking or showing a final reply; the conversation screen's text field is empty, or the screen is not in front; and Kestrel is not waiting for a command after "Kestrel" alone, the side key or the microphone button.
 
 **It starts from zero** at:
-- the end of a command's final reply: the end of its speech (when `Listening.say` completes, as `Event.SpeechEnded` reports today), or, for a written reply, the moment the reply is on the screen or the bar;
+- the end of a command's final reply: the end of its speech (when `Listening.say` completes, as `Event.SpeechEnded` reports it, naming the reply whose speech ended), or, for a written reply, the moment the reply is on the screen or the bar;
 - the end of the final reply of a local request;
 - the end of a goal, in any way, after its report;
 - the end of composing: the field is emptied, or the screen leaves the front without sending;
@@ -670,7 +670,7 @@ Every effect that starts work under a new command number (`StartGoal`, `ResumeGo
 
 ### 6.6 The follow-up window
 
-- **It opens** when Kestrel has finished speaking a command's final reply, and when it has finished speaking a local request's final reply, while no goal is open. It does not open after a `say` in the middle of a goal, nor while a goal is open in any phase, for example one that a waiting command started while the reply was spoken: steering a goal by voice always needs the name (D9), so that a TV cannot steer a goal. It does not open after a written reply.
+- **It opens** when Kestrel has finished speaking a command's final reply, and when it has finished speaking a local request's final reply, while no goal is open. It does not open after a `say` in the middle of a goal, nor while a goal is open in any phase, for example one that a waiting command started while the reply was spoken: steering a goal by voice always needs the name (D9), so that a TV cannot steer a goal. It does not open after a written reply. Only the final reply's own end decides: `Event.SpeechEnded` names the reply whose speech ended, because the ends of two speeches may come in either order, as a withdrawn question's after the final reply that came while it was spoken. The window opens once the final reply was spoken to its end and Kestrel speaks nothing else; the end of another speech neither opens it nor cancels it, and a final reply that was not spoken to its end opens none.
 - **Its length** is 8 s by default (D4), set on the Conversations page, and never longer than the quiet time.
 - **What it does.** `Rules` sets `State.followUp`, a number like `wait`, and recognition `ALL`, also in the paused mode. Every utterance that starts inside the window goes to the conversation as a command, without the name (D14). `Requests` still reads Kestrel's own requests in it ("stop", "cancel", "stop listening", "turn off", "new conversation", "continue the conversation about X"), which keep their meaning; the instant-command parser is not asked.
 - **What the owner sees.** The bar shows "Go on…" with the seconds left, and fades when the window ends.

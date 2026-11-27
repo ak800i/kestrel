@@ -1296,7 +1296,7 @@ class Listening internal constructor(
                 showInstead()
             }
             ended?.complete(Unit)
-            send(Event.SpeechEnded(spoken = spoke == Spoke.FINISHED))
+            send(Event.SpeechEnded(reply, spoken = spoke == Spoke.FINISHED))
         }
     }
 
