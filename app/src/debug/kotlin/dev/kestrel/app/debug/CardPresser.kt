@@ -5,6 +5,9 @@ import dev.kestrel.app.conversation.OverlayCards
 import dev.kestrel.app.conversation.TapEnd
 import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.screen.overlay.CARD_ARMING_MILLIS
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
 
 /**
  * What the debug hook's press of the overlay's card found (Task 13a). [PRESSED] answered the question; [HELD] is a
@@ -35,9 +38,17 @@ internal enum class CardPress {
  * must have given it to the screen twice the card's arming delay ago, because the overlay may wait one delay before it
  * shows a card, which then ignores taps for another. The press then goes through the desk's one entry for taps, so a
  * Continue on the lock screen is held exactly as the owner's is; the answer says what the desk did with it ([TapEnd]).
+ * The press runs on [main], the main thread, which is the screen source's: the desk stamps it with the source's status
+ * there, in order with the source's reports, as the owner's tap is stamped (plan 7F's fifth re-check).
  */
-internal class CardPresser(private val overlay: OverlayCards) {
-    fun press(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress = overlay.withShown { shown, answer ->
+internal class CardPresser(
+    private val overlay: OverlayCards,
+    private val main: CoroutineContext = Dispatchers.Main.immediate,
+) {
+    suspend fun press(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress =
+        withContext(main) { pressHere(key, kind, choice) }
+
+    private fun pressHere(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress = overlay.withShown { shown, answer ->
         when {
             shown == null -> CardPress.NOT_ON_OVERLAY
             shown.card.key != key || shown.card.kind != kind -> CardPress.OTHER_CARD

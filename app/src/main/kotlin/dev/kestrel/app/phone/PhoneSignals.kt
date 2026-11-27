@@ -38,7 +38,8 @@ internal enum class ScreenReading {
 internal data class ScreenStatus(val reading: ScreenReading, val offs: Long, val seq: Long)
 
 /**
- * Android's screen and lock (design spec, section 8.5). Any thread may call it. Every report, every [start]'s cameOn and
+ * Android's screen and lock (design spec, section 8.5). Any thread may call [start], [stop] and [read]; [status] runs on
+ * the source's one thread only. Every report, every [start]'s cameOn and
  * every [read] runs on the source's one thread, in the order in which they happen there, so that no reading can come
  * after a newer change.
  */
@@ -55,7 +56,9 @@ internal interface ScreenSource {
     /**
      * The reading now, with the count of screen-offs and the number of the newest reading that the source gave. On the
      * source's thread it is in order with the reports, so a question card's tap is judged by the screen of its own moment
-     * and by the readings that come after it (plan 7F). Any thread may call it.
+     * and by the readings that come after it (plan 7F). Only the source's thread may call it, because a status read
+     * elsewhere is not in order with the reports; it throws [IllegalStateException] on another thread (plan 7F's fifth
+     * re-check).
      */
     fun status(): ScreenStatus
 
@@ -150,7 +153,7 @@ internal class PhoneSignals(private val screens: ScreenSource, private val calls
         awaitClose { watch.stop() }
     }
 
-    /** The screen source's status now ([ScreenSource.status]), which stamps a card's tap. */
+    /** The screen source's status now ([ScreenSource.status]), which stamps a card's tap; on the main thread only. */
     fun screenStatus(): ScreenStatus = screens.status()
 
     /**

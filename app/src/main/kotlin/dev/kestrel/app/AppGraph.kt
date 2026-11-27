@@ -910,7 +910,11 @@ class AppGraph(context: Context) {
      * The phone's screen, lock and calls (design 5.5 and 6.5 of sub-project 7): one receiver and one call listener for
      * ListeningService, Listening and, from plan 7D's switch-over, the conversation.
      */
-    internal val phoneSignals: PhoneSignals by lazy { PhoneSignals(AndroidScreenSource(appContext), AndroidCallMonitor(appContext)) }
+    internal val phoneSignals: PhoneSignals by lazy {
+        // How long the keyguard took to read unlocked after USER_PRESENT: a count only, which Task 14 measures.
+        val screens = AndroidScreenSource(appContext) { millis -> Log.i(TAG, "the keyguard caught up $millis ms after USER_PRESENT") }
+        PhoneSignals(screens, AndroidCallMonitor(appContext))
+    }
 
     /** The screen's turn (spec 7.3; design 7.1 of sub-project 7): the instant commands, the settings and the goals wait in it. */
     internal val screenTurns: ScreenTurns by lazy { ScreenTurns(reportFailure) }

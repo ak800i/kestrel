@@ -1,89 +1,111 @@
 package dev.kestrel.app.phone
 
 /**
- * The screen source's rule for what it reads (design 8.5 and 10.3 of sub-project 7; plan 7F's fourth re-check), apart
- * from Android's broadcasts and services, which [AndroidScreenSource] feeds in. A reading is correct at the moment it
- * is read: the screen is [ScreenReading.OFF] while it is not [interactive], and otherwise [ScreenReading.LOCKED] while
- * the lock screen shows ([keyguardLocked], `KeyguardManager.isKeyguardLocked`, which a swipe lock screen and Android's
- * Lockdown both show), else [ScreenReading.UNLOCKED].
+ * The screen source's rule for what it reads (design 8.5 and 10.3 of sub-project 7; plan 7F's fourth and fifth
+ * re-checks), apart from Android's broadcasts and services, which [AndroidScreenSource] feeds in. A reading is correct
+ * at the moment it is read: the screen is [ScreenReading.OFF] while it is not [interactive], and otherwise
+ * [ScreenReading.LOCKED] while the lock screen shows ([keyguardLocked], `KeyguardManager.isKeyguardLocked`, which a swipe
+ * lock screen and Android's Lockdown both show), else [ScreenReading.UNLOCKED].
  *
- * One exception bridges a lag: KeyguardManager can learn of the owner's unlock a moment after USER_PRESENT, so for
- * [UNLOCK_LAG_MILLIS] after USER_PRESENT the screen reads as unlocked although the keyguard still says locked. The bridge
- * ends at the first reading that sees the keyguard unlocked, at the end of that time, and at a screen-off, so a lock
- * screen that comes back later without a screen-off (Lockdown) reads as locked at once. When what the source would read
- * now differs from the newest reading that it gave ([stale]), the source gives it as a new reading.
+ * KeyguardManager can learn of the owner's unlock after USER_PRESENT, and Android gives a normal app no event when it
+ * does (`addKeyguardLockedStateListener` needs `SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE`, which only privileged apps hold).
+ * So after USER_PRESENT the keyguard is *settling*: the source looks again every [KEYGUARD_POLL_MILLIS] ([settling])
+ * until a look sees the keyguard unlocked, a screen-off comes, or [KEYGUARD_SETTLE_MILLIS] have passed, and each look
+ * that reads otherwise than the newest reading ([stale]) gives a new reading. For the first [UNLOCK_LAG_MILLIS] of that
+ * time the screen reads as unlocked although the keyguard still says locked, so that the unlock does not read as a lock
+ * for a moment; a lock screen that comes back later without a screen-off (Lockdown) reads as locked at once. The first
+ * look that sees the keyguard unlocked tells [caughtUp] how long after USER_PRESENT that was.
  *
- * [heard], [next] and [stale] run on the source's one thread, which numbers the readings in their order; [status] may
- * run on any thread.
+ * Every call runs on the source's one thread ([onSourceThread]), which numbers the readings in the order of its looks and
+ * broadcasts, and refuses to run elsewhere: a status read on another thread could not be in order with the reports.
  */
 internal class ScreenReadings(
     private val interactive: () -> Boolean,
     private val keyguardLocked: () -> Boolean,
     private val clock: () -> Long,
+    private val onSourceThread: () -> Boolean,
+    private val caughtUp: (millis: Long) -> Unit = {},
 ) {
     /** The broadcasts that change the screen's reading. */
     enum class Broadcast { SCREEN_OFF, SCREEN_ON, USER_PRESENT }
 
-    // When USER_PRESENT came, while its bridge lasts.
-    @Volatile
-    private var presentAt: Long? = null
+    // One immutable state: when USER_PRESENT came while the keyguard settles, the count of screen-offs, the number of the
+    // newest reading, and that reading.
+    private data class State(val presentAt: Long?, val offs: Long, val seq: Long, val given: ScreenReading?)
 
-    @Volatile
-    private var offs = 0L
-
-    @Volatile
-    private var seq = 0L
-
-    // The newest reading that the source gave.
-    private var given: ScreenReading? = null
+    private var state = State(presentAt = null, offs = 0, seq = 0, given = null)
 
     /** A [broadcast] came: the source's new reading, which it reports. */
     fun heard(broadcast: Broadcast): ScreenStatus {
-        when (broadcast) {
-            Broadcast.USER_PRESENT -> presentAt = clock()
-            Broadcast.SCREEN_OFF -> {
-                presentAt = null
-                offs++
-            }
-            Broadcast.SCREEN_ON -> Unit
+        onThread()
+        state = when (broadcast) {
+            Broadcast.USER_PRESENT -> state.copy(presentAt = clock())
+            Broadcast.SCREEN_OFF -> state.copy(presentAt = null, offs = state.offs + 1)
+            Broadcast.SCREEN_ON -> state
         }
         return next()
     }
 
-    /** The source starts again: an unlock that it heard before is no longer its to bridge. */
-    fun restarted() {
-        presentAt = null
-    }
-
     /** A new reading of the source, numbered after every earlier one. */
     fun next(): ScreenStatus {
-        val reading = look(endBridge = true)
-        seq++
-        given = reading
-        return ScreenStatus(reading, offs, seq)
+        onThread()
+        val reading = look()
+        state = state.copy(seq = state.seq + 1, given = reading)
+        return ScreenStatus(reading, state.offs, state.seq)
     }
 
     /** Whether the source would read otherwise now than its newest reading, which it then gives again ([next]). */
-    fun stale(): Boolean = given != null && look(endBridge = true) != given
+    fun stale(): Boolean {
+        onThread()
+        return state.given != null && look() != state.given
+    }
+
+    /** Whether the keyguard is still settling after USER_PRESENT, so that the source looks again. */
+    fun settling(): Boolean {
+        onThread()
+        val present = state.presentAt ?: return false
+        return clock() - present < KEYGUARD_SETTLE_MILLIS
+    }
 
     /** The reading now, with the count of screen-offs and the number of the newest reading that the source gave. */
-    fun status(): ScreenStatus = ScreenStatus(look(endBridge = false), offs, seq)
+    fun status(): ScreenStatus {
+        onThread()
+        val reading = look()
+        return ScreenStatus(reading, state.offs, state.seq)
+    }
 
-    // Only the source's thread ends the bridge, so that another thread's look never ends a newer USER_PRESENT's.
-    private fun look(endBridge: Boolean): ScreenReading {
+    private fun onThread() {
+        check(onSourceThread()) {
+            "The screen source reads only on its own thread, the main thread, so that each reading is in order with " +
+                "its reports"
+        }
+    }
+
+    // A look at the screen now, which ends the keyguard's settling when it sees the keyguard unlocked or when its time has
+    // passed.
+    private fun look(): ScreenReading {
         if (!interactive()) return ScreenReading.OFF
+        val present = state.presentAt
+        val since = present?.let { clock() - it }
         if (!keyguardLocked()) {
-            if (endBridge) presentAt = null
+            if (since != null) {
+                state = state.copy(presentAt = null)
+                caughtUp(since)
+            }
             return ScreenReading.UNLOCKED
         }
-        val present = presentAt ?: return ScreenReading.LOCKED
-        if (clock() - present < UNLOCK_LAG_MILLIS) return ScreenReading.UNLOCKED
-        if (endBridge) presentAt = null
-        return ScreenReading.LOCKED
+        if (since != null && since >= KEYGUARD_SETTLE_MILLIS) state = state.copy(presentAt = null)
+        return if (since != null && since < UNLOCK_LAG_MILLIS) ScreenReading.UNLOCKED else ScreenReading.LOCKED
     }
 
     companion object {
         /** How long USER_PRESENT counts as the unlock while KeyguardManager has not caught up with it. */
         const val UNLOCK_LAG_MILLIS = 1_000L
+
+        /** How often the source looks at the keyguard while it settles after USER_PRESENT. */
+        const val KEYGUARD_POLL_MILLIS = 250L
+
+        /** How long after USER_PRESENT the source looks at the keyguard, at most. */
+        const val KEYGUARD_SETTLE_MILLIS = 5_000L
     }
 }

@@ -15,17 +15,31 @@ import android.os.SystemClock
  * screen's and the keyguard's state when the source reads, which [ScreenReadings] turns into the source's readings, so
  * that each reading is correct at the moment it is read (plan 7F's fourth re-check). The source's thread is the main
  * thread: the receiver runs there, and so does every reading, so that a reading and the broadcasts keep their order.
- * When a look at the screen, at a tap's stamp or at the end of USER_PRESENT's bridge, finds another reading than the
- * newest that the source gave, as when the lock screen came back without a screen-off (Lockdown), the source reports
- * it as a new reading.
+ * When a look at the screen, at a tap's stamp or while the keyguard settles after USER_PRESENT, finds another reading
+ * than the newest that the source gave, as when the lock screen came back without a screen-off (Lockdown) or the keyguard
+ * caught up with the unlock late, the source reports it as a new reading. [keyguardCaughtUp] hears how long after
+ * USER_PRESENT the keyguard read unlocked, which the app graph logs (Task 14 measures it).
  */
-internal class AndroidScreenSource(private val context: Context) : ScreenSource {
+internal class AndroidScreenSource(
+    private val context: Context,
+    keyguardCaughtUp: (millis: Long) -> Unit = {},
+) : ScreenSource {
     private val main = Handler(Looper.getMainLooper())
     private val readings = ScreenReadings(
         interactive = { context.getSystemService(PowerManager::class.java).isInteractive },
         keyguardLocked = { context.getSystemService(KeyguardManager::class.java).isKeyguardLocked },
         clock = SystemClock::uptimeMillis,
+        onSourceThread = { main.looper.isCurrentThread },
+        caughtUp = keyguardCaughtUp,
     )
+
+    // While the keyguard settles after USER_PRESENT, the source looks again at each poll.
+    private val settle = object : Runnable {
+        override fun run() {
+            confirm()
+            if (readings.settling()) main.postDelayed(this, ScreenReadings.KEYGUARD_POLL_MILLIS)
+        }
+    }
     private var receiver: BroadcastReceiver? = null
 
     // Where the readings go while the source runs: set under this object's lock, read on the main thread.
@@ -43,9 +57,11 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
                 report(readings.heard(broadcast))
                 when (broadcast) {
                     ScreenReadings.Broadcast.SCREEN_ON -> cameOn()
-                    // The keyguard has caught up with the unlock by the end of the bridge, or the lock screen shows.
-                    ScreenReadings.Broadcast.USER_PRESENT -> main.postDelayed(::confirm, ScreenReadings.UNLOCK_LAG_MILLIS)
-                    ScreenReadings.Broadcast.SCREEN_OFF -> Unit
+                    ScreenReadings.Broadcast.USER_PRESENT -> {
+                        main.removeCallbacks(settle)
+                        if (readings.settling()) main.postDelayed(settle, ScreenReadings.KEYGUARD_POLL_MILLIS)
+                    }
+                    ScreenReadings.Broadcast.SCREEN_OFF -> main.removeCallbacks(settle)
                 }
             }
         }
@@ -56,7 +72,7 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
         }
         synchronized(this) {
             receiver?.let(context::unregisterReceiver)
-            readings.restarted()
+            main.removeCallbacks(settle)
             this.report = report
             // SCREEN_ON and SCREEN_OFF come from the system, but USER_PRESENT comes from SystemUI, and Android gives another
             // app's broadcasts only to an exported receiver. All three are protected broadcasts, which other apps cannot
@@ -69,12 +85,14 @@ internal class AndroidScreenSource(private val context: Context) : ScreenSource 
     override fun stop() {
         synchronized(this) {
             receiver?.let(context::unregisterReceiver)
+            main.removeCallbacks(settle)
             receiver = null
             report = null
         }
     }
 
-    // The tap's stamp reads the screen now; a reading that differs from the newest given is reported after it.
+    // The tap's stamp reads the screen now, on the main thread only; a reading that differs from the newest given is
+    // reported after it.
     override fun status(): ScreenStatus = readings.status().also { main.post(::confirm) }
 
     override fun read(reading: (ScreenStatus) -> Unit) {

@@ -62,7 +62,10 @@ internal interface OwnerScreen {
      */
     val screens: Flow<ScreenStatus>
 
-    /** The screen source's reading and count of screen-offs now, which stamps the debug hook's press as a tap's own do. */
+    /**
+     * The screen source's status now ([ScreenSource.status]), which stamps the debug hook's press as a tap's own do: on
+     * the main thread only, the source's thread, in order with its reports.
+     */
     fun screenStatus(): ScreenStatus
 
     /**

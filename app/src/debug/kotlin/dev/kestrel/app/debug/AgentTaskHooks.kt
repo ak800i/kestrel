@@ -122,7 +122,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     // the card of the tagged task's open question [question] (openCardRefusal), by its number and kind, the card takes
     // that button, and it takes taps. A confirmation, a hand-over and a pick are answered here; a refusal leaves the
     // question open for the caller's next try.
-    private fun cardAnswer(tag: String, words: String, question: Int?, asking: QuestionKind?): String {
+    private suspend fun cardAnswer(tag: String, words: String, question: Int?, asking: QuestionKind?): String {
         val desk = graph.cardDesk
         val card = desk.open.value ?: throw HookError("no card is open: Kestrel listens, and the conversation is spoken")
         AgentHookAnswers.openCardRefusal(card, tag, question, asking)?.let { throw HookError(it) }
