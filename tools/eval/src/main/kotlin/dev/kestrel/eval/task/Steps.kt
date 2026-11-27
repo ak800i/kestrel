@@ -6,10 +6,13 @@ import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.Hooks
+import dev.kestrel.eval.run.Asked
 import dev.kestrel.eval.run.Console
 import dev.kestrel.eval.run.Restores
+import dev.kestrel.eval.run.SentCommand
 import java.net.URLEncoder
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * The values of one run (design D4 of sub-project 6) that fill the placeholders of a request and a script: `{marker}`,
@@ -69,9 +72,17 @@ class RunScope(
     val notes: MutableMap<String, String> = mutableMapOf(),
     /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
     val putBack: PutBack = PutBack(),
+    /**
+     * The commands that the run gave Kestrel, in their order, each with its questions and the run's answers (T1); the
+     * shutdown hook's thread reads them too.
+     */
+    val commands: MutableList<SentCommand> = CopyOnWriteArrayList(),
 ) {
     /** The tag of the task that the run gave, once it gave one. */
     var tag: String? = null
+
+    /** The run's answers and the questions that it left open on purpose, command by command, which [AskedInOrder] reads. */
+    val asked: List<Asked> get() = commands.flatMap { it.record.asked }
 
     /**
      * This run's scope for a wait that ends at [deadline] (plan 7G), for the checks that the wait reads: its device and hooks
@@ -79,7 +90,7 @@ class RunScope(
      * now, so that a check reads through it as through the run's scope and no read outlives the wait.
      */
     fun until(deadline: Deadline): RunScope =
-        RunScope(device.until(deadline), hooks.until(deadline), restores, clock, console, config, work, values, notes, putBack).also { it.tag = tag }
+        RunScope(device.until(deadline), hooks.until(deadline), restores, clock, console, config, work, values, notes, putBack, commands).also { it.tag = tag }
 }
 
 /** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */

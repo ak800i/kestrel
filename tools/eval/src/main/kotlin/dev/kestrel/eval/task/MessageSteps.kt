@@ -59,6 +59,21 @@ data class EmuSms(val number: String, val text: String) : Setup {
 }
 
 /**
+ * The run's test SMS deleted between two turns (design 15.3 of sub-project 7: search-past), so that a later command can
+ * learn its words only from the conversation that read it; [EmuSms]'s restore, pushed before the SMS existed, still
+ * checks that none is left.
+ */
+data object DeleteTestSms : TurnAction {
+    override fun run(scope: RunScope) {
+        val marker = scope.values.marker
+        scope.restores.change("the test SMS deleted", "Messages: delete the SMS that holds \"$marker\".") { Sms.delete(scope, Sms.ids(scope, marker)) }
+        check(Sms.ids(scope, marker).isEmpty()) { "The test SMS is still in the inbox." }
+    }
+
+    override fun toString() = "the test SMS deleted"
+}
+
+/**
  * notification-read's notification (design D17 of sub-project 6): `:testapp`'s NotificationActivity posts "Kestrel test
  * {marker}", after a restore that cancels it (`--ez cancel true`); the setup waits up to 10 s until `dumpsys
  * notification` lists a notification of `:testapp`.

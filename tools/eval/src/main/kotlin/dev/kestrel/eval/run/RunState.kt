@@ -3,7 +3,6 @@ package dev.kestrel.eval.run
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.task.PutBack
 import dev.kestrel.eval.task.TurnChannel
-import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A command that the run gave Kestrel (design 14.4 of sub-project 7): its [tag], the end that its turns expect
@@ -34,12 +33,14 @@ class SentCommand(val tag: String, expected: String?) {
     override fun toString(): String = "SentCommand(tag=$tag, expected=$expected, sent=$sent, ended=${answer != null}, lost=$lost)"
 }
 
-/** What a run met; the shutdown hook's restores read it too, for the commands' stop, the credits and the detail line. */
-internal class RunState(private val putBack: PutBack) {
+/**
+ * What a run met; the shutdown hook's restores read it too, for the commands' stop, the credits and the detail line.
+ * [commands] are the commands that the run gave Kestrel, in their order, each with its questions and the run's answers
+ * (T1); they are the run scope's, so that a check reads their answers too.
+ */
+internal class RunState(private val putBack: PutBack, val commands: MutableList<SentCommand>) {
     var call = false
 
-    /** The commands that the run gave Kestrel, in their order; the shutdown hook's thread reads them too. */
-    val commands: MutableList<SentCommand> = CopyOnWriteArrayList()
     var timedOut = false
     var stalled = false
     var refusal: String? = null

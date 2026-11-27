@@ -133,6 +133,18 @@ class Hooks(private val client: HookClient) {
         )
 
     /**
+     * conversation-control do=restore-check (design 14.4 of sub-project 7): what the restore at the process's start found,
+     * `restored=nothing|open|closed|goal-held|goal-ended`, or `pending` before it has run.
+     */
+    fun restoreCheck(): HookAnswer = read("conversation-control", Extra.Text("do", "restore-check"))
+
+    /**
+     * goal-control --es do [action] (plan 7E): `touch` gives the conversation the owner's touch, as the touch watcher
+     * reports it (design D13 of sub-project 7), and answers `touch=sent`.
+     */
+    fun goalControl(action: String): HookAnswer = act("goal-control", Extra.Text("do", action))
+
+    /**
      * crash (spec 16.1): ends Kestrel's process with an error whose message is [text]; it answers `crashing`, and the
      * process ends half a second later.
      */

@@ -110,7 +110,7 @@ class Runner(
      */
     fun run(task: Task, script: String?, number: Int, marker: String): RunLine {
         val scope = RunScope(device, hooks, restores, clock, console, config, work, RunValues(marker, name = options.name))
-        val state = RunState(scope.putBack)
+        val state = RunState(scope.putBack, scope.commands)
         current = number to state
         val mark = restores.mark()
         var verdict: Verdict? = null

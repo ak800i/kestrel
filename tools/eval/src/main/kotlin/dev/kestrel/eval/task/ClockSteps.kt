@@ -167,6 +167,18 @@ data object NextAlarmAt : Check {
     }
 }
 
+/**
+ * The clock holds one alarm clock only, at the next [hour]:[minute] or at the same time a day later (design 7.3 of
+ * sub-project 7: a steered goal changed its alarm, and did not set a second one); [ClockFree] found none before the run.
+ */
+data class OnlyAlarmAt(val hour: Int, val minute: Int) : Check {
+    override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
+        val clock = scope.notes[ClockApp.NOTE] ?: return false
+        val dump = ClockApp.alarms(scope) ?: return false
+        return AlarmCleanup.clocks(dump, clock).distinct().size == 1 && AlarmCleanup.set(scope, clock, hour, minute)
+    }
+}
+
 /** A rehearsal's alarm at {time}, set through Android's alarm intent without the clock's screen; [ClockFree]'s restore deletes it. */
 data object AlarmIntent : Setup {
     override fun apply(scope: RunScope): SetupResult {
