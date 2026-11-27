@@ -93,7 +93,7 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
     }
 
     private fun inject(vararg events: Int) {
-        if (STAMPS_FROM_TIME_BASE) send("""{"id":1,"command":"updateTimeBase"}""")
+        if (KNOWS_UPDATE_TIME_BASE) send("""{"id":1,"command":"updateTimeBase"}""")
         send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
     }
 
@@ -109,14 +109,16 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
         const val LOG_LINES = 10
 
         /**
-         * Whether the tool stamps the events itself and has the command `updateTimeBase`, which sets its time base to
-         * the current time. From Android 15 on, it does; on kestrel-api37 it stamps the device's first injection with
-         * that base, which it sets when it registers the device, so without the command a tap carries the time at
-         * which this finger was made, and Android's input pipeline sees a touch from the past. Up to Android 14 (the
-         * A71 has 13), the tool stamps each event with the time at which it writes it and has no such command: an
-         * unknown command ends the tool, and the finger with it.
+         * Whether the tool has the command `updateTimeBase`, which sets its time base to the current time: from Android
+         * 15 on (AOSP android15-release). Before that it has no such command, and an unknown command ends the tool, and
+         * the finger with it; the tool there (the A71 has 13) stamps each event with the time at which it writes it.
+         * The tool on kestrel-api37's image stamps a device's first injection with the time base that it set when it
+         * registered the device, so without the command the first tap carries the time at which this finger was made,
+         * and Android's input pipeline sees a touch from the past; the finger therefore resets the base before each
+         * injection. AOSP's own tool from Android 15 on stamps the first injection with the time of the call, and there
+         * the command changes nothing.
          */
-        val STAMPS_FROM_TIME_BASE = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+        val KNOWS_UPDATE_TIME_BASE = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
         const val EV_SYN = 0
