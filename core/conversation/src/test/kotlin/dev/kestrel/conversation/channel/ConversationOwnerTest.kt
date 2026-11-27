@@ -331,6 +331,28 @@ class ConversationOwnerTest {
         assertEquals(DialogueEvent.HandOverDone(number), events.last())
     }
 
+    // Plan 7G: every act that ends a hand-over reaches the engine with its number. The owner's tap on the card's Continue or
+    // Cancel, as on a spoken conversation's card once Kestrel is off, closes the hand-over with the tap's number, also for a
+    // permission request; an end by itself or by the engine's input, which reached the engine as its own event, has none.
+    @Test
+    fun aHandOverClosesWithTheNumberOfTheTapThatEndedIt() = runTest {
+        kestrelOn.value = false
+        text.taps = { 51L }
+        text.handOverEnds += HandOverEnd.CONTINUED
+        assertEquals(HandOverEnd.CONTINUED, owner.handOver(HandOver.of(HandOverKind.PAYMENT)))
+        assertEquals(DialogueEvent.HandOverDone(1, act = 51L), events.last())
+
+        text.taps = { 52L }
+        text.handOverEnds += HandOverEnd.CANCELLED
+        assertEquals(PermissionEnd.REFUSED, owner.askPermission(listOf("android.permission.READ_CALENDAR"), "Kestrel needs to read your calendar."))
+        assertEquals(DialogueEvent.HandOverDone(2, act = 52L), events.last())
+
+        typed()
+        text.handOverEnds += HandOverEnd.DONE_BY_ITSELF
+        owner.handOver(HandOver.of(HandOverKind.PAYMENT))
+        assertEquals(DialogueEvent.HandOverDone(3, act = null), events.last())
+    }
+
     @Test
     fun aHandOverThatWaitsForTheResumeLetsContinueTheGoalBeAsked() = runTest {
         owner.pause()

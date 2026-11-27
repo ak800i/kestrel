@@ -29,5 +29,10 @@ sealed interface DialogueEvent {
 
     data class HandedOver(val number: Int) : DialogueEvent
 
-    data class HandOverDone(val number: Int) : DialogueEvent
+    /**
+     * Hand-over [number] ended. [act] is the number of the owner's tap among his inputs when a card's Continue or Cancel
+     * ended it, and null when an input ended it, which reached the engine as its own event, or when it ended by itself
+     * (plan 7G): every act that ends a hand-over reaches the engine with its number, as a question's answer does.
+     */
+    data class HandOverDone(val number: Int, val act: Long? = null) : DialogueEvent
 }
