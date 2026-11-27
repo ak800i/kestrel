@@ -569,24 +569,28 @@ function Assert-EmulatorHealthy([string]$Serial) {
 # The cold boot of kestrel-api37 ------------------------------------------------------------------------------------
 
 # After a cold boot, the 5-minute load average still holds the boot's load (the 1-minute average reaches 17), so the
-# cold boot reads the health right after the boot and again after each pause of $ColdBootHealthPauseSeconds, at most
-# $ColdBootHealthPauses times: 5 minutes of waiting, plus 10 s for each reading.
+# cold boot reads the health right after the boot and again after each pause of $ColdBootHealthPauseSeconds, until a
+# reading passes, all within $ColdBootHealthSeconds from the start of the first reading: it starts no pause after which
+# the next reading could end later. A reading takes $EmulatorHealthSampleSeconds on the device; $ColdBootHealthReadSeconds
+# allows for adb around it.
+$ColdBootHealthSeconds = 300
 $ColdBootHealthPauseSeconds = 30
-$ColdBootHealthPauses = 10
+$ColdBootHealthReadSeconds = $EmulatorHealthSampleSeconds + 5
 
 # Waits until kestrel-api37 passes the gates' health check (Get-EmulatorHealthProblem), and throws with the last
-# problem when it has not passed after the last pause.
+# problem when it has not passed within $ColdBootHealthSeconds.
 function Wait-EmulatorHealthy([string]$Serial) {
-    foreach ($pause in 0..$ColdBootHealthPauses) {
-        if ($pause -gt 0) { Start-Sleep -Seconds $ColdBootHealthPauseSeconds }
+    $deadline = (Get-Date).AddSeconds($ColdBootHealthSeconds)
+    while ($true) {
         $problem = Get-EmulatorHealthProblem -Serial $Serial
         if (-not $problem) { return }
+        if ((Get-Date).AddSeconds($ColdBootHealthPauseSeconds + $ColdBootHealthReadSeconds) -gt $deadline) { break }
+        Start-Sleep -Seconds $ColdBootHealthPauseSeconds
     }
     throw ("kestrel-api37 ($Serial) was cold-booted, but it did not pass the gates' health check within " +
-        "$($ColdBootHealthPauses * $ColdBootHealthPauseSeconds / 60) minutes: $problem. Look for what loads the emulator " +
+        "$($ColdBootHealthSeconds / 60) minutes: $problem. Look for what loads the emulator " +
         'or this computer, such as a Gradle build, and run scripts\cold-boot.ps1 again.')
 }
-
 # Cold-boots kestrel-api37 on $Serial, without a window, and checks the owner's data around the boot; README asks for it
 # before each long device suite, because only a cold boot brings back an emulator that degraded (see above). In order:
 #   1. Assert-TestDevice, and a refusal of every device other than kestrel-api37;

@@ -618,12 +618,17 @@ Describe 'Invoke-KestrelColdBoot' {
 
 Describe 'Wait-EmulatorHealthy' {
     BeforeEach {
-        Mock Start-Sleep {}
+        # A clock that only the pauses and the readings move: a reading takes 10 s, as on the device.
+        $clock = [pscustomobject]@{ Now = [datetime]::new(2026, 11, 27, 18, 0, 0) }
+        $start = $clock.Now
+        Mock Get-Date { $clock.Now }
+        Mock Start-Sleep { $clock.Now = $clock.Now.AddSeconds($Seconds) }
+        $degraded = 'kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6'
     }
 
     It 'reads the health until it passes, with a pause of 30 s before each reading after the first' {
-        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@('kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6', $null))
-        Mock Get-EmulatorHealthProblem { $answers.Dequeue() }
+        $answers = [System.Collections.Generic.Queue[object]]::new([object[]]@($degraded, $null))
+        Mock Get-EmulatorHealthProblem { $clock.Now = $clock.Now.AddSeconds(10); $answers.Dequeue() }
 
         { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
 
@@ -631,13 +636,15 @@ Describe 'Wait-EmulatorHealthy' {
         Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 30 }
     }
 
-    It 'throws with the last problem when the emulator has not passed after 5 minutes of pauses' {
-        Mock Get-EmulatorHealthProblem { 'kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6' }
+    It 'throws with the last problem when the emulator has not passed, and starts no reading that could end after 5 minutes' {
+        Mock Get-EmulatorHealthProblem { $clock.Now = $clock.Now.AddSeconds(10); $degraded }
 
         { Wait-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage ("kestrel-api37 (emulator-5554) was cold-booted, but it did not pass the gates' health check within 5 minutes: " +
-            'kestrel-api37 has degraded: the load average over 5 minutes was 6.40 on 4 CPUs, above the limit of 6. Look for what loads the emulator *')
+            "$degraded. Look for what loads the emulator *")
 
-        Should -Invoke Get-EmulatorHealthProblem -Times 11 -Exactly
-        Should -Invoke Start-Sleep -Times 10 -Exactly
+        # Readings end at 10, 50, ... 290 s; after the eighth, a pause and a reading (30 s + 15 s) could end after 300 s.
+        Should -Invoke Get-EmulatorHealthProblem -Times 8 -Exactly
+        Should -Invoke Start-Sleep -Times 7 -Exactly
+        ($clock.Now - $start).TotalSeconds | Should -BeLessOrEqual 300
     }
 }
