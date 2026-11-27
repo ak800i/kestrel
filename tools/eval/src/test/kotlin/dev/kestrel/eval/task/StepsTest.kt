@@ -1,6 +1,7 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.Redactions
+import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.DeviceCommandFailed
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.hook.HookAnswer
@@ -12,10 +13,29 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /** Each step pushes its restore before its change, and each check reads only counts and flags (design D4 of sub-project 6). */
 class StepsTest {
     private val run = FakeRun()
+
+    // Plan 7G: a check that a wait reads goes through the run's scope bounded by the wait, so that none of its reads outlives
+    // the wait's deadline, however slow adb is; the scope's notes, put-back record and tag are the run's.
+    @Test
+    fun aScopeBoundedByAWaitsDeadlineEndsItsReadsAtTheDeadlineAndSharesTheRunsState() {
+        run.scope.tag = "t1"
+        run.scope.notes["clock"] = "google"
+        val bounded = run.scope.until(Deadline(run.clock, 10.seconds))
+        run.adb.slow(run.clock, 2.minutes)
+
+        assertThrows(DeviceCommandFailed::class.java) { bounded.hooks.state() }
+
+        assertEquals(10.seconds, run.clock.time)
+        assertEquals("t1", bounded.tag)
+        assertEquals("google", bounded.notes["clock"])
+        assertTrue(bounded.putBack === run.scope.putBack)
+    }
 
     @Test
     fun forceStopStopsTheAppBeforeAndAfterTheRun() {

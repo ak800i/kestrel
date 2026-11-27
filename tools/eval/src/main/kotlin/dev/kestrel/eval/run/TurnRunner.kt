@@ -226,11 +226,11 @@ internal class TurnRunner(
     }
 
     // Design 15.3 of sub-project 7: a check between turns, read every 2 s with the newest command's end until it holds, for
-    // up to its time by the clock; the check's own reads keep their timeouts.
+    // up to its time by the clock; the check reads through the run's scope bounded by the wait ([RunScope.until]).
     private fun expect(index: Int, turn: Turn.Expect): TurnsEnd? {
-        val held = clock.waitUntil(turn.within, Runner.POLL) {
+        val held = clock.waitUntil(turn.within, Runner.POLL) { deadline ->
             val answer = state.commands.lastOrNull { it.answer != null }?.answer ?: HookAnswer.EMPTY
-            quietly { turn.check.passes(scope, answer) } == true
+            quietly { turn.check.passes(scope.until(deadline), answer) } == true
         }
         if (held) return null
         state.unmet = turn.check.toString()

@@ -11,8 +11,9 @@ import kotlin.time.Duration
  * `typed:<words>`, `steered:<words>`, `stop` or `unheard:<text>`, and [onInput] gets each one; [answers] holds the run's
  * answers as `<answer>` or `<answer>/<channel>`. As plan 7F's hook does, agent-answer on the text channel refuses a
  * confirmation, a hand-over and a pick, which only the card over the app answers (`channel=card`, plan 7F's Task 13a).
- * conversation-state counts the open conversation's commands (a "continue" adds none), conversation-control do=expire
- * closes it while no goal is open, do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
+ * conversation-state counts the open conversation's commands (a "continue" adds none) and says whether a hook's input
+ * opened it (`typed=`), conversation-control do=expire closes it while no goal is open, do=expire-typed does so only for
+ * one that a hook's input opened (plan 7G), do=delete-typed deletes the closed conversations that a hook's input opened, whose marks
  * outlive a restart, as plan 7F keeps them in a file ([deleted]), never one that a switch moved into, and
  * voice-state's followUp= is open from the end of a spoken command until the next input, unless [windows] is false. The
  * hook crash answers `crashing` and ends the process: `pidof` then gives a new process, the command that ran is lost with
@@ -106,7 +107,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         adb.hook("VOICE_RESTORE") { "restoredAgo=${restoredAt?.let { (clock() - it).inWholeSeconds } ?: "none"} guard=$GUARD_SECONDS" }
         adb.hook("CONVERSATION_STATE") {
             val quiet = if (open && running == null && goal == "none") "running" else "off"
-            "open=${yesNo(open)} continued=${yesNo(continued)} commands=$commands goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on"
+            "open=${yesNo(open)} continued=${yesNo(continued)} commands=$commands goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${yesNo(open && conversation in own)}"
         }
         adb.hook("CONVERSATION_CONTROL") { extras -> control(extras) }
         adb.hook("CRASH") {
@@ -253,6 +254,8 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             }
             "expire=sent"
         }
+        // Plan 7G: only the hooks' own conversation, as Kestrel checks their mark when it ends the quiet time.
+        "expire-typed" -> if (open && conversation in own) control(mapOf("do" to "expire")) else "expire=not-typed"
         "delete-typed" -> {
             val stillOpen = own.filter { open && it == conversation }.toSet()
             val gone = own - stillOpen

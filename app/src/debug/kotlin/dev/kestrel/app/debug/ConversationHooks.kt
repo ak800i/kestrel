@@ -13,13 +13,16 @@ import dev.kestrel.conversation.model.OwnerInput
 
 /**
  * The conversation's hooks (design 14.4 of sub-project 7): conversation-state reads the open conversation,
- * conversation-control starts a new one, ends the quiet time, sets a round's limits or says what the restore found, and
+ * conversation-control starts a new one, ends the quiet time (with expire-typed only of the hooks' own conversation),
+ * sets a round's limits or says what the restore found, and
  * conversation-type types words as the owner does on the conversation screen (plan 7F). The answers never contain words.
  */
 internal class ConversationHooks(private val graph: AppGraph) {
     suspend fun run(command: String, intent: Intent): String = when (command) {
-        "CONVERSATION_STATE" ->
-            ConversationHookAnswers.state(graph.conversations.view.value, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis())
+        "CONVERSATION_STATE" -> {
+            val view = graph.conversations.view.value
+            ConversationHookAnswers.state(view, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis(), HookConversations.owns(view.id))
+        }
         "CONVERSATION_CONTROL" -> control(intent)
         "CONVERSATION_TYPE" -> type(intent)
         else -> throw HookError("unknown command '$command'")
@@ -56,6 +59,9 @@ internal class ConversationHooks(private val graph: AppGraph) {
             graph.conversations.endQuietTime()
             "expire=sent"
         }
+        // Only the hooks' own conversation (plan 7G): the conversation's loop checks the mark at the moment that it ends the
+        // quiet time, so a conversation that the owner opened or continued with his words or his choice is never ended.
+        "expire-typed" -> if (graph.conversations.endQuietTimeIf(HookConversations::owns)) "expire=sent" else "expire=not-typed"
         "limits" -> limits(intent.getStringExtra(EXTRA_LIMITS))
         "restore-check" -> "restored=${ConversationHookAnswers.restored(graph.conversations.restored)}"
         // The conversations that the hooks opened (HookConversations), never the owner's: each closed one is deleted and its
@@ -66,7 +72,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
             "deleted=${ended.values.count { it == PastDeletion.DELETED }} open=${ended.values.count { it == PastDeletion.OPEN }} " +
                 "failed=${ended.values.count { it == PastDeletion.FAILED }}"
         }
-        else -> throw HookError("add --es do with one of new, expire, limits, restore-check or delete-typed")
+        else -> throw HookError("add --es do with one of new, expire, expire-typed, limits, restore-check or delete-typed")
     }
 
     // The page's smallest limits, or with --es limits those that a check stored before, so that it can put them back.

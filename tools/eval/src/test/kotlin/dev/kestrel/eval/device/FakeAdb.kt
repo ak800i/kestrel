@@ -257,7 +257,7 @@ class FakeAdb(
 
     companion object {
         /** conversation-state's answer while no conversation is open (design 14.4 of sub-project 7). */
-        const val NO_CONVERSATION = "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on"
+        const val NO_CONVERSATION = "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no"
 
         /** conversation-control do=delete-typed's answer when none of the hooks' own conversations is left (plan 7F). */
         const val NOTHING_DELETED = "deleted=0 open=0 failed=0"

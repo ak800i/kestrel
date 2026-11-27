@@ -2,6 +2,7 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.Clock
+import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.Hooks
@@ -64,15 +65,21 @@ class RunScope(
     /** A folder of this computer for the run's files, such as the filled script and the test photos. */
     val work: Path,
     val values: RunValues,
+    /** What a setup read for the run's checks, such as the Wi-Fi page's activity or the alarms before the run. */
+    val notes: MutableMap<String, String> = mutableMapOf(),
+    /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
+    val putBack: PutBack = PutBack(),
 ) {
     /** The tag of the task that the run gave, once it gave one. */
     var tag: String? = null
 
-    /** What a setup read for the run's checks, such as the Wi-Fi page's activity or the alarms before the run. */
-    val notes: MutableMap<String, String> = mutableMapOf()
-
-    /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
-    val putBack: PutBack = PutBack()
+    /**
+     * This run's scope for a wait that ends at [deadline] (plan 7G), for the checks that the wait reads: its device and hooks
+     * give each read only the time left ([Device.until]), and everything else is this scope's own, with the run's tag of
+     * now, so that a check reads through it as through the run's scope and no read outlives the wait.
+     */
+    fun until(deadline: Deadline): RunScope =
+        RunScope(device.until(deadline), hooks.until(deadline), restores, clock, console, config, work, values, notes, putBack).also { it.tag = tag }
 }
 
 /** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */

@@ -40,6 +40,13 @@ class PreflightTest {
             refusal.message,
         )
 
+        // Plan 7G's mark of the hooks' own conversation, with which the series' cleanup leaves the owner's open.
+        run.adb.hook("CONVERSATION_STATE") { FakeAdb.NO_CONVERSATION.removeSuffix(" typed=no") }
+        assertEquals(
+            "Kestrel on emulator-5554 answers no conversation-state's typed= and conversation-control do=expire-typed, as a build from before plan 7G of sub-project 7 does; install the current debug build with scripts\\install.ps1.",
+            assertThrows(Refusal::class.java) { preflight().prepare(needsTestApp = false) }.message,
+        )
+
         run.adb.hook("CONVERSATION_STATE") { FakeAdb.NO_CONVERSATION }
         run.adb.hookFails("CONVERSATION_CONTROL", "add --es do with one of new, expire, limits or restore-check")
         assertEquals(

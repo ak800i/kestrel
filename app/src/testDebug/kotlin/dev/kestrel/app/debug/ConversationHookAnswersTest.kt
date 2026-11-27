@@ -34,19 +34,19 @@ class ConversationHookAnswersTest {
             quiet = QuietClock.Running(2, now - 20_500),
         )
 
-        val state = ConversationHookAnswers.state(open, settings, now)
+        val state = ConversationHookAnswers.state(open, settings, now, typed = true)
 
         assertEquals(
-            "open=yes continued=yes commands=2 goal=paused-at-limit quiet=running quietLeft=40 replyChannel=text testMode=off",
+            "open=yes continued=yes commands=2 goal=paused-at-limit quiet=running quietLeft=40 replyChannel=text testMode=off typed=yes",
             state,
         )
         assertFalse(state, state.contains("secret"))
         assertEquals(
-            "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on",
-            ConversationHookAnswers.state(ConversationView(), settings, now),
+            "open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=voice testMode=on typed=no",
+            ConversationHookAnswers.state(ConversationView(), settings, now, typed = false),
         )
         val held = open.copy(quiet = QuietClock.Held(HoldReason.REPLYING))
-        assertTrue(ConversationHookAnswers.state(held, settings, now).contains(" quiet=held quietLeft=none "))
+        assertTrue(ConversationHookAnswers.state(held, settings, now, typed = false).contains(" quiet=held quietLeft=none "))
         assertEquals("3/7", ConversationHookAnswers.checklist(open.checklist))
         assertEquals("none", ConversationHookAnswers.checklist(null))
         assertEquals("goal-held", ConversationHookAnswers.restored(RestoreResult.GOAL_HELD))

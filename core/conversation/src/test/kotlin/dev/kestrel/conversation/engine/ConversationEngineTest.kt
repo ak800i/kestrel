@@ -1465,6 +1465,27 @@ class ConversationEngineTest {
         assertEquals(EndReason.FINISHED, engine.view.value.records.single().end)
     }
 
+    // Plan 7G's hook expire-typed: the quiet time ends only for an open conversation that the check accepts, checked on the
+    // loop; without one, or when the check refuses, nothing changes.
+    @Test
+    fun theQuietTimeEndsOnlyForAnOpenConversationThatTheCheckAccepts() = scope.runTest {
+        val engine = engine(environment(listSms, finish(1)))
+        engine.restore()
+        assertFalse(engine.endQuietTimeIf { true })
+        engine.submit(typed("Read my latest SMS"))
+        runCurrent()
+        val open = engine.view.value.id!!
+        val seen = mutableListOf<ConversationId>()
+
+        assertFalse(engine.endQuietTimeIf { seen += it; false })
+        runCurrent()
+        assertEquals(open, engine.view.value.id)
+        assertTrue(engine.endQuietTimeIf { seen += it; true })
+        runCurrent()
+        assertNull(engine.view.value.id)
+        assertEquals(listOf(open, open), seen)
+    }
+
     // Design 9.5 of sub-project 7: a past conversation is deleted, or all of them, and never the open one.
     @Test
     fun aPastConversationIsDeletedFromTheListButTheOpenOneIsNot() = scope.runTest {

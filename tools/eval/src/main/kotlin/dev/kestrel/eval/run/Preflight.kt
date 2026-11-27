@@ -103,12 +103,15 @@ class Preflight(
     // answer, nor one without plan 7F's delete-typed. delete-typed here also deletes what an earlier series left, and the
     // series' cleanup, a restore with the series' guard, deletes what this one's runs leave, and only that.
     private fun conversationHooks() {
-        val open = try {
-            hooks.conversationState()["open"]
+        val state = try {
+            hooks.conversationState()
         } catch (e: HookError) {
             null
         }
-        if (open == null) refuse("conversation-state", "plan 7D of sub-project 7")
+        if (state == null || state["open"] == null) refuse("conversation-state", "plan 7D of sub-project 7")
+        // The series' cleanup ends only the hooks' own conversation: it reads their mark (typed=) and ends the quiet time
+        // with do=expire-typed, which Kestrel's build of plan 7G gives with it.
+        if (state["typed"] == null) refuse("conversation-state's typed= and conversation-control do=expire-typed", "plan 7G of sub-project 7")
         val deleted = try {
             hooks.deleteTyped()["deleted"]
         } catch (e: HookError) {

@@ -10,6 +10,8 @@ import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -61,5 +63,26 @@ class HookConversationsTest {
 
         assertEquals(emptyList<ConversationId>(), HookConversations.all())
         assertEquals(emptyList<ConversationId>(), HookConversations(file).all())
+    }
+
+    // Plan 7G's typed= and expire-typed: a conversation is the hooks' own only while it carries their mark, which the owner's
+    // words clear; no conversation, and none before the marks' rule started, is the hooks'.
+    @Test
+    fun aConversationIsTheHooksOwnOnlyWhileItCarriesTheirMark() {
+        val marked = ConversationId("1".repeat(32))
+        val owners = ConversationId("2".repeat(32))
+        HookConversations(folder.root.resolve(HookConversations.FILE)).own(marked)
+        assertFalse(HookConversations.owns(marked))
+
+        var steps: StepWatcher? = null
+        HookConversations.watch(folder.root, CommandTags()) { steps = it }
+
+        assertTrue(HookConversations.owns(marked))
+        assertFalse(HookConversations.owns(owners))
+        assertFalse(HookConversations.owns(null))
+        val open = ConversationState(id = marked)
+        val words = OwnerInput(1, InputChannel.TEXT, InputIntent.Command("and the prices"), 0)
+        checkNotNull(steps)(ConversationEvent.Input(words), open, MachineStep(open, listOf(ConversationEffect.StartGoal(2, 2, words, "and the prices"))))
+        assertFalse(HookConversations.owns(marked))
     }
 }

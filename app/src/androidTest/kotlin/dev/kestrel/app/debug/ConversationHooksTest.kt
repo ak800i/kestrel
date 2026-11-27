@@ -42,11 +42,14 @@ class ConversationHooksTest {
         check(VoiceTests.waitUntil(30_000) { conversations.view.value.quiet is QuietClock.Running }) { "The quiet time did not run" }
 
         val open = hook("CONVERSATION_STATE")
-        assertTrue(open, Regex("open=yes continued=no commands=1 goal=none quiet=running quietLeft=\\d+ replyChannel=voice testMode=(on|off)").matches(open))
+        assertTrue(open, Regex("open=yes continued=no commands=1 goal=none quiet=running quietLeft=\\d+ replyChannel=voice testMode=(on|off) typed=no").matches(open))
+        // No hook's input opened this conversation, so expire-typed leaves it open (plan 7G).
+        assertEquals("expire=not-typed", hook("CONVERSATION_CONTROL", "do" to "expire-typed"))
+        assertTrue(conversations.view.value.id != null)
         assertEquals("expire=sent", hook("CONVERSATION_CONTROL", "do" to "expire"))
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
         val closed = hook("CONVERSATION_STATE")
-        assertTrue(closed, Regex("open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=(voice|text) testMode=(on|off)").matches(closed))
+        assertTrue(closed, Regex("open=no continued=no commands=0 goal=none quiet=off quietLeft=none replyChannel=(voice|text) testMode=(on|off) typed=no").matches(closed))
     }
 
     @Test
@@ -62,7 +65,7 @@ class ConversationHooksTest {
 
             val restored = hook("CONVERSATION_CONTROL", "do" to "restore-check")
             assertTrue(restored, Regex("restored=(nothing|open|closed|goal-held|goal-ended)").matches(restored))
-            assertEquals("error: add --es do with one of new, expire, limits, restore-check or delete-typed", hook("CONVERSATION_CONTROL", "do" to "other"))
+            assertEquals("error: add --es do with one of new, expire, expire-typed, limits, restore-check or delete-typed", hook("CONVERSATION_CONTROL", "do" to "other"))
         } finally {
             runBlocking { settings.set(SettingKeys.CONVERSATIONS, stored) }
         }
@@ -86,6 +89,7 @@ class ConversationHooksTest {
 
             // The hooks' own conversation, once closed, is deleted; the owner's are not (plan 7F).
             val id = checkNotNull(conversations.view.value.id)
+            assertTrue(hook("CONVERSATION_STATE").endsWith(" typed=yes"))
             hook("CONVERSATION_CONTROL", "do" to "new")
             check(VoiceTests.waitUntil(10_000) { conversations.view.value.id == null }) { "The conversation did not close" }
             assertTrue(hook("CONVERSATION_CONTROL", "do" to "delete-typed").startsWith("deleted="))

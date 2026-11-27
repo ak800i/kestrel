@@ -38,13 +38,27 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * A goal that is open is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation that stays
      * open. A read whose answer is lost is read again a second later.
      */
-    fun close(within: Duration = CLOSE) {
+    fun close(within: Duration = CLOSE) = closing(within, Ending.ANY)
+
+    /**
+     * Closes the open conversation only while it is one of the hooks' own, for the series' cleanup (plan 7G): every round
+     * reads whether it carries the hooks' mark (conversation-state's `typed=`), and the wait is over once no conversation is
+     * open or the open one has no mark, because that one is the owner's and stays open, also when the owner continued the
+     * hooks' conversation with his words during the wait, or opened his own after it closed. While the quiet clock runs, it
+     * sends conversation-control do=expire-typed, with which Kestrel checks the mark again on the conversation's loop, at
+     * the moment that it ends the quiet time, and refuses (`expire=not-typed`) without it. A goal in the hooks' conversation
+     * fails it, and so does a conversation of theirs that stays open for [within].
+     */
+    private fun closeTyped(within: Duration) = closing(within, Ending.TYPED)
+
+    // The wait of [close] and [closeTyped], one round a second for at most [within] by the clock.
+    private fun closing(within: Duration, ending: Ending) {
         val closed = clock.waitUntil(within, POLL) { deadline ->
             val hooks = hooks.until(deadline)
             val state = quietly { hooks.conversationState() } ?: return@waitUntil false
-            if (state["open"] != "yes") return@waitUntil true
+            if (state["open"] != "yes" || !ending.ends(state)) return@waitUntil true
             if (goalOpen(state)) throw SetupFailed("Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first.")
-            if (state["quiet"] == "running") expire(hooks)
+            if (state["quiet"] == "running") expire(hooks, ending)
             false
         }
         if (!closed) throw SetupFailed("Kestrel's conversation did not close within ${within.inWholeSeconds} s.")
@@ -72,15 +86,16 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * The series' cleanup after its last run ([Preflight] pushes it as a restore), which ends only what the series' runs
      * opened, never the owner's conversation or goal. A series whose runs gave Kestrel no command, as when every run was
      * untestable, opened nothing, so the cleanup sends nothing. Otherwise delete-typed deletes the hooks' own conversations
-     * that are closed and counts the one that is open (`open=`): only that one, a conversation of a run's command that no
-     * input of the owner's has reached, is closed, waiting up to [CLEANUP] for a long final reply, and then deleted. An open
-     * conversation that is not the hooks' own is the owner's and stays open. A conversation of the series' that stays open,
-     * or a deletion that failed, fails the cleanup, and the console says what to do by hand.
+     * that are closed and counts the one that is open (`open=`). Only while one is, the cleanup closes the open conversation
+     * as long as it carries the hooks' mark, checked on every round of its wait and by Kestrel itself when it ends the quiet
+     * time ([closeTyped]), waiting up to [CLEANUP] for a long final reply, and deletes it then. An open conversation without
+     * the mark is the owner's and stays open. A conversation of the hooks' that stays open, or a deletion that failed, fails
+     * the cleanup, and the console says what to do by hand.
      */
     fun deleteLeft() {
         if (given.isEmpty()) return
         if (delete().int("open") == 0) return
-        close(CLEANUP)
+        closeTyped(CLEANUP)
         delete()
     }
 
@@ -105,13 +120,28 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
         }
     }
 
-    // An expire whose answer was lost may have reached Kestrel; a second one changes nothing, so the next read decides.
-    private fun expire(hooks: Hooks) {
+    // An expire whose answer was lost may have reached Kestrel; a second one changes nothing, so the next read decides, as
+    // it does after expire-typed's refusal.
+    private fun expire(hooks: Hooks, ending: Ending) {
         try {
-            hooks.conversationControl("expire")
+            hooks.conversationControl(ending.control)
         } catch (e: HookLost) {
             // Read back by the next conversation-state.
         }
+    }
+
+    // Which open conversation a wait ends, and the control that ends its quiet time: any, as a run's own restore must,
+    // which also closes a past conversation that the run continued, or only one of the hooks' own, as the cleanup must.
+    private enum class Ending(val control: String) {
+        ANY("expire") {
+            override fun ends(state: HookAnswer) = true
+        },
+        TYPED("expire-typed") {
+            override fun ends(state: HookAnswer) = state["typed"] == "yes"
+        },
+        ;
+
+        abstract fun ends(state: HookAnswer): Boolean
     }
 
     private fun goalOpen(state: HookAnswer): Boolean = state["goal"].let { it != null && it != "none" }

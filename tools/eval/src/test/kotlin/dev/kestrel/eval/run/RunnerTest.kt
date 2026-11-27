@@ -791,10 +791,10 @@ class RunnerTest {
         var open = false
         var quiet = "off"
         run.adb.hook("CONVERSATION_STATE") {
-            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on"
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${if (open) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
-            if (extras["do"] == "expire") {
+            if (extras["do"]!!.startsWith("expire")) {
                 if (quiet == "running") open = false
                 "expire=sent"
             } else {
@@ -813,7 +813,7 @@ class RunnerTest {
         quiet = "running"
         series.deleteLeft()
         assertFalse(open)
-        assertEquals(listOf("delete-typed", "delete-typed", "expire", "delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
+        assertEquals(listOf("delete-typed", "delete-typed", "expire-typed", "delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
     }
 
     @Test

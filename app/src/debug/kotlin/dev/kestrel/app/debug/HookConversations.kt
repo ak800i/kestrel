@@ -34,6 +34,10 @@ internal class HookConversations(private val file: File) {
     @Synchronized
     fun all(): List<ConversationId> = ids.toList()
 
+    /** Whether [id] is one of the hooks' own conversations, a mark that no input of the owner's has cleared. */
+    @Synchronized
+    fun owns(id: ConversationId?): Boolean = id != null && id in ids
+
     @Synchronized
     fun forget(done: Collection<ConversationId>) {
         if (ids.removeAll(done.toSet())) save()
@@ -71,6 +75,9 @@ internal class HookConversations(private val file: File) {
         }
 
         fun all(): List<ConversationId> = current?.all().orEmpty()
+
+        /** Whether [id] carries the hooks' mark in this process (plan 7G's `typed=` and `expire-typed`). */
+        fun owns(id: ConversationId?): Boolean = current?.owns(id) == true
 
         fun forget(done: Collection<ConversationId>) {
             current?.forget(done)

@@ -18,19 +18,26 @@ class ConversationGuardTest {
     private var quiet = "held"
     private var goal = "none"
 
+    // Whether the open conversation carries the hooks' mark (typed=), which Kestrel checks again at expire-typed.
+    private var typed = true
+
     init {
         run.adb.hook("CONVERSATION_STATE") {
-            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on"
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=$quiet quietLeft=none replyChannel=voice testMode=on " +
+                "typed=${if (open && typed) "yes" else "no"}"
         }
         run.adb.hook("CONVERSATION_CONTROL") { extras ->
             when (extras["do"]) {
-                "delete-typed" -> if (open) "deleted=0 open=1 failed=0" else "deleted=1 open=0 failed=0"
-                else -> {
-                    if (extras["do"] == "expire" && quiet == "running") open = false
-                    "expire=sent"
-                }
+                "delete-typed" -> if (open && typed) "deleted=0 open=1 failed=0" else "deleted=1 open=0 failed=0"
+                "expire-typed" -> if (open && typed) expire() else "expire=not-typed"
+                else -> expire()
             }
         }
+    }
+
+    private fun expire(): String {
+        if (quiet == "running") open = false
+        return "expire=sent"
     }
 
     @Test
@@ -118,6 +125,65 @@ class ConversationGuardTest {
         assertEquals(listOf(mapOf("do" to "delete-typed")), run.adb.hookCalls("CONVERSATION_CONTROL"))
         assertTrue(run.adb.hookCalls("CONVERSATION_STATE").isEmpty())
         assertTrue(open)
+    }
+
+    // The series' cleanup checks the hooks' mark on every round of its wait: when the owner continues the hooks' conversation
+    // with his words during the wait, the mark goes, and the cleanup leaves the conversation open, sends no expire and does
+    // not fail; when Kestrel cleared the mark between the cleanup's read and its expire-typed, Kestrel refuses, and the next
+    // read ends the wait.
+    @Test
+    fun theSeriesCleanupLeavesAConversationOpenThatTheOwnerContinuedDuringItsWait() {
+        guard.gave("t1")
+        var reads = 0
+        run.adb.hook("CONVERSATION_STATE") {
+            // The owner speaks after the first read.
+            if (++reads == 2) typed = false
+            "open=yes continued=no commands=2 goal=none quiet=$quiet quietLeft=none replyChannel=voice testMode=on typed=${if (typed) "yes" else "no"}"
+        }
+
+        guard.deleteLeft()
+
+        assertTrue(open)
+        assertEquals(listOf("delete-typed", "delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
+
+        // The mark goes between the read, which still shows it with the quiet clock running, and expire-typed.
+        typed = true
+        quiet = "running"
+        reads = 0
+        run.adb.hook("CONVERSATION_STATE") {
+            reads++
+            "open=yes continued=no commands=2 goal=none quiet=running quietLeft=10 replyChannel=voice testMode=on typed=${if (reads == 1) "yes" else "no"}"
+        }
+        run.adb.hook("CONVERSATION_CONTROL") { extras ->
+            when (extras["do"]) {
+                "delete-typed" -> if (reads == 0) "deleted=0 open=1 failed=0" else "deleted=0 open=0 failed=0"
+                else -> "expire=not-typed"
+            }
+        }
+        guard.deleteLeft()
+        assertTrue(open)
+        assertEquals(listOf("delete-typed", "delete-typed", "delete-typed", "expire-typed", "delete-typed"), run.adb.hookCalls("CONVERSATION_CONTROL").map { it["do"] })
+    }
+
+    // The hooks' conversation closes by itself during the cleanup's wait, and the owner opens his own: the cleanup sees no
+    // mark on it and leaves it open.
+    @Test
+    fun theSeriesCleanupLeavesTheOwnersNewConversationOpenAfterTheHooksOneClosed() {
+        guard.gave("t1")
+        var sleeps = 0
+        // The hooks' conversation holds its quiet clock for a long final reply; after two rounds it has closed and the
+        // owner's own is open, with its quiet clock running.
+        run.clock.onSleep = {
+            if (++sleeps == 2) {
+                typed = false
+                quiet = "running"
+            }
+        }
+
+        guard.deleteLeft()
+
+        assertTrue(open)
+        assertTrue(run.adb.hookCalls("CONVERSATION_CONTROL").none { it["do"]!!.startsWith("expire") })
     }
 
     // The waits measure the clock, so a slow adb cannot stretch them: on a device whose every command takes 7 s, or that

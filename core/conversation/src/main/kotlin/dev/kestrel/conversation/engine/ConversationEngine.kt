@@ -148,6 +148,12 @@ class ConversationEngine(
         /** The deletion of the past conversation [id] (plan 7F); [done] gets how it ended. */
         class DeletePast(val id: ConversationId, val done: CompletableDeferred<PastDeletion>) : Message
 
+        /**
+         * The end of the quiet time, only when [open] holds for the open conversation's id at this step of the loop; [done]
+         * gets whether it did (plan 7G).
+         */
+        class EndQuietTimeIf(val open: (ConversationId) -> Boolean, val done: CompletableDeferred<Boolean>) : Message
+
         /** The settings page's "Delete history" after its own question; [done] gets how it ended. */
         class DeleteHistory(val done: CompletableDeferred<HistoryDeletion>) : Message
 
@@ -345,6 +351,19 @@ class ConversationEngine(
     fun endQuietTime() = post(ConversationEvent.EndQuietTime)
 
     /**
+     * The hook `conversation-control do=expire-typed` (plan 7G): ends the quiet time as [endQuietTime] does, but only when
+     * [open] holds for the open conversation's id. The loop checks it between the machine's steps, where every step's
+     * watcher has already run, so no input of the owner's can come between the check and the end. Returns whether [open]
+     * held, so that the conversation got the end, which closes it only while its quiet clock runs, as with [endQuietTime];
+     * false without an open conversation. Waits for [restore].
+     */
+    suspend fun endQuietTimeIf(open: (ConversationId) -> Boolean): Boolean {
+        val done = CompletableDeferred<Boolean>()
+        inbox.send(Message.EndQuietTimeIf(open, done))
+        return done.await()
+    }
+
+    /**
      * The settings page's "Delete history" after the page's own question (design 9.7 of sub-project 7; plan 7D): deletes
      * what a yes to "delete history" deletes and closes the open conversation, with no reply on a channel. While a goal is
      * open or one of Kestrel's own requests runs, it leaves everything alone, as "delete history" by voice does. Waits for
@@ -437,6 +456,7 @@ class ConversationEngine(
                 Message.SaveFailed -> dirty = true
                 is Message.Reopened -> reopened(message)
                 is Message.DeletePast -> deletion(message)
+                is Message.EndQuietTimeIf -> endQuietTimeIf(message)
                 is Message.DeleteHistory -> deleteHistory(message.done)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
             }
@@ -660,6 +680,16 @@ class ConversationEngine(
         }
     }
 
+    private fun endQuietTimeIf(message: Message.EndQuietTimeIf) {
+        val id = state.id
+        if (id == null || !message.open(id)) {
+            message.done.complete(false)
+            return
+        }
+        process(ConversationEvent.EndQuietTime)
+        message.done.complete(true)
+    }
+
     // Design 9.5 of sub-project 7: the open conversation is never a past one, nor is the one that a running switch opens.
     // The writer deletes the others after the writes that the loop gave it before, so that no save or switch comes after;
     // while the settings page's "Delete history" runs, the deletion waits with the other writes ([send]).
@@ -774,6 +804,7 @@ class ConversationEngine(
                 is Message.DeleteHistory -> message.done.complete(HistoryDeletion.FAILED)
                 is Message.HistoryDeletionEnded -> deletionEnded(message)
                 is Message.DeletePast -> message.done.complete(PastDeletion.FAILED)
+                is Message.EndQuietTimeIf -> message.done.complete(false)
                 else -> Unit
             }
         } catch (e: CancellationException) {
