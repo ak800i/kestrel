@@ -92,7 +92,10 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
         "nothing that could be read (${e.javaClass.name})"
     }
 
-    private fun inject(vararg events: Int) = send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
+    private fun inject(vararg events: Int) {
+        if (STAMPS_FROM_TIME_BASE) send("""{"id":1,"command":"updateTimeBase"}""")
+        send("""{"id":1,"command":"inject","events":[${events.joinToString(",")}]}""")
+    }
 
     private fun send(command: String) {
         commands.write(command)
@@ -104,6 +107,16 @@ class TestFinger(private val automation: UiAutomation) : AutoCloseable {
         const val NAME = "Kestrel test finger"
         const val LIFT_MILLIS = 50L
         const val LOG_LINES = 10
+
+        /**
+         * Whether the tool stamps the events itself and has the command `updateTimeBase`, which sets its time base to
+         * the current time. From Android 15 on, it does; on kestrel-api37 it stamps the device's first injection with
+         * that base, which it sets when it registers the device, so without the command a tap carries the time at
+         * which this finger was made, and Android's input pipeline sees a touch from the past. Up to Android 14 (the
+         * A71 has 13), the tool stamps each event with the time at which it writes it and has no such command: an
+         * unknown command ends the tool, and the finger with it.
+         */
+        val STAMPS_FROM_TIME_BASE = Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
 
         // Linux input event codes, from linux/input-event-codes.h and linux/uinput.h.
         const val EV_SYN = 0

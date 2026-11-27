@@ -121,5 +121,9 @@
         <activity
             android:name=".ObscuringActivity"
             android:exported="true" />
+        <!-- The event times of a touch, for the test of the device tests' virtual touchscreen. -->
+        <activity
+            android:name=".TouchTimesActivity"
+            android:exported="true" />
     </application>
 </manifest>
