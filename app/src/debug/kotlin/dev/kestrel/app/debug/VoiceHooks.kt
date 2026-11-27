@@ -316,12 +316,12 @@ internal class VoiceHooks(private val graph: AppGraph) {
 
         /**
          * Starts the record of the steps ([install]) and returns what takes the number of a hook's own act that is not an
-         * input, as its press of a card (`CardPresser`): the next number among the inputs, noted as the hooks' before the
+         * input, as its press of a card (`CardPresser`): the next number among the inputs, claimed as the hooks' before the
          * act reaches Kestrel, so that it is never taken for the owner's (plan 7G).
          */
         fun hooksAct(graph: AppGraph): () -> Long {
             install(graph)
-            return { InputIds.next().also(tags::untagged) }
+            return { InputIds.next().also(tags::claim) }
         }
 
         /**

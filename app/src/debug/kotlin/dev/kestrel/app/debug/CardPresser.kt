@@ -40,7 +40,7 @@ internal enum class CardPress {
  * Continue on the lock screen is held exactly as the owner's is; the answer says what the desk did with it ([TapEnd]).
  * The press runs on [main], the main thread, which is the screen source's: the desk stamps it with the source's status
  * there, in order with the source's reports, as the owner's tap is stamped (plan 7F's fifth re-check). The press carries
- * its own act's number among the inputs, which [hooksAct] takes and notes as the hooks' before the desk gets the press,
+ * its own act's number among the inputs, which [hooksAct] takes and claims as the hooks' before the desk gets the press,
  * so that the answer that it gives is never the owner's act (plan 7G).
  */
 internal class CardPresser(

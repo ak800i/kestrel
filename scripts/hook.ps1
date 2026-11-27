@@ -325,8 +325,8 @@
 #                                           process's start found (restored=nothing, open, closed, goal-held, goal-ended
 #                                           or pending); delete-typed deletes the closed conversations that the work of a
 #                                           hook's input opened (any input that a hook gives, tagged or not), also before a
-#                                           restart, unless an act of the owner's with his words or his choice (his input,
-#                                           or his tap on a card) reached them since, and never another, and answers
+#                                           restart, unless an act of the owner's (any act whose number the hooks did not
+#                                           claim before it) reached them since, and never another, and answers
 #                                           deleted=<n> open=<n> failed=<n>
 #   voice-restore                           how long ago the restore at the process's start turned Kestrel on
 #                                           (restoredAgo=<seconds>|none) and the guard against a crash loop (guard=<seconds>),

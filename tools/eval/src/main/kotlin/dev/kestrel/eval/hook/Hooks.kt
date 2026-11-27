@@ -203,7 +203,7 @@ class Hooks(private val client: HookClient) {
     /**
      * conversation-control --es do delete-typed (plan 7F with its Task 13a): deletes the closed conversations that the work
      * of a hook's input opened, every input that a hook gives, tagged or not, as Kestrel marked them across restarts, and
-     * never another, nor one that an act of the owner's with his words or his choice (his input, or his tap on a card) has
+     * never another, nor one that an act of the owner's (any act whose number the hooks did not claim before it) has
      * reached since; answers
      * `deleted=`, `open=` and `failed=`. One that is open or failed stays marked, and a second call deletes nothing more, so
      * a lost answer is asked again.

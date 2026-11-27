@@ -109,7 +109,8 @@ internal object GoalNotices {
  * The tap counts only for the [goal] that its notice showed, and only while the goal's notice [shown] offers what the
  * button does: a button that stops while the notice offers any way to stop (his tap on Stop can arrive after a touch, his
  * pull of the shade, held the goal and the notice offers Cancel instead), and Continue only while it offers Continue. A tap
- * is the owner's act of its moment, as a spoken or typed input is: its number of his inputs (`InputIds.next`) and its time
+ * is the owner's act of its moment, as a spoken or typed input is: its number of his inputs (`ButtonActs`, the next of
+ * `InputIds`) and its time
  * are the tap's own, taken when its broadcast arrives (`GoalActionReceiver`), before any wait for the restore. So an input
  * that he gives during that wait comes after the tap, and a Continue that resumes the goal lets the round have an instant
  * command that he started before the tap, and waits for one that he started after it: plan 7D's `ScreenTurns` lets a round

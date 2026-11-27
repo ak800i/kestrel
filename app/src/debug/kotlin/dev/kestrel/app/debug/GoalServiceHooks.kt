@@ -30,12 +30,13 @@ import kotlinx.coroutines.withContext
  * The goal service's hooks (plan 7E; design 10.6 of sub-project 7). goal-service-state reads the service, whether a
  * refusal of its next start is armed, and the audio-focus requests. goal-control presses a button of the goal notification
  * in SystemUI's shade by its key, so that SystemUI sends the button's broadcast as it does for the owner's finger and
- * Android's rules for a start from a notification apply, says which collapsed rows it had to expand before the press, and
+ * Android's rules for a start from a notification apply, with the press's number claimed as the hooks' ([ButtonClaims];
+ * plan 7G), says which collapsed rows it had to expand before the press, and
  * closes the shade again however the press ends; stops the goal or Kestrel's own request of the hooks' own conversation,
  * and only that one (stop-typed; plan 7G); gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
  * asks Android for the audio focus with and without the speech's types (spike S9); arms or takes back a refusal of the
  * service's next start; or has a button's own PendingIntent sent a few seconds later, to a process that has ended
- * meanwhile. The answers never contain words.
+ * meanwhile, with its claim saved for that process. The answers never contain words.
  */
 internal class GoalServiceHooks(private val graph: AppGraph, private val context: Context) {
     private val buttons = NoticeButtons()
@@ -76,7 +77,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
         // Only the goal or Kestrel's own request of the hooks' own conversation, or the hooks' own request while no
         // conversation is open (plan 7G): the conversation's loop checks their mark at the moment that it takes the stop, so
-        // the work of a conversation that the owner opened or continued with his words is never stopped. `stop=none` when
+        // the work of a conversation that the owner opened or that an act of his reached is never stopped. `stop=none` when
         // no such work runs.
         "stop-typed" -> {
             val stop = VoiceHooks.untagged(graph, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Stop, System.currentTimeMillis()))
@@ -89,16 +90,24 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val action = actionOf(name)
         val notice = graph.goalForeground.notice() ?: throw HookError("the goal service shows no notification")
         if (action !in notice.actions) throw HookError("the goal notification has no ${action.name.lowercase()} now")
+        val goal = notice.goal ?: throw HookError("the goal notification names no goal")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
+        // The press is the hooks', so a button that gives the conversation an input has its number claimed before the press:
+        // the receiver uses the claim up as the button's broadcast arrives, and a press that never happened takes it back
+        // (ButtonClaims; plan 7G). Open gives no input.
+        val claims = ButtonClaims.current()
+        val armed = action.intent?.let { claims.arm(action, goal) }
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
         // is as the hook found it (AGENTS.md's limits on the A71).
         val seen = ShadeSeen()
         var shadeClosed = false
+        var pressed = false
         var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
             val tapped = tapInShade(session, notice, action, seen)
             expanded = tapped.expanded
+            pressed = tapped is NoticeButtons.Tapped.Pressed
             when (tapped) {
                 is NoticeButtons.Tapped.Pressed -> null
                 is NoticeButtons.Tapped.Refused -> tapped.reason
@@ -109,6 +118,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
         } finally {
+            if (!pressed) armed?.let(claims::disarm)
             shadeClosed = withContext(NonCancellable) { closeShade(session, seen) }
         }
         if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
@@ -155,14 +165,25 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
      */
     private fun sendLater(name: String?): String {
         val action = actionOf(name)
-        val id = NoticeIntents.idOf(graph.goalForeground.status(), action) ?: return "send=none"
+        val status = graph.goalForeground.status()
+        val id = NoticeIntents.idOf(status, action) ?: return "send=none"
+        val goal = status.counting?.notice?.goal ?: return "send=none"
         val posted = context.getSystemService(NotificationManager::class.java).activeNotifications.map { shown ->
             NoticeIntents.Posted(shown.id, (shown.notification.actions ?: emptyArray()).map { it.title.toString() to it.actionIntent })
         }
         val button = NoticeIntents.intentOf(posted, id, action.label) ?: return "send=none"
         val alarms = context.getSystemService(AlarmManager::class.java)
         if (!alarms.canScheduleExactAlarms()) throw HookError("Kestrel may not set an exact alarm")
-        alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + SEND_LATER_MILLIS, button)
+        // The press is the hooks', and its broadcast may reach a new process, so its claim is saved before the alarm is set
+        // (ButtonClaims; plan 7G), and taken back when the alarm is not.
+        val claims = ButtonClaims.current()
+        val armed = action.intent?.let { claims.armSaved(action, goal, SEND_LATER_MILLIS) }
+        try {
+            alarms.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + SEND_LATER_MILLIS, button)
+        } catch (error: Exception) {
+            armed?.let(claims::disarm)
+            throw error
+        }
         return "send=scheduled"
     }
 

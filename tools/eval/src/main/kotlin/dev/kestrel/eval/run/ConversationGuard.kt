@@ -29,8 +29,8 @@ import kotlin.time.Duration.Companion.seconds
  * goal or Kestrel's own request), that carries the hooks' mark, which every round of a wait reads (conversation-state's
  * `typed=`: the open conversation's mark, or while none is open, that of the request that runs) and which Kestrel checks
  * again on the conversation's loop when it ends the quiet time (conversation-control do=expire-typed) or takes the stop
- * (goal-control do=stop-typed). A conversation or a request without the mark is the owner's, also one that he continued or
- * answered with his words or opened himself during a wait, and the evaluation never ends it nor stops its work.
+ * (goal-control do=stop-typed). A conversation or a request without the mark is the owner's, also one that an act of his
+ * reached or that he opened himself during a wait, and the evaluation never ends it nor stops its work.
  */
 class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     // The tags of the commands that the series' runs gave Kestrel; the shutdown hook's thread reads them too.
@@ -103,7 +103,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * After a run: closes the run's conversation while it carries the hooks' mark ([closeOwn]) and deletes the hooks' own conversations (plan 7F's delete-typed,
      * which covers every input that a hook gives, tagged or not), so that no test conversation stays among the owner's past
      * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no act of
-     * the owner's with his words or his choice (his input, or his tap on a card) has reached, never one of the owner's, and keeps its marks across a restart.
+     * the owner's (any act whose number the hooks did not claim before it) has reached, never one of the owner's, and keeps its marks across a restart.
      * A conversation that does not close within [CLOSE], as after a long final reply, only gives [warn] a warning:
      * delete-typed keeps it marked, and the next run's restore or the series' cleanup ([deleteLeft]) deletes it. A deletion
      * that failed fails the restore that calls it.
@@ -149,7 +149,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * (remember, forget, "save that as", delete history or a switch with its question, which the stop withdraws). It waits
      * up to [STOP] by the clock for the work's end. Every round reads the work's mark (`typed=`), and the stop goes through
      * goal-control do=stop-typed, which Kestrel checks again on the conversation's loop, so the work of a conversation that
-     * the owner opened, or continued or answered with his words, is never stopped: the wait then ends with
+     * the owner opened, or that an act of his reached, is never stopped: the wait then ends with
      * [WorkStop.OWNERS]. A stop is given once; one that Kestrel refused because no work of the hooks' ran at that moment is
      * sent again on a later round while some does, and one whose answer was lost counts as given, because a second one
      * could reach work that the first is ending. A goal and Kestrel's own request never run together, so one stop ends the

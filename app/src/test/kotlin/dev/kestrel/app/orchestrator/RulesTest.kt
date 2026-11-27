@@ -211,7 +211,7 @@ class RulesTest {
         )
 
         val stopped = Rules.next(acting, Event.Heard("Stop.", named = false))
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop.", named = false))), stopped.effects)
     }
 
     @Test
@@ -224,7 +224,7 @@ class RulesTest {
             listOf(
                 Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")),
                 Effect.StopSaying,
-                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Stop, heard),
                 Effect.Converse(InputIntent.Command("open Viber."), heard),
             ),
             step.effects,
@@ -272,7 +272,7 @@ class RulesTest {
         )
         // After "Stop." while a goal works, the goal stops and no command follows.
         val stopped = Rules.next(goal(GoalPhase.ACTING, paused), Event.Heard("Stop. Kestrel, sign up.", named = true))
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, sign up.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, sign up.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop. Kestrel, sign up.", named = true))), stopped.effects)
         // "Stop Kestrel" with a name further away turns Kestrel off when the spotter heard "stop" at its start.
         assertEquals(Mode.OFF, Rules.next(listening, Event.Heard("Stop Castral.", named = false, stopSpotted = true)).state.mode)
         assertEquals(Mode.LISTENING, Rules.next(listening, Event.Heard("Stop Castral.", named = false)).state.mode)
@@ -775,13 +775,13 @@ class RulesTest {
         assertEquals(Step(dark), Rules.next(dark, Event.Heard("Kestrel?", named = true)))
         // Design D2 of sub-project 5: "Stop." before the name still stops the goal, and nothing starts.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.Converse(InputIntent.Stop)),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop. Kestrel, open Viber.", named = true))),
             Rules.next(darkAndRunning, Event.Heard("Stop. Kestrel, open Viber.", named = true)).effects,
         )
 
         val stopped = Rules.next(darkAndRunning, Event.Heard("Stop.", named = false))
         assertEquals(Work.IDLE, stopped.state.work)
-        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop)), stopped.effects)
+        assertEquals(listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop.", named = false))), stopped.effects)
         assertEquals(Mode.PAUSED, Rules.next(darkAndRunning, Event.Heard("Stop listening.", named = false)).state.mode)
         assertEquals(Mode.PAUSED, Rules.next(dark, Event.Heard("Stop listening.", named = false)).state.mode)
         assertEquals(Mode.OFF, Rules.next(darkAndRunning, Event.Heard("Stop Kestrel.", named = false)).state.mode)
@@ -1021,7 +1021,7 @@ class RulesTest {
         val step = Rules.next(acting, Event.Heard("Stop. Kestrel, open settings.", named = true))
 
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop), Effect.OpenSettings),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop. Kestrel, open settings.", named = true)), Effect.OpenSettings),
             step.effects,
         )
         assertEquals(Work.IDLE, step.state.work)
@@ -1485,7 +1485,7 @@ class RulesTest {
         val question = asked(QuestionKind.CONFIRM, voice = false)
 
         assertEquals(Step(question, listOf(Effect.Show(Feedback.Heard("Confirm.")))), heard(question, "Confirm."))
-        assertTrue(Effect.Converse(InputIntent.Stop) in heard(question, "Cancel.").effects)
+        assertTrue(Effect.Converse(InputIntent.Stop, Event.Heard("Cancel.", named = false)) in heard(question, "Cancel.").effects)
         assertEquals(
             listOf(Effect.Converse(InputIntent.Answer(ChannelAnswer.Silence, question = 4))),
             Rules.next(question, Event.AnswerWaitEnded(question.wait)).effects,
@@ -1558,7 +1558,7 @@ class RulesTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.Heard("Stop. Kestrel, open Viber.")),
-                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Stop, replacing),
                 Effect.Converse(InputIntent.Command("open Viber."), replacing),
             ),
             Rules.next(asked, replacing).effects,
@@ -1758,7 +1758,7 @@ class RulesTest {
         assertEquals(
             listOf(
                 Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code.")),
-                Effect.Converse(InputIntent.Stop),
+                Effect.Converse(InputIntent.Stop, forget),
                 Effect.Converse(InputIntent.Forget("the gate code"), forget),
             ),
             Rules.next(acting, forget).effects,
@@ -1767,17 +1767,17 @@ class RulesTest {
         val remember = Event.Heard("Stop. Kestrel, remember that the gate code is blue.", named = true)
         for (state in listOf(asked(QuestionKind.CONFIRM), goal(GoalPhase.PAUSED), continueAsked(), handedOver())) {
             val step = Rules.next(state, remember)
-            assertTrue("$state", Effect.Converse(InputIntent.Stop) in step.effects)
+            assertTrue("$state", Effect.Converse(InputIntent.Stop, remember) in step.effects)
             assertEquals("$state", Effect.Converse(InputIntent.Remember("the gate code", "blue"), remember), step.effects.last())
         }
         // "Stop. Kestrel, open settings." stops the goal and opens them.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop), Effect.OpenSettings),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, open settings.")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop. Kestrel, open settings.", named = true)), Effect.OpenSettings),
             heard(continueAsked(), "Stop. Kestrel, open settings.", named = true).effects,
         )
         // With the screen off nothing may start, but the stop still stops the goal.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code")), Effect.Converse(InputIntent.Stop)),
+            listOf(Effect.Show(Feedback.Heard("Stop. Kestrel, forget the gate code")), Effect.Converse(InputIntent.Stop, Event.Heard("Stop. Kestrel, forget the gate code", named = true))),
             heard(pausedGoal, "Stop. Kestrel, forget the gate code", named = true).effects,
         )
     }
@@ -1792,7 +1792,7 @@ class RulesTest {
         for (state in listOf(ownQuestion(), running)) {
             assertEquals(
                 "$state",
-                listOf(Effect.Converse(InputIntent.Stop), Effect.Converse(InputIntent.Command("open Viber."), command)),
+                listOf(Effect.Converse(InputIntent.Stop, command), Effect.Converse(InputIntent.Command("open Viber."), command)),
                 Rules.next(state, command).effects.filterIsInstance<Effect.Converse>(),
             )
         }
@@ -1807,16 +1807,16 @@ class RulesTest {
     @Test
     fun aStopInEveryFormStopsKestrelsOwnRequestThatRunsWithoutAQuestion() {
         val running = listening.copy(conversation = VoiceView(open = true, ownRequest = true))
-        val stop = listOf(Effect.Converse(InputIntent.Stop))
+        fun stop(text: String, named: Boolean = false) = listOf(Effect.Converse(InputIntent.Stop, Event.Heard(text, named)))
 
         for ((text, named) in listOf("Stop." to false, "Cancel" to false, "Kestrel, stop." to true, "Kestrel, cancel" to true)) {
             val step = heard(running, text, named)
-            assertEquals(text, stop, step.effects.filter { it is Effect.Converse || it is Effect.RunCommand })
+            assertEquals(text, stop(text, named), step.effects.filter { it is Effect.Converse || it is Effect.RunCommand })
             assertEquals(text, Work.IDLE, step.state.work)
         }
         val waiting = heard(running, "Kestrel", named = true).state
         assertEquals(Work.AWAITING_TASK, waiting.work)
-        assertEquals(stop, heard(waiting, "Stop.").effects.filterIsInstance<Effect.Converse>())
+        assertEquals(stop("Stop."), heard(waiting, "Stop.").effects.filterIsInstance<Effect.Converse>())
         // "Never mind" after "Yes?" only ends the wait.
         assertTrue(heard(waiting, "Never mind.").effects.none { it is Effect.Converse })
         assertEquals(listOf(Effect.StopSaying, Effect.Converse(InputIntent.Stop)), Rules.next(running.copy(speeches = 1), Event.Spotted(Keyword.STOP)).effects)
@@ -1847,7 +1847,7 @@ class RulesTest {
         assertTrue(withdrawn in paused.effects)
         // "Stop" ends the question and Kestrel's voice, and so does the spotter's "stop" over the question.
         assertEquals(
-            listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.StopSaying, Effect.Converse(InputIntent.Stop)),
+            listOf(Effect.Show(Feedback.Heard("Stop.")), Effect.StopSaying, Effect.Converse(InputIntent.Stop, Event.Heard("Stop.", named = false))),
             heard(speaking, "Stop.").effects,
         )
         assertEquals(listOf(Effect.StopSaying, Effect.Converse(InputIntent.Stop)), Rules.next(speaking, Event.Spotted(Keyword.STOP)).effects)

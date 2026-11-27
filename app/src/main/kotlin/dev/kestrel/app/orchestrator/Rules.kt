@@ -540,8 +540,9 @@ sealed interface Effect {
 
     /**
      * Gives the conversation the owner's [intent] (design 5.5 of sub-project 7): a command, an answer, a stop or one of
-     * Kestrel's own requests. [heard] is the transcript that said it, or null for the end of an answer wait or the
-     * conversation's own question that the name withdrew; the debug hooks find a tagged transcript's options by it.
+     * Kestrel's own requests. [heard] is the transcript that said it, also a stop, or null for the end of an answer wait,
+     * the conversation's own question that the name withdrew and the spotter's stop; the debug hooks find a transcript's
+     * tag and options by it, and note an input of their own transcript as theirs (plan 7G).
      */
     data class Converse(val intent: InputIntent, val heard: Event.Heard? = null) : Effect {
         override fun toString() = "Converse($intent, heard=${heard != null})"
@@ -776,7 +777,7 @@ object Rules {
         // A transcription that was queued before the microphone stopped can finish after the screen turned off. Then
         // only the requests that stop something count, because nothing may start (section 14.4); a "Stop." before the
         // name still stops the goal or Kestrel's own request.
-        if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopWork(counted, shown) else Step(counted)
+        if (!counted.screenOn && !stopsSomething(request)) return if (stopsFirst) stopWork(counted, event, shown) else Step(counted)
         if (stopsFirst) return stopFirst(counted, request, event, shown, event.spokeAt)
         return when (counted.work) {
             // Every utterance in the follow-up window is a command, and Kestrel's own requests keep their meaning; the
@@ -805,7 +806,7 @@ object Rules {
     // the owner says after the name reaches the conversation: a command steers the goal, Kestrel's own requests wait for
     // it. "Stop listening" and "turn off" change only the listening mode (plan 7B's decision 10). Anything else is ignored.
     private fun whileGoalWorks(state: State, request: Request, event: Event.Heard, shown: Effect): Step {
-        if (request is Request.Stop) return stopWork(state, shown)
+        if (request is Request.Stop) return stopWork(state, event, shown)
         if (request == Request.PauseListening) return changeMode(state, Mode.PAUSED, shown)
         if (request == Request.TurnOff) return turnOff(state, shown)
         val intent = Requests.intent(request) ?: return Step(state)
@@ -823,7 +824,7 @@ object Rules {
     // conversation takes a command or Kestrel's own request after the stop, and the settings open. "Stop" and "turn off"
     // after the name keep their own rules. The transcript shows once, before the stop.
     private fun stopFirst(state: State, request: Request, event: Event.Heard, shown: Effect, spokeAt: Long?): Step {
-        val stopped = stopWork(state, shown)
+        val stopped = stopWork(state, event, shown)
         val after = whileIdle(stopped.state, request, event, shown, spokeAt)
         return Step(after.state, stopped.effects + after.effects.filter { it !== shown })
     }
@@ -835,7 +836,7 @@ object Rules {
     // 5), no spoken answer counts. A command after the name answers "Continue the goal?" as steering (design 6.5 of
     // sub-project 7).
     private fun answering(state: State, question: VoiceQuestion, request: Request, event: Event.Heard, shown: Effect): Step {
-        if (request is Request.Stop || (request is Request.Other && startsWithStop(event.text))) return stopWork(state, shown)
+        if (request is Request.Stop || (request is Request.Other && startsWithStop(event.text))) return stopWork(state, event, shown)
         if (request == Request.PauseListening || request == Request.TurnOff) {
             val withdrawn = if (state.goal == null) answer(state, question, ChannelAnswer.Interrupted, null, shown) else Step(state, listOf(shown))
             return withdrawn.then { if (request == Request.TurnOff) turnOff(it) else changeMode(it, Mode.PAUSED) }
@@ -897,7 +898,7 @@ object Rules {
             is Request.Other -> converse(idle, InputIntent.Command(request.text), event, shown)
             Request.Name -> askForTask(state, shown)
             Request.WakeUp -> changeMode(idle, Mode.LISTENING, shown)
-            is Request.Stop -> if (state.stoppable && Normalizer.words(event.text).any { it in STOP_WORDS }) stopWork(state, shown) else Step(idle, listOf(shown))
+            is Request.Stop -> if (state.stoppable && Normalizer.words(event.text).any { it in STOP_WORDS }) stopWork(state, event, shown) else Step(idle, listOf(shown))
             Request.PauseListening -> changeMode(idle, Mode.PAUSED, shown)
             Request.TurnOff -> turnOff(state, shown)
             is Request.OpenSettings -> Step(idle, listOf(shown, Effect.OpenSettings))
@@ -917,7 +918,7 @@ object Rules {
             stopsWorkFirst(state, request, event) -> stopFirst(state, request, event, shown, spokeAt)
             question != null -> answering(state, question, request, event, shown)
             state.goalWorks -> whileGoalWorks(state, request, event, shown)
-            state.stoppable && request is Request.Stop -> stopWork(state, shown)
+            state.stoppable && request is Request.Stop -> stopWork(state, event, shown)
             else -> whileIdle(state, request, event, shown, spokeAt)
         }
     }
@@ -1192,7 +1193,7 @@ object Rules {
             // runs (design 6.4 of sub-project 7).
             Keyword.STOP, Keyword.CANCEL ->
                 if (state.stoppable) {
-                    stopWork(state.copy(spottedStop = true))
+                    stopWork(state.copy(spottedStop = true), null)
                 } else {
                     Step(state.copy(work = Work.IDLE, spottedStop = true), listOf(Effect.StopSaying))
                 }
@@ -1339,11 +1340,11 @@ object Rules {
 
     // "Stop" and "cancel" stop whatever is stoppable (State.stoppable): the goal in every phase and Kestrel's own request,
     // and they withdraw the conversation's question: its answer wait ends, and the conversation gets Stop (plan 7B's
-    // decision 10; design 6.4 of sub-project 7).
-    private fun stopWork(state: State, vararg first: Effect): Step = converse(
+    // decision 10; design 6.4 of sub-project 7). [heard] is the transcript that said it, null for the spotter's word.
+    private fun stopWork(state: State, heard: Event.Heard?, vararg first: Effect): Step = converse(
         state.copy(work = Work.IDLE, voiceQuestion = null, voiceAnswers = true, answered = state.openQuestion?.number ?: state.answered),
         InputIntent.Stop,
-        null,
+        heard,
         *first,
         *listOfNotNull(Effect.StopSaying.takeIf { state.speaking }).toTypedArray(),
     )

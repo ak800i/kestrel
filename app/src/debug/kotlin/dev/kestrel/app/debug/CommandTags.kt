@@ -66,9 +66,9 @@ internal class CommandTags {
     var ownConversation: (ConversationId) -> Unit = {}
 
     /**
-     * Gets the conversation that the owner's act with his words or his choice reached (a command, an answer, spoken, typed
-     * or tapped on a card, or a switch, never a hook's), which is his and never the hooks' (Task 13a, review low risk and
-     * review M1; plan 7G);
+     * Gets the conversation that an act of the owner's reached, any act whose number the hooks did not claim (a command, an
+     * answer, a continue, a stop or a switch, on any channel), which is his and never the hooks' (Task 13a, review low risk
+     * and review M1; plan 7G);
      * [HookConversations.watch] sets it at the process's start. It runs under this object's lock.
      */
     @Volatile
@@ -85,46 +85,50 @@ internal class CommandTags {
     private var request: Request? = null
 
     /**
-     * Kestrel's own request that runs, by its [command]'s number: [owners] once an input of the owner's with his words or
-     * his choice started or reached it (plan 7G).
+     * Kestrel's own request that runs, by its [command]'s number: [owners] once an act of the owner's started or reached it
+     * (plan 7G).
      */
     private data class Request(val command: Int, val owners: Boolean)
 
-    // The inputs that the hooks gave the conversation, tagged or not: never the owner's (review M2 of Task 13a). They stay
-    // noted after the step that started their work, because a local request's switch names its input again later.
-    private val hookInputs = LinkedHashSet<Long>()
+    // The numbers of the hooks' own acts, which they claimed before each act reached Kestrel: their inputs, tagged or not,
+    // their presses of a card and their presses of the goal notification's buttons. Every other act is the owner's (plan
+    // 7G). They stay claimed after the step that started their work, because a local request's switch names its input again
+    // later.
+    private val claimed = LinkedHashSet<Long>()
 
-    // The transcripts that a hook sent without a tag, until the Orchestrator's step, and those of them that went on to the
-    // conversation, until Listening makes their input.
+    // The transcripts that a hook sent without a tag, until the Orchestrator's step, and how many inputs Listening still
+    // makes for the conversation of each hook's transcript, tagged or not, which are all the hooks' (a "stop" before a
+    // command gives two).
     private val hookHeard: MutableSet<Event.Heard> = Collections.newSetFromMap(IdentityHashMap())
-    private val hookConversing: MutableSet<Event.Heard> = Collections.newSetFromMap(IdentityHashMap())
+    private val hookConversing = IdentityHashMap<Event.Heard, Int>()
 
     /**
-     * Notes [input], which a hook gives the conversation without a tag (`conversation-type`, `conversation-control do new`
-     * or agent-answer's typed answer), as the hooks' and not the owner's.
+     * Notes [input], which a hook gives the conversation without a tag (`conversation-type`, `conversation-control do new`,
+     * `goal-control do stop-typed` or agent-answer's typed answer), as the hooks' and not the owner's.
      */
     @Synchronized
-    fun untagged(input: OwnerInput) = noteHooks(input.id)
+    fun untagged(input: OwnerInput) = claimAct(input.id)
 
     /**
-     * Notes [act], the number among the inputs that a hook's own act carries when it is no input, as its press of the card
-     * over the app (`CardPresser`), as the hooks' and not the owner's, before the act reaches Kestrel (plan 7G).
+     * Claims [act], the number among the inputs that a hook's own act carries when it is no input of theirs, as its press of
+     * the card over the app (`CardPresser`) or of a button of the goal notification (`ButtonClaims`), as the hooks' and not
+     * the owner's, before the act reaches Kestrel (plan 7G).
      */
     @Synchronized
-    fun untagged(act: Long) = noteHooks(act)
+    fun claim(act: Long) = claimAct(act)
 
     /**
      * Notes [event], a transcript that a hook sends without a tag (voice heard, agent-answer's spoken answer), so that the
-     * input that Listening makes of it is the hooks' and not the owner's.
+     * inputs that Listening makes of it are the hooks' and not the owner's.
      */
     @Synchronized
     fun untagged(event: Event.Heard) {
         hookHeard += event
     }
 
-    private fun noteHooks(id: Long) {
-        hookInputs += id
-        while (hookInputs.size > MAX_TAGS) hookInputs.remove(hookInputs.first())
+    private fun claimAct(id: Long) {
+        claimed += id
+        while (claimed.size > MAX_TAGS) claimed.remove(claimed.first())
     }
 
     /**
@@ -152,7 +156,7 @@ internal class CommandTags {
         if (tag in tags) return null
         tags[tag] = Tagged(Role.CONVERSE, 0, read)
         inputs[input.id] = tag
-        noteHooks(input.id)
+        claimAct(input.id)
         dropOldest()
         while (inputs.size > MAX_TAGS) inputs.remove(inputs.keys.first())
         return if (options.isEmpty()) input else input.copy(options = options)
@@ -191,9 +195,12 @@ internal class CommandTags {
         val running = if (before.work == Work.RUNNING_COMMAND) before.command else 0
         val started = step.effects.filterIsInstance<Effect.RunCommand>().lastOrNull()
         val heard = event as? Event.Heard
-        val conversed = step.effects.filterIsInstance<Effect.Converse>().lastOrNull { it.heard != null && it.heard === heard }
+        // A transcript may give the conversation more than one input, as a stop before a command: its tag goes to the last.
+        val converses = step.effects.filterIsInstance<Effect.Converse>().filter { it.heard != null && it.heard === heard }
+        val conversed = converses.lastOrNull()
         val tag = heard?.let { waiting.remove(it) }
-        if (heard != null && hookHeard.remove(heard) && conversed != null) hookConversing += heard
+        val fromHooks = heard != null && hookHeard.remove(heard)
+        if (heard != null && (fromHooks || tag != null) && conversed != null) hookConversing[heard] = converses.size
         val tagged = tag?.let { tags[it] }
         val answer = step.effects.filterIsInstance<Effect.AnswerCommand>().firstOrNull()
         if (tag != null && tagged != null) {
@@ -249,15 +256,20 @@ internal class CommandTags {
 
     /**
      * The input that Listening made of [heard] for the conversation, with the options of its tag, if it has one; the
-     * conversation's step that starts work for the input then gives its tag the command's number. The input of a hook's
-     * transcript, tagged or not, is the hooks'.
+     * conversation's step that starts work for the input then gives its tag the command's number. Every input of a hook's
+     * transcript, tagged or not, is the hooks', and a tag goes to the transcript's last input.
      */
     @Synchronized
     fun input(heard: Event.Heard?, input: OwnerInput): OwnerInput {
-        if (heard != null && hookConversing.remove(heard)) noteHooks(input.id)
-        val tag = heard?.let { conversing.remove(it) } ?: return input
+        val left = heard?.let { hookConversing[it] } ?: return input
+        claimAct(input.id)
+        if (left > 1) {
+            hookConversing[heard] = left - 1
+            return input
+        }
+        hookConversing.remove(heard)
+        val tag = conversing.remove(heard) ?: return input
         inputs[input.id] = tag
-        noteHooks(input.id)
         while (inputs.size > MAX_TAGS) inputs.remove(inputs.keys.first())
         return options.remove(tag)?.let { input.copy(options = it) } ?: input
     }
@@ -269,12 +281,12 @@ internal class CommandTags {
      */
     @Synchronized
     fun onConversationStep(event: ConversationEvent, state: ConversationState, step: MachineStep) {
-        // A mark means that only the hooks' inputs are in the conversation (review M1 of Task 13a). The owner's act that
-        // carries his words or his choice ([ownersActs]), whatever its channel, reaches Kestrel's own request that runs, and
-        // the conversation that the step leaves open, or for an input whose work is a switch, the switch's target instead.
-        // A request that the owner started or reached is his, and so is the conversation that its switch moves into, also
-        // when the switch comes at the end of a request that a hook's input started, as after his "yes" to the switch's
-        // question, spoken, typed or tapped on a card (plan 7G). The mark goes from every conversation that he reached.
+        // A mark means that only the hooks' acts are in the conversation (review M1 of Task 13a). An act of the owner's
+        // ([ownersActs]), any act whose number the hooks did not claim, on any channel, reaches Kestrel's own request that
+        // runs, and the conversation that the step leaves open, or for an input whose work is a switch, the switch's target
+        // instead. A request that the owner started or reached is his, and so is the conversation that its switch moves
+        // into, also when the switch comes at the end of a request that a hook's input started, as after his "yes" to the
+        // switch's question (plan 7G). The mark goes from every conversation that he reached.
         val given = (event as? ConversationEvent.Input)?.input
         val acts = ownersActs(event, step)
         request = step.state.local?.let { local ->
@@ -301,9 +313,9 @@ internal class CommandTags {
             // tag, a goal's work or a local request's: a switch moves into a past conversation, and a follow-up continues the
             // open one, either of which may be the owner's (plan 7G's review N1). This is the one rule that marks the hooks'
             // conversations (review B-I2 of plan 7F).
-            val hooks = input != null && input.id in hookInputs
+            val hooksWork = input != null && hooks(input.id)
             val opened = step.state.id?.takeIf { it != state.id && it != switchedTo }
-            if (hooks && effect !is ConversationEffect.SwitchTo) opened?.let(ownConversation)
+            if (hooksWork && effect !is ConversationEffect.SwitchTo) opened?.let(ownConversation)
             val tag = input?.let { inputs.remove(it.id) } ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }
@@ -327,36 +339,37 @@ internal class CommandTags {
     private fun chosen(switch: ConversationEffect.SwitchTo): Boolean =
         request?.takeIf { it.command == switch.command }?.owners ?: owners(switch.input)
 
-    // The numbers of the owner's acts in [step] that bring his words or his choice, whatever their channel (plan 7G): the
-    // input of [event], spoken, typed or a tap on the conversation screen's copy of a card, the inputs that the step's work
-    // starts for, and his tap on a card over the app that answered a question, which reaches the conversation as the
-    // dialogue's answer with the tap's number and never as an input. Each goes through the one rule ([owners]).
-    private fun ownersActs(event: ConversationEvent, step: MachineStep): Set<Long> {
+    // The numbers of the owner's acts in [step] (plan 7G): each act whose number the hooks did not claim ([hooks]).
+    private fun ownersActs(event: ConversationEvent, step: MachineStep): Set<Long> = acts(event, step).filterNot(::hooks).toSet()
+
+    // The numbers of the acts in [step], by what each means and never by its channel (plan 7G): an act answers, continues,
+    // stops, steers, switches or asks something else of Kestrel. They are the input of [event], spoken, typed, a tap on the
+    // conversation screen or a button of the goal notification, the inputs that the step's work starts for, and a tap on a
+    // card over the app, which reaches the conversation with its number and never as an input: the answer of a question
+    // (the dialogue's answer, or the answer to "Continue the goal?") or the Continue or Cancel that ended a hand-over. The
+    // end of a wait (Silence) and a withdrawn question (Interrupted) answer nothing, so they are no acts.
+    private fun acts(event: ConversationEvent, step: MachineStep): List<Long> {
         val inputs = listOfNotNull((event as? ConversationEvent.Input)?.input) + step.effects.mapNotNull { work(it)?.second }
         val tap = when (event) {
-            is ConversationEvent.Dialogue -> (event.event as? DialogueEvent.Answered)?.let { tapped(it.tap, it.answer) }
-            is ConversationEvent.ContinueAnswered -> tapped(event.tap, event.answer)
+            is ConversationEvent.Dialogue -> when (val dialogue = event.event) {
+                is DialogueEvent.Answered -> dialogue.tap?.takeIf { answers(dialogue.answer) }
+                is DialogueEvent.HandOverDone -> dialogue.act
+                else -> null
+            }
+            is ConversationEvent.ContinueAnswered -> event.tap?.takeIf { answers(event.answer) }
             else -> null
         }
-        return (inputs.filter(::owners).map { it.id } + listOfNotNull(tap)).toSet()
+        return inputs.filter(::isAct).map { it.id } + listOfNotNull(tap)
     }
 
-    // The number of the tap that gave [answer], when the tap is the owner's act: a tap is his answer, as his input with that
-    // answer is.
-    private fun tapped(tap: Long?, answer: ChannelAnswer?): Long? =
-        tap?.takeIf { answer != null && owners(it, InputIntent.Answer(answer)) }
+    private fun isAct(input: OwnerInput): Boolean = (input.intent as? InputIntent.Answer)?.let { answers(it.answer) } ?: true
 
-    private fun owners(input: OwnerInput): Boolean = owners(input.id, input.intent)
+    private fun answers(answer: ChannelAnswer?): Boolean = answer != null && answer != ChannelAnswer.Silence && answer != ChannelAnswer.Interrupted
 
-    // Whether act [act] with [intent] is the owner's and brings his words or his choice: not the hooks' (an input or a
-    // press of a card that a hook noted), and not a wordless Stop, Continue or New conversation, which the goal
-    // notification's buttons also give, for goal-control's tap in the shade as for his, nor the end of a wait (Silence) or
-    // a withdrawn question.
-    private fun owners(act: Long, intent: InputIntent): Boolean = act !in hookInputs && when (intent) {
-        InputIntent.Stop, InputIntent.Continue, InputIntent.NewConversation -> false
-        is InputIntent.Answer -> intent.answer != ChannelAnswer.Silence && intent.answer != ChannelAnswer.Interrupted
-        else -> true
-    }
+    private fun owners(input: OwnerInput): Boolean = isAct(input) && !hooks(input.id)
+
+    // The one rule (plan 7G): an act is the owner's unless the hooks claimed its number before the act.
+    private fun hooks(act: Long): Boolean = act in claimed
 
     private fun add(command: Int, said: String? = null, shown: String? = null) {
         if (command <= 0) return

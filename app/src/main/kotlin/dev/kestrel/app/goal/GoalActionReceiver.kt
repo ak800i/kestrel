@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dev.kestrel.app.KestrelApplication
-import dev.kestrel.app.conversation.InputIds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -23,8 +22,9 @@ class GoalActionReceiver : BroadcastReceiver() {
         val conversations = graph.conversations
         val action = intent.action
         val goal = GoalNotification.goalOf(intent)
-        // The tap's own number and time, taken as it arrives, before the wait for the restore (`GoalButtons`).
-        val number = InputIds.next()
+        // The tap's own number and time, taken as it arrives, before the wait for the restore (`GoalButtons`), through the
+        // one seam that takes a button's number ([ButtonActs]).
+        val number = graph.buttonActs.take(GoalAction.ofBroadcast(action), goal)
         val atMillis = System.currentTimeMillis()
         val pending = goAsync()
         graph.scope.launch {

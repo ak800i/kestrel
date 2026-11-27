@@ -1,10 +1,19 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.app.conversation.InputIds
+import dev.kestrel.app.goal.GoalAction
+import dev.kestrel.app.goal.GoalButtons
+import dev.kestrel.app.goal.GoalNotice
+import dev.kestrel.app.goal.NoticeGoal
+import dev.kestrel.app.goal.NoticeKind
 import dev.kestrel.app.listen.ListeningTexts
+import dev.kestrel.app.orchestrator.Effect
 import dev.kestrel.app.orchestrator.Event
 import dev.kestrel.app.orchestrator.Rules
 import dev.kestrel.app.orchestrator.State
+import dev.kestrel.app.orchestrator.Step
+import dev.kestrel.app.orchestrator.VoiceView
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.conversation.channel.DialogueEvent
@@ -25,19 +34,30 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /** The tags of plan 4D's checks (hook H1), on the Orchestrator's real rules. */
 class CommandTagsTest {
+    @get:Rule
+    val folder = TemporaryFolder()
+
     private val tags = CommandTags()
     private var state = State()
 
     // Applies the rules to [event] as the Orchestrator does, and gives the step to the tags.
-    private fun step(event: Event) {
+    private fun step(event: Event): Step {
         val before = state
         val step = Rules.next(before, event)
         state = step.state
         tags.onStep(event, before, step)
+        return step
+    }
+
+    // The inputs that Listening makes of [step]'s Converse effects for the conversation, as Listening makes them.
+    private fun inputsOf(step: Step): List<OwnerInput> = step.effects.filterIsInstance<Effect.Converse>().map { converse ->
+        tags.input(converse.heard, OwnerInput(InputIds.next(), InputChannel.VOICE, converse.intent, 0))
     }
 
     private fun send(text: String, tag: String? = null) {
@@ -193,9 +213,9 @@ class CommandTagsTest {
         assertEquals(listOf(conversation), own)
     }
 
-    // Review low risk of plan 7F and review M1 of Task 13a: a mark means that only the hooks' inputs are in the conversation.
-    // The owner's own command or answer in it makes it his again, so that delete-typed leaves it; a hook's command or answer
-    // does not, nor a wordless Stop, which the goal notification's button gives for goal-control's tap too.
+    // Review low risk of plan 7F and review M1 of Task 13a: a mark means that only the hooks' acts are in the conversation.
+    // The owner's own command or answer in it makes it his again, so that delete-typed leaves it; a hook's command, answer or
+    // stop does not.
     @Test
     fun theOwnersOwnCommandOrAnswerInAMarkedConversationTakesItsMarkAway() {
         val gone = mutableListOf<ConversationId>()
@@ -208,6 +228,7 @@ class CommandTagsTest {
         tags.untagged(hooksAnswer)
         tags.onConversationStep(ConversationEvent.Input(hooksAnswer), marked, MachineStep(marked, emptyList()))
         val stop = OwnerInput(34, InputChannel.TEXT, InputIntent.Stop, 0)
+        tags.untagged(stop)
         tags.onConversationStep(ConversationEvent.Input(stop), marked, MachineStep(marked, emptyList()))
         assertEquals(emptyList<ConversationId>(), gone)
 
@@ -328,7 +349,7 @@ class CommandTagsTest {
         assertEquals(listOf(open.id, target), gone)
 
         gone.clear()
-        tags.untagged(106L)
+        tags.claim(106L)
         switchAfterAnswer(quiet, OwnerInput(105, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Yes, 106), command = 33, target = target)
         switchAfterAnswer(quiet, OwnerInput(107, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Silence, 108), command = 34, target = target)
         assertEquals(emptyList<ConversationId>(), gone)
@@ -342,7 +363,7 @@ class CommandTagsTest {
         tags.ownerConversation = { gone += it }
         val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
 
-        tags.untagged(111L)
+        tags.claim(111L)
         tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 111), marked, MachineStep(marked, emptyList()))
         tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), marked, MachineStep(marked, emptyList()))
         assertEquals(emptyList<ConversationId>(), gone)
@@ -449,5 +470,108 @@ class CommandTagsTest {
         tags.onConversationStep(ConversationEvent.Input(joins), his, MachineStep(his, listOf(ConversationEffect.StartGoal(13, 2, joins, "and the times"))))
 
         assertEquals(listOf(opened), own)
+    }
+
+    // Plan 7G's re-check of round 10 (Important 1): every Continue of the owner's is his act, whatever its channel, and takes
+    // the mark of the conversation that it continues: the notification's Continue, whose number the receiver takes through
+    // the seam that no hook armed, the Continue button of the conversation screen, his spoken "Kestrel, continue", which the
+    // Orchestrator's rules give the conversation as Listening does, and his Continue on a hand-over's card over an app.
+    @Test
+    fun theOwnersContinueFromTheNotificationTheScreensButtonHisVoiceOrAHandOversCardTakesTheMark() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+        val goal = NoticeGoal(checkNotNull(marked.id), 1)
+        val held = GoalNotice(NoticeKind.HELD, "Continue the goal?", null, null, listOf(GoalAction.CANCEL, GoalAction.CONTINUE), goal)
+        val buttons = ButtonClaims(folder.root.resolve(ButtonClaims.FILE), tags::claim, clock = { 0L })
+        val number = buttons.take(GoalAction.CONTINUE, goal)
+        val notification = checkNotNull(GoalButtons.input(GoalAction.CONTINUE.broadcast, goal, held, InputChannel.VOICE, number, 0))
+        val screen = OwnerInput(InputIds.next(), InputChannel.TEXT, InputIntent.Continue, 0)
+        step(Event.Toggle)
+        val voice = inputsOf(step(Event.Heard("Kestrel, continue.", named = true))).single()
+        assertEquals(InputIntent.Continue, voice.intent)
+
+        for (input in listOf(notification, screen, voice)) {
+            tags.onConversationStep(ConversationEvent.Input(input), marked, MachineStep(marked, emptyList()))
+        }
+        tags.onConversationStep(ConversationEvent.Dialogue(DialogueEvent.HandOverDone(1, act = InputIds.next())), marked, MachineStep(marked, emptyList()))
+
+        assertEquals(List(4) { marked.id }, gone)
+    }
+
+    // Plan 7G: an act is the owner's unless the hooks claimed its number before the act, on every channel and whatever it
+    // means: a command, an answer, a stop, a continue or a new conversation, spoken or typed, a tap that answered a question
+    // or "Continue the goal?", and a tap that ended a hand-over. The end of a wait, a withdrawn question and a hand-over that
+    // ended by itself are no acts.
+    @Test
+    fun anActIsTheOwnersUnlessTheHooksClaimedItsNumberWhateverItsChannelAndMeaning() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+        val intents = listOf(
+            InputIntent.Command("and the times"),
+            InputIntent.Answer(ChannelAnswer.Yes),
+            InputIntent.Answer(ChannelAnswer.Text("the red one")),
+            InputIntent.Stop,
+            InputIntent.Continue,
+            InputIntent.NewConversation,
+        )
+        // Each act with its number.
+        fun acts(): List<Pair<ConversationEvent, Long>> = intents.flatMap { intent ->
+            InputChannel.entries.map { channel ->
+                val input = OwnerInput(InputIds.next(), channel, intent, 0)
+                ConversationEvent.Input(input) to input.id
+            }
+        } + listOf(
+            InputIds.next().let { ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = it)) to it },
+            InputIds.next().let { ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = it) to it },
+            InputIds.next().let { ConversationEvent.Dialogue(DialogueEvent.HandOverDone(2, act = it)) to it },
+        )
+        fun give(event: ConversationEvent) = tags.onConversationStep(event, marked, MachineStep(marked, emptyList()))
+
+        acts().forEach { (event, act) ->
+            tags.claim(act)
+            give(event)
+        }
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        val owners = acts()
+        owners.forEach { (event) -> give(event) }
+        assertEquals(List(owners.size) { marked.id }, gone)
+
+        gone.clear()
+        listOf(ChannelAnswer.Silence, ChannelAnswer.Interrupted).forEach { answer ->
+            give(ConversationEvent.Input(OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Answer(answer), 0)))
+            give(ConversationEvent.Dialogue(DialogueEvent.Answered(3, answer, tap = null)))
+        }
+        give(ConversationEvent.Dialogue(DialogueEvent.HandOverDone(4, act = null)))
+        assertEquals(emptyList<ConversationId>(), gone)
+    }
+
+    // Plan 7G: a hook's transcript may give the conversation more than one input, as a stop before a command, and each is
+    // the hooks', so neither takes a mark; a tag goes to the last, the command, which its work then names.
+    @Test
+    fun everyInputOfAHooksTranscriptIsTheirsAlsoAStopBeforeACommand() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"), command = 5)
+        step(Event.Toggle)
+        state = state.copy(conversation = VoiceView(open = true, ownRequest = true))
+        val sent = Event.Heard("Stop. Kestrel, open Viber.", named = true)
+        tags.untagged(sent)
+        val untagged = inputsOf(step(sent))
+        assertEquals(listOf(InputIntent.Stop, InputIntent.Command("open Viber.")), untagged.map { it.intent })
+
+        state = state.copy(conversation = VoiceView(open = true, ownRequest = true))
+        val tagged = Event.Heard("Stop. Kestrel, open the maps.", named = true)
+        assertTrue(tags.register("stop-first", tagged, VoiceHooks.readOf(tagged.text, named = true), mapOf("model" to "scripted")))
+        val (stop, command) = inputsOf(step(tagged))
+        assertEquals(emptyMap<String, String>(), stop.options)
+        assertEquals(mapOf("model" to "scripted"), command.options)
+
+        for (input in untagged + stop) tags.onConversationStep(ConversationEvent.Input(input), marked, MachineStep(marked, emptyList()))
+        tags.onConversationStep(ConversationEvent.Input(command), marked, MachineStep(marked, listOf(ConversationEffect.StartGoal(6, 2, command, "open the maps."))))
+        assertEquals(emptyList<ConversationId>(), gone)
+        assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, VoiceHooks.readOf(tagged.text, named = true), task = 6), tags.tagged("stop-first"))
     }
 }

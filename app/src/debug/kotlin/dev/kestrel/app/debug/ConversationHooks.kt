@@ -61,7 +61,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
             "expire=sent"
         }
         // Only the hooks' own conversation (plan 7G): the conversation's loop checks the mark at the moment that it ends the
-        // quiet time, so a conversation that the owner opened or continued with his words or his choice is never ended.
+        // quiet time, so a conversation that the owner opened or that an act of his reached is never ended.
         "expire-typed" -> if (graph.conversations.endQuietTimeIf(HookConversations::owns)) "expire=sent" else "expire=not-typed"
         "limits" -> limits(intent.getStringExtra(EXTRA_LIMITS))
         // A pure read of the stored limits, so that a test's restore asks Kestrel whether its change reached it (plan 7G).

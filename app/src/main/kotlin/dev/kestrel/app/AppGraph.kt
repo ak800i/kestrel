@@ -98,6 +98,7 @@ import dev.kestrel.app.download.ModelDownloads
 import dev.kestrel.app.download.downloadBlockedBy
 import dev.kestrel.app.download.gatewayDownloader
 import dev.kestrel.app.download.networkKind
+import dev.kestrel.app.goal.ButtonActs
 import dev.kestrel.app.goal.GoalForeground
 import dev.kestrel.app.goal.GoalNotification
 import dev.kestrel.app.goal.GoalService
@@ -589,6 +590,14 @@ class AppGraph(context: Context) {
      */
     @Volatile
     internal var conversationSteps: ((ConversationEvent, ConversationState, MachineStep) -> Unit)? = null
+
+    /**
+     * How the goal notification's buttons take the number of a tap among the owner's inputs (`GoalActionReceiver`): the
+     * next number ([ButtonActs.PLAIN]). Debug builds install, at the process's start, a form that also notes the number of
+     * the debug hooks' own press in the shade as theirs (plan 7G).
+     */
+    @Volatile
+    internal var buttonActs: ButtonActs = ButtonActs.PLAIN
 
     /**
      * Device tests only: the conversation's timers' lengths, such as D21's waits shortened by an instrumentation argument
