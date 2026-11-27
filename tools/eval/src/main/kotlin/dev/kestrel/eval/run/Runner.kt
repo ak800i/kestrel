@@ -14,6 +14,7 @@ import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.PutBack
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
+import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupResult
 import dev.kestrel.eval.task.Task
 import dev.kestrel.eval.task.TaskKind
@@ -56,6 +57,7 @@ class Runner(
 ) {
     private val calls = CallGuard(device, console, clock)
     private val scripts = ScriptInstaller(device, hooks, work)
+    private val conversations = ConversationGuard(hooks, clock)
 
     // The run that is under way, which the bottom restore of runAll reads for its credits when Ctrl+C ends it.
     @Volatile
@@ -148,7 +150,7 @@ class Runner(
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.CALL)
         }
         if (device.kind !in task.devices) return Verdict(RunResult.SKIPPED, CheckResult.SKIPPED, Reason.UNTESTABLE)
-        for (step in task.setup) {
+        for (step in listOf<Setup>(NewConversation(conversations)) + task.setup) {
             val result = try {
                 step.apply(scope)
             } catch (e: Exception) {
@@ -164,6 +166,12 @@ class Runner(
         if (!options.live) {
             restores.push("the scripted model removed", "Run: scripts\\hook.ps1 -Serial ${device.serial} agent-script -Clear") { scripts.remove() }
             scripts.install(scope.values.fill(script!!, json = true))
+        }
+        // Design 6.4 of sub-project 7: a goal that the run left open, held or not, would take the next run's command.
+        restores.push("the goal of ${task.name}, run $number, ended", "Say 'Kestrel, stop'.") {
+            if (!conversations.stopGoal { quietly { hooks.voiceHeard("stop", tags()) } }) {
+                console.warn("Task ${task.name}, run $number: Kestrel's goal could not be stopped; say 'Kestrel, stop'.")
+            }
         }
         val tag = tags()
         state.tag = tag
@@ -331,19 +339,6 @@ class Runner(
         if (!options.live || tag == null) return "0.00"
         val last = quietly { hooks.agentTask(tag) }
         return last?.get("credits")?.takeIf { last["state"] == "done" && NUMBER.matches(it) } ?: "unknown"
-    }
-
-    /** The hook's answer, or null when Kestrel did not answer, refused, or adb lost the answer. */
-    private fun <T> quietly(call: () -> T): T? = try {
-        call()
-    } catch (e: HookError) {
-        null
-    } catch (e: HookSilent) {
-        null
-    } catch (e: HookLost) {
-        null
-    } catch (e: DeviceCommandFailed) {
-        null
     }
 
     /** What a run met; the shutdown hook's restores read it too, for the task's stop, the credits and the detail line. */

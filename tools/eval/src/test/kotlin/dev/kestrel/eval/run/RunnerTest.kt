@@ -61,6 +61,48 @@ class RunnerTest {
         run.adb.hook("AGENT_STATE") { "phase=running asking=none work=running-task handOver=none confirming=none" }
     }
 
+    // Design 14.1 and 6.4 of sub-project 7: the run's command opens a conversation of its own, a goal that the run left
+    // held is stopped, so that the next run's command does not resume it, and the run's conversation is closed and deleted
+    // after it (plan 7F's delete-typed, which covers every input that a hook gives).
+    @Test
+    fun aRunClosesTheOpenConversationFirstStopsAGoalThatItLeftHeldAndDeletesItsOwnConversation() {
+        run.adb.hook("AGENT_TASK") { done }
+        var open = true
+        var goal = "none"
+        run.adb.hook("CONVERSATION_STATE") {
+            "open=${if (open) "yes" else "no"} continued=no commands=1 goal=$goal quiet=${if (goal == "none") "running" else "held"} quietLeft=none replyChannel=voice testMode=on"
+        }
+        run.adb.hook("CONVERSATION_CONTROL") { extras ->
+            if (extras["do"] == "expire") {
+                open = false
+                "expire=sent"
+            } else {
+                "deleted=1 open=0 failed=0"
+            }
+        }
+        run.adb.hook("VOICE") { extras ->
+            when (extras["text"]) {
+                "Kestrel, turn on hotspot" -> {
+                    open = true
+                    goal = "paused-at-limit"
+                }
+                "stop" -> goal = "none"
+            }
+            "sent"
+        }
+
+        val line = runner().run(task(), "[]", 1, "maple heron")
+
+        assertEquals(Reason.OK, line.reason)
+        assertEquals(
+            listOf(mapOf("do" to "expire"), mapOf("do" to "expire"), mapOf("do" to "delete-typed")),
+            run.adb.hookCalls("CONVERSATION_CONTROL"),
+        )
+        assertEquals(listOf("Kestrel, turn on hotspot", "stop"), run.adb.hookCalls("VOICE").map { it["text"] })
+        assertEquals("none", goal)
+        assertFalse(open)
+    }
+
     @Test
     fun aRunThatFinishesWithItsCheckPassesAndPutsTheDeviceBack() {
         var polls = 0

@@ -1,6 +1,7 @@
 package dev.kestrel.eval.run
 
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.device.ShellResult
 import dev.kestrel.eval.hook.ProviderState
@@ -24,6 +25,27 @@ class PreflightTest {
         run.adb.hook("STATE") { "screen=on testMode=$testMode numbers=0" }
         run.adb.hook("TEST_MODE") { extras -> testMode = if (extras["on"] == "true") "on" else "off"; "testMode=$testMode" }
         run.adb.hook("VOICE_STATE") { "mode=listening work=idle session=open clips=off" }
+    }
+
+    // Every run opens and closes a conversation of Kestrel's (design 14.1 of sub-project 7), which a build from before plan
+    // 7D does not hold.
+    @Test
+    fun aBuildWithoutTheConversationsHooksIsARefusal() {
+        run.adb.hookFails("CONVERSATION_STATE", "unknown command 'CONVERSATION_STATE'")
+
+        val refusal = assertThrows(Refusal::class.java) { preflight().prepare(needsTestApp = false) }
+
+        assertEquals(
+            "Kestrel on emulator-5554 answers no conversation-state, as a build from before plan 7D of sub-project 7 does; install the current debug build with scripts\\install.ps1.",
+            refusal.message,
+        )
+
+        run.adb.hook("CONVERSATION_STATE") { FakeAdb.NO_CONVERSATION }
+        run.adb.hookFails("CONVERSATION_CONTROL", "add --es do with one of new, expire, limits or restore-check")
+        assertEquals(
+            "Kestrel on emulator-5554 answers no conversation-control do=delete-typed, as a build from before plan 7F of sub-project 7 does; install the current debug build with scripts\\install.ps1.",
+            assertThrows(Refusal::class.java) { preflight().prepare(needsTestApp = false) }.message,
+        )
     }
 
     private fun preflight(of: FakeRun = run) = Preflight(of.device, of.hooks, of.restores, of.clock, installer)
@@ -56,8 +78,9 @@ class PreflightTest {
             ),
             installs,
         )
-        // On kestrel-api37 :testapp stays, as it always has.
-        assertEquals(1, run.restores.size)
+        // On kestrel-api37 :testapp stays, as it always has; the restores are test mode's and the series' cleanup of the
+        // hooks' own conversations.
+        assertEquals(2, run.restores.size)
     }
 
     @Test

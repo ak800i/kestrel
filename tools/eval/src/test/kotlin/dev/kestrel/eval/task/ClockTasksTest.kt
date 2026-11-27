@@ -39,7 +39,7 @@ class ClockTasksTest {
 
         assertEquals(Reason.UNTESTABLE, bench.run(ClockTasks.ALARM).reason)
         assertTrue(bench.run.console.lines.toString(), bench.run.console.lines.any { it.endsWith(": the owner's real alarms are on this phone.") })
-        assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("pm ") || it.startsWith("dumpsys alarm") || it.startsWith("cmd package") })
+        assertTrue(bench.adb.deviceCommands.toString(), bench.adb.deviceCommands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("pm ") || it.startsWith("dumpsys alarm") || it.startsWith("cmd package") })
         assertTrue(bench.adb.hookCalls("SCREEN_HAS").isEmpty() && bench.adb.hookCalls("SCREEN_TAP").isEmpty() && bench.adb.hookCalls("VOICE").isEmpty())
         assertEquals(1, phone.clocks())
         bench.assertPutBack()

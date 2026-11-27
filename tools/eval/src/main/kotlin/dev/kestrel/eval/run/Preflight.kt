@@ -39,6 +39,7 @@ class Preflight(
         }
         wake()
         if (hooks.state()["screen"] != "on") throw Refusal("Kestrel's accessibility service is off on ${device.serial}. Turn it on first.")
+        conversationHooks()
         testModeOn()
         try {
             waitListening()
@@ -95,6 +96,32 @@ class Preflight(
     }
 
     private fun installed(packageName: String): Boolean = Dumps.packageListed(device.read("pm list packages $packageName"), packageName)
+
+    // Every run closes Kestrel's open conversation first, stops a goal that it left open and deletes the hooks' own
+    // conversations after it (ConversationGuard, design 14.1 of sub-project 7), which a build from before plan 7D cannot
+    // answer, nor one without plan 7F's delete-typed. delete-typed here also deletes what an earlier series left, and the
+    // series' cleanup, a restore, deletes what this one leaves.
+    private fun conversationHooks() {
+        val open = try {
+            hooks.conversationState()["open"]
+        } catch (e: HookError) {
+            null
+        }
+        if (open == null) refuse("conversation-state", "plan 7D of sub-project 7")
+        val deleted = try {
+            hooks.deleteTyped()["deleted"]
+        } catch (e: HookError) {
+            null
+        }
+        if (deleted == null) refuse("conversation-control do=delete-typed", "plan 7F of sub-project 7")
+        restores.push("the hooks' own conversations deleted", "Kestrel > Past conversations: delete the conversations of the series' runs.") {
+            ConversationGuard(hooks, clock).deleteLeft()
+        }
+    }
+
+    private fun refuse(hook: String, plan: String): Nothing = throw Refusal(
+        "Kestrel on ${device.serial} answers no $hook, as a build from before $plan does; install the current debug build with scripts\\install.ps1.",
+    )
 
     private companion object {
         const val KESTREL = "dev.kestrel"

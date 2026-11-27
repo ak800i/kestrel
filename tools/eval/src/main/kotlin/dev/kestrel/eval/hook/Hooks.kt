@@ -110,6 +110,29 @@ class Hooks(private val client: HookClient) {
     /** provider-standin: whether the stand-in runs, and the default profile's kind, ID and credential ([ProviderState]). */
     fun providerStandin(): ProviderState = ProviderState.from(read("provider-standin"))
 
+    /**
+     * conversation-state (design 14.4 of sub-project 7): the open conversation in counts and kinds, `open=yes|no`,
+     * `continued=`, `commands=<n>`, `goal=<phase>|none`, `quiet=off|held|running`, `quietLeft=`, `replyChannel=` and `testMode=`.
+     */
+    fun conversationState(): HookAnswer = read("conversation-state")
+
+    /**
+     * conversation-control --es do [action] (design 14.4 of sub-project 7): `new` starts a new conversation, `expire` ends
+     * the quiet time at once while its clock runs, and `limits` sets a round's limits, [limits] as
+     * "<replies>/<minutes>/<credits>" or the Conversations page's smallest without it, and answers the stored ones as `was=`.
+     */
+    fun conversationControl(action: String, limits: String? = null): HookAnswer =
+        act("conversation-control", Extra.Text("do", action), limits?.let { Extra.Text("limits", it) })
+
+    /**
+     * conversation-control --es do delete-typed (plan 7F with its Task 13a): deletes the closed conversations that the work
+     * of a hook's input opened, every input that a hook gives, tagged or not, as Kestrel marked them across restarts, and
+     * never another, nor one that an input of the owner's with his words or his choice has reached since; answers
+     * `deleted=`, `open=` and `failed=`. One that is open or failed stays marked, and a second call deletes nothing more, so
+     * a lost answer is asked again.
+     */
+    fun deleteTyped(): HookAnswer = read("conversation-control", Extra.Text("do", "delete-typed"))
+
     private fun read(command: String, vararg extras: Extra?): HookAnswer = client.call(command, extras.filterNotNull(), retry = true)
 
     private fun act(command: String, vararg extras: Extra?): HookAnswer = client.call(command, extras.filterNotNull(), retry = false)

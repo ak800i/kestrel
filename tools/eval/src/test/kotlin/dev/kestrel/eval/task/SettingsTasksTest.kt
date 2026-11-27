@@ -98,7 +98,7 @@ class SettingsTasksTest {
 
             assertEquals(task.name, Reason.UNTESTABLE, bench.run(task).reason)
             assertTrue(bench.run.console.lines.toString(), bench.run.console.lines.any { it.endsWith(": One UI's brightness curve is not AOSP's, so the check cannot judge the value.") })
-            assertTrue(bench.adb.commands.toString(), bench.adb.commands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("settings ") || it.startsWith("cmd uimode") })
+            assertTrue(bench.adb.deviceCommands.toString(), bench.adb.deviceCommands.none { it.startsWith("input ") || it.startsWith("am ") || it.startsWith("settings ") || it.startsWith("cmd uimode") })
             assertTrue(bench.adb.hookCalls("VOICE").isEmpty())
             bench.assertPutBack()
         }
