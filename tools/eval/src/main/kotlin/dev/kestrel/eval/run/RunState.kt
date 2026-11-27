@@ -72,6 +72,12 @@ internal class RunState(private val putBack: PutBack) {
     val asked: List<Asked> get() = commands.flatMap { it.record.asked }
 
     /**
+     * The run's questions before the one that [command] has open now: those of its earlier commands and the command's own
+     * before it ([AskedRecord.before]), so that a limit's answer counts the run's limits before it (plan 7G).
+     */
+    fun before(command: SentCommand): List<Asked> = commands.takeWhile { it !== command }.flatMap { it.record.asked } + command.record.before
+
+    /**
      * The kinds of the questions and hand-overs whose answer by the run ended the command whose end the run's answer
      * carries ([Outcomes.deciding]), each once: an answer that ended an earlier command does not explain the run's end.
      */

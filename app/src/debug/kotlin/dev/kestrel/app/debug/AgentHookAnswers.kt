@@ -159,8 +159,9 @@ internal object AgentHookAnswers {
      * agent-state's `question=`: the kind that the agent asked the open question with, `yes-no`, `free` (the model's
      * `ask_user`, or a routine's name), `pick-number` (look_closer's "Which number should I use?"), `screenshot`
      * (look_closer's screenshot question, which the voice asks as a free question) or `limit` (a round's "Continue?"), so
-     * that :tools:eval answers each as the owner decided (plan 6B-basefix); `none` for a confirmation and the
-     * conversation's own questions.
+     * that :tools:eval answers each as the owner decided (plan 6B-basefix); the conversation's own questions by their kind,
+     * `continue-goal`, `switch` (to a past conversation) and `delete-history`, so that :tools:eval tells them from a
+     * yes-or-no question of the agent's and answers "Delete the history?" only with no (plan 7G); `none` for a confirmation.
      */
     fun question(kind: QuestionKind): String = when (kind) {
         QuestionKind.YES_NO -> "yes-no"
@@ -168,7 +169,10 @@ internal object AgentHookAnswers {
         QuestionKind.PICK -> "pick-number"
         QuestionKind.SCREENSHOT -> "screenshot"
         QuestionKind.LIMIT -> "limit"
-        QuestionKind.CONFIRM, QuestionKind.CONTINUE_GOAL, QuestionKind.SWITCH, QuestionKind.DELETE_HISTORY -> "none"
+        QuestionKind.CONTINUE_GOAL -> "continue-goal"
+        QuestionKind.SWITCH -> "switch"
+        QuestionKind.DELETE_HISTORY -> "delete-history"
+        QuestionKind.CONFIRM -> "none"
     }
 
     /**

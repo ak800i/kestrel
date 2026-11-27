@@ -60,4 +60,20 @@ class AskedRecordTest {
         record.answered("cancel")
         assertEquals("yes-no:no,yes-no:no,pick-number:none,pick-number:none,free:cancel", record.text())
     }
+
+    // Plan 7G: the questions before the open one leave out the entry that keeps the open one open, so that each read of the
+    // same question counts the same questions before it.
+    @Test
+    fun theQuestionsBeforeTheOpenOneLeaveOutTheEntryThatKeepsItOpen() {
+        val record = AskedRecord()
+        record.saw("limit")
+        record.answered("yes")
+        record.saw("limit")
+        record.keepOpen()
+
+        assertEquals(listOf(Asked("limit", "yes")), record.before)
+        assertEquals(listOf(Asked("limit", "yes"), Asked("limit", null)), record.asked)
+        record.saw(null)
+        assertEquals(record.asked, record.before)
+    }
 }

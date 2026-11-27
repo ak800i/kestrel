@@ -242,7 +242,11 @@ class AgentHookAnswersTest {
         assertEquals("free", AgentHookAnswers.question(QuestionKind.FREE))
         assertEquals("yes-no", AgentHookAnswers.question(QuestionKind.YES_NO))
         assertEquals("limit", AgentHookAnswers.question(QuestionKind.LIMIT))
-        assertEquals("none", AgentHookAnswers.question(QuestionKind.CONTINUE_GOAL))
+        // The conversation's own questions by their kind, so that :tools:eval tells them apart (plan 7G).
+        assertEquals("continue-goal", AgentHookAnswers.question(QuestionKind.CONTINUE_GOAL))
+        assertEquals("switch", AgentHookAnswers.question(QuestionKind.SWITCH))
+        assertEquals("delete-history", AgentHookAnswers.question(QuestionKind.DELETE_HISTORY))
+        assertEquals("none", AgentHookAnswers.question(QuestionKind.CONFIRM))
         // agent-state's asking= keeps the words that :tools:eval reads (design 14.4 of sub-project 7).
         assertEquals("continue", AgentHookAnswers.asking(QuestionKind.CONTINUE_GOAL))
         assertEquals("yes-no", AgentHookAnswers.asking(QuestionKind.LIMIT))

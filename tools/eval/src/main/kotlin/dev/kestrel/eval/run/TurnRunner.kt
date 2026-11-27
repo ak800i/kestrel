@@ -9,6 +9,7 @@ import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.ProcessSetup
+import dev.kestrel.eval.task.Reply
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Task
 import dev.kestrel.eval.task.TaskKind
@@ -176,16 +177,21 @@ internal class TurnRunner(
     }
 
     /**
-     * Answers the open question of [kind] as the task says, on the text channel's card after a typed input; true when an
-     * answer went to Kestrel, after which the run keeps quiet for a moment. A lost or refused answer is not sent again: the
-     * next poll answers only if the same question is still open.
+     * Answers the open question of agent-state's [asked], of [kind], as the task says, after the run's questions before it
+     * ([RunState.before]), on the card over the app or the text channel's card after a typed input; true when an answer
+     * went to Kestrel, after which the run keeps quiet for a moment. A lost or refused answer is not sent again: the next
+     * poll answers only if the same question is still open.
      */
     private fun answer(command: SentCommand, asked: HookAnswer, kind: String): Boolean {
-        val reply = task.answers.reply(asked)
-        if (reply == null) {
-            // "Which number should I use?" stays unanswered (the owner's decision P1).
-            if (kind == Answers.PICK_NUMBER) command.record.keepOpen()
-            return false
+        val reply = when (val chosen = task.answers.reply(asked, state.before(command))) {
+            null -> return false
+            // "Which number should I use?" (the owner's decision P1) and a limit's "Continue?" that the task leaves to
+            // Kestrel's own wait (design 7.4 of sub-project 7) stay unanswered.
+            Reply.LeaveOpen -> {
+                command.record.keepOpen()
+                return false
+            }
+            is Reply.Say -> chosen.words
         }
         val confirming = asked["confirming"].takeIf { asked["asking"] == "confirm" }
         // A confirmation that the task does not name was cancelled; outside the injection fixtures, whose defence it is, the run fails.

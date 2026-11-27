@@ -711,11 +711,11 @@ class RunnerTest {
         val handOver = runner().run(task(), "[]", 2, "cedar otter")
         assertTrue(handOver.text(), handOver.text().endsWith(" asked=hand-over/PERMISSION reason=asked"))
 
-        // The run's "no" to "Continue the task?" cancels the task too.
-        questions.add("phase=paused work=idle handOver=none confirming=none asking=continue question=none")
+        // The run's "no" to "Continue the goal?" cancels the goal too.
+        questions.add("phase=paused work=idle handOver=none confirming=none asking=continue question=continue-goal")
         polls = 0
         val paused = runner().run(task(), "[]", 3, "amber lynx")
-        assertTrue(paused.text(), paused.text().endsWith(" asked=continue reason=asked"))
+        assertTrue(paused.text(), paused.text().endsWith(" asked=continue-goal reason=asked"))
 
         // An answer that never reached Kestrel ended nothing: the end stays Kestrel's.
         run.adb.hookFails("AGENT_ANSWER", "the task asks nothing")

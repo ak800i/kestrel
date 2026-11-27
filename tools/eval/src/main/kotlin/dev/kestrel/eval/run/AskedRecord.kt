@@ -26,6 +26,13 @@ class AskedRecord {
     val asked: List<Asked>
         @Synchronized get() = entries.toList()
 
+    /**
+     * The entries of the questions before the one that is open now: all of them but the entry with which the run keeps the
+     * open question open, so that every read of that question counts the same questions before it (plan 7G).
+     */
+    val before: List<Asked>
+        @Synchronized get() = if (keptOpen) entries.dropLast(1) else entries.toList()
+
     /** A read of agent-state found a question of [kind] open, or none (null). */
     @Synchronized
     fun saw(kind: String?) {
