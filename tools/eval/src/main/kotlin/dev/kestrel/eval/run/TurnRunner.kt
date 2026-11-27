@@ -1,6 +1,7 @@
 package dev.kestrel.eval.run
 
 import dev.kestrel.eval.device.DeviceCommandFailed
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
@@ -11,7 +12,6 @@ import dev.kestrel.eval.task.Task
 import dev.kestrel.eval.task.TaskKind
 import dev.kestrel.eval.task.Turn
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 
 /** How a run's turns ended: all of them ran, a command did not reach Kestrel, or a command cut the rest short. */
 internal enum class TurnsEnd { DONE, UNDELIVERED, CUT }
@@ -158,12 +158,7 @@ internal class TurnRunner(
 
     private enum class Delivery { DELIVERED, REFUSED, LOST }
 
-    /** Whether Kestrel has a command with [tag], read for up to 10 s after the command's answer was lost. */
-    private fun exists(tag: String): Boolean {
-        repeat(Runner.EXISTS_TRIES) {
-            if (quietly { hooks.agentTask(tag) } != null) return true
-            clock.sleep(1.seconds)
-        }
-        return false
-    }
+    /** Whether Kestrel has a command with [tag], read once a second for up to 10 s by the clock after the command's answer was lost. */
+    private fun exists(tag: String): Boolean =
+        clock.waitUntil(Runner.EXISTS, Runner.REREAD) { deadline -> quietly { hooks.until(deadline).agentTask(tag) } != null }
 }

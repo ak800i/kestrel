@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.nio.file.Paths
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** The guarded device and its retry rule: reads are tried 3 times, a command that acts runs once (design D3 of sub-project 6). */
@@ -94,5 +95,22 @@ class DeviceTest {
 
         assertEquals(listOf("true"), adb.commands)
         assertEquals(listOf(listOf("push", file.toString(), "/data/local/tmp/kestrel-task.json")), adb.hostCommands)
+    }
+
+    // A device bounded by a wait's deadline gives each try only the time left, starts no retry past it, and sends nothing
+    // once it has passed, so that a wait ends at its deadline however slow adb is.
+    @Test
+    fun aDeviceBoundedByADeadlineGivesEachTryOnlyTheTimeLeft() {
+        adb.slow(clock, 2.minutes)
+        val bounded = device.until(Deadline(clock, 70.seconds))
+
+        assertThrows(DeviceCommandFailed::class.java) { bounded.read("dumpsys battery") }
+
+        assertEquals(listOf(60.seconds, 8.seconds), adb.timeouts)
+        assertEquals(70.seconds, clock.time)
+        val failure = assertThrows(DeviceCommandFailed::class.java) { bounded.read("dumpsys battery") }
+        assertEquals("Could not run 'dumpsys battery' on emulator-5554: the wait's time ran out", failure.message)
+        assertEquals(2, adb.timeouts.size)
+        assertEquals(emptyList<String>(), adb.commands)
     }
 }

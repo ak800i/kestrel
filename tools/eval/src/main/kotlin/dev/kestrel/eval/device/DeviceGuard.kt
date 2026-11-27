@@ -1,5 +1,6 @@
 package dev.kestrel.eval.device
 
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /** The two test devices (design D1 of sub-project 6), with the name that the results use and the results folder's prefix. */
@@ -62,11 +63,11 @@ class DeviceGuard(private val clock: Clock = SystemClock) {
         const val DAILY_PHONE = "SM-S916"
         private const val TRIES = 3
         private val RETRY = 2.seconds
-        private val QUICK = 30.seconds
+        internal val QUICK = 30.seconds
 
-        /** The AVD name that the emulator's console gives, from the first line of `emu avd name`, or "" without one. */
-        fun consoleName(adb: Adb): String = try {
-            adb.host(listOf("emu", "avd", "name"), QUICK).out.lineSequence().firstOrNull()?.trim().orEmpty()
+        /** The AVD name that the emulator's console gives, from the first line of `emu avd name`, or "" without one within [timeout]. */
+        fun consoleName(adb: Adb, timeout: Duration = QUICK): String = try {
+            adb.host(listOf("emu", "avd", "name"), timeout).out.lineSequence().firstOrNull()?.trim().orEmpty()
         } catch (e: AdbException) {
             ""
         }

@@ -1,11 +1,16 @@
 package dev.kestrel.eval.hook
 
+import dev.kestrel.eval.device.Deadline
+
 /**
  * One function per debug hook that :tools:eval uses (design D3 of sub-project 6; scripts\hook.ps1 lists the hooks). A
  * hook that only reads is tried again after a lost answer; one that acts runs once, and throws [HookLost] when its answer
  * was lost, so that the caller reads the state back.
  */
 class Hooks(private val client: HookClient) {
+    /** The hooks for a wait that ends at [deadline]: each call gets only the time left ([dev.kestrel.eval.device.Device.until]). */
+    fun until(deadline: Deadline): Hooks = Hooks(client.until(deadline))
+
     /**
      * agent-task -Result: `state=running`, or `state=done` with the task's end, counts, model and tokens; with [marker],
      * whether the reply held it, and with [digits] (design D17 of sub-project 6), whether its digits held them.

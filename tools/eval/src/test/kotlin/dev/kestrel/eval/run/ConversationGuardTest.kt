@@ -7,6 +7,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /** Kestrel's conversation around a run (design 6.4, 14.1 and 14.4 of sub-project 7). */
 class ConversationGuardTest {
@@ -98,5 +100,32 @@ class ConversationGuardTest {
         goal = "interrupted"
         assertFalse(guard.stopGoal { stops++ })
         assertEquals(2, stops)
+    }
+
+    // The waits measure the clock, so a slow adb cannot stretch them: on a device whose every command takes 7 s, or that
+    // never answers, close ends at its 60 s, the series' cleanup at its 300 s and stopGoal's wait at its 15 s.
+    @Test
+    fun theWaitsEndAtTheirLimitsHoweverSlowAdbIs() {
+        for (latency in listOf(7.seconds, 2.minutes)) {
+            run.adb.slow(run.clock, latency)
+            open = true
+            quiet = "held"
+            goal = "none"
+
+            assertEquals(60.seconds, timed { assertThrows(SetupFailed::class.java) { guard.close() } })
+            assertEquals(5.minutes, timed { assertThrows(SetupFailed::class.java) { guard.deleteLeft() } })
+        }
+
+        run.adb.slow(run.clock, 7.seconds)
+        goal = "interrupted"
+        var stopped = run.clock.time
+        assertFalse(guard.stopGoal { stopped = run.clock.time })
+        assertEquals(15.seconds, run.clock.time - stopped)
+    }
+
+    private fun timed(wait: () -> Unit): kotlin.time.Duration {
+        val start = run.clock.time
+        wait()
+        return run.clock.time - start
     }
 }

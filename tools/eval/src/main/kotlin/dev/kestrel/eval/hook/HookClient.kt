@@ -1,5 +1,6 @@
 package dev.kestrel.eval.hook
 
+import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.Device
 import kotlin.time.Duration.Companion.seconds
 
@@ -60,6 +61,9 @@ class HookLost(command: String) : Exception("The answer of $command was lost.")
  * -1 is an answer, 0 means that Kestrel did not answer, and any other code is an error whose data is the reason.
  */
 class HookClient(private val device: Device) {
+    /** The hooks for a wait that ends at [deadline] ([Device.until]). */
+    fun until(deadline: Deadline): HookClient = HookClient(device.until(deadline))
+
     fun call(command: String, extras: List<Extra>, retry: Boolean): HookAnswer {
         val broadcast = broadcast(command, extras)
         val lines = if (retry) device.read(broadcast, TIMEOUT) else device.once(broadcast, TIMEOUT) ?: throw HookLost(command)

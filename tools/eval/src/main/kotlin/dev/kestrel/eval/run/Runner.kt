@@ -4,10 +4,10 @@ import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.device.Clock
 import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.device.DeviceChanged
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.RunValues
-import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupResult
 import dev.kestrel.eval.task.Task
 import java.nio.file.Path
@@ -24,12 +24,12 @@ class RestoreFailed(message: String) : Exception(message)
 
 /**
  * One run of a task, and the runs of a task (design D5 of sub-project 6), in task-check.ps1's order: the call state, the
- * device rule, a conversation of the run's own and the setup (whose failure fails only this run, `reason=setup`), the
+ * device rule, the setup and then a conversation of the run's own (whose failure fails only this run, `reason=setup`), the
  * scripted model of a run without a model, the task's turns ([TurnRunner]; design 14.4 of sub-project 7), the checks, and
  * the end however the run ends: the run's restores (the stop of a command whose end the run did not read, the stop of a
- * goal that the run left open, the scripted model removed, and the setup's restores, in that order), the call state
- * again, the credits and the line. The stops and the removal are restores, so that the shutdown hook runs them after
- * Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel listens, before each run. Once the
+ * goal that the run left open, the scripted model removed, the run's conversations deleted, and the setup's restores, in
+ * that order), the call state again, the credits and the line. The stops and the removal are restores, so that the
+ * shutdown hook runs them after Ctrl+C too, as task-check.ps1's `finally` blocks did. [listening] waits until Kestrel listens, before each run. Once the
  * shutdown hook began ([Restores.stopping]), no run and no command starts: the runner throws [Stopping].
  */
 class Runner(
@@ -141,7 +141,9 @@ class Runner(
             return Verdict(RunResult.FAIL, CheckResult.SKIPPED, Reason.CALL)
         }
         if (device.kind !in task.devices) return Verdict(RunResult.SKIPPED, CheckResult.SKIPPED, Reason.UNTESTABLE)
-        for (step in listOf<Setup>(NewConversation(conversations)) + task.setup) {
+        // The task's setup decides first whether the device can run it, so that an untestable run gives Kestrel nothing,
+        // not even a read of its conversation; the run's conversation is the setup's last step.
+        for (step in task.setup + NewConversation(conversations)) {
             val result = try {
                 step.apply(scope)
             } catch (e: Exception) {
@@ -209,22 +211,24 @@ class Runner(
      * Kestrel does not know yet is read once a second for up to 10 s.
      */
     private fun stop(task: Task, number: Int, tag: String, sent: Boolean) {
-        if (!running(tag, if (sent) EXISTS_TRIES else 1)) return
+        if (!running(tag, sent)) return
         quietly { hooks.voiceHeard("stop", tags()) }
-        repeat(STOP_SECONDS) {
-            if (quietly { hooks.agentTask(tag) }?.get("state") == "done") return
-            clock.sleep(1.seconds)
-        }
+        if (clock.waitUntil(STOP, REREAD) { quietly { hooks.until(it).agentTask(tag) }?.get("state") == "done" }) return
         console.warn("Task ${task.name}, run $number: the task could not be stopped; say 'Kestrel, stop' or turn Kestrel off.")
     }
 
-    /** Whether the command of [tag] runs, read up to [tries] times while Kestrel does not answer with its state. */
-    private fun running(tag: String, tries: Int): Boolean {
-        repeat(tries) { attempt ->
-            quietly { hooks.agentTask(tag) }?.get("state")?.let { return it == "running" }
-            if (attempt < tries - 1) clock.sleep(1.seconds)
+    /**
+     * Whether the command of [tag] runs: its state read once, or, once its words were [sent], read once a second for up to
+     * [EXISTS] by the clock while Kestrel does not answer with one.
+     */
+    private fun running(tag: String, sent: Boolean): Boolean {
+        if (!sent) return quietly { hooks.agentTask(tag) }?.get("state") == "running"
+        var state: String? = null
+        clock.waitUntil(EXISTS, REREAD) { deadline ->
+            state = quietly { hooks.until(deadline).agentTask(tag) }?.get("state")
+            state != null
         }
-        return false
+        return state == "running"
     }
 
     /**
@@ -250,8 +254,11 @@ class Runner(
         val POLL = 2.seconds
         val QUIET = 3.seconds
         val STALL = 30.seconds
-        private const val STOP_SECONDS = 15
-        internal const val EXISTS_TRIES = 10
+        private val STOP = 15.seconds
+
+        /** How long a command whose words were sent may take to show in agent-task, and the pause between its reads. */
+        internal val EXISTS = 10.seconds
+        internal val REREAD = 1.seconds
         private val NUMBER = Regex("^\\d+(\\.\\d+)?$")
     }
 }

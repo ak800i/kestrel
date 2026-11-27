@@ -1,6 +1,7 @@
 package dev.kestrel.eval.run
 
 import dev.kestrel.eval.device.Clock
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.Hooks
@@ -8,6 +9,8 @@ import dev.kestrel.eval.task.RunScope
 import dev.kestrel.eval.task.Setup
 import dev.kestrel.eval.task.SetupFailed
 import dev.kestrel.eval.task.SetupResult
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -21,21 +24,20 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     /**
      * Closes the open conversation, if any. Its quiet clock runs once its final reply has ended, and conversation-control
      * do=expire then ends the quiet time at once, so the guard reads the conversation once a second and ends the quiet time
-     * while it runs, until the conversation is closed, for at most [seconds] seconds. A goal that is open is no run's to
-     * end, so it fails the step ([SetupFailed]), and so does a conversation that stays open. A read whose answer is lost is
-     * read again a second later.
+     * while it runs, until the conversation is closed, for at most [within] by the clock, however slow adb is ([waitUntil]).
+     * A goal that is open is no run's to end, so it fails the step ([SetupFailed]), and so does a conversation that stays
+     * open. A read whose answer is lost is read again a second later.
      */
-    fun close(seconds: Int = CLOSE_SECONDS) {
-        repeat(seconds) {
-            val state = quietly { hooks.conversationState() }
-            if (state != null) {
-                if (state["open"] != "yes") return
-                if (goalOpen(state)) throw SetupFailed("Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first.")
-                if (state["quiet"] == "running") expire()
-            }
-            clock.sleep(1.seconds)
+    fun close(within: Duration = CLOSE) {
+        val closed = clock.waitUntil(within, POLL) { deadline ->
+            val hooks = hooks.until(deadline)
+            val state = quietly { hooks.conversationState() } ?: return@waitUntil false
+            if (state["open"] != "yes") return@waitUntil true
+            if (goalOpen(state)) throw SetupFailed("Kestrel's conversation has a goal open (${state["goal"]}); say 'Kestrel, stop' first.")
+            if (state["quiet"] == "running") expire(hooks)
+            false
         }
-        throw SetupFailed("Kestrel's conversation did not close within $seconds s.")
+        if (!closed) throw SetupFailed("Kestrel's conversation did not close within ${within.inWholeSeconds} s.")
     }
 
     /**
@@ -43,9 +45,9 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * which covers every input that a hook gives, tagged or not), so that no test conversation stays among the owner's past
      * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no input of
      * the owner's with his words or his choice has reached, never one of the owner's, and keeps its marks across a restart.
-     * A conversation that does not close within [CLOSE_SECONDS] seconds, as after a long final reply, only gives [warn] a
-     * warning: delete-typed keeps it marked, and the next run's restore or the series' cleanup ([deleteLeft]) deletes it. A
-     * deletion that failed fails the restore that calls it.
+     * A conversation that does not close within [CLOSE], as after a long final reply, only gives [warn] a warning:
+     * delete-typed keeps it marked, and the next run's restore or the series' cleanup ([deleteLeft]) deletes it. A deletion
+     * that failed fails the restore that calls it.
      */
     fun deleteRun(warn: (String) -> Unit) {
         try {
@@ -58,11 +60,11 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
 
     /**
      * The series' cleanup after its last run ([Preflight] pushes it as a restore): closes the open conversation, waiting up
-     * to [CLEANUP_SECONDS] seconds for a long final reply, and deletes every one of the hooks' own conversations. One that
-     * stays open, or whose deletion failed, fails it, and the console says what to do by hand.
+     * to [CLEANUP] for a long final reply, and deletes every one of the hooks' own conversations. One that stays open, or
+     * whose deletion failed, fails it, and the console says what to do by hand.
      */
     fun deleteLeft() {
-        close(CLEANUP_SECONDS)
+        close(CLEANUP)
         delete()
     }
 
@@ -73,24 +75,21 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     }
 
     /**
-     * Ends the goal that is open, held or not, with [stop], the owner's "stop" (design 6.4), and waits up to [STOP_SECONDS]
-     * seconds for its end. Returns whether no goal is open then; without a goal it does nothing, and when Kestrel does not
+     * Ends the goal that is open, held or not, with [stop], the owner's "stop" (design 6.4), and waits up to [STOP] by the
+     * clock for its end. Returns whether no goal is open then; without a goal it does nothing, and when Kestrel does not
      * answer it returns false.
      */
     fun stopGoal(stop: () -> Unit): Boolean {
         val state = quietly { hooks.conversationState() } ?: return false
         if (!goalOpen(state)) return true
         stop()
-        repeat(STOP_SECONDS) {
-            clock.sleep(1.seconds)
-            val now = quietly { hooks.conversationState() }
-            if (now != null && !goalOpen(now)) return true
+        return clock.waitUntil(STOP, POLL) { deadline ->
+            quietly { hooks.until(deadline).conversationState() }?.let { !goalOpen(it) } ?: false
         }
-        return false
     }
 
     // An expire whose answer was lost may have reached Kestrel; a second one changes nothing, so the next read decides.
-    private fun expire() {
+    private fun expire(hooks: Hooks) {
         try {
             hooks.conversationControl("expire")
         } catch (e: HookLost) {
@@ -101,16 +100,18 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     private fun goalOpen(state: HookAnswer): Boolean = state["goal"].let { it != null && it != "none" }
 
     companion object {
-        const val CLOSE_SECONDS = 60
-        const val CLEANUP_SECONDS = 300
-        const val STOP_SECONDS = 15
+        val CLOSE = 60.seconds
+        val CLEANUP = 5.minutes
+        val STOP = 15.seconds
+        private val POLL = 1.seconds
     }
 }
 
 /**
- * A run's first setup step (design 14.1 of sub-project 7): the open conversation closed, so that the run's first command
- * opens one; its restore, the run's last, closes the run's conversation and deletes the hooks' own conversations
- * ([ConversationGuard.deleteRun]).
+ * A run's last setup step (design 14.1 of sub-project 7): the open conversation closed, so that the run's first command
+ * opens one. It comes after the task's own steps, so that a run that they find untestable touches no conversation; its
+ * restore, which runs after the run's stops and before the task's restores, closes the run's conversation and deletes the
+ * hooks' own conversations ([ConversationGuard.deleteRun]).
  */
 class NewConversation(private val conversations: ConversationGuard) : Setup {
     override fun apply(scope: RunScope): SetupResult {

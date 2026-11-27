@@ -21,10 +21,21 @@ class DeviceChanged(message: String) : Exception(message)
  *   that do the same when they run twice;
  * - [once] runs a command that creates something or acts once, and answers null when its answer was lost; the step then
  *   reads the state back instead of sending the command again.
+ *
+ * A device bounded by a wait's [Deadline] ([until]) gives each adb call at most the time left, starts no retry whose pause
+ * would end past it, and sends nothing once it has passed, so that the wait ends at its deadline however slow adb is.
  */
-class Device(private val adb: Adb, val test: TestDevice, private val clock: Clock = SystemClock) {
+class Device(
+    private val adb: Adb,
+    val test: TestDevice,
+    private val clock: Clock = SystemClock,
+    private val deadline: Deadline? = null,
+) {
     val serial: String get() = test.serial
     val kind: DeviceKind get() = test.kind
+
+    /** This device for a wait that ends at [deadline]. */
+    fun until(deadline: Deadline): Device = Device(adb, test, clock, deadline)
 
     private val property = if (test.kind == DeviceKind.EMULATOR) "ro.boot.qemu.avd_name" else "ro.product.model"
     private val pattern = if (test.kind == DeviceKind.EMULATOR) DeviceGuard.EMULATOR_AVD else "${DeviceGuard.A71_MODEL}*"
@@ -47,38 +58,27 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
     /** A command of the emulator's console, right after the check that the console still belongs to kestrel-api37. */
     fun emu(args: List<String>, timeout: Duration = TIMEOUT): String {
         if (kind != DeviceKind.EMULATOR) throw DeviceChanged("Only kestrel-api37 has an emulator console; $serial is ${kind.label}.")
-        if (DeviceGuard.consoleName(adb) != DeviceGuard.EMULATOR_AVD) throw DeviceChanged(changed("emu ${args.joinToString(" ")}"))
-        return adb.host(listOf("emu") + args, timeout).out
+        val what = "emu ${args.joinToString(" ")}"
+        if (DeviceGuard.consoleName(adb, hostTime(DeviceGuard.QUICK, what)) != DeviceGuard.EMULATOR_AVD) throw DeviceChanged(changed(what))
+        return adb.host(listOf("emu") + args, hostTime(timeout, what)).out
     }
 
     /** Copies a file of this computer to the device, after the guard's check; a copy overwrites, so it may run twice. */
     fun push(local: Path, remote: String) {
         read("true")
-        var reason = "no answer"
-        repeat(TRIES) { attempt ->
-            if (attempt > 0) clock.sleep(RETRY)
-            val result = try {
-                adb.host(listOf("push", local.toString(), remote), PUSH_TIMEOUT)
-            } catch (e: AdbException) {
-                reason = e.message.orEmpty()
-                null
-            }
-            if (result != null && result.exitCode == 0) return
-            if (result != null) reason = complaint(result)
-        }
-        throw DeviceCommandFailed("adb push failed on $serial: $reason")
+        transfer(listOf("push", local.toString(), remote))
     }
 
     /** The output of `adb exec-out <args>` after the guard's check, for a read that is no shell's, such as `uiautomator dump /dev/tty`. */
     fun execOut(args: List<String>, timeout: Duration = TIMEOUT): String {
         read("true")
-        return adb.host(listOf("exec-out") + args, timeout).out
+        return adb.host(listOf("exec-out") + args, hostTime(timeout, "exec-out")).out
     }
 
     /** Installs [apk] with `adb install -r` after the guard's check; a second install of the same file does the same. */
     fun install(apk: Path) {
         read("true")
-        val result = adb.host(listOf("install", "-r", apk.toString()), PUSH_TIMEOUT)
+        val result = adb.host(listOf("install", "-r", apk.toString()), hostTime(PUSH_TIMEOUT, "install"))
         if (result.exitCode != 0) throw DeviceCommandFailed("adb install failed on $serial: ${complaint(result)}")
     }
 
@@ -86,11 +86,24 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
     fun pull(remote: String, local: Path) {
         read("true")
         Files.createDirectories(local.toAbsolutePath().parent)
+        transfer(listOf("pull", remote, local.toString()))
+    }
+
+    /** The command inside the guard's check, as `Format-TestDeviceCommand` writes it. */
+    fun guarded(command: String): String = "case \$(getprop $property) in $pattern) $command && echo && echo $END;; *) echo $REFUSED;; esac"
+
+    /** A copy by `adb push` or `adb pull`, which overwrites, so it may run up to 3 times, 2 s apart. */
+    private fun transfer(args: List<String>) {
         var reason = "no answer"
-        repeat(TRIES) { attempt ->
-            if (attempt > 0) clock.sleep(RETRY)
+        for (attempt in 0 until TRIES) {
+            if (attempt > 0 && !pause()) break
+            val time = time(PUSH_TIMEOUT)
+            if (time == null) {
+                reason = OUT_OF_TIME
+                break
+            }
             val result = try {
-                adb.host(listOf("pull", remote, local.toString()), PUSH_TIMEOUT)
+                adb.host(args, time)
             } catch (e: AdbException) {
                 reason = e.message.orEmpty()
                 null
@@ -98,16 +111,13 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
             if (result != null && result.exitCode == 0) return
             if (result != null) reason = complaint(result)
         }
-        throw DeviceCommandFailed("adb pull failed on $serial: $reason")
+        throw DeviceCommandFailed("adb ${args.first()} failed on $serial: $reason")
     }
-
-    /** The command inside the guard's check, as `Format-TestDeviceCommand` writes it. */
-    fun guarded(command: String): String = "case \$(getprop $property) in $pattern) $command && echo && echo $END;; *) echo $REFUSED;; esac"
 
     private fun repeated(command: String, timeout: Duration): List<String> {
         var reason = "no answer"
-        repeat(TRIES) { attempt ->
-            if (attempt > 0) clock.sleep(RETRY)
+        for (attempt in 0 until TRIES) {
+            if (attempt > 0 && !pause()) break
             when (val answer = attempt(command, timeout)) {
                 is Answer.Done -> return answer.lines
                 is Answer.Lost -> reason = answer.reason
@@ -116,9 +126,27 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
         throw DeviceCommandFailed("Could not run '$command' on $serial: $reason")
     }
 
+    // The pause before a retry; false, without a pause, when the retry would start at or after the wait's deadline.
+    private fun pause(): Boolean {
+        if (deadline != null && deadline.left <= RETRY) return false
+        clock.sleep(RETRY)
+        return true
+    }
+
+    // The time that an adb call may take: [timeout], or the time left before the wait's deadline when that is shorter;
+    // null when the deadline has passed.
+    private fun time(timeout: Duration): Duration? {
+        val left = deadline?.left ?: return timeout
+        return if (left.isPositive()) minOf(timeout, left) else null
+    }
+
+    private fun hostTime(timeout: Duration, what: String): Duration =
+        time(timeout) ?: throw DeviceCommandFailed("Did not run 'adb $what' on $serial: $OUT_OF_TIME")
+
     private fun attempt(command: String, timeout: Duration): Answer {
+        val time = time(timeout) ?: return Answer.Lost(OUT_OF_TIME)
         val result = try {
-            adb.shell(guarded(command), timeout)
+            adb.shell(guarded(command), time)
         } catch (e: AdbException) {
             return Answer.Lost(e.message.orEmpty())
         }
@@ -149,6 +177,7 @@ class Device(private val adb: Adb, val test: TestDevice, private val clock: Cloc
     companion object {
         const val END = "kestrel-end"
         const val REFUSED = "kestrel-refused"
+        private const val OUT_OF_TIME = "the wait's time ran out"
         val TIMEOUT = 60.seconds
         private val PUSH_TIMEOUT = 2.minutes
         private val RETRY = 2.seconds

@@ -4,6 +4,7 @@ import dev.kestrel.eval.config.LocalConfig
 import dev.kestrel.eval.config.Redactions
 import dev.kestrel.eval.device.DeviceChanged
 import dev.kestrel.eval.device.DeviceKind
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.task.Answers
 import dev.kestrel.eval.task.Check
@@ -103,6 +104,40 @@ class RunnerTest {
         assertEquals(listOf("Kestrel, turn on hotspot", "stop"), run.adb.hookCalls("VOICE").map { it["text"] })
         assertEquals("none", goal)
         assertFalse(open)
+    }
+
+    // The task's setup decides whether the device can run it before the run's conversation is closed, so that a run that
+    // it finds untestable gives Kestrel nothing at all, and its restores have nothing of the conversation's to put back.
+    @Test
+    fun theTasksSetupComesBeforeTheRunsConversationAndAnUntestableRunTouchesNoConversation() {
+        run.adb.hook("AGENT_TASK") { done }
+        val order = mutableListOf<String>()
+        run.adb.hook("CONVERSATION_STATE") {
+            order += "conversation"
+            FakeAdb.NO_CONVERSATION
+        }
+        val ready = object : Setup {
+            override fun apply(scope: RunScope): SetupResult {
+                order += "setup"
+                scope.restores.push("the fixture", "") { order += "fixture back" }
+                return SetupResult.Ready
+            }
+        }
+        val untestable = object : Setup {
+            override fun apply(scope: RunScope) = SetupResult.Untestable("the test says so")
+        }
+
+        assertEquals(Reason.UNTESTABLE, runner().run(task(setup = listOf(ready, untestable)), "[]", 1, "maple heron").reason)
+
+        assertEquals(listOf("setup", "fixture back"), order)
+        assertTrue(run.adb.commands.toString(), run.adb.commands.none { it.startsWith("am ") })
+        assertEquals(0, run.restores.size)
+
+        order.clear()
+        assertEquals(Reason.OK, runner().run(task(setup = listOf(ready)), "[]", 2, "maple heron").reason)
+        assertEquals("setup", order.first())
+        assertEquals("conversation", order[1])
+        assertEquals("fixture back", order.last())
     }
 
     // Design 14.4 of sub-project 7: each command has its tag, and the run's one line holds their sums.

@@ -6,7 +6,8 @@ import kotlin.time.Duration
  * A small device for the tests (design D3 of sub-project 6): properties, settings, files, the answers of commands and of
  * the debug hooks by action, and every command that reached it. A guarded command runs only when the guard's property
  * matches its pattern, as on a real device; [loseNext] loses the next answer of a matching command, as adb does when a
- * device goes away for a moment, and [hookCalls] gives the extras of each broadcast.
+ * device goes away for a moment, [slow] makes every command take time on a [FakeClock], and [hookCalls] gives the extras
+ * of each broadcast.
  */
 class FakeAdb(
     override val serial: String = "emulator-5554",
@@ -21,12 +22,13 @@ class FakeAdb(
     /** The commands inside the guard, in their order. */
     val commands = mutableListOf<String>()
 
-    /** The commands inside the guard other than Kestrel's debug hooks, whose broadcasts [hookCalls] gives, in their order. */
-    val deviceCommands: List<String> get() = commands.filterNot { BROADCAST.matches(it) }
-
     /** The guarded commands as they went to adb. */
     val raw = mutableListOf<String>()
     val hostCommands = mutableListOf<List<String>>()
+
+    /** The time that each call of adb got, in their order. */
+    val timeouts = mutableListOf<Duration>()
+    private var slowness: Pair<FakeClock, Duration>? = null
 
     /** The output of a host command other than `get-state` and `emu avd name`, such as `exec-out uiautomator dump /dev/tty`. */
     var hostOut: (List<String>) -> String = { "" }
@@ -99,12 +101,21 @@ class FakeAdb(
         lost.add(Regex(pattern))
     }
 
+    /**
+     * Makes adb slow, as on a busy device or a bad cable: each call takes [latency] on [clock], and one that would take
+     * longer than its timeout ends at the timeout without an answer, as [ProcessAdb] ends it, before it reaches the device.
+     */
+    fun slow(clock: FakeClock, latency: Duration) {
+        slowness = clock to latency
+    }
+
     /** The extras of each broadcast of [action], in their order. */
     fun hookCalls(action: String): List<Map<String, String>> = broadcasts.filter { it.first == action }.map { it.second }
 
     // Synchronized, because a test's shutdown hook may run restores while the main thread still sends commands.
     @Synchronized
     override fun shell(command: String, timeout: Duration): ShellResult {
+        take(timeout)
         val guard = GUARD.matchEntire(command)
         if (guard == null) {
             commands.add(command)
@@ -129,12 +140,23 @@ class FakeAdb(
 
     @Synchronized
     override fun host(args: List<String>, timeout: Duration): ShellResult {
+        take(timeout)
         hostCommands.add(args)
         return when {
             args == listOf("get-state") -> ShellResult(0, "$state\n", "")
             args == listOf("emu", "avd", "name") -> ShellResult(0, "$consoleName\r\nOK\r\n", "")
             else -> ShellResult(0, hostOut(args), "")
         }
+    }
+
+    private fun take(timeout: Duration) {
+        timeouts.add(timeout)
+        val (clock, latency) = slowness ?: return
+        if (latency > timeout) {
+            clock.time += timeout
+            throw AdbException("adb did not end within $timeout.")
+        }
+        clock.time += latency
     }
 
     /** Answers a guarded command, with Android's handler running around it as [busyHandler] says. */
