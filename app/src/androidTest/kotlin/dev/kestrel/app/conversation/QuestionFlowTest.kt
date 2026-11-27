@@ -87,8 +87,10 @@ class QuestionFlowTest {
         }
     }
 
-    // D21's wait of the open question, which the test's timer source holds: it must be the wait that D21 gives the question.
-    private fun heldWait(timers: HeldTimers, millis: Long): HeldTimers.HeldTimer {
+    // D21's wait of the open question of [kind], which the test's timer source holds. The view shows the question only
+    // after the step that started its timer, so the held timer exists once the view shows it.
+    private fun heldWait(timers: HeldTimers, kind: QuestionKind, millis: Long): HeldTimers.HeldTimer {
+        check(VoiceTests.waitUntil(10_000) { conversations.view.value.asking == kind }) { "The question $kind did not open" }
         val wait = checkNotNull(timers.newest(Timer.QUESTION)) { "The question has no wait" }
         assertEquals(millis, wait.millis)
         return wait
@@ -146,8 +148,7 @@ class QuestionFlowTest {
         val timers = TypedTests.holdTimers(Timer.QUESTION)
         val command = typedGoal(ScriptedModel(listOf(ask, fail)), "Set a reminder") { screen.open("ViewsActivity", "Views fixture") }
         awaitButton(TypedTests.text(R.string.card_reply))
-        val wait = heldWait(timers, QUESTION_MILLIS)
-        assertEquals(QuestionKind.FREE, conversations.view.value.asking)
+        val wait = heldWait(timers, QuestionKind.FREE, QUESTION_MILLIS)
 
         wait.end()
         val ended = AgentTests.ended(command)
@@ -164,8 +165,7 @@ class QuestionFlowTest {
             screen.open("MessengerActivity", "Ana Petrović", "--es chat ana")
         }
         awaitButton(TypedTests.text(R.string.card_confirm))
-        val wait = heldWait(timers, CONFIRM_MILLIS)
-        assertEquals(QuestionKind.CONFIRM, conversations.view.value.asking)
+        val wait = heldWait(timers, QuestionKind.CONFIRM, CONFIRM_MILLIS)
 
         wait.end()
         val ended = AgentTests.ended(command)
@@ -246,9 +246,8 @@ class QuestionFlowTest {
         TypedTests.bringScreen(screen, compose)
         // While the goal is held the screen's own row says Cancel and Continue; Stop is the card's.
         compose.waitUntil(5_000) { compose.onAllNodesWithText(TypedTests.text(R.string.card_stop)).fetchSemanticsNodes().isNotEmpty() }
-        assertEquals(QuestionKind.CONTINUE_GOAL, conversations.view.value.asking)
 
-        heldWait(timers, QUESTION_MILLIS).end()
+        heldWait(timers, QuestionKind.CONTINUE_GOAL, QUESTION_MILLIS).end()
         check(VoiceTests.waitUntil(10_000) { conversations.view.value.asking == null }) { "The question did not end after its wait" }
 
         compose.waitUntil(5_000) { compose.onAllNodesWithText(TypedTests.text(R.string.card_stop)).fetchSemanticsNodes().isEmpty() }

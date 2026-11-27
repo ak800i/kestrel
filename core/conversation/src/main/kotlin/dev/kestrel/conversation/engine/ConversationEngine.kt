@@ -85,17 +85,18 @@ import kotlinx.coroutines.launch
  * input and a signal too, the loop ends every timer whose deadline has passed, and a coroutine's `delay`, which stops
  * while the phone sleeps, only wakes it; [timers] says how each timer ends, which in release builds is always at its
  * deadline ([TimerSource.REAL]), and a device test's source may hold a timer until the test ends it. Work that the
- * machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order; each is taken by
- * its channels as the engine emits it (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs that wait behind the one that plays (plan
- * 7B's decision 10; plan 7F), and the end of a final reply's `show` is the machine's `ReplyShown`. [view] is what the
- * voice rules, the screen, the goal service and the hooks read. [restore] must run once at process start; inputs wait
- * for it. [report] gets a failure by its class. [kestrelOn] is whether Kestrel is on, from listening's one source
- * (`Listening.kestrelOn`); the machine's `Voice` event mirrors it. Every act of the owner's that lets a goal's round
- * act comes with its number among his inputs, an input with its own and a tap on a card with the one that `:app` took
- * as the tap reached Kestrel (plan 7F), so that the screen's turn can tell whether it came after an instant command
- * started (design 6.5); the engine numbers nothing itself. [onStep] sees every step, for the hooks' tags (plan 7D):
- * every effect that starts work under a new command number (`StartGoal`, `ResumeGoal`, `RunLocal`, `SwitchTo`, and
- * `EndLocal` for "new conversation", which has no work) carries the owner's input that asked for it.
+ * machine waits for gets its end on every path, also when its effect failed. Outputs are shown in order; each is taken
+ * by its channels as the engine emits it (`OwnerChannel.take`), so that a stop of Kestrel's speech drops the outputs
+ * that wait behind the one that plays (plan 7B's decision 10; plan 7F), and the end of a final reply's `show` is the
+ * machine's `ReplyShown`. [view] is what the voice rules, the screen, the goal service and the hooks read. [restore]
+ * must run once at process start; inputs wait for it. [report] gets a failure by its class. [kestrelOn] is whether
+ * Kestrel is on, from listening's one source (`Listening.kestrelOn`); the machine's `Voice` event mirrors it. Every act
+ * of the owner's that lets a goal's round act comes with its number among his inputs, an input with its own and a tap
+ * on a card with the one that `:app` took as the tap reached Kestrel (plan 7F), so that the screen's turn can tell
+ * whether it came after an instant command started (design 6.5); the engine numbers nothing itself. [onStep] sees every
+ * step, for the hooks' tags (plan 7D): every effect that starts work under a new command number (`StartGoal`,
+ * `ResumeGoal`, `RunLocal`, `SwitchTo`, and `EndLocal` for "new conversation", which has no work) carries the owner's
+ * input that asked for it.
  */
 class ConversationEngine(
     private val scope: CoroutineScope,
