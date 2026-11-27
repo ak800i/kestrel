@@ -79,8 +79,14 @@ internal class CommandTags {
     @Volatile
     var ownRequest: (Boolean) -> Unit = {}
 
-    // Kestrel's own request that runs while no conversation is open, by its command's number, and whether it is the hooks'.
-    private var request: Pair<Int, Boolean>? = null
+    // Kestrel's own request that runs, in a conversation or not, and whether it is the owner's.
+    private var request: Request? = null
+
+    /**
+     * Kestrel's own request that runs, by its [command]'s number: [owners] once an input of the owner's with his words or
+     * his choice started or reached it (plan 7G).
+     */
+    private data class Request(val command: Int, val owners: Boolean)
 
     // The inputs that the hooks gave the conversation, tagged or not: never the owner's (review M2 of Task 13a). They stay
     // noted after the step that started their work, because a local request's switch names its input again later.
@@ -254,21 +260,28 @@ internal class CommandTags {
      */
     @Synchronized
     fun onConversationStep(event: ConversationEvent, state: ConversationState, step: MachineStep) {
-        // A mark means that only the hooks' inputs are in the conversation (review M1 of Task 13a): the owner's input that
-        // carries his words or his choice takes the mark away from the conversation that it reaches, the one that the step
-        // leaves open, or for a switch the one that it moves into, also when the switch ends a local request later.
+        // A mark means that only the hooks' inputs are in the conversation (review M1 of Task 13a). The owner's input that
+        // carries his words or his choice reaches Kestrel's own request that runs, and the conversation that the step leaves
+        // open, or for an input whose work is a switch, the switch's target instead. A request that the owner started or
+        // reached is his, and so is the conversation that its switch moves into, also when the switch comes at the end of a
+        // request that a hook's input started, as after his "yes" to the switch's question (plan 7G). The mark goes from
+        // every conversation that he reached.
         val given = (event as? ConversationEvent.Input)?.input
         val brought = (listOfNotNull(given) + step.effects.mapNotNull { work(it)?.second }).distinctBy { it.id }.filter(::owners)
-        brought.mapNotNull { reached(it, step) }.distinct().forEach(ownerConversation)
-        // A request that runs while no conversation is open, as a switch that asks before it moves into a past conversation,
-        // has no conversation to carry the mark, so it carries the mark itself (plan 7G): the request that a hook's input
-        // started, until an input of the owner's with his words or his choice reaches it.
-        val running = step.state.local?.takeIf { !it.cancelled && step.state.id == null }
-        request = running?.let { local ->
-            val hooks = request?.takeIf { it.first == local.command }?.second ?: (local.input.id in hookInputs)
-            local.command to (hooks && brought.isEmpty())
+        request = step.state.local?.let { local ->
+            val owners = request?.takeIf { it.command == local.command }?.owners ?: owners(local.input)
+            Request(local.command, owners || brought.isNotEmpty())
         }
-        ownRequest(request?.second == true)
+        val switches = step.effects.filterIsInstance<ConversationEffect.SwitchTo>()
+        val open = step.state.id?.takeIf { brought.any { input -> switches.none { it.input.id == input.id } } }
+        val targets = switches.filter(::chosen).map { it.id }
+        (listOfNotNull(open) + targets).distinct().forEach(ownerConversation)
+        // A request that runs while no conversation is open, as a switch that asks before it moves into a past conversation,
+        // has no conversation to carry the mark, so it carries the mark itself (plan 7G) while it is not the owner's.
+        ownRequest(request?.owners == false && step.state.id == null && step.state.local?.cancelled == false)
+        // A conversation that a switch opened in this step is the switch's target, never one that the work of a command that
+        // waited for the switch opened.
+        val switched = step.effects.any { it is ConversationEffect.OpenSwitched }
         val started = mutableSetOf<Long>()
         for (effect in step.effects) {
             if (effect is ConversationEffect.StartGoal) lastGoalWords = effect.text.split(WHITESPACE).count { it.isNotEmpty() }
@@ -279,7 +292,7 @@ internal class CommandTags {
             // open one, either of which may be the owner's (plan 7G's review N1). This is the one rule that marks the hooks'
             // conversations (review B-I2 of plan 7F).
             val hooks = input != null && input.id in hookInputs
-            if (hooks && effect !is ConversationEffect.SwitchTo && step.state.id != state.id) step.state.id?.let(ownConversation)
+            if (hooks && effect !is ConversationEffect.SwitchTo && !switched && step.state.id != state.id) step.state.id?.let(ownConversation)
             val tag = input?.let { inputs.remove(it.id) } ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.TASK, task = command) }
         }
@@ -298,9 +311,10 @@ internal class CommandTags {
         else -> null
     }
 
-    // The conversation that [input] reaches in [step]: the one that a switch for it moves into, or else the open one.
-    private fun reached(input: OwnerInput, step: MachineStep): ConversationId? =
-        step.effects.filterIsInstance<ConversationEffect.SwitchTo>().firstOrNull { it.input.id == input.id }?.id ?: step.state.id
+    // Whether the owner chose [switch]: its request is his (the step's [request]), or its input is, for a switch whose request
+    // this object never saw run.
+    private fun chosen(switch: ConversationEffect.SwitchTo): Boolean =
+        request?.takeIf { it.command == switch.command }?.owners ?: owners(switch.input)
 
     // The owner's input that brings his words or his choice: not the hooks', and not a wordless Stop, Continue or New
     // conversation, which the goal notification's buttons also give, for goal-control's tap in the shade as for his, nor
