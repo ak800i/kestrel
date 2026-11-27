@@ -34,4 +34,27 @@ class GestureRunnerTest {
         assertTrue(job.isCancelled && job.isCompleted)
         assertEquals(listOf("hold"), started)
     }
+
+    // Re-check of round 12, Minor A: the press learns the moment that its gesture goes to Android, and learns too when
+    // Android refused it, so that only a gesture that Android took keeps what the press did then.
+    @Test
+    fun aHandedOverGestureTellsThePressRightBeforeAndAgainWhenAndroidRefusedIt() {
+        val told = mutableListOf<String>()
+        val press = object : PressDispatch {
+            override fun dispatching() {
+                told += "dispatching"
+            }
+
+            override fun notDispatched() {
+                told += "not dispatched"
+            }
+        }
+
+        assertTrue(GestureRunner.handedOver(press) { told += "Android"; true })
+        assertEquals(listOf("dispatching", "Android"), told)
+        told.clear()
+        assertFalse(GestureRunner.handedOver(press) { told += "Android"; false })
+        assertEquals(listOf("dispatching", "Android", "not dispatched"), told)
+        assertTrue(GestureRunner.handedOver(null) { true })
+    }
 }

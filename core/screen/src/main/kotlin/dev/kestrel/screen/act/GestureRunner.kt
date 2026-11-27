@@ -36,20 +36,26 @@ class GestureRunner(private val service: AccessibilityService) {
      * When the caller cancels it, Android still runs the part that it has started, so Kestrel still waits for that part's
      * answer, and only then throws the cancellation, without starting another part: the caller's job completes only once
      * the finger has lifted, so that nothing new acts on the screen before (design spec, section 7.3).
+     *
+     * [press] learns the moment that the first part goes to Android, in this runner's turn ([PressDispatch.dispatching]),
+     * and whether Android refused it ([PressDispatch.notDispatched]); a gesture that is cancelled while it waits for its
+     * turn tells it nothing.
      */
-    suspend fun perform(vararg parts: GestureDescription): GestureOutcome = mutex.withLock {
+    suspend fun perform(vararg parts: GestureDescription, press: PressDispatch? = null): GestureOutcome = mutex.withLock {
         require(parts.isNotEmpty()) { "A gesture needs at least one part" }
         busyUntil = Long.MAX_VALUE
         var plannedEnd = 0L
         try {
-            inOrder(parts.asList(), started = { plannedEnd = SystemClock.uptimeMillis() + it.durationMillis() }, dispatch = ::dispatch)
+            inOrder(parts.asList(), started = { plannedEnd = SystemClock.uptimeMillis() + it.durationMillis() }) { part ->
+                dispatch(part, press.takeIf { part === parts.first() })
+            }
         } finally {
             busyUntil = maxOf(SystemClock.uptimeMillis(), plannedEnd) + SETTLE_MILLIS
         }
     }
 
     /** Waits for Android's answer, but not for ever: a lost answer would otherwise keep the lock for good. */
-    private suspend fun dispatch(gesture: GestureDescription): GestureOutcome = withContext(Dispatchers.Main) {
+    private suspend fun dispatch(gesture: GestureDescription, press: PressDispatch?): GestureOutcome = withContext(Dispatchers.Main) {
         withTimeoutOrNull(gesture.durationMillis() + ANSWER_MARGIN_MILLIS) {
             suspendCancellableCoroutine { continuation ->
                 val callback = object : AccessibilityService.GestureResultCallback() {
@@ -57,12 +63,14 @@ class GestureRunner(private val service: AccessibilityService) {
 
                     override fun onCancelled(gestureDescription: GestureDescription) = continuation.resume(GestureOutcome.CANCELLED)
                 }
-                val accepted = try {
-                    service.dispatchGesture(gesture, callback, null)
-                } catch (e: RuntimeException) {
-                    // A failed binder call reaches the app as a RuntimeException around a RemoteException.
-                    if (e.cause !is RemoteException) throw e
-                    false
+                val accepted = handedOver(press) {
+                    try {
+                        service.dispatchGesture(gesture, callback, null)
+                    } catch (e: RuntimeException) {
+                        // A failed binder call reaches the app as a RuntimeException around a RemoteException.
+                        if (e.cause !is RemoteException) throw e
+                        false
+                    }
                 }
                 if (!accepted) continuation.resume(GestureOutcome.REJECTED)
             }
@@ -78,6 +86,15 @@ class GestureRunner(private val service: AccessibilityService) {
 
         /** How long after a gesture's planned end Kestrel still waits for Android's answer. */
         const val ANSWER_MARGIN_MILLIS = 2_000L
+
+        /**
+         * Hands a gesture to Android through [dispatch], which answers whether Android took it, and tells [press] right
+         * before, and again when Android refused it, so that only a gesture that Android took keeps what [press] did.
+         */
+        internal fun handedOver(press: PressDispatch?, dispatch: () -> Boolean): Boolean {
+            press?.dispatching()
+            return dispatch().also { accepted -> if (!accepted) press?.notDispatched() }
+        }
 
         /**
          * Calls [started] and then [dispatch] for each of [parts] in order, and stops at the first part that does not

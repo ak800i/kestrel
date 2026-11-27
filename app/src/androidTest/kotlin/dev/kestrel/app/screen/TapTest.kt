@@ -1,16 +1,22 @@
 package dev.kestrel.app.screen
 
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.kestrel.screen.act.ActionMethod
 import dev.kestrel.screen.act.ActionResult
+import dev.kestrel.screen.act.PressDispatch
 import dev.kestrel.screen.act.PressPolicy
+import dev.kestrel.screen.overlay.CardQuestion
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class TapTest {
@@ -125,5 +131,58 @@ class TapTest {
         screen.open("ViewsActivity", "Views fixture")
 
         assertTrue(actions.tap("no such key") is ActionResult.Failed)
+    }
+
+    // Re-check of round 12, Minor C: a press tells its [PressDispatch] once for each hand-over to Android, the node's
+    // action, the fallback gesture, or an action that answered no; a press that a check or the card stops tells it nothing.
+    @Test
+    fun aPressTellsItsDispatchOnlyWhenItGoesToAndroid() = runBlocking {
+        screen.open("ViewsActivity", "Views fixture")
+        val send = screen.awaitElement { it.label == "SEND" }
+        val refusals = CountedPress()
+        assertEquals(ActionResult.CHANGED, actions.tap(send.key, expected = { it.label != "SEND" }, dispatch = refusals))
+        assertEquals(ActionResult.CHANGED, actions.tap(send.key, guard = { false }, dispatch = refusals))
+        assertTrue(actions.tap("no such key", dispatch = refusals) is ActionResult.Failed)
+        val addToCart = screen.awaitElement { it.label == "ADD TO CART" }
+        assertEquals(ActionResult.Failed("It's disabled."), actions.tap(addToCart.key, dispatch = refusals))
+        val answer = async { screen.session.ask(CardQuestion(1, "Delete the test draft?", listOf("Confirm", "Cancel"))) { SystemClock.uptimeMillis() } }
+        try {
+            withTimeout(5_000) { while (!screen.session.cardShowing) delay(20) }
+            assertEquals(ActionResult.CARD_OPEN, actions.tap(send.key, dispatch = refusals))
+        } finally {
+            answer.cancel()
+        }
+        withTimeout(5_000) { while (screen.session.cardShowing) delay(50) }
+        assertEquals(0 to 0, refusals.counts)
+
+        val node = CountedPress()
+        assertEquals(ActionResult.Done(ActionMethod.ACTION), actions.tap(screen.awaitElement { it.label == "SEND" }.key, dispatch = node))
+        assertEquals(1 to 0, node.counts)
+
+        screen.open("ViewsActivity", "Views fixture")
+        val gesture = CountedPress()
+        assertEquals(ActionResult.Done(ActionMethod.GESTURE), actions.tap(screen.awaitElement { it.label == "Touch target" }.key, dispatch = gesture))
+        assertEquals(1 to 0, gesture.counts)
+
+        screen.open("PressActivity", "Press fixture")
+        val once = CountedPress()
+        assertEquals(ActionResult.UNCERTAIN, actions.tap(screen.awaitElement { it.label == "DEAF" }.key, policy = PressPolicy.ONCE, dispatch = once))
+        assertEquals(1 to 0, once.counts)
+    }
+
+    // How often a press told its dispatch that it went to Android, and that Android refused it.
+    private class CountedPress : PressDispatch {
+        private val dispatched = AtomicInteger()
+        private val refused = AtomicInteger()
+
+        val counts: Pair<Int, Int> get() = dispatched.get() to refused.get()
+
+        override fun dispatching() {
+            dispatched.incrementAndGet()
+        }
+
+        override fun notDispatched() {
+            refused.incrementAndGet()
+        }
     }
 }

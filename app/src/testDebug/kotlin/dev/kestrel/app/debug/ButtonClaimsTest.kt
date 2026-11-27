@@ -43,7 +43,7 @@ class ButtonClaimsTest {
     }
 
     // A process's claims in the boot [boot].
-    private fun claims(boot: Int = BOOT) = ButtonClaims(file, tags::claim, clock = { now }, boot = boot, next = { ++numbers })
+    private fun claims(boot: Int? = BOOT) = ButtonClaims(file, tags::claim, clock = { now }, boot = boot, next = { ++numbers })
 
     // A broadcast of [action]'s button reaches the receiver, which takes its number through [claims], and the conversation
     // gets its input, as GoalActionReceiver gives it.
@@ -56,8 +56,8 @@ class ButtonClaimsTest {
     // goal-control's press in the shade as ScreenActions runs it: [dispatched] says whether the press went to SystemUI,
     // which runs the press's step first, and [answer] what the press then answers or throws.
     private fun shadePress(claims: ButtonClaims, action: GoalAction, dispatched: Boolean, answer: () -> String?): String? {
-        val dispatching = claims.pressing(action, goal)
-        if (dispatched) dispatching()
+        val dispatch = claims.pressing(action, goal)
+        if (dispatched) dispatch.dispatching()
         return answer()
     }
 
@@ -98,8 +98,8 @@ class ButtonClaimsTest {
         assertEquals(listOf(marked.id, marked.id), gone)
         // The press's step arms once, also when the press runs it twice.
         val twice = claims.pressing(GoalAction.CONTINUE, goal)
-        twice()
-        twice()
+        twice.dispatching()
+        twice.dispatching()
         press(claims, GoalAction.CONTINUE)
         press(claims, GoalAction.CONTINUE)
         assertEquals(listOf(marked.id, marked.id, marked.id), gone)
@@ -110,10 +110,10 @@ class ButtonClaimsTest {
     @Test
     fun aClaimIsValidOnlyFromItsBroadcastsDueTime() {
         val claims = claims()
-        val dispatching = claims.pressing(GoalAction.CONTINUE, goal)
+        val dispatch = claims.pressing(GoalAction.CONTINUE, goal)
         press(claims, GoalAction.CONTINUE)
         assertEquals(listOf(marked.id), gone)
-        dispatching()
+        dispatch.dispatching()
         press(claims, GoalAction.CONTINUE)
         assertEquals(listOf(marked.id), gone)
 
@@ -177,6 +177,52 @@ class ButtonClaimsTest {
         press(claims(), GoalAction.CANCEL)
         assertFalse(file.exists())
         assertEquals(List(3) { marked.id }, gone)
+    }
+
+    // Re-check of round 12, Minor A: a gesture that Android refused reached nothing, so its claim is taken back and the
+    // owner's tap after it is his; a press whose node action answered no keeps its claim also when its gesture after that
+    // is refused, because the app may have acted on the action.
+    @Test
+    fun aRefusedGestureTakesItsClaimBackUnlessAnEarlierHandOverMayHaveReachedSystemUi() {
+        val claims = claims()
+        val refused = claims.pressing(GoalAction.CONTINUE, goal)
+        refused.dispatching()
+        refused.notDispatched()
+        assertFalse(file.exists())
+        press(claims, GoalAction.CONTINUE)
+        assertEquals(listOf(marked.id), gone)
+
+        val actionThenGesture = claims.pressing(GoalAction.CONTINUE, goal)
+        actionThenGesture.dispatching()
+        actionThenGesture.dispatching()
+        actionThenGesture.notDispatched()
+        press(claims, GoalAction.CONTINUE)
+        assertEquals(listOf(marked.id), gone)
+    }
+
+    // Re-check of round 12, Important B: without a boot count, no claim of the file is trusted, as one that an earlier
+    // process wrote, and the file is deleted; claims stay in this process's memory, where a broadcast still uses them, and
+    // reach no new process.
+    @Test
+    fun withoutABootCountClaimsLiveInTheProcessOnly() {
+        claims().arm(GoalAction.CANCEL, goal)
+        assertTrue(file.isFile)
+
+        val unbooted = claims(boot = null)
+        assertFalse(file.exists())
+        assertFalse(unbooted.reachesNewProcesses)
+        press(unbooted, GoalAction.CANCEL)
+        assertEquals(listOf(marked.id), gone)
+
+        unbooted.pressing(GoalAction.CONTINUE, goal).dispatching()
+        assertFalse(file.exists())
+        press(unbooted, GoalAction.CONTINUE)
+        assertEquals(listOf(marked.id), gone)
+        unbooted.arm(GoalAction.CANCEL, goal)
+        assertFalse(file.exists())
+        press(claims(boot = null), GoalAction.CANCEL)
+        assertEquals(listOf(marked.id, marked.id), gone)
+        assertTrue(claims().reachesNewProcesses)
     }
 
     // A claim counts only for its button and its goal, is used once, and expires.

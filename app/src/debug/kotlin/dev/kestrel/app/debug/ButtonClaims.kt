@@ -1,19 +1,22 @@
 package dev.kestrel.app.debug
 
+import android.content.ContentResolver
+import android.provider.Settings
 import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.goal.ButtonActs
 import dev.kestrel.app.goal.GoalAction
 import dev.kestrel.app.goal.NoticeGoal
+import dev.kestrel.screen.act.PressDispatch
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The debug hooks' claims of their own presses of the goal notification's buttons (plan 7G): the debug form of
  * [ButtonActs], which `GoalActionReceiver` asks for the number of each tap as its broadcast arrives. goal-control arms a
  * claim for the button [GoalAction] of the notice of one goal ([NoticeGoal]) before the button's broadcast can come: `tap`
- * at the moment that its press goes to SystemUI ([pressing]), and `send-later` before it hands the button's PendingIntent
+ * at the moment that its press goes to SystemUI, taken back when Android refused the press's gesture ([pressing]), and
+ * `send-later` before it hands the button's PendingIntent
  * to AlarmManager, from the alarm's trigger time on ([arm]). [take] gives every broadcast the next number among the inputs,
  * and when an armed claim matches the broadcast's button and goal, it uses the claim up and claims that number as the
  * hooks' ([claim], `CommandTags.claim`) before it returns, so before the receiver gives the conversation its input. Any
@@ -27,6 +30,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * its claims to the next one, and the file is written again in one step (a temporary file, then a rename) at every
  * change. A claim holds the button's name, the goal's key, the boot's count and a time, and no words.
  *
+ * Without a boot count ([boot] null: a phone or an Android build that does not keep `Settings.Global.BOOT_COUNT`), no claim
+ * in the file can be tied to this boot, so none is trusted: the file is deleted, and the claims live in this process's
+ * memory only, where they stay exact, because the process's clock belongs to the current boot. A claim then never reaches
+ * a new process ([reachesNewProcesses]), so `goal-control send-later` refuses, and `tap`, whose broadcast reaches this
+ * process, keeps working; when this process ends before the broadcast, the press counts as the owner's.
+ *
  * One window remains, and nothing can close it: Kestrel's buttons are immutable PendingIntents (`GoalNotification`), so
  * neither SystemUI's send nor AlarmManager's can add a token, and the receiver cannot tell the hooks' broadcast from the
  * owner's. The owner's own tap on the same button of the same goal's notice, from the moment that the hooks' broadcast is
@@ -38,19 +47,27 @@ internal class ButtonClaims(
     private val file: File,
     private val claim: (Long) -> Unit,
     private val clock: () -> Long,
-    private val boot: Int,
+    private val boot: Int?,
     private val next: () -> Long = InputIds::next,
 ) : ButtonActs {
-    /** A claim of the hooks' press of [action] on the notice of [goal] in the boot [boot], valid from [fromMillis] on [clock]. */
-    data class Claim(val action: GoalAction, val goal: NoticeGoal, val boot: Int, val fromMillis: Long) {
+    /**
+     * A claim of the hooks' press of [action] on the notice of [goal] in the boot [boot], or in this process only when the
+     * phone has no boot count, valid from [fromMillis] on [clock].
+     */
+    data class Claim(val action: GoalAction, val goal: NoticeGoal, val boot: Int?, val fromMillis: Long) {
         /** The end of the claim's life on [clock]. */
         val untilMillis: Long get() = fromMillis + LIFE_MILLIS
     }
 
     private val claims = mutableListOf<Claim>()
 
+    /** Whether a claim reaches a new process of this boot through [file]: only with a boot count. */
+    val reachesNewProcesses: Boolean get() = boot != null
+
     init {
-        if (file.isFile) {
+        if (boot == null) {
+            file.delete()
+        } else if (file.isFile) {
             val now = clock()
             val lines = file.readLines()
             lines.mapNotNull(::parse).filterTo(claims) { it.boot == boot && now <= it.untilMillis }
@@ -59,14 +76,35 @@ internal class ButtonClaims(
     }
 
     /**
-     * The step that goal-control's press of [action]'s button on the notice of [goal] runs right before the press goes to
-     * SystemUI (`ScreenActions.tap`'s `dispatching`): it arms the press's claim from that moment, once. Nothing takes it
-     * back, because from then on the press may have sent the button's broadcast, whatever the press answers, also when it
-     * is cancelled or fails later; an unused claim expires. A press that never goes to SystemUI never arms one.
+     * What goal-control's press of [action]'s button on the notice of [goal] tells the claims (`ScreenActions.tap`'s
+     * [PressDispatch]): the press's claim is armed right before the press first goes to SystemUI, once for the whole press,
+     * and stays whatever the press answers, also when it is cancelled or fails later, because from then on the press may
+     * have sent the button's broadcast; an unused claim expires. Only when Android refused every hand-over of the press, as
+     * a refused gesture, is the claim taken back, because then nothing reached SystemUI. A press that never goes to
+     * SystemUI never arms one.
      */
-    fun pressing(action: GoalAction, goal: NoticeGoal): () -> Unit {
-        val armed = AtomicBoolean(false)
-        return { if (armed.compareAndSet(false, true)) arm(action, goal) }
+    fun pressing(action: GoalAction, goal: NoticeGoal): PressDispatch = object : PressDispatch {
+        private var armed: Claim? = null
+
+        // The hand-overs that Android may have taken: a node's action, whatever it answered, or a gesture that it took.
+        private var reached = 0
+
+        override fun dispatching() {
+            synchronized(this) {
+                if (armed == null) armed = arm(action, goal)
+                reached++
+            }
+        }
+
+        override fun notDispatched() {
+            synchronized(this) {
+                reached--
+                if (reached == 0) {
+                    armed?.let { disarm(it) }
+                    armed = null
+                }
+            }
+        }
     }
 
     /** Arms a claim of the hooks' press of [action] on the notice of [goal], valid from [fromMillis] on [clock], now by default. */
@@ -77,7 +115,7 @@ internal class ButtonClaims(
         return armed
     }
 
-    /** Takes back [armed], whose broadcast was certainly never sent, as an alarm that AlarmManager did not take. */
+    /** Takes back [armed], whose broadcast was certainly never sent: a refused gesture, or an alarm that AlarmManager did not take. */
     @Synchronized
     fun disarm(armed: Claim) {
         change(claims.filterNot { it === armed })
@@ -102,6 +140,7 @@ internal class ButtonClaims(
     }
 
     private fun save(saved: List<Claim>) {
+        if (boot == null) return
         if (saved.isEmpty()) {
             file.delete()
             return
@@ -137,12 +176,20 @@ internal class ButtonClaims(
         private var current: ButtonClaims? = null
 
         /**
-         * Starts the claims of this process in the boot [boot] (`DebugKestrelApplication`, once, before any broadcast):
-         * reads the claims that an earlier process armed in [dir], has [tags] claim the number of each used claim, and gives
-         * [install] the receiver's seam, `AppGraph.buttonActs`.
+         * This boot's count, which Android counts up at every boot, or null when the phone does not keep it or keeps no
+         * number. It never throws, so that a phone without it starts Kestrel as usual; its claims then stay in one process.
+         */
+        fun bootCount(resolver: ContentResolver): Int? =
+            Settings.Global.getInt(resolver, Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 }
+
+        /**
+         * Starts the claims of this process in the boot [boot], or in this process only without a boot count
+         * (`DebugKestrelApplication`, once, before any broadcast): reads the claims that an earlier process of this boot
+         * armed in [dir], has [tags] claim the number of each used claim, and gives [install] the receiver's seam,
+         * `AppGraph.buttonActs`.
          */
         @Synchronized
-        fun start(dir: File, tags: CommandTags, clock: () -> Long, boot: Int, install: (ButtonActs) -> Unit) {
+        fun start(dir: File, tags: CommandTags, clock: () -> Long, boot: Int?, install: (ButtonActs) -> Unit) {
             val claims = ButtonClaims(File(dir, FILE), tags::claim, clock, boot)
             current = claims
             install(claims)

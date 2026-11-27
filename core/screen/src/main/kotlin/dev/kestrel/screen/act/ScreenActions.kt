@@ -62,18 +62,20 @@ class ScreenActions internal constructor(
      * these snapshots as a whole in the same way, such as test mode's check that the window still shows the owner's own
      * chat (fix-5c-selfchats-review M1).
      *
-     * [dispatching] runs right before each press that Kestrel hands to Android, the node's action or the gesture, on the
-     * caller's coroutine. From then on the press may have reached the app, whatever the result says, also when the press
-     * is cancelled or throws later; a press that stops before it hands anything to Android, as one that a check refuses,
-     * never runs it.
+     * [dispatch] learns each moment that Kestrel hands the press to Android ([PressDispatch.dispatching]): right before the
+     * node's action, on the caller's coroutine, or right before the fallback gesture, on the main thread in
+     * [GestureRunner]'s turn. From then on the press may have reached the app, whatever the result says, also when the
+     * press is cancelled or throws later, except for a gesture that Android refused, which it is told of
+     * ([PressDispatch.notDispatched]). A press that stops before it hands anything to Android, as one that a check refuses
+     * or one that is cancelled while it waits for the gesture runner, tells it nothing.
      */
     suspend fun tap(
         key: String,
         expected: ((ScreenElement) -> Boolean)? = null,
         policy: PressPolicy = PressPolicy.VERIFIED,
         guard: ((ScreenSnapshot) -> Boolean)? = null,
-        dispatching: (() -> Unit)? = null,
-    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected, policy, guard, dispatching)
+        dispatch: PressDispatch? = null,
+    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_CLICK, Gestures::tap, expected, policy, guard, dispatch)
 
     /** Long-presses the element with [key], in the same way as [tap]. */
     suspend fun longPress(
@@ -81,8 +83,8 @@ class ScreenActions internal constructor(
         expected: ((ScreenElement) -> Boolean)? = null,
         policy: PressPolicy = PressPolicy.VERIFIED,
         guard: ((ScreenSnapshot) -> Boolean)? = null,
-        dispatching: (() -> Unit)? = null,
-    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected, policy, guard, dispatching)
+        dispatch: PressDispatch? = null,
+    ): ActionResult = press(key, AccessibilityNodeInfo.ACTION_LONG_CLICK, Gestures::longPress, expected, policy, guard, dispatch)
 
     suspend fun tapAt(x: Int, y: Int): ActionResult = pressed(gestureAt(ScreenPoint(x, y), Gestures::tap))
 
@@ -520,7 +522,7 @@ class ScreenActions internal constructor(
         expected: ((ScreenElement) -> Boolean)?,
         policy: PressPolicy,
         guard: ((ScreenSnapshot) -> Boolean)?,
-        dispatching: (() -> Unit)?,
+        dispatch: PressDispatch?,
     ): ActionResult {
         cardOpen()?.let { return it }
         val live = snapshots.current()
@@ -533,22 +535,22 @@ class ScreenActions internal constructor(
         val gecko = action == AccessibilityNodeInfo.ACTION_LONG_CLICK && node.firefoxPage(live.snapshot.element(key)?.packageName) != null
         if (gecko && node.refresh() && node.isVisibleToUser) {
             val bounds = node.screenBounds()
-            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback, dispatching))
+            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback, dispatch))
         }
         val target = if (gecko) null else node.touchTarget(action)
         if (target != null && !target.node.isEnabled) return DISABLED
         if (target != null && target.node.offers(action)) {
-            if (target.node.press(action, dispatching)) {
+            if (target.node.press(action, dispatch)) {
                 return settled(if (target.isSelf) ActionMethod.ACTION else ActionMethod.PARENT_ACTION)
             }
             // Android answered no, but some apps act all the same, so a second press could send twice (D32 item 29).
             if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
-            return pressAgain(key, action, fallback, expected, guard, dispatching, live.snapshot, windowId, target.node)
+            return pressAgain(key, action, fallback, expected, guard, dispatch, live.snapshot, windowId, target.node)
         }
         if (!gecko && node.refresh() && node.isVisibleToUser) {
             // The element is still there, but what a touch on it reaches does not offer the action: a gesture presses it.
             val bounds = node.screenBounds()
-            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback, dispatching))
+            if (!bounds.isEmpty) return pressed(fallbackAt(bounds, live.snapshot.coversAbove(windowId), fallback, dispatch))
         }
         // The node has gone or is hidden, so nothing was pressed yet: look for the element again (design spec, section
         // 14.3). The key may name another element in the fresh snapshot, so [expected] checks it again.
@@ -560,11 +562,11 @@ class ScreenActions internal constructor(
         val freshTarget = if (gecko) null else fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && !freshTarget.node.isEnabled) return DISABLED
         if (freshTarget != null && freshTarget.node.offers(action)) {
-            if (freshTarget.node.press(action, dispatching)) return settled(ActionMethod.RETRY_ACTION)
+            if (freshTarget.node.press(action, dispatch)) return settled(ActionMethod.RETRY_ACTION)
             if (policy == PressPolicy.ONCE) return ActionResult.UNCERTAIN
-            return pressAgain(key, action, fallback, expected, guard, dispatching, fresh.snapshot, element.windowId, freshTarget.node)
+            return pressAgain(key, action, fallback, expected, guard, dispatch, fresh.snapshot, element.windowId, freshTarget.node)
         }
-        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback, dispatching))
+        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback, dispatch))
     }
 
     /**
@@ -578,7 +580,7 @@ class ScreenActions internal constructor(
         fallback: (Int, Int) -> GestureDescription,
         expected: ((ScreenElement) -> Boolean)?,
         guard: ((ScreenSnapshot) -> Boolean)?,
-        dispatching: (() -> Unit)?,
+        dispatch: PressDispatch?,
         before: ScreenSnapshot,
         windowId: Int?,
         refusedNode: AccessibilityNodeInfo,
@@ -592,9 +594,9 @@ class ScreenActions internal constructor(
         if (guard != null && !guard(fresh.snapshot)) return ActionResult.CHANGED
         val freshTarget = fresh.node(key)?.touchTarget(action)
         if (freshTarget != null && freshTarget.node.isEnabled && freshTarget.node.offers(action) && freshTarget.node != refusedNode) {
-            return if (freshTarget.node.press(action, dispatching)) settled(ActionMethod.RETRY_ACTION) else ActionResult.UNCERTAIN
+            return if (freshTarget.node.press(action, dispatch)) settled(ActionMethod.RETRY_ACTION) else ActionResult.UNCERTAIN
         }
-        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback, dispatching))
+        return pressed(fallbackAt(element.bounds, fresh.snapshot.coversAbove(element.windowId), fallback, dispatch))
     }
 
     /** A pressing gesture whose end Android did not report may still have pressed (design D32 item 29 of sub-project 5). */
@@ -605,10 +607,10 @@ class ScreenActions internal constructor(
         bounds: IntRect,
         covers: List<IntRect>,
         build: (Int, Int) -> GestureDescription,
-        dispatching: (() -> Unit)?,
+        dispatch: PressDispatch?,
     ): ActionResult {
         val point = Uncovered.point(bounds, covers) ?: return ActionResult.COVERED
-        return gestureAt(point, build, dispatching)
+        return gestureAt(point, build, dispatch)
     }
 
     /** Focuses the field, waits until it connects to Kestrel's input method, and replaces its text. */
@@ -649,25 +651,24 @@ class ScreenActions internal constructor(
         }
     }
 
-    private suspend fun gestureAt(point: ScreenPoint, build: (Int, Int) -> GestureDescription, dispatching: (() -> Unit)? = null): ActionResult =
-        gesture(listOf(point), dispatching) { arrayOf(build(point.x, point.y)) }
+    private suspend fun gestureAt(point: ScreenPoint, build: (Int, Int) -> GestureDescription, dispatch: PressDispatch? = null): ActionResult =
+        gesture(listOf(point), dispatch) { arrayOf(build(point.x, point.y)) }
 
     /**
      * Runs the gesture that [build] makes, after checking that its [points] lie on the screen: Android's gesture builder
-     * throws for a negative point, and a gesture beyond the screen's edge reaches nothing. [dispatching] runs right before
-     * the gesture goes to Android.
+     * throws for a negative point, and a gesture beyond the screen's edge reaches nothing. [dispatch] learns, in
+     * [GestureRunner]'s turn, the moment that the gesture goes to Android and whether Android refused it.
      */
-    private suspend fun gesture(points: List<ScreenPoint>, dispatching: (() -> Unit)? = null, build: () -> Array<GestureDescription>): ActionResult {
+    private suspend fun gesture(points: List<ScreenPoint>, dispatch: PressDispatch? = null, build: () -> Array<GestureDescription>): ActionResult {
         cardOpen()?.let { return it }
         val screen = service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
         if (points.any { it.x < screen.left || it.x >= screen.right || it.y < screen.top || it.y >= screen.bottom }) {
             return OFF_SCREEN
         }
         val strokes = build()
-        dispatching?.invoke()
         own.begin()
         val outcome = try {
-            gestures.perform(*strokes)
+            gestures.perform(*strokes, press = dispatch)
         } finally {
             own.end()
         }
@@ -742,9 +743,12 @@ class ScreenActions internal constructor(
     private fun AccessibilityNodeInfo.perform(action: Int, arguments: Bundle? = null, kind: OwnActions.Kind = OwnActions.kindOf(action)): Boolean =
         own.node(kind) { performAction(action, arguments) }
 
-    /** Presses this node with [action], as [perform] does, after [dispatching] has run: [tap]'s press as Android gets it. */
-    private fun AccessibilityNodeInfo.press(action: Int, dispatching: (() -> Unit)?): Boolean {
-        dispatching?.invoke()
+    /**
+     * Presses this node with [action], as [perform] does, right after [dispatch]'s step: [tap]'s press as Android gets it.
+     * An answer of no keeps the step, because some apps act all the same (D32 item 29).
+     */
+    private fun AccessibilityNodeInfo.press(action: Int, dispatch: PressDispatch?): Boolean {
+        dispatch?.dispatching()
         return perform(action)
     }
 

@@ -19,6 +19,7 @@ import dev.kestrel.privacy.logs.describeWithoutMessages
 import dev.kestrel.screen.ScreenSession
 import dev.kestrel.screen.act.ActionResult
 import dev.kestrel.screen.act.GlobalAction
+import dev.kestrel.screen.act.PressDispatch
 import dev.kestrel.screen.act.PressPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -93,9 +94,10 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val goal = notice.goal ?: throw HookError("the goal notification names no goal")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         // The press is the hooks', so a button that gives the conversation an input has its number claimed at the moment that
-        // the press goes to SystemUI, and the claim stays whatever the press answers afterwards: the receiver uses it up as
-        // the button's broadcast arrives, and an unused one expires (ButtonClaims; plan 7G). Open gives no input.
-        val dispatching = action.intent?.let { ButtonClaims.current().pressing(action, goal) }
+        // the press goes to SystemUI, and the claim stays whatever the press answers afterwards, unless Android refused the
+        // press's gesture: the receiver uses it up as the button's broadcast arrives, and an unused one expires
+        // (ButtonClaims; plan 7G). Open gives no input.
+        val dispatch = action.intent?.let { ButtonClaims.current().pressing(action, goal) }
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
         // is as the hook found it (AGENTS.md's limits on the A71).
         val seen = ShadeSeen()
@@ -103,7 +105,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            val tapped = tapInShade(session, notice, action, seen, dispatching)
+            val tapped = tapInShade(session, notice, action, seen, dispatch)
             expanded = tapped.expanded
             when (tapped) {
                 is NoticeButtons.Tapped.Pressed -> null
@@ -137,13 +139,13 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         return false
     }
 
-    // Null once the button with [key] was pressed, else why not. [dispatching] runs right before the press goes to SystemUI.
+    // Null once the button with [key] was pressed, else why not. [dispatch] learns the moments that the press goes to SystemUI.
     private suspend fun pressInShade(
         session: ScreenSession,
         notice: GoalNotice,
         action: GoalAction,
         key: String,
-        dispatching: (() -> Unit)?,
+        dispatch: PressDispatch?,
     ): String? {
         // By the button's key, which the press checks again in every snapshot that it acts on: a row that a new notification
         // moved, or another app's button, is never pressed in its place (AGENTS.md's limits on the A71). Once only, so that a
@@ -153,7 +155,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             expected = { element -> buttons.isButton(element, action.label) },
             policy = PressPolicy.ONCE,
             guard = { snapshot -> buttons.button(snapshot, notice.title, action.label) == key },
-            dispatching = dispatching,
+            dispatch = dispatch,
         )
         return (pressed as? ActionResult.Failed)?.reason
     }
@@ -164,7 +166,9 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
      * step ends Kestrel's process meanwhile, and the system delivers the button's broadcast to a new process as it
      * delivers the owner's tap. Nothing is tapped on the screen, so a row that moves in the shade can never turn it into a
      * tap on another app's notification. `send=scheduled`, or `send=none` when Kestrel's goal notification shows no such
-     * button. USE_EXACT_ALARM in the debug manifest allows the exact alarm without a setting of the phone.
+     * button. USE_EXACT_ALARM in the debug manifest allows the exact alarm without a setting of the phone. On a phone
+     * without a boot count, a button that gives an input is refused before the alarm, because its claim cannot reach the
+     * new process ([ButtonClaims.reachesNewProcesses]).
      */
     private fun sendLater(name: String?): String {
         val action = actionOf(name)
@@ -183,6 +187,9 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         // it, so that the broadcast reaches Kestrel as the owner's tap does, without the exemptions of an alarm that is
         // allowed while idle; an alarm that Doze defers beyond the claim's life comes unclaimed, and counts as the owner's.
         val claims = ButtonClaims.current()
+        if (action.intent != null && !claims.reachesNewProcesses) {
+            throw HookError("this phone has no boot count, so send-later's press cannot be claimed in a new process")
+        }
         val due = SystemClock.elapsedRealtime() + SEND_LATER_MILLIS
         val armed = action.intent?.let { claims.arm(action, goal, fromMillis = due) }
         try {
@@ -206,7 +213,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         notice: GoalNotice,
         action: GoalAction,
         seen: ShadeSeen,
-        dispatching: (() -> Unit)?,
+        dispatch: PressDispatch?,
     ): NoticeButtons.Tapped =
         buttons.findAndPress(
             notice.title,
@@ -217,7 +224,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
                 session.snapshots.current().snapshot.also { if (buttons.showsTiles(it)) seen.tilesKnown = true }
             },
             expand = { session.actions.expand(it) },
-            press = { key -> pressInShade(session, notice, action, key, dispatching) },
+            press = { key -> pressInShade(session, notice, action, key, dispatch) },
         )
 
     /**

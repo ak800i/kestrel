@@ -280,6 +280,38 @@ class ListeningTest {
         assertEquals(Work.IDLE, listening.state.value.work)
     }
 
+    // Re-check of plan 7G's round 12, Minor C: the debug hooks' seam of the inputs gets the microphone of the voice session
+    // that heard each input, also after a restart of the session with another microphone.
+    @Test
+    fun theInputsSeamGetsTheMicrophoneOfTheSessionThatHeardTheInput() = runTest {
+        val listening = listening()
+        val first = FakeMicrophone()
+        val second = FakeMicrophone()
+        val heardBy = mutableListOf<Microphone?>()
+        listening.microphones = { first }
+        listening.inputs = { _, heard, input -> input.also { heardBy += heard } }
+        listening.converse = {}
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(service)
+        runCurrent()
+
+        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+        listening.send(Event.TurnOff)
+        runCurrent()
+        listening.microphones = { second }
+        listening.send(Event.Toggle)
+        runCurrent()
+        listening.onForeground(Any())
+        runCurrent()
+        listening.send(Event.Heard("Kestrel, open the settings.", named = true))
+        runCurrent()
+
+        assertEquals(listOf(first, second), sessions.microphones)
+        assertEquals(listOf<Microphone?>(first, second), heardBy)
+    }
+
     @Test
     fun theVoicePathReturnsOnceItsWordsHaveBeenSpokenOrWhileOffShown() = runTest {
         val listening = listeningWithSession()
