@@ -5,6 +5,7 @@ import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
 import dev.kestrel.commands.PhoneCommand
 import dev.kestrel.screen.ScreenSession
+import dev.kestrel.screen.read.withQuietBudget
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -24,7 +25,14 @@ internal class InstantCommands(private val environment: CommandEnvironment) : Co
     private val phone = phoneCommands(environment)
     private val screen = screenCommands(environment)
 
-    override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult {
+    // A command's waits for a quiet screen share one budget (design spec, sections 9.2 and 9.3), so that a screen that
+    // never goes quiet costs the command 3 s in all, not 3 s at each wait.
+    override suspend fun run(command: Command, heard: String, conversation: CommandConversation): CommandResult =
+        withQuietBudget { execute(command, heard, conversation) }
+
+    override fun privateInput(): Boolean = text.privateInput() || phone.privateInput() || screen.privateInput()
+
+    private suspend fun execute(command: Command, heard: String, conversation: CommandConversation): CommandResult {
         val session = environment.screen()
         if (session == null && !withoutScreen(command)) {
             return if (command is Command.Bare) CommandResult(Outcome.IGNORED) else CommandResult(Outcome.FAILED, say = CommandTexts.SERVICE_OFF)
@@ -42,8 +50,6 @@ internal class InstantCommands(private val environment: CommandEnvironment) : Co
         val result = screen.run(bare, heard, talk) ?: CommandResult(Outcome.IGNORED)
         return if (result.outcome == Outcome.DONE) result.copy(acted = bare) else result
     }
-
-    override fun privateInput(): Boolean = text.privateInput() || phone.privateInput() || screen.privateInput()
 
     private fun withoutScreen(command: Command): Boolean =
         command is PhoneCommand.Volume || command is PhoneCommand.Mute || command is PhoneCommand.Silence ||

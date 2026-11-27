@@ -5,6 +5,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,7 +36,7 @@ class ScreenChangeTrackerTest {
         }
 
         assertFalse(tracker.awaitQuiet(quietMillis = 200))
-        assertEquals(ScreenChangeTracker.MAX_WAIT_MILLIS, testScheduler.currentTime)
+        assertEquals(QuietBudget.MILLIS, testScheduler.currentTime)
         changes.cancel()
     }
 
@@ -46,6 +47,73 @@ class ScreenChangeTrackerTest {
 
         assertTrue(tracker.awaitQuiet(quietMillis = 200, since = testScheduler.currentTime))
         assertEquals(1_200, testScheduler.currentTime)
+    }
+
+    @Test
+    fun theWaitsOfOneCommandOnAScreenThatNeverGoesQuietTakeItsBudgetInAll() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        // A change every 110 ms, as SystemUI's shade sends while it sets its date again and again.
+        val changes = launch {
+            while (true) {
+                tracker.onScreenChanged()
+                delay(110)
+            }
+        }
+
+        val quiet = withQuietBudget {
+            listOf(
+                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS),
+                tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now()),
+                tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS),
+                // A run inside the command keeps the command's budget.
+                withQuietBudget { tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now()) },
+            )
+        }
+        changes.cancel()
+
+        assertEquals(listOf(false, false, false, false), quiet)
+        assertEquals(QuietBudget.MILLIS, testScheduler.currentTime)
+    }
+
+    @Test
+    fun aScreenThatGoesQuietSettlesWithinACommandAsItDoesOutsideOne() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val changes = launch {
+            repeat(6) {
+                tracker.onScreenChanged()
+                delay(50)
+            }
+        }
+        val budget = QuietBudget()
+
+        withContext(budget) {
+            // The last change comes at 250 ms, so the snapshot's wait ends 150 ms later.
+            assertTrue(tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS))
+            assertEquals(400, testScheduler.currentTime)
+            // The settle wait after an action counts from the action.
+            assertTrue(tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now()))
+            assertEquals(600, testScheduler.currentTime)
+        }
+        changes.join()
+
+        assertEquals(QuietBudget.MILLIS - 600, budget.remainingMillis)
+    }
+
+    @Test
+    fun outsideACommandEachWaitHasABudgetOfItsOwn() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val changes = launch {
+            while (true) {
+                tracker.onScreenChanged()
+                delay(50)
+            }
+        }
+
+        assertFalse(tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS))
+        assertFalse(tracker.awaitQuiet(ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS))
+        changes.cancel()
+
+        assertEquals(2 * QuietBudget.MILLIS, testScheduler.currentTime)
     }
 
     @Test

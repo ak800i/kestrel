@@ -1,5 +1,6 @@
 package dev.kestrel.screen.read
 
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Remembers when the screen last changed, so that Kestrel can wait until it is quiet (design spec, sections 9.2
- * and 9.3). [clock] counts milliseconds and never jumps, like `SystemClock.uptimeMillis`.
+ * and 9.3), within a [QuietBudget]. [clock] counts milliseconds and never jumps, like `SystemClock.uptimeMillis`.
  */
 class ScreenChangeTracker(private val clock: () -> Long) {
     private val versions = MutableStateFlow(0L)
@@ -68,17 +69,24 @@ class ScreenChangeTracker(private val clock: () -> Long) {
 
     /**
      * Waits until the screen has had no change for [quietMillis], counted from [since] at the earliest, and
-     * returns true. Returns false when that takes longer than [maxWaitMillis]. [since] must come from [now], because
-     * only this tracker's clock fits its times.
+     * returns true. Returns false when the context's [QuietBudget], or a budget of this wait's own outside a command, runs
+     * out first; the time that the wait took comes off that budget. [since] must come from [now], because only this
+     * tracker's clock fits its times.
      */
-    suspend fun awaitQuiet(quietMillis: Long, since: Long = Long.MIN_VALUE, maxWaitMillis: Long = MAX_WAIT_MILLIS): Boolean {
-        val deadline = clock() + maxWaitMillis
-        while (true) {
-            val now = clock()
-            val quietFor = now - maxOf(lastChangeAt, since)
-            if (quietFor >= quietMillis) return true
-            if (now >= deadline) return false
-            delay(minOf(quietMillis - quietFor, deadline - now))
+    suspend fun awaitQuiet(quietMillis: Long, since: Long = Long.MIN_VALUE): Boolean {
+        val budget = currentCoroutineContext()[QuietBudget] ?: QuietBudget()
+        val started = clock()
+        val deadline = started + budget.remainingMillis
+        try {
+            while (true) {
+                val now = clock()
+                val quietFor = now - maxOf(lastChangeAt, since)
+                if (quietFor >= quietMillis) return true
+                if (now >= deadline) return false
+                delay(minOf(quietMillis - quietFor, deadline - now))
+            }
+        } finally {
+            budget.spend(clock() - started)
         }
     }
 
@@ -88,9 +96,6 @@ class ScreenChangeTracker(private val clock: () -> Long) {
 
         /** How long the screen must be quiet after an action. */
         const val ACTION_QUIET_MILLIS = 200L
-
-        /** The longest wait for a quiet screen. */
-        const val MAX_WAIT_MILLIS = 3_000L
 
         /**
          * How long after an event of another app's window Kestrel checks that a new snapshot's window has stopped moving:

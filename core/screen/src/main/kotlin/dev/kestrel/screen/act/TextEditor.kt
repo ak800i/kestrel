@@ -459,7 +459,7 @@ class TextEditor(
         sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
     }
 
-    /** Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3). */
+    /** Waits until the screen has been quiet after the action, within the command's `QuietBudget` (design spec, section 9.3). */
     private suspend fun settled(method: ActionMethod): ActionResult {
         tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
         return ActionResult.Done(method)

@@ -25,7 +25,7 @@ import kotlin.coroutines.CoroutineContext
 /**
  * Starts activities and system actions, switches to the previous app and pans the magnification (design spec, section
  * 9.3). Like [ScreenActions], it makes blocking binder calls on the caller's dispatcher, so callers run it on
- * `Dispatchers.IO`, and each action waits until the screen has been quiet afterwards, but never longer than 3 s.
+ * `Dispatchers.IO`, and each action waits until the screen has been quiet afterwards, within the command's `QuietBudget`.
  */
 class SystemControls(
     private val service: AccessibilityService,

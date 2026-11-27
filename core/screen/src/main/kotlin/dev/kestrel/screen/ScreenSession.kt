@@ -173,7 +173,8 @@ class ScreenSession(service: AccessibilityService, private val errors: Coroutine
         scope.launch {
             // collect, not collectLatest: on a screen that changes all the time, such as a stopwatch, collectLatest would
             // cancel every check before it ran. The version is a state, so the check after a slow one sees the latest
-            // version, and the snapshot cache waits until the screen is quiet, but never longer than 3 s.
+            // version, and the snapshot cache waits until the screen is quiet, but never longer than the 3 s of a
+            // QuietBudget of its own, because the watcher is not part of a command.
             tracker.version.collect {
                 if (!keepFresh && numbersMode == null && labelsShownOn == null && whichOneShownOn == null) return@collect
                 // A failed check must not end the watcher, or the numbers and labels would stop following the screen.

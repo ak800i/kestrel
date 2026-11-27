@@ -84,7 +84,61 @@ class SnapshotCacheTest {
         ticking.cancel()
 
         // Each caller waits at most 3 s for quiet and then builds; the second does not wait 3 s more after the first.
-        assertTrue(testScheduler.currentTime - started < 2 * ScreenChangeTracker.MAX_WAIT_MILLIS)
+        assertTrue(testScheduler.currentTime - started < 2 * QuietBudget.MILLIS)
+    }
+
+    @Test
+    fun aCommandOnAScreenThatNeverGoesQuietWaitsForItAtMostItsBudgetInAll() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        var builds = 0
+        val cache = SnapshotCache(tracker) {
+            delay(BUILD_MILLIS)
+            ++builds
+        }
+        // A change every 110 ms, as SystemUI's shade sends while it sets its date again and again.
+        val ticking = launch {
+            while (true) {
+                tracker.onScreenChanged()
+                delay(110)
+            }
+        }
+
+        // A command in the shade: the snapshot that finds the element, the settle wait after the action, and the
+        // snapshots that check what the action did.
+        withQuietBudget {
+            cache.current()
+            tracker.awaitQuiet(ScreenChangeTracker.ACTION_QUIET_MILLIS, since = tracker.now())
+            cache.current()
+            cache.current()
+        }
+        ticking.cancel()
+
+        assertEquals(3, builds)
+        assertEquals(QuietBudget.MILLIS + builds * BUILD_MILLIS, testScheduler.currentTime)
+    }
+
+    @Test
+    fun aCommandOnAScreenThatGoesQuietStillWaitsForItBeforeEachSnapshot() = runTest {
+        val tracker = ScreenChangeTracker { testScheduler.currentTime }
+        val builtAt = mutableListOf<Long>()
+        val cache = SnapshotCache(tracker) { testScheduler.currentTime.also { builtAt += it } }
+
+        withQuietBudget {
+            // The screen changes for 250 ms after the command starts, and the snapshot waits for 150 ms of quiet after it.
+            val changes = launch {
+                repeat(6) {
+                    tracker.onScreenChanged()
+                    delay(50)
+                }
+            }
+            cache.current()
+            changes.join()
+            // An action's change later on gets its own wait.
+            tracker.onScreenChanged()
+            cache.current()
+        }
+
+        assertEquals(listOf(400L, 550L), builtAt)
     }
 
     @Test
@@ -202,7 +256,7 @@ class SnapshotCacheTest {
 
         assertNotNull("The check never ended", value)
         // The screen never goes quiet, so the first build comes after 3 s; the check after it ends 1.5 s later at most.
-        assertEquals(ScreenChangeTracker.MAX_WAIT_MILLIS, builtAt.first())
+        assertEquals(QuietBudget.MILLIS, builtAt.first())
         assertTrue(testScheduler.currentTime - builtAt.first() <= ScreenChangeTracker.SETTLE_MAX_MILLIS)
         assertEquals(value, 600_000L - builtAt.last())
     }
@@ -226,5 +280,9 @@ class SnapshotCacheTest {
         assertEquals(2L, cache.current())
         assertEquals(before, testScheduler.currentTime)
         assertEquals(0, window.reads)
+    }
+
+    private companion object {
+        const val BUILD_MILLIS = 100L
     }
 }

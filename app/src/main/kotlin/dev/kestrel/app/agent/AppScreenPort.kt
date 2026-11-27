@@ -18,6 +18,7 @@ import dev.kestrel.screen.act.GlobalAction
 import dev.kestrel.screen.act.PressPolicy
 import dev.kestrel.screen.act.ScrollDirection
 import dev.kestrel.screen.model.ScreenSnapshot
+import dev.kestrel.screen.read.withQuietBudget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -50,7 +51,10 @@ internal class AppScreenPort(
         val screen = session() ?: return ActionOutcome(done = false, reason = AgentTexts.NO_SERVICE)
         afterCard(screen)
         val result = try {
-            perform(screen, action)
+            // An action is the agent's command: its waits for a quiet screen share one budget (design spec, section 9.3).
+            // The observation after it, snapshot(), waits with a budget of its own, so that the step is judged on a
+            // screen that had its own time to settle.
+            withQuietBudget { perform(screen, action) }
         } finally {
             acted()
         }

@@ -23,7 +23,7 @@ interface PlaceCheck<T> {
 
 /**
  * Keeps the last snapshot until the screen changes. After a change, it builds a new snapshot once the screen
- * has been quiet for [ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS], or after [ScreenChangeTracker.MAX_WAIT_MILLIS] on a
+ * has been quiet for [ScreenChangeTracker.SNAPSHOT_QUIET_MILLIS], or once the caller's [QuietBudget] has run out on a
  * screen that never goes quiet, such as a stopwatch (design spec, section 9.2). While windows of other apps may still
  * slide into place after their events ([ScreenChangeTracker.movingWindows]), which may end without a further event,
  * [places] checks each new snapshot [ScreenChangeTracker.SETTLE_CHECK_MILLIS] later, and the snapshot is built again

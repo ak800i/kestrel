@@ -686,8 +686,8 @@ class ScreenActions internal constructor(
     }
 
     /**
-     * Waits until the screen has been quiet after the action, but never longer than 3 s (design spec, section 9.3).
-     * Call it right after the action: the quiet time counts from the call, so that it cannot run out before the app
+     * Waits until the screen has been quiet after the action, within the command's `QuietBudget` (design spec, section
+     * 9.3). Call it right after the action: the quiet time counts from the call, so that it cannot run out before the app
      * has reacted. Gestures call it once the finger has been lifted.
      */
     private suspend fun settled(method: ActionMethod): ActionResult {
