@@ -47,8 +47,11 @@ import kotlinx.serialization.json.put
  * - `{"error": "Timeout"}`, `{"error": "BadRequest", "toolChoice": true}`, `{"error": "ServerError", "status": 503}`,
  *   `{"error": "RateLimited"}`, `{"error": "Unreachable"}`, `{"error": "Malformed"}`, `{"error": "QuotaOrPolicy"}`:
  *   the call throws that provider error.
- * Any reply may carry `"credits": 0.5` (the default is 0.1). When the script is used up, the model fails the task with
- * "The script has no more replies." toString prints only counts.
+ * Any reply may carry `"credits": 0.5` (the default is 0.1), and `"requires": ["…"]` or `"refuses": ["…"]`: texts that its
+ * request must hold, or must not hold, in its context, the owner's messages or the tools' results, so that a dry run
+ * checks what reached the model (plan 7G; design 15.3 of sub-project 7). A reply whose request does not match fails the
+ * task with [MISMATCH], which names no text. When the script is used up, the model fails the task with [USED_UP].
+ * toString prints only counts.
  */
 class ScriptedModel(
     replies: List<JsonObject>,
@@ -63,10 +66,7 @@ class ScriptedModel(
 
     override suspend fun call(role: ModelRole, request: ChatRequest, step: Int): PricedResponse {
         recorded += role to request
-        val reply = script.removeFirstOrNull() ?: buildJsonObject {
-            put("tool", "fail")
-            put("arguments", buildJsonObject { put("reason", "The script has no more replies.") })
-        }
+        val reply = script.removeFirstOrNull()?.let { matching(it, request) } ?: fail(USED_UP)
         reply["error"]?.jsonPrimitive?.contentOrNull?.let { throw ProviderException(error(it, reply)) }
         val credits = reply["credits"]?.jsonPrimitive?.doubleOrNull ?: DEFAULT_CREDITS
         val parts = mutableListOf<AssistantPart>()
@@ -79,6 +79,19 @@ class ScriptedModel(
         val id = if (role == ModelRole.LIGHTWEIGHT) model.lightweight.id else model.versatile.id
         val response = ChatResponse(ChatMessage.Assistant(parts), stop, Usage(input = 1_000, output = 50, cacheRead = 500), id, invalid)
         return PricedResponse(response, Cost(credits / 100, credits, estimated = false, priceKnown = true, planUsage = false), RequestStyle.CHAT_COMPLETIONS)
+    }
+
+    /** [reply] when [request] holds each of its `requires` and none of its `refuses`, else a fail call with [MISMATCH]. */
+    private fun matching(reply: JsonObject, request: ChatRequest): JsonObject {
+        val texts = listOfNotNull(request.context) + texts(request)
+        fun named(key: String): List<String> = (reply[key] as? JsonArray).orEmpty().map { it.jsonPrimitive.content }
+        fun held(text: String) = texts.any { text in it }
+        return if (named("requires").all(::held) && named("refuses").none(::held)) reply else fail(MISMATCH)
+    }
+
+    private fun fail(reason: String): JsonObject = buildJsonObject {
+        put("tool", "fail")
+        put("arguments", buildJsonObject { put("reason", reason) })
     }
 
     private fun call(call: JsonObject, request: ChatRequest, id: String): AssistantPart.ToolCall {
@@ -146,6 +159,12 @@ class ScriptedModel(
 
     companion object {
         const val DEFAULT_CREDITS = 0.1
+
+        /** The reason of the fail call that ends the task when the script is used up. */
+        const val USED_UP = "The script has no more replies."
+
+        /** The reason of the fail call that replaces a reply whose request lacks a text that it requires, or holds one that it refuses. */
+        const val MISMATCH = "The request did not match the script."
         private val LINE = Regex("""(?m)^\[(\d+)]\*?\s+(\S+)\s+(?:hint |id |password |OCR )?"((?:[^"\\]|\\.)*)"""")
 
         val INFO = ModelInfo(
