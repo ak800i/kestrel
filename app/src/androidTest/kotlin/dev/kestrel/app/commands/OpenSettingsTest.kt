@@ -58,6 +58,12 @@ class OpenSettingsTest {
             "am start -W --activity-clear-task -a android.intent.action.MAIN -c android.intent.category.LAUNCHER " +
                 "-n ${launcher.flattenToShortString()}",
         )
+        awaitConversationScreen()
+        // The screen drops a touch that passes through another app's window (design 12.2 of sub-project 7), as the splash
+        // screen is while SystemUI fades it out, and its content slides into place meanwhile: the tap waits for the end
+        // of that, and goes where a new snapshot shows the button then.
+        screen.awaitUnobscured(launcher.flattenToString())
+        screen.session.snapshots.invalidate()
         val settings = awaitConversationScreen().bounds
         screen.shell("input tap ${settings.centerX} ${settings.centerY}")
         awaitKestrel(R.string.settings_checklist)

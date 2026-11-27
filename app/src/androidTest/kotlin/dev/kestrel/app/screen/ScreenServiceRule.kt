@@ -132,6 +132,33 @@ class ScreenServiceRule : ExternalResource() {
     }
 
     /**
+     * Waits until no window over the window with [title], such as
+     * `dev.kestrel/dev.kestrel.app.conversation.screen.ConversationActivity`, obscures it, as Android's input dispatcher
+     * judges it ([InputWindow.obscures]). The conversation screen drops a touch that passed through another app's window
+     * (design 12.2 of sub-project 7), and after a start from the launcher's intent, SystemUI fades its splash screen out
+     * over the screen while the screen's content slides into place, so a tap on the screen counts only after this, at
+     * bounds that are read afterwards.
+     */
+    suspend fun awaitUnobscured(title: String, timeoutMillis: Long = 15_000) {
+        var cover: String? = UNLISTED
+        withTimeoutOrNull(timeoutMillis) {
+            while (coverOf(title).also { cover = it } != null) delay(50)
+        } ?: throw AssertionError("The window $title was still obscured by $cover after ${timeoutMillis / 1_000} s")
+    }
+
+    // The name of a window that obscures the window with [title], or null when none does; a window that is not listed counts
+    // as obscured, because it cannot take a touch yet.
+    private fun coverOf(title: String): String? {
+        for (windows in InputWindow.lists(shell("dumpsys input"))) {
+            val index = windows.indexOfFirst { it.name.endsWith(" $title") }
+            if (index < 0) continue
+            val window = windows[index]
+            return windows.subList(0, index).firstOrNull { it.obscures(window) }?.name
+        }
+        return UNLISTED
+    }
+
+    /**
      * The bounds of a button with [text] on one of Kestrel's touchable overlays, such as the confirmation card, as
      * another accessibility client sees it.
      */
@@ -179,6 +206,7 @@ class ScreenServiceRule : ExternalResource() {
         const val KESTREL = "dev.kestrel"
         private const val SERVICE = "dev.kestrel/dev.kestrel.app.KestrelAccessibilityService"
         private const val BOUND_MILLIS = 10_000L
+        private const val UNLISTED = "nothing, because the input dispatcher did not list the window"
 
         // Connecting UiAutomation without this flag would turn off every accessibility service, Kestrel's included.
         private val automation: UiAutomation by lazy {
