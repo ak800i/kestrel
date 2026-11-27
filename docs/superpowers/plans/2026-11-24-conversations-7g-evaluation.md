@@ -47,7 +47,7 @@ Code comments name this plan "plan 7G" and the design's sections as "design 15.3
 
 These are this plan's readings of the design where it leaves a choice open, or where an earlier plan's settlement has a cleaner form. The controller accepted the first eleven and decision 12 on 2026-11-25, and decided the review's H1 to H4 ("Decisions for the controller" at the end); Task 11 writes them into the main spec, the design and plan 7D.
 
-- **Every run starts in a conversation of its own.** Design 14.1 says that a task of sub-project 6 is a conversation of one command. Runs follow each other within the quiet time, so without a step of its own a run's command would continue the earlier run's conversation, with its records, its owner's words and its allowance (D16). `ConversationGuard` closes the open conversation before a run (it waits for the final reply, then `conversation-control do=expire`), and fails the run's setup when a goal is open; after a run it stops a goal that the run left open, held or not, because a later command would resume a held goal (design 6.4).
+- **Every run starts in a conversation of its own.** Design 14.1 says that a task of sub-project 6 is a conversation of one command. Runs follow each other within the quiet time, so without a step of its own a run's command would continue the earlier run's conversation, with its records, its owner's words and its allowance (D16). One rule holds for every close and every stop (the amendments of the review fixes): `ConversationGuard` ends only a conversation, and stops only a goal, that carries the hooks' mark, which every round of its waits reads (`typed=`) and which Kestrel checks again on the conversation's loop (`conversation-control do=expire-typed`, `goal-control do=stop-typed`); the owner's conversation and goal are never ended. Before a run it closes the hooks' own conversation once its final reply is spoken, and fails the run's setup when a goal of theirs is open; the owner's open conversation it waits for until his own quiet time closes it, for the quiet time that Kestrel first reports and 30 s more, and when it is still open then, the series stops (`owner-busy`: the runs that it did not run are written as not run, `result=skipped reason=owner-busy`, and a resumed suite runs them). After a run it stops a goal that the run left open in the hooks' own conversation, held or not, because a later command would resume a held goal (design 6.4), closes that conversation and deletes the hooks' own conversations.
 - **Each run deletes the conversations that the hooks' inputs made (H4).** A run on the A71 would otherwise leave its conversations among the owner's past conversations and their search. Plan 7F's `conversation-control do=delete-typed`, as its Task 13a and its review fixes built it, deletes the closed conversations that the work of any hook's input opened, tagged or not (`conversation-type`, `voice heard`, agent-answer's answers and `conversation-control do=new`), never the owner's: a mark goes as soon as an input of the owner's with his words or his choice reaches the conversation (his wordless Stop, Continue and New conversation keep it), and the marks are kept by id in a debug file across a restart, watched from the start of every process (`DebugKestrelApplication`, `HookConversations.watch`), so the run's last restore closes its conversation and deletes them. A conversation that the run only continued, as after a switch into a past one, is never marked, because it may be the owner's (the re-review's N1). A conversation that a long final reply keeps open past 60 s gives a warning, not a failed restore: it stays marked, and the next run or the series' cleanup, a restore that the preflight pushes and that waits up to 5 minutes, deletes it (N3). The preflight refuses a build without `delete-typed` or `voice-restore` (N4).
 - **A typed command's questions are answered as the owner answers them (H1).** On the text channel's cards a yes-or-no question, a free question, a limit's "Continue?" and the switch are answered through `agent-answer --es channel text`, as plan 7F built it. A confirmation, a hand-over and a pick are answered only on the card over the app (plan 7F's S2 rule), so the run presses that card's button with `agent-answer --es channel card`: plan 7F's debug `CardPresser.press` checks, under the card desk's lock, that the overlay shows the card whose question number and kind match the question that the hook checked (N2), that the card takes the button that the answer names, and that it takes taps, and then gives the press to the desk's one entry for taps (`CardDesk.tapped`), as the owner's tap; never by the screen's coordinates. The run presses only confirm, no, cancel or a number there, never Continue (a hand-over's card gets cancel), so the desk answers at once or refuses, and never holds a press until the unlock (`held … until=unlock`). The scripted Kestrel of the JVM tests refuses those three kinds on the text channel, as the real hook does.
 - **A setup step that holds state in Kestrel's process is made again after a restart (H3).** Such a step is a `ProcessSetup`, whose `renew` the turn runner calls after `Turn.Restart`: the fixtures' self-chat aliases (`SelfChatAliases`) and the scripted model (`ScriptedModelSetup`, with the next restart script). The type system marks them, so a new step of that kind cannot be forgotten by the restart.
@@ -158,6 +158,17 @@ Task 6's review (`task-7g-6-review.md`: M1, M2, M3) is fixed in `ef34cea7`. Ever
 - **`OnlyAlarmAt` counts the run's alarms by their entries (M3).** Its rule, in its KDoc: the run's alarms are the clock app's alarm clocks in `dumpsys alarm` (which lists only enabled ones), each by its own entry, that were not in `ClockFree`'s list before the run (`ClockFree.BEFORE`, the ids that `ClockFree` records); the check passes when exactly one is, at the time asked. A second alarm of the run's at the same minute fails it; an alarm that the goal set and then turned off is not enabled and is no alarm of the run's. `dumpsys alarm`'s entries keep their hash (`AlarmEntry.id`), and an alarm that the dump lists in several places is one entry.
 - **The counts.** `:tools:eval` + 3 (`ConversationStepsTest` + 3: the limits' Ctrl+C case, their refused change with a lost answer that the retry recovers, and the second alarm at the same minute; the earlier limits test and the alarm test are rewritten): Task 7 starts at 341, each later count is 3 higher, and `:tools:eval` ends at 356 (E₀ + 58). `:app` JVM keeps its counts; `:app`'s device test `ConversationHooksTest` checks `limits-check` in its assertions (505 stays).
 - **The changed steps.** Task 7's counts and its count step; Task 8's counts, its count step and Step 3's replacement of `ConversationSteps.kt`'s imports (which now hold `Hooks` and `AtomicReference`); Task 9's counts and its count step; Task 10's Interfaces, Pester case, `ValidateSet`, check and help; Task 11's design row of `conversation-control`; "Counts at the end of plan 7G".
+
+## Amendment: the third re-check (I1, I2, M3, M4)
+
+The re-check of the round-5 fixes (`recheck-7g-fix5.md`: I1, I2, M3, M4) is fixed in `e957e545`. Every task from Task 7 on starts from there, and the plan checker runs clean from Task 7 against it. Each change, and why:
+
+- **One rule for every stop (I1).** A new debug control, `goal-control --es do stop-typed`, gives the owner's "stop" to a goal only while its conversation carries the hooks' mark, which the conversation's loop checks at that moment (`ConversationEngine.stopGoalIf`, built as `endQuietTimeIf` is); it answers `stop=sent`, or `stop=none` with no change. `ConversationGuard.stopGoal()` reads `typed=` on every round of its 15 s and sends only `stop-typed`, once; it returns `GoalStop.ENDED`, `OWNERS` (the open goal is the owner's: never stopped, and the console says so) or `OPEN`. The run's two restores that stopped its command and its goal with a plain spoken "stop" are one restore now, which first waits while Kestrel may still register the run's command (up to 10 s) and then stops the hooks' goal. The preflight refuses a build without `stop-typed`. Task 10's `hook.ps1` learns `-Do stop-typed`, and Task 11's design gets its row.
+- **Every script is checked before the first run (I2).** `agent-script --ez check true` reads a script by the scripted model's own rules and installs nothing (`script=valid replies=<n>`); a script that the model refuses is a `HookError` that names its kind and only the reply's number and the keys (`InvalidScript`, which `ScriptedModel` now throws), and a script that is no JSON array of replies says only that (`:app`'s `AgentScripts`). `:tools:eval` keeps depending on no Kestrel module, and the rule stays in one place, the scripted model that installs the scripts: `ScriptCheck`, from `Session.prepare(tasks, live, scripts)`, has Kestrel read every script that the runs will install, each task's and those after its restarts (`DryRun.scripts`), filled as a run fills them, and refuses with the file and Kestrel's reason before any run; a build without the check, which would install the script instead, has it removed again and is refused. The scripted model's install is now the setup's last step, after the run's conversation, so a failed install fails only its run (`reason=setup`). Task 9's replacement of `DryRun`'s line keeps the class's new body.
+- **The owner's open conversation stops the series (M3; the controller's decision).** Before a run and between turns, `close()` waits for the owner's open conversation for the quiet time that Kestrel first reports (`quietLeft=`) and 30 s more (`OWNER_MARGIN`), or for its own 60 s while Kestrel reports none, as while his goal is open (`Deadline.extend`). When it is still open then, the series stops (`OwnerBusy`): the run under way and the task's runs after it are written as not run, `result=skipped reason=owner-busy`, which counts as no failure, and a resumed suite runs them again, as it runs the `reason=stopped` lines of Ctrl+C (`Reason.ended`); the CLI prints `STOPPED:` with the reason and ends with 1. This replaces the second re-check's "a run whose setup finds the owner's conversation still open, or holding his goal, fails its setup (`reason=setup`)".
+- **The texts of the closing rule (M4).** Design change "Every run starts in a conversation of its own", decision 1, and Task 11's text of design 15.3 (with the design's rows of `agent-script` and `goal-control`) describe the one rule for every close and every stop, the owner-busy stop and the scripts' check.
+- **The counts.** `:tools:eval` + 9 (`RunnerTest` + 3, `ConversationGuardTest` + 1, `ScriptCheckTest` 3, `ResumeTest` + 1, `CommandsTest` + 1; `PreflightTest` checks `stop-typed`'s refusal in an existing test): Task 7 starts at 350, each later count is 9 higher, and `:tools:eval` ends at 365 (E₀ + 67). `:app` JVM + 1 (`AgentScriptsTest`): 865 before Task 8, 866 at the end. `:core:conversation` + 1 (`ConversationEngineTest`): 310. `:core:agent` keeps 318 (`ScriptedModelTest` checks `InvalidScript`). `:app`'s device tests + 1 (`ConversationHooksTest`): 506, with new assertions in `GoalServiceHooksTest` and `AgentHooksTest`, which no device has run yet.
+- **The changed steps.** Design change "Every run starts in a conversation of its own"; Task 7's counts and its count step; Task 8's counts, its count step and its replacement in `FakeAdb.kt` (whose default hooks now end with `GOAL_CONTROL`); Task 9's counts, its count step and its replacement of `DryRun`; Task 10's introduction, Interfaces, Pester cases, `ValidateSet`, check and help; Task 11's Interfaces, its text of design 15.3 and its rows of the design's hooks; "Counts at the end of plan 7G"; decision 1.
 
 ## File structure
 
@@ -4624,7 +4635,7 @@ Design 15.3's tasks that a live model can run: `followup-settings` (a follow-up 
 - Consumes: Tasks 3, 4 and 6 (turns, `Answers.switches`, `EndQuietTime`, `DeleteTestSms`, `ConversationIs`, `AskedInOrder`); Task 5's `requires` and `refuses`; the existing steps `HomeScreen`, `ForceStop`, `UiNightMode`, `SettingsValue`, `TestName`, `KeptPermissions`, `FreeNumber`, `DeviceContact`, `FixturePresses`, `SelfChatAliases.TELEGRAM`, `FixtureScreen`, `EmuSms` and the checks `NightMode`, `SettingsIs`, `ReplyHasDigits`, `Confirmed`, `Recipient`, `SelfChat`, `Presses`, `ScreenHas`, `ReplyHas`; plan 7C's `search_conversations`; plan 7B's continued note "This conversation was continued on …" and records header "This conversation so far:".
 - Produces: `TaskKind.CONVERSATION`; `Task.runsLive: Boolean = true`, false for a task that runs only with the scripted model, which `run --live` skips with that reason; `object ConversationTasks` with `FOLLOWUP_SETTINGS`, `QUIET_TIME_ENDS`, `TYPED_CONTACT_THEN_MESSAGE`, `STAND_IN_TYPED_CONTACT_THEN_MESSAGE`, `SEARCH_PAST`, `CONTINUE_PAST` and `ALL`; `Catalogue.multiTurn(kind: DeviceKind, live: Boolean): List<Task>`; `SettingsTasks.START`, `NIGHT` and `TWO_MINUTES` (internal).
 
-Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 + 7 (341, with the second re-check's fixes and Task 6's review fixes): 346 at the end of the task.
+Counts: `:tools:eval` E₅ + 5 (`ConversationTasksTest` 3, `TasksTest` + 1, `CommandsTest` + 1), where E₅ = E₄ + 6 + 16 (350, with the second re-check's fixes, Task 6's review fixes and the third re-check's fixes): 355 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5256,7 +5267,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (346).
+Expected: BUILD SUCCESSFUL; `eval` E₅ + 5 (355).
 
 - [ ] **Step 7: Commit**
 
@@ -5280,7 +5291,7 @@ The tasks of design 15.3 that need a goal still acting at a known step, or repli
 - Consumes: Task 3's `Until.ACTING`, `Turn.Steer`, `Turn.AwaitEnd`, `Turn.Restart`, `DryRun.restarts`, `ProcessSetup` and `KestrelRestart`; Task 7's `Task.runsLive`; the stored listening mode's `restoredAt` (`SettingKeys.LISTENING`) and its guard against a crash loop (main spec 8.5); Task 4's `AtLimit`; Task 6's `OwnerTouch`, `SmallestLimits`, `PhaseIs`, `ChecklistIs`, `RestoredAs`, `AskedInOrder`, `OnlyAlarmAt`; Task 7's `ConversationTasks`; the existing steps of alarm, of stand-in-messenger-late and of stand-in-hotspot, and of injection fixture 7; plan 7A's resume texts ("You are continuing this goal after a restart of Kestrel.", "… after an interruption.", "… after a pause at a limit.", "Its checklist: c1 [done] …", "Look at the screen afresh; it may have changed.") and its steering line ("The owner added (spoken) …").
 - Produces: `ConversationTasks.STEER_WHILE_RUNNING`, `LIMIT_CONTINUE`, `INTERRUPT_CONTINUE`, `RESUME_AFTER_DEATH`; the debug hook `voice-restore` (`restoredAgo=<seconds>|none guard=<seconds>`), `VoiceRestore.answer(restoredAt, now)` and the top-level `internal const val CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, which leaves `Listening`'s private companion without a change of its value or its use; `Hooks.voiceRestore()`, which the preflight reads, refusing a build from before this plan; `data object CrashGuardPassed : Setup` with `MARGIN` and `WAIT` (Durations) and `left(answer: HookAnswer, margin: Duration): Duration?`; `DryRun.checks: List<Check>`, which only a run without a model checks; `data class EndedOtherThan(end: String) : Check`; `InjectionFixtures.FIXTURES` (the 14) and `InjectionFixtures.RECORDS` (`records-injection`), with `ALL = FIXTURES + RECORDS`.
 
-Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (346): 352 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 865 with A₁ = A₀ + 1 = 864 (Task 1's review fix adds `HookConversationsTest` + 1).
+Counts: `:tools:eval` E₆ + 6 (`ConversationTasksTest` + 4, `InjectionFixturesTest` + 1, `PreflightTest` + 1), where E₆ = E₅ + 5 (355): 361 at the end of the task; `:app` JVM A₁ + 1 (`VoiceRestoreTest` 1): 866 with A₁ = A₀ + 2 = 865 (Task 1's review fix adds `HookConversationsTest` + 1, the third re-check's fix `AgentScriptsTest` + 1).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5561,14 +5572,14 @@ In `tools/eval/src/test/kotlin/dev/kestrel/eval/run/PreflightTest.kt`, add these
 In `tools/eval/src/test/kotlin/dev/kestrel/eval/device/FakeAdb.kt`, replace:
 
 ```kotlin
-        "CONVERSATION_CONTROL" to { _ -> -1 to NOTHING_DELETED },
+        "GOAL_CONTROL" to { extras -> -1 to if (extras["do"] == "stop-typed") "stop=none" else "${extras["do"]}=sent" },
     )
 ```
 
 with:
 
 ```kotlin
-        "CONVERSATION_CONTROL" to { _ -> -1 to NOTHING_DELETED },
+        "GOAL_CONTROL" to { extras -> -1 to if (extras["do"] == "stop-typed") "stop=none" else "${extras["do"]}=sent" },
         "VOICE_RESTORE" to { _ -> -1 to "restoredAgo=none guard=120" },
     )
 ```
@@ -5837,7 +5848,7 @@ In `tools/eval/src/main/kotlin/dev/kestrel/eval/task/Task.kt`, replace:
  * are the scripts that the scripted model gets after each [Turn.Restart], in their order, because it ends with Kestrel's
  * process (design 15.3 of sub-project 7).
  */
-data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList())
+data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList()) {
 ```
 
 with:
@@ -5847,7 +5858,7 @@ with:
  * process (design 15.3 of sub-project 7). [checks] hold only for a run without a model, with the task's own checks,
  * such as that the script's requests held what its replies require ([EndedOtherThan]).
  */
-data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList(), val checks: List<Check> = emptyList())
+data class DryRun(val script: String, val standIn: String? = null, val restarts: List<String> = emptyList(), val checks: List<Check> = emptyList()) {
 ```
 
 In `tools/eval/src/main/kotlin/dev/kestrel/eval/run/Runner.kt`, replace:
@@ -6159,7 +6170,7 @@ Expected: PASS both times.
 - [ ] **Step 7: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test :app:testDebugUnitTest`, then `foreach ($dir in 'tools\eval\build\test-results\test', 'app\build\test-results\testDebugUnitTest') { $n = 0; Get-ChildItem $dir -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "$dir $n" }`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (352); `app` A₁ + 1 (865).
+Expected: BUILD SUCCESSFUL; `tools\eval` E₆ + 6 (361); `app` A₁ + 1 (866).
 
 - [ ] **Step 8: Commit**
 
@@ -6182,7 +6193,7 @@ The main spec keeps the multi-turn tasks out of the 29 tasks' rates and records 
 - Consumes: Task 7's `Catalogue.multiTurn`.
 - Produces: `Command.Suite.multiTurn` (`suite --multi-turn`); `SeriesCommand(…, multiTurn: Boolean = false, pick)` with `SeriesCommand.SUITE` and `SeriesCommand.INJECTION`; `Report.multiTurn: Boolean = false`; `Baseline.multiTurn: Map<String, BaselinePart>` and `Baseline.withMultiTurn(device, part)`; `SuiteCall.multiTurn: Boolean = false`; `Resume.open(…, recordBaseline, multiTurn: Boolean = false)`, which refuses a folder whose `multiTurn` differs.
 
-Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (352): 356 at the end of the task.
+Counts: `:tools:eval` E₇ + 4 (`BaselineTest` + 1, `CompareCommandTest` + 1, `CommandsTest` + 1, `ResumeTest` + 1), where E₇ = E₆ + 6 (361): 365 at the end of the task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -6822,7 +6833,7 @@ Expected: PASS.
 - [ ] **Step 6: Run the tool's tests, count them and stop Gradle**
 
 Run: `scripts\gradle.ps1 :tools:eval:test`, then `$n = 0; Get-ChildItem tools\eval\build\test-results\test -Filter *.xml | ForEach-Object { $n += [int]([xml](Get-Content $_.FullName -Raw)).testsuite.tests }; "eval $n"`, then `scripts\gradle.ps1 --stop`
-Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (356).
+Expected: BUILD SUCCESSFUL; `eval` E₇ + 4 (365).
 
 - [ ] **Step 7: Commit**
 
@@ -6835,14 +6846,14 @@ git commit -m "feat(eval): suite --multi-turn runs the multi-turn tasks apart, w
 
 ### Task 10: The hooks of plans 7D to 7F in `scripts\hook.ps1`
 
-`scripts\hook.ps1` learns the hooks that plans 7D, 7E and 7F added to the debug build, so that the owner and the controller can read and drive a conversation by hand, as `:tools:eval` does: `conversation-state`, `conversation-control` (with plan 7F's `-Do delete-typed`, review finding M1, and this plan's `-Do expire-typed`), `conversation-type`, `goal-service-state`, `goal-control` (with plan 7E's `-Do refuse`, `refuse-off` and `send-later`, which plan 7E's decision 10 left to this plan), `voice-restore` (Task 8), `voice-task -HandOver` (plan 7F's `--ez handover true`, a stand-in round that first hands the owner a payment step), and `agent-answer -Channel voice|text|card` (`card` is plan 7F's Task 13a). Its help names `voice-state`'s `followUp=`, `agent-state`'s new fields and the card channel's answers. Its own checks refuse a wrong combination before it reaches a device.
+`scripts\hook.ps1` learns the hooks that plans 7D, 7E and 7F added to the debug build, so that the owner and the controller can read and drive a conversation by hand, as `:tools:eval` does: `conversation-state`, `conversation-control` (with plan 7F's `-Do delete-typed`, review finding M1, and this plan's `-Do expire-typed`), `conversation-type`, `goal-service-state`, `goal-control` (with plan 7E's `-Do refuse`, `refuse-off` and `send-later`, which plan 7E's decision 10 left to this plan, and this plan's `-Do stop-typed`), `voice-restore` (Task 8), `voice-task -HandOver` (plan 7F's `--ez handover true`, a stand-in round that first hands the owner a payment step), and `agent-answer -Channel voice|text|card` (`card` is plan 7F's Task 13a). Its help names `voice-state`'s `followUp=`, `agent-state`'s new fields and the card channel's answers. Its own checks refuse a wrong combination before it reaches a device.
 
 **Files:**
 - Modify: `scripts/hook.ps1`
 - Test: modify `scripts/tests/Hook.Tests.ps1`
 
 **Interfaces:**
-- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`) and this plan's `typed=yes|no` and `--es do expire-typed` (`expire=sent`, or `expire=not-typed` with no change; the fix of the re-check's I1, `e496e947`) and `--es do limits-check` (`limits=<r>/<m>/<c>`, a pure read; the fix of Task 6's review, `ef34cea7`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`; the three options need `--es tag`, or the hook types nothing: `add --es tag for <options>: typed words without a tag take no options`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a; `answered tag=<tag> asking=<kind> channel=card`, or `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen); plan 7F's `VOICE_TASK --ez handover true` (Task 14, Step 8a; its answer then holds `first hands the owner a payment step`); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus|refuse|refuse-off|send-later`, `--es action stop|open|continue|cancel` with `tap` and `send-later`; the hook's error for another `do` is `add --es do with one of tap, touch, speak, focus, refuse, refuse-off or send-later`).
+- Consumes: plan 7D's `CONVERSATION_STATE` and `CONVERSATION_CONTROL` (`--es do new|expire|limits|restore-check`, `--es limits r/m/c`), with plan 7F's `--es do delete-typed` (`deleted=<n> open=<n> failed=<n>`) and this plan's `typed=yes|no` and `--es do expire-typed` (`expire=sent`, or `expire=not-typed` with no change; the fix of the re-check's I1, `e496e947`) and `--es do limits-check` (`limits=<r>/<m>/<c>`, a pure read; the fix of Task 6's review, `ef34cea7`); plan 7F's `CONVERSATION_TYPE` (`--es text`, `--es tag`, `--es model`, `--ez live`, `--es marker`; the three options need `--es tag`, or the hook types nothing: `add --es tag for <options>: typed words without a tag take no options`) and `AGENT_ANSWER --es channel voice|text|card` (`card`: plan 7F's Task 13a; `answered tag=<tag> asking=<kind> channel=card`, or `held tag=<tag> asking=<kind> channel=card until=unlock` for a Continue pressed on the lock screen); plan 7F's `VOICE_TASK --ez handover true` (Task 14, Step 8a; its answer then holds `first hands the owner a payment step`); Task 8's `VOICE_RESTORE`; plan 7E's `GOAL_SERVICE_STATE` and `GOAL_CONTROL` (`--es do tap|touch|speak|focus|refuse|refuse-off|send-later`, `--es action stop|open|continue|cancel` with `tap` and `send-later`), with this plan's `--es do stop-typed` (`stop=sent`, or `stop=none` with no change when no goal is open in a conversation that carries the hooks' mark; the fix of the third re-check's I1, `e957e545`); the hook's error for another `do` is `add --es do with one of tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed`.
 - Produces: the commands `conversation-state`, `conversation-control`, `conversation-type`, `goal-service-state`, `goal-control` and `voice-restore`, and the parameters `-Do`, `-Limits`, `-Channel` and `-HandOver`.
 
 Counts: Pester P₀ + 3 (`Hook.Tests.ps1` + 3): 557 in PowerShell 7 with P₀ = 554.
@@ -6873,6 +6884,7 @@ with:
             @('goal-control', '-Do', 'tap', '-Action', 'stop'),
             @('goal-control', '-Do', 'send-later', '-Action', 'cancel'),
             @('goal-control', '-Do', 'refuse-off'),
+            @('goal-control', '-Do', 'stop-typed'),
             @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'),
             @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'),
             @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card')
@@ -6921,7 +6933,7 @@ with:
         $channelElsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-task -Tag t1 -Channel card 2>&1) -join "`n"
 
         $control | Should -BeLike '*conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.*'
-        $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.*'
+        $goal | Should -BeLike '*goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed.*'
         $limits | Should -BeLike '*-Limits needs conversation-control -Do limits.*'
         $action | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
         $tap | Should -BeLike '*goal-control needs -Action with -Do tap or send-later, and only with them.*'
@@ -6976,7 +6988,7 @@ with:
     [string]$Revoke,
     [switch]$Restore,
     # sub-project 7: conversation parameters
-    [ValidateSet('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')]
+    [ValidateSet('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed', 'tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later', 'stop-typed')]
     [string]$Do,
     [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
     [ValidateSet('voice', 'text', 'card')][string]$Channel,
@@ -6998,8 +7010,8 @@ if ($Has -and -not $Key) { throw 'agent-memory -Has needs -Key; give the key to 
 if ($Command -eq 'conversation-control' -and $Do -notin @('new', 'expire', 'expire-typed', 'limits', 'limits-check', 'restore-check', 'delete-typed')) {
     throw 'conversation-control needs -Do new, expire, expire-typed, limits, limits-check, restore-check or delete-typed.'
 }
-if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later')) {
-    throw 'goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off or send-later.'
+if ($Command -eq 'goal-control' -and $Do -notin @('tap', 'touch', 'speak', 'focus', 'refuse', 'refuse-off', 'send-later', 'stop-typed')) {
+    throw 'goal-control needs -Do tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed.'
 }
 if ($Limits -and -not ($Command -eq 'conversation-control' -and $Do -eq 'limits')) { throw '-Limits needs conversation-control -Do limits.' }
 # The goal notification's button that tap presses and send-later sends.
@@ -7168,14 +7180,16 @@ with:
 #   goal-service-state                      the goal service: whether it runs, its notification and its types, its starts
 #                                           and refusals in this process, an armed refusal, and the newest audio-focus
 #                                           request with the counts of requests and answers
-#   goal-control -Do tap|send-later -Action stop|open|continue|cancel | -Do touch|speak|focus|refuse|refuse-off
+#   goal-control -Do tap|send-later -Action stop|open|continue|cancel | -Do touch|speak|focus|refuse|refuse-off|stop-typed
 #                                           tap presses that button of the goal notification in the shade, as the owner's
 #                                           finger, and says which rows it had to expand; send-later hands that button's
 #                                           own PendingIntent to AlarmManager, which sends it 5 s later (send=scheduled, or
 #                                           send=none); touch gives the conversation the owner's touch, as the touch watcher
 #                                           reports it; speak and focus ask Android for the audio focus with and without
 #                                           the speech's types; refuse makes the goal service's next start in this process
-#                                           fail as Android's refusal does, once, and refuse-off takes an armed refusal back
+#                                           fail as Android's refusal does, once, and refuse-off takes an armed refusal back;
+#                                           stop-typed stops the goal of the hooks' own conversation only, as Kestrel checks
+#                                           their mark (stop=sent), and leaves the owner's (stop=none)
 # -Number picks an element by the number that the numbers overlay shows on it.
 ```
 
@@ -7201,7 +7215,7 @@ The controller's decision 11: the main spec (sections 5.3, 16.1, 16.5 and 18), d
 - Modify: `docs/superpowers/specs/2026-11-12-kestrel-design.md`, `docs/superpowers/specs/2026-11-24-conversations-design.md`, `docs/superpowers/plans/2026-11-24-conversations-7d-voice.md`
 
 **Interfaces:**
-- Consumes: Tasks 4 and 6 to 9 as built (their names and their commands), Task 8's `voice-restore`, Task 1's review fixes (`typed=` and `expire-typed`), and plan 7F's Task 13a with its review fixes (`agent-answer --es channel card`, `delete-typed` for the conversations that any hook's input opened).
+- Consumes: Tasks 4 and 6 to 9 as built (their names and their commands), Task 8's `voice-restore`, Task 1's review fixes (`typed=` and `expire-typed`), the third re-check's fixes (`goal-control do=stop-typed`, `agent-script --ez check true` and `reason=owner-busy`, `e957e545`), and plan 7F's Task 13a with its review fixes (`agent-answer --es channel card`, `delete-typed` for the conversations that any hook's input opened).
 - Produces: nothing that code reads.
 
 Counts: none.
@@ -7363,7 +7377,7 @@ Each new task has a dry-run script; the ones that can run live also run live in 
 with:
 
 ```text
-Each new task has a dry-run script; the ones that can run live also run live in test mode. Four run only with the scripted model (`steer-while-running`, `limit-continue`, `interrupt-continue` and `resume-after-death`), because a live model cannot be made to be still acting at a known step or to spend a known cost. Every run starts in a conversation of its own, and a goal that a run leaves open is stopped after it; then the run deletes the hooks' own conversations (`conversation-control do=delete-typed`), so that no test conversation stays among the owner's past conversations. A setup step that holds state in Kestrel's process, such as the fixtures' self-chat aliases or the scripted model, is made again after a restart of Kestrel.
+Each new task has a dry-run script; the ones that can run live also run live in test mode. Four run only with the scripted model (`steer-while-running`, `limit-continue`, `interrupt-continue` and `resume-after-death`), because a live model cannot be made to be still acting at a known step or to spend a known cost. Every run starts in a conversation of its own. The evaluation ends only a conversation, and stops only a goal, that carries the hooks' mark, which Kestrel checks again at that moment (`conversation-control do=expire-typed`, `goal-control do=stop-typed`), and never ends the owner's conversation or stops his goal. Before a run it closes the hooks' own conversation and waits for the owner's to close by its own quiet time; when his is still open after the quiet time that Kestrel reports and a margin, the series stops, and the runs that it did not run are written as not run (`reason=owner-busy`), which a resumed suite runs. After a run it stops a goal that the run left open in the hooks' own conversation, closes that conversation and deletes the hooks' own conversations (`conversation-control do=delete-typed`), so that no test conversation stays among the owner's past conversations. Before the first run without a model, Kestrel's scripted model reads every script that the runs will install, the scripts after a restart too, without installing it (`agent-script --ez check true`), so that a malformed script stops the series before it starts. A setup step that holds state in Kestrel's process, such as the fixtures' self-chat aliases or the scripted model, is made again after a restart of Kestrel.
 ```
 
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
@@ -7514,6 +7528,18 @@ with:
 In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
 
 ```text
+| `agent-script`, `agent-live`, `agent-settings`, `agent-memory` | Fields of `AgentRunner` and settings | The same fields on `AppGoalEnvironment`; a scripted model's replies serve the commands of a conversation in order |
+```
+
+with:
+
+```text
+| `agent-script`, `agent-live`, `agent-settings`, `agent-memory` | Fields of `AgentRunner` and settings | The same fields on `AppGoalEnvironment`; a scripted model's replies serve the commands of a conversation in order; `agent-script --ez check true` reads a script by the scripted model's rules without installing it (`script=valid replies=<n>`), and a script that the model refuses is an error that names its kind and only the reply's number and the keys, never a text (plan 7G) |
+```
+
+In `docs/superpowers/specs/2026-11-24-conversations-design.md`, replace:
+
+```text
 | New `conversation-control --es do new\|expire\|limits\|restore-check` |
 ```
 
@@ -7533,6 +7559,7 @@ with:
 
 ```text
 reports what `restore()` found after a restart; `delete-typed` deletes the hooks' own conversations, those that the work of a hook's input opened (any input that a hook gives, tagged or not) and that no input of the owner's with his words or his choice reached since, never the owner's (plan 7F); `expire-typed` ends the quiet time only while the open conversation is one of the hooks' own, which the conversation's loop checks at that moment, and otherwise answers `expire=not-typed` and changes nothing, and `conversation-state`'s `typed=` says whether the open conversation is one of them; `limits-check` answers a round's stored limits and changes nothing (plan 7G) |
+| New `goal-control --es do stop-typed` | — | Gives the owner's "stop" to a goal only while its conversation is one of the hooks' own, which the conversation's loop checks at that moment, and otherwise answers `stop=none` and changes nothing, so that a test stops its own goal and never the owner's (plan 7G) |
 ```
 
 - [ ] **Step 3: Plan 7D's note on the test-limit seam**
@@ -7737,19 +7764,20 @@ Add to `.superpowers\sdd\progress.md`, under "## Plan 7G": the builds' commit on
 
 ## Counts at the end of plan 7G
 
-- `:tools:eval`: E₀ + 58 (Task 1 + 6 and its review fixes + 9, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fixes + 5, Task 4 + 2 and its review fix + 1, Task 6 + 6 and its review fixes + 3, Task 7 + 5, Task 8 + 6, Task 9 + 4): 356 with E₀ = 298 at `c6d38be6`.
+- `:tools:eval`: E₀ + 67 (Task 1 + 6 and its review fixes + 9, Task 2 + 3 and its review fixes + 2, Task 3 + 6 and its review fixes + 5, Task 4 + 2 and its review fix + 1, Task 6 + 6 and its review fixes + 3, the third re-check's fixes + 9, Task 7 + 5, Task 8 + 6, Task 9 + 4): 365 with E₀ = 298 at `c6d38be6`.
 - `:core:agent`: G₀ + 3 (Task 5 + 2 and its review fix + 1): 318 with G₀ = 315.
-- `:app` JVM: A₀ + 2 (Task 1's review fix, `HookConversationsTest` + 1; Task 8's `VoiceRestoreTest`; Task 4 changes a test's assertions): 865 with A₀ = 863, measured after plan 7F with every fix of its whole-plan review, whose tests count in plan 7F.
+- `:app` JVM: A₀ + 3 (Task 1's review fix, `HookConversationsTest` + 1; the third re-check's fix, `AgentScriptsTest` + 1; Task 8's `VoiceRestoreTest`; Task 4 changes a test's assertions): 866 with A₀ = 863, measured after plan 7F with every fix of its whole-plan review, whose tests count in plan 7F.
 - Pester in PowerShell 7: P₀ + 3 (Task 10): 557 with P₀ = 554 (Windows PowerShell 5.1: 556 passed and 1 skipped).
-- `:core:conversation`: 309 (Task 1's review fix, the engine's `endQuietTimeIf`, + 1).
-- Unchanged: `:core:screen` 101, `:core:privacy` 95 (device 36), `:core:voice` 179, `:app`'s device tests 505.
+- `:core:conversation`: 310 (Task 1's review fix, the engine's `endQuietTimeIf`, + 1; the third re-check's fix, its `stopGoalIf`, + 1).
+- `:app`'s device tests: 506 (the third re-check's fix, `ConversationHooksTest` + 1; `GoalServiceHooksTest` and `AgentHooksTest` check `stop-typed` and `agent-script`'s check in their assertions).
+- Unchanged: `:core:screen` 101, `:core:privacy` 95 (device 36), `:core:voice` 179.
 - New tasks: 10 multi-turn tasks and 1 injection task; `list` shows 60 tasks.
 
 ## Decisions for the controller
 
 Each is one of "Changes to the design that this plan makes". The controller accepted decisions 1 to 12 as recommended on 2026-11-25; decision 2 replaces plan 7D's decision 2. Decisions 13 to 16 are the controller's own for the review's H1 to H4, and the controller accepted decisions 17 to 19, this plan's choices in carrying them out and the review's L2 and M4. The re-review's N1 to N4 changed decisions 13, 16 and 17 as their texts say. Decisions 20 to 22 are the amendment of 2026-11-28's, marked DECISION, for the controller; the amendment also brought decisions 13, 14, 16 and 17 to plans 7D to 7F as built, without a change of their meaning.
 
-1. **Every run starts in a conversation of its own, and a goal that a run left open is stopped after it.** Recommended: accept. Without it, the second run of a task would continue the first's conversation with its records and its allowance, and a held goal would take the next run's command.
+1. **Every run starts in a conversation of its own, and a goal that a run left open in the hooks' own conversation is stopped after it; the owner's conversation and goal are never ended, and while his conversation stays open past its quiet time, the series stops (`owner-busy`).** Recommended: accept. Without it, the second run of a task would continue the first's conversation with its records and its allowance, and a held goal would take the next run's command. Only a conversation or a goal that carries the hooks' mark, which Kestrel checks at that moment (`expire-typed`, `stop-typed`), is ever ended (the controller's decisions in the amendments of the review fixes).
 2. **No debug seam for test limits** (plan 7D's decision 2 left it to this plan). `limit-continue` uses the Conversations page's smallest limits and scripted replies that cost 10 AI Credits each. Recommended: accept; no field of production code exists only for tests. The other way: a debug-only `limits` below the page's bounds, which would let a live run reach a limit too.
 3. **After a restart, "Kestrel, continue" is the yes to "Continue the goal?"**, because the goal's tag is gone with the process. Recommended: accept; design 6.4 gives both the same meaning.
 4. **`typed-contact-then-message` on the A71 checks the confirmed send, its recipient and the self-chat, not a count on Telegram's screen, and does not require the question before typing.** Recommended: accept; its stand-in on kestrel-api37 checks the screen and both questions.
