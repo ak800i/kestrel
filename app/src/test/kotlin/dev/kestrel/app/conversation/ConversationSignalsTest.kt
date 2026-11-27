@@ -6,6 +6,7 @@ import dev.kestrel.app.listen.CallMonitor
 import dev.kestrel.app.orchestrator.CallState
 import dev.kestrel.app.phone.PhoneSignals
 import dev.kestrel.app.phone.ScreenReading
+import dev.kestrel.app.phone.ScreenReadings
 import dev.kestrel.app.phone.ScreenStatus
 import dev.kestrel.app.phone.ScreenSource
 import dev.kestrel.conversation.engine.ConversationView
@@ -56,6 +57,29 @@ class ConversationSignalsTest {
         views.value = open
         runCurrent()
         assertEquals(listOf(PhoneSignal.LOCKED, PhoneSignal.UNLOCKED, PhoneSignal.LOCKED), signals)
+    }
+
+    // The sixth re-check's N6-M1: a keyguard that catches up 1.5 s after USER_PRESENT, while the screen source looks
+    // every 250 ms. The conversation hears the unlock once and no lock in between, so its goal goes on as after any
+    // unlock and is never paused by the keyguard's lag.
+    @Test
+    fun aKeyguardThatIsLateAfterTheUnlockSendsTheUnlockOnceAndNoLock() = runTest {
+        val screen = ReadingScreens()
+        follow(screen)
+        views.value = open
+        runCurrent()
+        assertEquals(listOf(PhoneSignal.LOCKED), signals)
+
+        screen.heard(ScreenReadings.Broadcast.USER_PRESENT)
+        while (screen.readings.settling()) {
+            screen.clock += ScreenReadings.KEYGUARD_POLL_MILLIS
+            if (screen.clock >= 1_500) screen.keyguardLocked = false
+            screen.look()
+            runCurrent()
+        }
+
+        assertEquals(1_500L, screen.clock)
+        assertEquals(listOf(PhoneSignal.LOCKED, PhoneSignal.UNLOCKED), signals)
     }
 
     @Test
@@ -168,10 +192,40 @@ class ConversationSignalsTest {
         assertEquals(0, callApi.ended)
     }
 
-    private fun kotlinx.coroutines.test.TestScope.follow() {
+    private fun kotlinx.coroutines.test.TestScope.follow(screens: ScreenSource = this@ConversationSignalsTest.screens) {
         val conversationSignals = ConversationSignals(PhoneSignals(screens, calls), backstop, backgroundScope, { signals += it }) { what, _ -> reports += what }
         backgroundScope.launch { conversationSignals.follow(views) }
         runCurrent()
+    }
+
+    // The screen source's own rule (ScreenReadings) behind a source whose broadcasts and looks the test gives, on the test's
+    // one thread, as AndroidScreenSource gives them on the main thread.
+    private class ReadingScreens : ScreenSource {
+        var clock = 0L
+        var keyguardLocked = true
+        val readings = ScreenReadings({ true }, { keyguardLocked }, { clock }, { true })
+        private var report: ((ScreenStatus) -> Unit)? = null
+
+        override fun start(report: (ScreenStatus) -> Unit, cameOn: () -> Unit) {
+            this.report = report
+        }
+
+        override fun stop() {
+            report = null
+        }
+
+        override fun status(): ScreenStatus = readings.status()
+
+        override fun read(reading: (ScreenStatus) -> Unit) = reading(readings.next())
+
+        fun heard(broadcast: ScreenReadings.Broadcast) {
+            checkNotNull(report)(readings.heard(broadcast))
+        }
+
+        // One of the source's looks while the keyguard settles: a changed reading is reported with a new number.
+        fun look() {
+            if (readings.stale()) checkNotNull(report)(readings.next())
+        }
     }
 
     private class FakeScreens : ScreenSource {

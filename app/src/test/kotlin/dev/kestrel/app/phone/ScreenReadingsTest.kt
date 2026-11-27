@@ -31,36 +31,37 @@ class ScreenReadingsTest {
         assertFalse(readings.stale())
     }
 
-    // The fifth re-check's N5-M2: a keyguard that catches up 1.5 s after USER_PRESENT. The unlock reads as unlocked for
-    // its first second, then as locked, and the source goes on looking while the keyguard settles, so the look after the
-    // keyguard caught up gives the unlock again with a new number, and the looks end.
+    // The fifth and sixth re-checks' N5-M2 and N6-M1: a keyguard that catches up 1.5 s after USER_PRESENT. The screen
+    // reads as unlocked for the whole time that the source looks, so no look gives a reading, no LOCKED comes between,
+    // and the catch-up ends the looks.
     @Test
-    fun theSourceLooksUntilASlowKeyguardCatchesUpAndThenReadsTheUnlockAgain() {
+    fun aKeyguardThatIsLateGivesNoLockedReadingAndItsCatchUpEndsTheLooks() {
         assertEquals(ScreenStatus(ScreenReading.UNLOCKED, offs = 0, seq = 1), readings.heard(Broadcast.USER_PRESENT))
-        assertTrue(readings.settling())
-        now = ScreenReadings.UNLOCK_LAG_MILLIS - 1
-        assertFalse(readings.stale())
-
-        now = ScreenReadings.UNLOCK_LAG_MILLIS
-        assertTrue(readings.stale())
-        assertEquals(ScreenStatus(ScreenReading.LOCKED, offs = 0, seq = 2), readings.next())
-        assertTrue(readings.settling())
+        for (at in listOf(1_000L, 1_250L)) {
+            now = at
+            assertFalse(readings.stale())
+            assertTrue(readings.settling())
+        }
 
         now = 1_500
         keyguardLocked = false
-        assertTrue(readings.stale())
-        assertEquals(ScreenStatus(ScreenReading.UNLOCKED, offs = 0, seq = 3), readings.next())
+        assertFalse(readings.stale())
         assertFalse(readings.settling())
         assertEquals(listOf(1_500L), caughtUp)
+        assertEquals(ScreenStatus(ScreenReading.UNLOCKED, offs = 0, seq = 1), readings.status())
     }
 
-    // The source's looks are bounded: a keyguard that never catches up ends them after their time.
+    // The source's looks are bounded: a keyguard that has not caught up when they end reads as locked, with a new reading.
     @Test
-    fun theLooksEndWhenTheKeyguardDoesNotSettleInTime() {
+    fun aKeyguardThatDoesNotSettleInTimeReadsAsLockedWhenTheLooksEnd() {
         readings.heard(Broadcast.USER_PRESENT)
+        now = ScreenReadings.KEYGUARD_SETTLE_MILLIS - 1
+        assertFalse(readings.stale())
+
         now = ScreenReadings.KEYGUARD_SETTLE_MILLIS
         assertFalse(readings.settling())
-        assertEquals(ScreenReading.LOCKED, readings.next().reading)
+        assertTrue(readings.stale())
+        assertEquals(ScreenStatus(ScreenReading.LOCKED, offs = 0, seq = 2), readings.next())
         assertEquals(emptyList<Long>(), caughtUp)
     }
 

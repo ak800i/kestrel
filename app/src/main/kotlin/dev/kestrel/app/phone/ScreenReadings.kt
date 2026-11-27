@@ -11,10 +11,12 @@ package dev.kestrel.app.phone
  * does (`addKeyguardLockedStateListener` needs `SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE`, which only privileged apps hold).
  * So after USER_PRESENT the keyguard is *settling*: the source looks again every [KEYGUARD_POLL_MILLIS] ([settling])
  * until a look sees the keyguard unlocked, a screen-off comes, or [KEYGUARD_SETTLE_MILLIS] have passed, and each look
- * that reads otherwise than the newest reading ([stale]) gives a new reading. For the first [UNLOCK_LAG_MILLIS] of that
- * time the screen reads as unlocked although the keyguard still says locked, so that the unlock does not read as a lock
- * for a moment; a lock screen that comes back later without a screen-off (Lockdown) reads as locked at once. The first
- * look that sees the keyguard unlocked tells [caughtUp] how long after USER_PRESENT that was.
+ * that reads otherwise than the newest reading ([stale]) gives a new reading. While the keyguard settles, the screen
+ * reads as unlocked although the keyguard may still say locked: USER_PRESENT is SystemUI's word that the owner unlocked,
+ * which the keyguard is only late to report, so a late keyguard never reads as a lock for a moment. Only a keyguard that
+ * has not caught up when that time ends reads as locked, with a new reading. The first look that sees the keyguard
+ * unlocked ends the settling, within one poll of the catch-up, so a lock screen that comes back later without a
+ * screen-off (Lockdown) reads as locked at once; that look tells [caughtUp] how long after USER_PRESENT it was.
  *
  * Every call runs on the source's one thread ([onSourceThread]), which numbers the readings in the order of its looks and
  * broadcasts, and refuses to run elsewhere: a status read on another thread could not be in order with the reports.
@@ -94,18 +96,17 @@ internal class ScreenReadings(
             }
             return ScreenReading.UNLOCKED
         }
-        if (since != null && since >= KEYGUARD_SETTLE_MILLIS) state = state.copy(presentAt = null)
-        return if (since != null && since < UNLOCK_LAG_MILLIS) ScreenReading.UNLOCKED else ScreenReading.LOCKED
+        if (since == null) return ScreenReading.LOCKED
+        if (since < KEYGUARD_SETTLE_MILLIS) return ScreenReading.UNLOCKED
+        state = state.copy(presentAt = null)
+        return ScreenReading.LOCKED
     }
 
     companion object {
-        /** How long USER_PRESENT counts as the unlock while KeyguardManager has not caught up with it. */
-        const val UNLOCK_LAG_MILLIS = 1_000L
-
         /** How often the source looks at the keyguard while it settles after USER_PRESENT. */
         const val KEYGUARD_POLL_MILLIS = 250L
 
-        /** How long after USER_PRESENT the source looks at the keyguard, at most. */
+        /** How long after USER_PRESENT the source looks at the keyguard and reads the screen as unlocked, at most. */
         const val KEYGUARD_SETTLE_MILLIS = 5_000L
     }
 }
