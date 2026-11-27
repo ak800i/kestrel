@@ -67,16 +67,29 @@ data object ReplyHas : Check {
 }
 
 /**
- * One number of Kestrel's spoken reply holds [digits] in a row, from the start of one of its groups of digits to the end
- * of one, compared on the phone (agent-task -Digits answers 1 or 0). Groups belong to one number when only spaces,
- * hyphens, dots, brackets or `+` stand between them, so "+1 202-555-0143" holds 2025550143, but "58 percent, about 7
- * hours" does not hold 587. [digits] may hold the run's placeholders, such as "{number}".
+ * Kestrel's spoken reply names the phone number [number], an international number written "+<country code> <national
+ * number>", which may hold the run's placeholders, such as "{number}". The number is compared by its national digits,
+ * without the country code, which a reply may leave out: "+1 202 555 0143" is found in "202-555-0143" as in "+1 202 555
+ * 0143" (contact-number; typed-contact-then-message, plan 7G). One number of the reply holds them in a row, from the
+ * start of one of its groups of digits to the end of one, compared on the phone (agent-task -Digits answers 1 or 0).
+ * Groups belong to one number when only spaces, hyphens, dots, brackets or `+` stand between them, so "+1 202-555-0143"
+ * holds 2025550143, but "58 percent, about 7 hours" does not hold 587.
  */
-data class ReplyHasDigits(val digits: String) : Check {
+data class ReplyHasNumber(val number: String) : Check {
     override val needsTask: Boolean get() = true
 
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
         val tag = scope.tag ?: return false
-        return scope.hooks.agentTask(tag, digits = scope.values.fill(digits).filter { it.isDigit() })["digits"] == "1"
+        return scope.hooks.agentTask(tag, digits = nationalDigits(scope.values.fill(number)))["digits"] == "1"
+    }
+
+    companion object {
+        /** The digits of [number], written "+<country code> <national number>", after its country code. */
+        fun nationalDigits(number: String): String {
+            require(INTERNATIONAL.matches(number)) { "A test number is written as +<country code> <national number>." }
+            return number.substringAfter(' ').filter { it.isDigit() }
+        }
+
+        private val INTERNATIONAL = Regex("\\+\\d{1,3} [\\d -]+")
     }
 }

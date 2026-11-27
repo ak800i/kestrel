@@ -355,8 +355,7 @@ class SettingsStepsTest {
         level = 84
         assertTrue(ReplyHasBattery.passes(run.scope, none))
         assertEquals(listOf("85", "85", "84"), asked)
-        assertFalse(ReplyHasDigits("{number}").passes(run.scope, none))
-        assertTrue(ReplyHasDigits("2025550143").passes(run.scope, none))
+        assertTrue(ReplyHasNumber("+1 202 555 0143").passes(run.scope, none))
     }
 
     @Test

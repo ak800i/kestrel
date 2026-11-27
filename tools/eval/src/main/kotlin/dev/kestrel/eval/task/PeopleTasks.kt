@@ -64,7 +64,7 @@ object PeopleTasks {
         answers = Answers.NONE,
         verdict = VerdictRule.Finished,
         setup = listOf(KeptPermissions(listOf(EvalAccess.READ_CONTACTS)), DeviceContact(ANA, ANA_NUMBER)),
-        check = listOf(ReplyHasDigits("2025550143")),
+        check = listOf(ReplyHasNumber(ANA_NUMBER)),
         dryRun = DryRun("contact-number.json"),
         rehearsal = Rehearsal.SetupOnly("its check reads Kestrel's spoken reply"),
     )

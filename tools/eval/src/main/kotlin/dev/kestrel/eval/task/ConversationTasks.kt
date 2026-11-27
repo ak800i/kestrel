@@ -20,11 +20,13 @@ object ConversationTasks {
     private val SETTINGS_CHECKS = listOf(NightMode(on = true), SettingsIs("system", "screen_off_timeout", Wanted.Equals("120000")))
     private val SMS = listOf(KeptPermissions(listOf(EvalAccess.READ_SMS)), EmuSms("+1 202 555 0177", "Kestrel test: the code word is {marker}"))
 
-    // Two typed commands: the second's "it" is the number that the first one found.
+    // Two typed commands in one conversation: the second's "it" is the number that the first one found, which the first
+    // reply names with or without its country code, as contact-number checks it.
     private val TYPED = listOf(
         Turn.Say(Request("Find the number of {name} Test."), TurnChannel.TYPED),
-        Turn.Expect(ReplyHasDigits("{number}")),
+        Turn.Expect(ReplyHasNumber("{number}")),
         Turn.Say(Request("Send it to me in Telegram's Saved Messages."), TurnChannel.TYPED),
+        Turn.Expect(ConversationIs(open = true, commands = 2)),
     )
     private val CONTACT = listOf(KeptPermissions(listOf(EvalAccess.READ_CONTACTS)), FreeNumber, DeviceContact("{name} Test", "{number}"))
 

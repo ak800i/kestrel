@@ -90,6 +90,10 @@ class ConversationTasksTest {
         assertEquals(Reason.OK, bench.run(ConversationTasks.STAND_IN_TYPED_CONTACT_THEN_MESSAGE).reason)
 
         assertEquals(listOf("typed:Find the number of Ana Test.", "typed:Send it to me in Telegram's Saved Messages."), kestrel.inputs)
+        // The first reply is checked for the number's national digits, as contact-number checks it, so a reply without the
+        // country code passes too; both commands are in one conversation.
+        assertEquals(listOf("2025550160"), bench.adb.hookCalls("AGENT_TASK").mapNotNull { it["digits"] })
+        assertEquals(2, kestrel.closed)
         assertEquals(listOf("confirm/card", "confirm/card"), kestrel.answers)
         assertTrue(bench.adb.hookCalls("VOICE").isEmpty())
         assertTrue(providers.live().isEmpty())
