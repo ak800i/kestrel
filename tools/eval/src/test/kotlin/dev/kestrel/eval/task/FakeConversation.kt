@@ -70,6 +70,10 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
      */
     var closed = 0
         private set
+
+    /** A round's limits as Kestrel stores them, which do=limits sets and do=limits-check reads. */
+    var limits = OWNERS_LIMITS
+        private set
     private var conversation = 0
     private var conversations = 0
     private var closedConversation = 0
@@ -264,7 +268,12 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             "deleted=${gone.size} open=${stillOpen.size} failed=0"
         }
         "restore-check" -> "restored=$restored"
-        "limits" -> extras["limits"]?.let { "limits=$it was=50/5/10" } ?: "limits=50/5/10 was=500/60/1000"
+        "limits" -> {
+            val was = limits
+            limits = extras["limits"] ?: SMALLEST
+            "limits=$limits was=$was"
+        }
+        "limits-check" -> "limits=$limits"
         else -> "new=sent"
     }
 
@@ -278,6 +287,10 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
     companion object {
         const val NAME = "Kestrel, "
         const val WAIT_READS = 3
+
+        /** The owner's limits of a round before a run, and the Conversations page's smallest. */
+        const val OWNERS_LIMITS = "500/60/1000"
+        const val SMALLEST = "50/5/10"
 
         /** Kestrel's guard against a crash loop in seconds, as voice-restore answers it (`CRASH_AFTER_RESTORE_MILLIS` of `Listening.kt`, main spec 8.5). */
         const val GUARD_SECONDS = 120

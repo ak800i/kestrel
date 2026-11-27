@@ -5,10 +5,11 @@ import java.time.ZoneId
 
 /**
  * One alarm of `dumpsys alarm`: its type (0 and 1 are wall-clock times), its time, its due time on the elapsed clock, its
- * app, and whether it is an alarm clock ([clock]: its entry holds "Alarm clock:", as one set with `setAlarmClock` does),
- * unlike the clock app's other wakeups, such as Google Clock's UPDATE_ALARM_INSTANCES every 15 s around an alarm.
+ * app, whether it is an alarm clock ([clock]: its entry holds "Alarm clock:", as one set with `setAlarmClock` does),
+ * unlike the clock app's other wakeups, such as Google Clock's UPDATE_ALARM_INSTANCES every 15 s around an alarm, and
+ * the dump's name of the alarm ([id], the hash in `Alarm{<hash> …}`), which tells two alarms at the same time apart.
  */
-data class AlarmEntry(val type: Int, val origWhen: Long, val whenElapsed: Long, val packageName: String, val clock: Boolean = false)
+data class AlarmEntry(val type: Int, val origWhen: Long, val whenElapsed: Long, val packageName: String, val clock: Boolean = false, val id: String = "")
 
 /** `dumpsys alarm`'s wall clock in ms ([nowRtc]), its elapsed clock ([nowElapsed]) and its alarms. */
 data class AlarmDump(val nowRtc: Long, val nowElapsed: Long, val alarms: List<AlarmEntry>) {
@@ -23,9 +24,12 @@ data class AlarmDump(val nowRtc: Long, val nowElapsed: Long, val alarms: List<Al
  */
 object Alarms {
     private val clocks = Regex("\\bnowRTC=(\\d+).*?\\bnowELAPSED=(\\d+)")
-    private val alarm = Regex("\\bAlarm\\{\\S+ type (\\d+) origWhen (-?\\d+) whenElapsed (-?\\d+) ([\\w.]+)\\}")
+    private val alarm = Regex("\\bAlarm\\{(\\S+) type (\\d+) origWhen (-?\\d+) whenElapsed (-?\\d+) ([\\w.]+)\\}")
 
-    /** The clocks and the alarms, each once, or null when the dump gives no clocks. */
+    /**
+     * The clocks and the alarms, each once by its [AlarmEntry.id], since the dump lists an alarm in several places, such as
+     * its batch and "Next wake from idle", or null when the dump gives no clocks.
+     */
     fun parse(dump: List<String>): AlarmDump? {
         val now = dump.firstNotNullOfOrNull { clocks.find(it) } ?: return null
         val alarms = mutableListOf<AlarmEntry>()
@@ -36,8 +40,8 @@ object Alarms {
             val depth = line.length - line.trimStart().length
             val found = alarm.find(line)?.destructured
             if (found != null) {
-                val (type, origWhen, whenElapsed, packageName) = found
-                alarms.add(AlarmEntry(type.toInt(), origWhen.toLong(), whenElapsed.toLong(), packageName))
+                val (id, type, origWhen, whenElapsed, packageName) = found
+                alarms.add(AlarmEntry(type.toInt(), origWhen.toLong(), whenElapsed.toLong(), packageName, id = id))
                 open = alarms.lastIndex
                 indent = depth
                 continue
@@ -50,7 +54,9 @@ object Alarms {
                 alarms[at] = alarms[at].copy(clock = true)
             }
         }
-        return AlarmDump(now.groupValues[1].toLong(), now.groupValues[2].toLong(), alarms.distinct())
+        // One entry per alarm: an alarm clock is one where any of its places says so.
+        val each = alarms.groupBy { it.id }.values.map { same -> same.first().copy(clock = same.any { it.clock }) }
+        return AlarmDump(now.groupValues[1].toLong(), now.groupValues[2].toLong(), each)
     }
 
     /** The wall-clock time in ms of the next [hour]:[minute] after [nowRtc] in [zone]. */

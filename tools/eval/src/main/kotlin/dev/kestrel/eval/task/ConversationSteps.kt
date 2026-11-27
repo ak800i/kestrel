@@ -2,7 +2,9 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookLost
+import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.ConversationGuard
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The end of the quiet time between two turns (design 6.6 and 9.6 of sub-project 7): the open conversation closes as at
@@ -34,23 +36,33 @@ data object OwnerTouch : TurnAction {
 
 /**
  * A round's limits at the Conversations page's smallest for the run (design 7.4 and 15.3 of sub-project 7:
- * limit-continue): 50 replies, 5 minutes and 10 AI Credits, set with conversation-control do=limits, which answers the
- * limits that it found as `was=`. The restore, pushed before the change, puts those back and checks them; when the
- * change's answer was lost, they are not known, and the restore fails with what to do by hand.
+ * limit-continue): 50 replies, 5 minutes and 10 AI Credits. Only Kestrel's own answers decide what the restore does:
+ * before the change, the step reads the limits that Kestrel stores (conversation-control do=limits-check), and the
+ * restore, pushed before that read, reads them again. When they are still those of before, nothing changed, as after a
+ * Ctrl+C before the change or a refused change, and the restore does nothing; else it sets them back and reads them back
+ * to confirm. A set of given limits does the same when it is sent twice, so it goes through the retried path
+ * ([dev.kestrel.eval.hook.Hooks.conversationLimits]), the change and the restore's alike.
  */
 data object SmallestLimits : Setup {
     private const val BY_HAND = "Kestrel > Settings > Conversations: set a round's limits back to the owner's."
 
     override fun apply(scope: RunScope): SetupResult {
-        var was: String? = null
+        // The limits before the change, as Kestrel answered them; the shutdown hook's thread reads them too.
+        val before = AtomicReference<String?>(null)
         scope.restores.push("a round's limits", BY_HAND) {
-            val stored = checkNotNull(was) { "The limits before the run are not known, because conversation-control's answer was lost." }
-            val answer = scope.hooks.conversationControl("limits", stored)
-            check(answer["limits"] == stored) { "A round's limits are ${answer["limits"]}, not $stored again." }
+            // Without the read, the change has not been sent either.
+            val was = before.get() ?: return@push
+            if (limits(scope.hooks) == was) return@push
+            scope.hooks.conversationLimits(was)
+            check(limits(scope.hooks) == was) { "A round's limits are not those of before the run again." }
         }
-        was = scope.restores.change("a round's limits at the smallest", BY_HAND) { scope.hooks.conversationControl("limits") }["was"]
+        before.set(limits(scope.hooks))
+        scope.restores.change("a round's limits at the smallest", BY_HAND) { scope.hooks.conversationLimits() }
         return SetupResult.Ready
     }
+
+    private fun limits(hooks: Hooks): String =
+        checkNotNull(hooks.limitsCheck()["limits"]) { "Kestrel answered conversation-control do=limits-check without its limits." }
 }
 
 /** conversation-state (design 14.4 of sub-project 7) shows the open conversation as each field that is not null says. */

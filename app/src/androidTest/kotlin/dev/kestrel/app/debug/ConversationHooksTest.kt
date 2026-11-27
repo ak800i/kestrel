@@ -58,14 +58,16 @@ class ConversationHooksTest {
         val stored = runBlocking { settings.get(SettingKeys.CONVERSATIONS) }
         val was = ConversationHookAnswers.limitsText(stored.roundLimits)
         try {
+            assertEquals("limits=$was", hook("CONVERSATION_CONTROL", "do" to "limits-check"))
             assertEquals("limits=50/5/10 was=$was", hook("CONVERSATION_CONTROL", "do" to "limits"))
+            assertEquals("limits=50/5/10", hook("CONVERSATION_CONTROL", "do" to "limits-check"))
             assertEquals(GoalLimits(50, 5, 10), runBlocking { settings.get(SettingKeys.CONVERSATIONS) }.roundLimits)
             assertEquals("limits=$was was=50/5/10", hook("CONVERSATION_CONTROL", "do" to "limits", "limits" to was))
             assertEquals(stored, runBlocking { settings.get(SettingKeys.CONVERSATIONS) })
 
             val restored = hook("CONVERSATION_CONTROL", "do" to "restore-check")
             assertTrue(restored, Regex("restored=(nothing|open|closed|goal-held|goal-ended)").matches(restored))
-            assertEquals("error: add --es do with one of new, expire, expire-typed, limits, restore-check or delete-typed", hook("CONVERSATION_CONTROL", "do" to "other"))
+            assertEquals("error: add --es do with one of new, expire, expire-typed, limits, limits-check, restore-check or delete-typed", hook("CONVERSATION_CONTROL", "do" to "other"))
         } finally {
             runBlocking { settings.set(SettingKeys.CONVERSATIONS, stored) }
         }

@@ -89,6 +89,9 @@ data object ClockFree : Setup {
     private const val HOUR = 6
     private const val MINUTE = 45
 
+    /** The key of [RunScope.notes] that holds the clock's alarm clocks before the run, by their dump ids, for [OnlyAlarmAt]. */
+    const val BEFORE = "clock-alarms-before"
+
     override fun apply(scope: RunScope): SetupResult {
         if (scope.device.kind != DeviceKind.EMULATOR) return SetupResult.Untestable(NoOwnerAlarms.WHY)
         val clock = ClockApp.find(scope) ?: return SetupResult.Untestable("no app sets alarms")
@@ -96,6 +99,7 @@ data object ClockFree : Setup {
         val dump = ClockApp.alarms(scope) ?: return SetupResult.Untestable("dumpsys alarm gives no clocks")
         if (ClockClear.holds(scope, dump)) return SetupResult.Untestable("Google Clock holds an alarm or a timer, which its restore would delete")
         scope.notes[ClockApp.NOTE] = clock
+        scope.notes[BEFORE] = dump.of(clock).filter { it.clock }.joinToString(",") { it.id }
         scope.values.time = TIME
         scope.values.hour = "$HOUR"
         scope.values.minute = "$MINUTE"
@@ -149,8 +153,14 @@ internal object AlarmCleanup {
     /** Whether `dumpsys alarm` shows an alarm clock of [clock] at the next [hour]:[minute], or at the same time a day later. */
     fun set(scope: RunScope, clock: String, hour: Int, minute: Int): Boolean {
         val dump = checkNotNull(ClockApp.alarms(scope)) { "dumpsys alarm gives no clocks." }
-        val next = Alarms.nextAt(dump.nowRtc, ClockApp.zone(scope), hour, minute)
-        return clocks(dump, clock).any { at -> listOf(next, next + DAY).any { abs(at - it) < MINUTE } }
+        val zone = ClockApp.zone(scope)
+        return clocks(dump, clock).any { at(dump, zone, it, hour, minute) }
+    }
+
+    /** Whether the wall-clock time [time] of [dump] is the next [hour]:[minute] in [zone], or the same time a day later. */
+    fun at(dump: AlarmDump, zone: ZoneId, time: Long, hour: Int, minute: Int): Boolean {
+        val next = Alarms.nextAt(dump.nowRtc, zone, hour, minute)
+        return listOf(next, next + DAY).any { abs(time - it) < MINUTE }
     }
 
     private const val MINUTE = 60_000L
@@ -168,14 +178,21 @@ data object NextAlarmAt : Check {
 }
 
 /**
- * The clock holds one alarm clock only, at the next [hour]:[minute] or at the same time a day later (design 7.3 of
- * sub-project 7: a steered goal changed its alarm, and did not set a second one); [ClockFree] found none before the run.
+ * The run left exactly one alarm that rings, the one asked for (design 7.3 of sub-project 7: a steered goal changed its
+ * alarm, and did not set a second one). The rule: the run's alarms are the clock app's alarm clocks in `dumpsys alarm`,
+ * each by its own entry, that were not in [ClockFree]'s list of them before the run ([ClockFree.BEFORE]); the check passes
+ * when exactly one is, and it is at the next [hour]:[minute] or at the same time a day later. `dumpsys alarm` lists only
+ * enabled alarms, so an alarm that the goal set and then turned off is no alarm of the run's: it never rings, and the
+ * check passes on the one that does. A second enabled alarm of the run's fails the check, also one at the same minute,
+ * because each alarm is its own entry. An alarm that was there before the run is never the run's.
  */
 data class OnlyAlarmAt(val hour: Int, val minute: Int) : Check {
     override fun passes(scope: RunScope, answer: HookAnswer): Boolean {
         val clock = scope.notes[ClockApp.NOTE] ?: return false
+        val before = scope.notes[ClockFree.BEFORE]?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: return false
         val dump = ClockApp.alarms(scope) ?: return false
-        return AlarmCleanup.clocks(dump, clock).distinct().size == 1 && AlarmCleanup.set(scope, clock, hour, minute)
+        val runs = dump.of(clock).filter { it.clock && it.id !in before }
+        return runs.size == 1 && AlarmCleanup.at(dump, ClockApp.zone(scope), runs.single().origWhen, hour, minute)
     }
 }
 

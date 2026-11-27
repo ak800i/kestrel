@@ -39,6 +39,11 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
     var tip = false
 
     private var screen = "alarms"
+
+    // Each alarm's name in `dumpsys alarm` (its hash), so that two alarms at the same time are two entries, as on a device.
+    private var ids = 0x5a0
+
+    private fun id(): String = Integer.toHexString(++ids)
     private val zone = ZoneId.of("Europe/Belgrade")
     private val noon = at(23, 12, 0)
 
@@ -92,7 +97,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
 
     private fun entry(time: Long, packageName: String, clock: Boolean): String {
         val lines = listOf(
-            "    RTC_WAKEUP #0: Alarm{5a1 type 0 origWhen $time whenElapsed ${ELAPSED + time - noon} $packageName}",
+            "    RTC_WAKEUP #0: Alarm{${id()} type 0 origWhen $time whenElapsed ${ELAPSED + time - noon} $packageName}",
             "      tag=*walarm*:com.android.deskclock.action.UPDATE_ALARM_INSTANCES",
         ) + if (clock) listOf("      Alarm clock:", "        triggerTime=2026-11-24 06:45:00.000") else emptyList()
         return lines.joinToString("\n")
@@ -108,7 +113,7 @@ class ClockPhone(private val run: FakeRun, val clock: String = ClockApp.GOOGLE) 
 
     /** A timer's alarm of the clock app due [seconds] later. */
     fun timerIn(seconds: Long) {
-        val line = "    ELAPSED_WAKEUP #0: Alarm{7c3 type 2 origWhen ${ELAPSED + seconds * 1000} whenElapsed ${ELAPSED + seconds * 1000} $clock}"
+        val line = "    ELAPSED_WAKEUP #0: Alarm{${id()} type 2 origWhen ${ELAPSED + seconds * 1000} whenElapsed ${ELAPSED + seconds * 1000} $clock}"
         alarms.add(line)
         timers.add(line)
     }
@@ -173,7 +178,7 @@ class ClockStepsTest {
         assertEquals(1795086000000L, parsed.nowRtc)
         assertEquals(1000000L, parsed.nowElapsed)
         assertEquals(
-            listOf(AlarmEntry(0, 1795153500000L, 68500000L, ClockApp.GOOGLE), AlarmEntry(2, 1290000L, 1290000L, ClockApp.GOOGLE)),
+            listOf(AlarmEntry(0, 1795153500000L, 68500000L, ClockApp.GOOGLE, id = "5a1"), AlarmEntry(2, 1290000L, 1290000L, ClockApp.GOOGLE, id = "6b2")),
             parsed.of(ClockApp.GOOGLE),
         )
         assertNull(Alarms.parse(listOf("Current Alarm Manager state:")))

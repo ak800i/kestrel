@@ -1,7 +1,10 @@
 package dev.kestrel.eval.task
 
+import dev.kestrel.eval.device.Alarms
 import dev.kestrel.eval.hook.HookAnswer
+import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.run.SentCommand
+import dev.kestrel.eval.run.Stopping
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -37,23 +40,77 @@ class ConversationStepsTest {
     }
 
     @Test
-    fun theSmallestLimitsPutBackTheLimitsThatTheyFoundAndALostAnswerLeavesWhatToDoByHand() {
-        var stored = "500/60/1000"
-        run.adb.hook("CONVERSATION_CONTROL") { extras ->
-            val was = stored
-            stored = extras["limits"] ?: "50/5/10"
-            "limits=$stored was=$was"
-        }
+    fun theSmallestLimitsPutBackTheLimitsThatKestrelAnsweredBeforeTheChange() {
+        val kestrel = Limits()
 
         assertEquals(SetupResult.Ready, SmallestLimits.apply(scope))
-        assertEquals("50/5/10", stored)
+        assertEquals("50/5/10", kestrel.stored)
         assertTrue(run.restores.runDownTo(0).isEmpty())
-        assertEquals("500/60/1000", stored)
+        assertEquals("500/60/1000", kestrel.stored)
+    }
 
-        run.adb.loseNext("CONVERSATION_CONTROL")
-        assertThrows(Exception::class.java) { SmallestLimits.apply(scope) }
-        val failures = run.restores.runDownTo(0)
-        assertEquals("Kestrel > Settings > Conversations: set a round's limits back to the owner's.", failures.single().byHand)
+    // Task 6's review M1 and M2: only Kestrel's own answers decide the restore. A change that never reached Kestrel, after a
+    // Ctrl+C between the restore's push and the change or after a refused change, leaves the limits as they were, so the
+    // restore does nothing and asks no one for work by hand; a lost answer of the restore's set is asked again, because the
+    // set does the same when it is sent twice.
+    @Test
+    fun theSmallestLimitsRestoreDoesNothingWhenCtrlCCameBeforeTheChange() {
+        val kestrel = Limits()
+        // Ctrl+C after the restore was pushed, while the step reads the limits before its change.
+        run.restores.push("an earlier step", "") {}
+        var ctrlC: Thread? = null
+        kestrel.onCheck = { if (ctrlC == null) ctrlC = run.ctrlC() }
+
+        assertThrows(Stopping::class.java) { SmallestLimits.apply(scope) }
+
+        checkNotNull(ctrlC).join()
+        assertEquals("500/60/1000", kestrel.stored)
+        assertEquals(emptyList<String>(), kestrel.sets)
+        assertTrue(run.console.warnings.toString(), run.console.warnings.none { "by hand" in it || "Conversations" in it })
+    }
+
+    @Test
+    fun theSmallestLimitsRestoreDoesNothingAfterARefusedChangeAndRetriesALostSet() {
+        val kestrel = Limits()
+        kestrel.refuse = true
+
+        assertThrows(HookError::class.java) { SmallestLimits.apply(scope) }
+        assertTrue(run.restores.runDownTo(0).isEmpty())
+        assertEquals("500/60/1000", kestrel.stored)
+
+        kestrel.refuse = false
+        SmallestLimits.apply(scope)
+        run.adb.loseNext("hook.CONVERSATION_CONTROL.*'500/60/1000'")
+        assertTrue(run.restores.runDownTo(0).isEmpty())
+        assertEquals("500/60/1000", kestrel.stored)
+        assertEquals(listOf("50/5/10", "500/60/1000", "500/60/1000"), kestrel.sets)
+    }
+
+    // Kestrel's stored limits as conversation-control do=limits sets them and do=limits-check reads them.
+    private inner class Limits {
+        var stored = "500/60/1000"
+        val sets = mutableListOf<String>()
+        var refuse = false
+        var onCheck: () -> Unit = {}
+
+        init {
+            run.adb.hookWith("CONVERSATION_CONTROL") { extras ->
+                when (extras["do"]) {
+                    "limits-check" -> {
+                        onCheck()
+                        -1 to "limits=$stored"
+                    }
+                    else -> if (refuse) {
+                        1 to "add --es limits <replies>/<minutes>/<credits>, or no limits for the page's smallest"
+                    } else {
+                        val was = stored
+                        stored = extras["limits"] ?: "50/5/10"
+                        sets += stored
+                        -1 to "limits=$stored was=$was"
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -120,15 +177,33 @@ class ConversationStepsTest {
     }
 
     @Test
-    fun onlyAlarmAtPassesForOneAlarmClockOfTheClockAtItsTime() {
+    fun onlyAlarmAtPassesForTheOneAlarmClockThatTheRunLeftAtItsTime() {
         val phone = ClockPhone(run)
-        scope.notes[ClockApp.NOTE] = ClockApp.GOOGLE
+        assertEquals(SetupResult.Ready, ClockFree.apply(scope))
         fun passes() = OnlyAlarmAt(7, 30).passes(scope, HookAnswer.EMPTY)
 
         assertFalse(passes())
+        // The goal's 7:00 alarm, which it turned off, is not in dumpsys alarm, which lists only enabled alarms.
         phone.alarmAt(7, 30)
         assertTrue(passes())
         phone.alarmAt(7, 0)
         assertFalse(passes())
+    }
+
+    // Task 6's review M3: each alarm is its own entry, so a second alarm of the run's at the same minute fails the check, and
+    // an alarm in the setup's list from before the run is never the run's.
+    @Test
+    fun onlyAlarmAtFailsOnASecondAlarmAtTheSameMinuteAndCountsOnlyTheRunsAlarms() {
+        val phone = ClockPhone(run)
+        assertEquals(SetupResult.Ready, ClockFree.apply(scope))
+        phone.alarmAt(7, 30)
+        phone.alarmAt(7, 30)
+
+        assertFalse(OnlyAlarmAt(7, 30).passes(scope, HookAnswer.EMPTY))
+
+        // As if the first had been there before the run.
+        val first = Alarms.parse(run.device.read("dumpsys alarm"))!!.of(ClockApp.GOOGLE).first { it.clock }.id
+        scope.notes[ClockFree.BEFORE] = first
+        assertTrue(OnlyAlarmAt(7, 30).passes(scope, HookAnswer.EMPTY))
     }
 }

@@ -63,6 +63,8 @@ internal class ConversationHooks(private val graph: AppGraph) {
         // quiet time, so a conversation that the owner opened or continued with his words or his choice is never ended.
         "expire-typed" -> if (graph.conversations.endQuietTimeIf(HookConversations::owns)) "expire=sent" else "expire=not-typed"
         "limits" -> limits(intent.getStringExtra(EXTRA_LIMITS))
+        // A pure read of the stored limits, so that a test's restore asks Kestrel whether its change reached it (plan 7G).
+        "limits-check" -> "limits=${ConversationHookAnswers.limitsText(graph.settings.get(SettingKeys.CONVERSATIONS).roundLimits)}"
         "restore-check" -> "restored=${ConversationHookAnswers.restored(graph.conversations.restored)}"
         // The conversations that the hooks opened (HookConversations), never the owner's: each closed one is deleted and its
         // mark cleared, and one that is open or failed stays marked for a later call.
@@ -72,7 +74,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
             "deleted=${ended.values.count { it == PastDeletion.DELETED }} open=${ended.values.count { it == PastDeletion.OPEN }} " +
                 "failed=${ended.values.count { it == PastDeletion.FAILED }}"
         }
-        else -> throw HookError("add --es do with one of new, expire, expire-typed, limits, restore-check or delete-typed")
+        else -> throw HookError("add --es do with one of new, expire, expire-typed, limits, limits-check, restore-check or delete-typed")
     }
 
     // The page's smallest limits, or with --es limits those that a check stored before, so that it can put them back.

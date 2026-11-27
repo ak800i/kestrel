@@ -160,12 +160,22 @@ class Hooks(private val client: HookClient) {
     fun conversationState(): HookAnswer = read("conversation-state")
 
     /**
-     * conversation-control --es do [action] (design 14.4 of sub-project 7): `new` starts a new conversation, `expire` ends
-     * the quiet time at once while its clock runs, and `limits` sets a round's limits, [limits] as
-     * "<replies>/<minutes>/<credits>" or the Conversations page's smallest without it, and answers the stored ones as `was=`.
+     * conversation-control --es do [action] (design 14.4 of sub-project 7), a control that acts once: `new` starts a new
+     * conversation, `expire` ends the quiet time at once while its clock runs, and `expire-typed` does so only for the
+     * hooks' own conversation (plan 7G). A round's limits have their own calls ([conversationLimits], [limitsCheck]).
      */
-    fun conversationControl(action: String, limits: String? = null): HookAnswer =
-        act("conversation-control", Extra.Text("do", action), limits?.let { Extra.Text("limits", it) })
+    fun conversationControl(action: String): HookAnswer = act("conversation-control", Extra.Text("do", action))
+
+    /**
+     * conversation-control --es do limits (plan 7D): sets a round's limits to [limits], "<replies>/<minutes>/<credits>", or
+     * to the Conversations page's smallest without it. The set gives the same limits however often it is sent, so a lost
+     * answer is asked again; its `was=` is not used, because a second send would answer the first send's limits.
+     */
+    fun conversationLimits(limits: String? = null): HookAnswer =
+        read("conversation-control", Extra.Text("do", "limits"), limits?.let { Extra.Text("limits", it) })
+
+    /** conversation-control --es do limits-check (plan 7G): the stored limits of a round, `limits=<r>/<m>/<c>`, a pure read. */
+    fun limitsCheck(): HookAnswer = read("conversation-control", Extra.Text("do", "limits-check"))
 
     /**
      * conversation-control --es do delete-typed (plan 7F with its Task 13a): deletes the closed conversations that the work
