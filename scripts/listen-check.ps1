@@ -51,8 +51,8 @@
 #             cold boot, so the script instead runs 'sync' on it, closes it with 'adb emu kill', waits until its qemu
 #             process has ended, and starts it again with scripts\start-emulator.ps1 -ColdBoot, which must give it the
 #             same serial. For Kestrel, both end its process with the device and connect its accessibility service after
-#             the start. Start a run with -Reboot on an emulator from a cold boot too: run & $adb -s $serial emu kill,
-#             wait until the emulator has closed, and then run $serial = scripts\start-emulator.ps1 -ColdBoot. When the
+#             the start. Start a run with -Reboot on an emulator from a cold boot too: run
+#             scripts\cold-boot.ps1 -Serial $serial first. When the
 #             device does not come back ('adb reboot' or 'adb emu kill' has not returned within its limit, or the device
 #             does not answer within 5 minutes), the script puts nothing back on it: it lists what is left with the
 #             commands that put it back by hand, and ends with exit code 1.
@@ -83,6 +83,8 @@
 # Android says clearly that the PIN pad shows, never again after a typing that did not unlock the phone, and never
 # prints it. A phone that starts again but stays locked fails the reboot check with the reason, skips the role check, which
 # needs Kestrel running, and still gets its settings back through adb. It never waits for an Enter.
+# On kestrel-api37 it first checks that the emulator has not degraded (Assert-EmulatorHealthy in
+# scripts\lib\DeviceGuard.ps1), and stops before any check, with the advice to cold-boot it, when it has.
 # It needs PowerShell 7.3 or newer, as scripts\hook.ps1 does.
 # Example: scripts\listen-check.ps1 -Serial emulator-5554 -Reboot
 #Requires -Version 7.3
@@ -94,9 +96,12 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
 . "$PSScriptRoot\lib\Session.ps1"
 . "$PSScriptRoot\lib\Oracle.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 Use-KestrelToolchain
 # No command reaches the device before this check.
 Assert-TestDevice -Serial $Serial
+# A degraded kestrel-api37 would fail the checks for reasons that are not Kestrel's, so none starts on it.
+Assert-EmulatorHealthy -Serial $Serial
 $adb = Get-Adb
 $service = $KestrelAccessibilityService
 $tile = 'dev.kestrel/dev.kestrel.app.listen.KestrelTileService'

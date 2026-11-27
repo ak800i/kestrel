@@ -3,6 +3,8 @@
 # Gradle prints and caches, and it always passes the Gradle properties with which the Android Gradle plugin leaves
 # Kestrel installed after the tests and clears none of its data (Get-ConnectedTestArguments and $KestrelDataProperties
 # in scripts\lib\DeviceGuard.ps1). It refuses every other argument.
+# On kestrel-api37 it first checks that the emulator has not degraded (Assert-EmulatorHealthy in
+# scripts\lib\DeviceGuard.ps1), and stops before any test with the advice to cold-boot it when it has.
 # Before the tests it reads the device's state; afterwards, also when the tests fail or Ctrl+C interrupts them, it checks
 # that the serial still names the test device, and then:
 #   - on kestrel-api37, it checks what AGENTS.md asks for there: that the number of Google accounts in 'dumpsys account'
@@ -37,6 +39,8 @@ $ErrorActionPreference = 'Stop'
 $gradleArguments = Get-ConnectedTestArguments -Arguments $Tasks
 Use-KestrelToolchain
 Assert-TestDevice -Serial $Serial
+# A degraded kestrel-api37 would fail the tests for reasons that are not Kestrel's, so the tests do not start on it.
+Assert-EmulatorHealthy -Serial $Serial
 # The device tests replace the list of enabled accessibility services, and Android then clears the shortcuts of the
 # services that it turns off. So the accessibility settings are put back afterwards, even when the tests fail or are
 # interrupted. If they cannot be read, the tests do not start.

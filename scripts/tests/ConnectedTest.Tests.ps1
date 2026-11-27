@@ -87,6 +87,8 @@ Describe 'connected-test.ps1' {
         Remove-Item -LiteralPath $arguments, $gradleSerial -ErrorAction SilentlyContinue
         $env:ANDROID_SERIAL = 'caller-serial'
         Mock Get-KestrelProfiles { [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' } }
+        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 1.2; Load = 0.5; Cpus = 4; Seconds = 10.0 } }
+        Mock Write-Host {}
     }
 
     AfterAll {
@@ -206,5 +208,24 @@ Describe 'connected-test.ps1' {
 
         $run.Code | Should -Be 0
         Should -Invoke Get-KestrelProfiles -Times 0 -Exactly
+    }
+
+    It 'stops before Gradle runs, with the advice to cold-boot, when kestrel-api37 has degraded' {
+        Mock Read-EmulatorHealth { [pscustomobject]@{ SensorsCpuPercent = 47.5; Load = 2.1; Cpus = 4; Seconds = 10.0 } }
+
+        { & $connectedTest -Serial emulator-5554 ':app:connectedDebugAndroidTest' } |
+            Should -Throw -ExpectedMessage 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL*scripts\cold-boot.ps1 -Serial emulator-5554*'
+
+        $arguments | Should -Not -Exist
+        ([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).calls | Should -BeNullOrEmpty
+    }
+
+    It 'reads the emulator''s health on kestrel-api37 only, not on the A71' {
+        Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') | Out-Null
+        Should -Invoke Read-EmulatorHealth -Times 1 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+
+        Set-FakeDevice -A71
+        (Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Serial R58N66RVD7Z).Code | Should -Be 0
+        Should -Invoke Read-EmulatorHealth -Times 1 -Exactly
     }
 }

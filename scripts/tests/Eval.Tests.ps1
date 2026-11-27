@@ -10,12 +10,16 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\eval.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-NewestSource', 'Test-EvalStale', 'Invoke-Gradle', 'Update-EvalTool', 'Invoke-Java', 'Invoke-EvalScript')
+    $helpers = @('Get-EvalDevice', 'Get-NewestSource', 'Test-EvalStale', 'Invoke-Gradle', 'Update-EvalTool', 'Invoke-Java', 'Invoke-EvalScript')
     $functions = $tree.FindAll({
             param($node)
             $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $helpers
         }, $true)
     foreach ($function in $functions) { . ([scriptblock]::Create($function.Extent.Text)) }
+    # The toolchain and the device checks of scripts\lib, which the tests mock.
+    function Use-KestrelToolchain { }
+    function Assert-TestDevice([string]$Serial) { }
+    function Assert-EmulatorHealthy([string]$Serial) { }
 
     # A repository with the tool's sources, its build output, the installed copy and the stamp of its build, every file
     # written at $Time.
@@ -137,6 +141,29 @@ Describe 'scripts\eval.ps1' {
         Mock Invoke-Gradle { throw 'Set JAVA_HOME to a JDK 21.' }
 
         Invoke-EvalScript $root @('list') 3>$null | Should -Be 2
+    }
+
+    It 'checks the device that --device names before the tool runs, and refuses with exit code 2 when the check fails' {
+        Mock Invoke-Java { 0 }
+        Mock Assert-TestDevice {}
+        Mock Assert-EmulatorHealthy { throw 'Refusing to start on emulator-5554: kestrel-api37 has degraded.' }
+
+        Invoke-EvalScript (New-Repository $built) @('suite', '--device', 'emulator-5554') 3>$null | Should -Be 2
+
+        Should -Invoke Assert-TestDevice -Times 1 -Exactly -ParameterFilter { $Serial -eq 'emulator-5554' }
+        Should -Invoke Invoke-Java -Times 0 -Exactly
+    }
+
+    It 'runs the tool after the device checks passed, and checks no device when the arguments name none' {
+        Mock Invoke-Java { 0 }
+        Mock Assert-EmulatorHealthy {}
+
+        Invoke-EvalScript (New-Repository $built) @('run', '--task', 'stand-in-hotspot', '--device', 'R58N66RVD7Z') | Should -Be 0
+        Should -Invoke Assert-EmulatorHealthy -Times 1 -Exactly -ParameterFilter { $Serial -eq 'R58N66RVD7Z' }
+
+        Invoke-EvalScript (New-Repository $built) @('list') | Should -Be 0
+        Should -Invoke Assert-EmulatorHealthy -Times 1 -Exactly
+        Should -Invoke Invoke-Java -Times 2 -Exactly
     }
 
     It 'gives the program every argument as it was, without cmd.exe, and returns its exit code' {

@@ -1,6 +1,7 @@
 # Runs :tools:eval, the agent's task suite on the PC (design spec, section 16.5), with this script's own arguments, and
 # ends with the tool's exit code: 0 when every run passed or was skipped with a reason, 1 when a run failed, 2 for a
-# refusal before any run (a device, the live gate, a missing configuration, or a build of the tool that failed), and 3
+# refusal before any run (a device, a kestrel-api37 that has degraded (Assert-EmulatorHealthy in
+# scripts\lib\DeviceGuard.ps1), the live gate, a missing configuration, or a build of the tool that failed), and 3
 # when the owner's open conversation with Kestrel stopped the runs (owner-busy).
 # It rebuilds the tool's installed copy (tools\eval\build\install\eval) with scripts\gradle.ps1 :tools:eval:installDist
 # only when a file of tools\eval (outside its build folder), of build-logic (outside its build output), or
@@ -15,7 +16,13 @@
 # Example: scripts\eval.ps1 run --device emulator-5554 --task stand-in-hotspot --dry-run
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 
+# The serial that the arguments give with --device, which every command that uses a device takes; $null without one.
+function Get-EvalDevice([string[]]$Arguments) {
+    $at = [array]::IndexOf($Arguments, '--device')
+    if ($at -ge 0 -and $at + 1 -lt $Arguments.Count) { $Arguments[$at + 1] } else { $null }
+}
 # The newest write time of the files whose change needs a new build of the tool: its own files outside its build folder,
 # the build logic outside its build output, the version catalog and the settings. build-logic's sources hold a package
 # folder named "build" (dev\kestrel\build), so only build-logic's own output folders are left out.
@@ -83,7 +90,9 @@ function Invoke-Java([string]$Java, [string[]]$Arguments, [string]$Directory) {
 }
 
 # Builds the tool when it is out of date and runs it in the repository's folder with the arguments. Returns its exit
-# code, or 2 when the build failed or threw, as for any refusal before a run.
+# code, or 2 when the build failed or threw, as for any refusal before a run. When the arguments name a device, it first
+# checks it (Assert-TestDevice), and on kestrel-api37 that the emulator has not degraded (Assert-EmulatorHealthy); a
+# device that fails either check is a refusal too.
 function Invoke-EvalScript([string]$Root, [string[]]$Arguments) {
     try {
         if (-not (Update-EvalTool $Root)) {
@@ -95,6 +104,16 @@ function Invoke-EvalScript([string]$Root, [string[]]$Arguments) {
     } catch {
         Write-Warning "scripts\eval.ps1 could not build :tools:eval, so it did not run: $($_.Exception.Message)"
         return 2
+    }
+    $device = Get-EvalDevice $Arguments
+    if ($device) {
+        try {
+            Assert-TestDevice -Serial $device
+            Assert-EmulatorHealthy -Serial $device
+        } catch {
+            Write-Warning "scripts\eval.ps1 did not run :tools:eval: $($_.Exception.Message)"
+            return 2
+        }
     }
     $library = Join-Path $Root 'tools\eval\build\install\eval\lib\*'
     Invoke-Java (Join-Path $env:JAVA_HOME 'bin\java.exe') (@('-classpath', $library, 'dev.kestrel.eval.MainKt') + $Arguments) $Root

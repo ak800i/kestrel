@@ -17,6 +17,8 @@
 # Ctrl+C, it ends with exit code 1. Each command at the end runs only if the serial still names the emulator that the
 # script accepted at the start; if one cannot run, the script warns with the command that does it by hand and ends with
 # exit code 1.
+# It first checks that the emulator has not degraded (Assert-EmulatorHealthy in scripts\lib\DeviceGuard.ps1), and stops
+# before it reads or changes anything else, with the advice to cold-boot it, when it has.
 # Example: scripts\command-test.ps1 -Serial emulator-5554
 #          scripts\command-test.ps1 -Serial emulator-5554 -Class TouchCommandsTest,GestureCommandsTest#swipeUpOnANumber
 param(
@@ -26,6 +28,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 
 # Runs a command that puts the device back, and returns whether it worked. When it did not, it warns with the command
 # that does it by hand.
@@ -75,6 +78,8 @@ try {
     Use-KestrelToolchain
     if ($Serial -notlike 'emulator-*') { throw "Refusing ${Serial}: the command tests run only on the kestrel-api37 emulator." }
     Assert-TestDevice -Serial $Serial
+    # Before the state is read, so that a degraded emulator stops the run with nothing to put back.
+    Assert-EmulatorHealthy -Serial $Serial
     $selection = Get-CommandTestSelection -Class $Class
     # Read whole before it counts, so that a read that fails leaves the restore nothing to put back.
     $before = [ordered]@{

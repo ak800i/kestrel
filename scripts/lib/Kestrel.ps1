@@ -450,6 +450,14 @@ function Assert-TestDevice([string]$Serial, [switch]$AllowDailyPhone) {
     throw "Refusing to use $Serial (model '$model', AVD '$avd'). Kestrel is tested only on kestrel-api37 and the Galaxy A71."
 }
 
+# Whether Assert-TestDevice accepted the serial as the emulator kestrel-api37, and not as a phone. Throws when
+# Assert-TestDevice has not accepted the serial.
+function Test-KestrelEmulatorDevice([string]$Serial) {
+    $device = if ($KestrelTestDevices) { $KestrelTestDevices[$Serial] }
+    if (-not $device) { throw "Run Assert-TestDevice -Serial $Serial before asking which test device it is." }
+    $device.Pattern -eq 'kestrel-api37'
+}
+
 # Adds up the results that Gradle's connected tests wrote as JUnit XML files below a folder: the numbers of tests,
 # failures, errors and skipped tests. A folder that does not exist counts no tests.
 function Get-TestResultCounts([string]$Folder) {

@@ -27,10 +27,13 @@
 # as well, and the run fails when it ran there; it changes nothing that the script must put back.
 # Each command at the end runs only if the serial still names the device that the script accepted at the start. If a
 # command cannot run, the script warns with the command that does it by hand and ends with exit code 1.
+# On kestrel-api37 it first checks that the emulator has not degraded (Assert-EmulatorHealthy in
+# scripts\lib\DeviceGuard.ps1), and stops before it changes anything, with the advice to cold-boot it, when it has.
 # Example: scripts\voice-test.ps1 -Serial emulator-5554
 param([Parameter(Mandatory = $true)][string]$Serial)
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Kestrel.ps1"
+. "$PSScriptRoot\lib\DeviceGuard.ps1"
 
 # Runs a command that puts the device back, and returns whether it worked. When it did not, it warns with what is left
 # and with the command that does it by hand.
@@ -65,6 +68,8 @@ $rolePermissionsBefore = $null
 try {
     Use-KestrelToolchain
     Assert-TestDevice -Serial $Serial
+    # Before anything that the restore would put back, so that a degraded kestrel-api37 stops the run with nothing changed.
+    Assert-EmulatorHealthy -Serial $Serial
     $reached = $true
     # The lock-screen test turns on a swipe lock screen and puts the setting back itself, but a test process that died in
     # between would leave it on, so on an emulator the script reads the setting first and puts it back at the end.

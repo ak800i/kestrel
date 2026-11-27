@@ -2,8 +2,9 @@
 # Android Gradle plugin uninstall Kestrel on kestrel-api37, which deleted its Copilot profile, permissions, settings and
 # the agent's memory. So scripts\gradle.ps1 reaches no device, scripts\connected-test.ps1 accepts only arguments that keep
 # Kestrel installed with its data and compares the device before and after the tests, and no script deletes the profile
-# that kestrel-api37 keeps. Dot-source it after scripts\lib\Kestrel.ps1; the functions about the owner's data also need
-# scripts\lib\Session.ps1.
+# that kestrel-api37 keeps. It also keeps the gates from running on a kestrel-api37 that has degraded, and cold-boots it
+# with the owner's data checked around the boot. Dot-source it after scripts\lib\Kestrel.ps1; the functions about the
+# owner's data, and the cold boot, also need scripts\lib\Session.ps1.
 
 # Gradle's command line ---------------------------------------------------------------------------------------------
 
@@ -315,11 +316,7 @@ function Complete-TestPackages([string]$Serial, $Before) {
 
 # Whether the serial is kestrel-api37, which holds the owner's own Google account and Kestrel's Copilot profile, which no
 # script may sign in, remove or clear there (AGENTS.md). Assert-TestDevice must have accepted the serial.
-function Test-OwnerDataDevice([string]$Serial) {
-    $device = if ($KestrelTestDevices) { $KestrelTestDevices[$Serial] }
-    if (-not $device) { throw "Run Assert-TestDevice -Serial $Serial before asking whether it holds the owner's data." }
-    $device.Pattern -eq 'kestrel-api37'
-}
+function Test-OwnerDataDevice([string]$Serial) { Test-KestrelEmulatorDevice -Serial $Serial }
 
 # Refuses a debug hook that deletes data that kestrel-api37 keeps: provider-delete, which deletes every Copilot profile
 # with its credential. scripts\hook.ps1 asks before it sends a command.
@@ -440,4 +437,147 @@ function Compare-OwnerData([string]$Serial, $Before, [string]$During) {
         return
     }
     Get-OwnerDataChange -Before $Before -After $after -Serial $Serial -During $During
+}
+
+# The health of kestrel-api37 ---------------------------------------------------------------------------------------
+
+# kestrel-api37 degrades under long test activity, not with its uptime (the debugging of plan 7G's TouchCommandsTest,
+# part 2, Finding 5): the sensors HAL climbs to 90 % of one CPU, system_server blocks for up to 87 s, apps get ANRs and
+# system_server restarts, and the tests then fail for reasons that are not Kestrel's. Only a cold boot brings it back,
+# because the Quick Boot snapshot would bring the degraded state back too. So each gate reads two measures on
+# kestrel-api37 before it starts (Assert-EmulatorHealthy), in Android, through adb, as that debugging measured them:
+#   - the CPU use of the sensors HAL, $EmulatorSensorsProcess, over $EmulatorHealthSampleSeconds seconds, in % of one
+#     CPU. Healthy, it used 1 to 6 % (about 6 % in the first minutes after a cold boot, then about 1.2 % while idle);
+#     degraded, 8 to 52 % from the 13th minute of test runs on, and up to 90 % when the tests failed. The limit,
+#     $EmulatorSensorsCpuLimit = 30 %, is five times the healthy maximum. Under a gate's own test activity the HAL can
+#     pass it briefly, so it holds only for the reading before a gate starts, when no test runs.
+#   - the load average over 5 minutes per CPU of the guest (4 CPUs on kestrel-api37). Healthy, it was 0.25 to 0.45 per
+#     CPU during test runs and up to 1.15 in the first two minutes after a cold boot; degraded, 1.3 to 2.6. The limit,
+#     $EmulatorLoadPerCpuLimit = 1.5, lets a gate start right after a cold boot and refuses the emulator that failed.
+#     The 1-minute average is no measure, because it reaches 17 in the first minute after a cold boot.
+# The host's process list cannot tell the sensors HAL from the rest of the emulator, because one qemu process runs all
+# of Android, so the reading comes from Android's /proc.
+$EmulatorSensorsProcess = 'android.hardware.sensors-service.multihal'
+$EmulatorHealthSampleSeconds = 10
+$EmulatorSensorsCpuLimit = 30
+$EmulatorLoadPerCpuLimit = 1.5
+
+# The device shell's command that reads the measures: the sensors HAL's process ID, the clock ticks per second, the
+# number of CPUs, then /proc/uptime and the HAL's /proc/<pid>/stat twice, $Seconds apart, and last /proc/loadavg. Each
+# line starts with its name and '='. It has no double quotes, which Windows PowerShell 5.1 would not pass on to adb.
+function Format-EmulatorHealthCommand([int]$Seconds = $EmulatorHealthSampleSeconds) {
+    'p=$(pidof ' + $EmulatorSensorsProcess + '); echo pid=$p; echo ticks=$(getconf CLK_TCK); echo cpus=$(nproc); ' +
+    'echo first=$(cat /proc/uptime) $(cat /proc/$p/stat); sleep ' + $Seconds + '; ' +
+    'echo second=$(cat /proc/uptime) $(cat /proc/$p/stat); echo load=$(cat /proc/loadavg)'
+}
+
+# Reads the answer of Format-EmulatorHealthCommand's command: the sensors HAL's CPU use in % of one CPU between the two
+# samples (SensorsCpuPercent), the load average over 5 minutes (Load), the number of CPUs (Cpus) and the seconds
+# between the samples (Seconds). Throws System.IO.InvalidDataException that names what is missing when the answer cannot
+# be read, for example when the HAL does not run, or ran under another process ID at the second sample.
+function ConvertFrom-EmulatorHealthAnswer([string[]]$Lines) {
+    $values = @{}
+    foreach ($line in $Lines) {
+        if ("$line" -match '^(\w+)=(.*)$') { $values[$Matches[1]] = $Matches[2].Trim() }
+    }
+    $fail = { param($what) throw [System.IO.InvalidDataException]::new("$what in the answer '$($Lines -join ' | ')'") }
+    if ("$($values['pid'])" -notmatch '^\d+$') { & $fail "no process ID of $EmulatorSensorsProcess" }
+    if ("$($values['ticks'])" -notmatch '^[1-9]\d*$') { & $fail 'no clock ticks per second' }
+    if ("$($values['cpus'])" -notmatch '^[1-9]\d*$') { & $fail 'no number of CPUs' }
+    $samples = foreach ($name in 'first', 'second') {
+        # The uptime, the idle time, then the stat: the process ID, its name in parentheses, and from the state on the
+        # fields 3 to 52, of which utime and stime are the 14th and the 15th.
+        if ("$($values[$name])" -notmatch '^(\d+(?:\.\d+)?) \S+ (\d+) \(.*\) (.*)$' -or $Matches[2] -ne $values['pid']) {
+            & $fail "no $name sample of $EmulatorSensorsProcess under the process ID $($values['pid'])"
+        }
+        $uptime = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+        $fields = $Matches[3] -split ' '
+        if ($fields.Count -lt 13 -or $fields[11] -notmatch '^\d+$' -or $fields[12] -notmatch '^\d+$') { & $fail "no CPU times in the $name sample" }
+        [pscustomobject]@{ Uptime = $uptime; Ticks = [long]$fields[11] + [long]$fields[12] }
+    }
+    $seconds = $samples[1].Uptime - $samples[0].Uptime
+    if ($seconds -le 0) { & $fail 'no time between the two samples' }
+    if ("$($values['load'])" -notmatch '^\d+(?:\.\d+)? (\d+(?:\.\d+)?) ') { & $fail 'no load average' }
+    $load = [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)
+    [pscustomobject]@{
+        SensorsCpuPercent = ($samples[1].Ticks - $samples[0].Ticks) / [double]$values['ticks'] / $seconds * 100
+        Load = $load
+        Cpus = [int]$values['cpus']
+        Seconds = $seconds
+    }
+}
+
+# Returns a message for each measure of a reading (ConvertFrom-EmulatorHealthAnswer) that is above its limit; nothing
+# for a healthy emulator.
+function Get-EmulatorHealthProblems($Reading) {
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    if ($Reading.SensorsCpuPercent -gt $EmulatorSensorsCpuLimit) {
+        "the sensors HAL ($EmulatorSensorsProcess) used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
+        "$($Reading.Seconds.ToString('0.0', $invariant)) s, above the limit of $EmulatorSensorsCpuLimit %"
+    }
+    $loadLimit = $EmulatorLoadPerCpuLimit * $Reading.Cpus
+    if ($Reading.Load -gt $loadLimit) {
+        "the load average over 5 minutes was $($Reading.Load.ToString('0.00', $invariant)) on $($Reading.Cpus) CPUs, above the " +
+        "limit of $($loadLimit.ToString('0.##', $invariant))"
+    }
+}
+
+# Describes a reading in one line.
+function Format-EmulatorHealth($Reading) {
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    "the sensors HAL used $($Reading.SensorsCpuPercent.ToString('0.0', $invariant)) % of one CPU over " +
+    "$($Reading.Seconds.ToString('0.0', $invariant)) s, and the load average over 5 minutes was " +
+    "$($Reading.Load.ToString('0.00', $invariant)) on $($Reading.Cpus) CPUs"
+}
+
+# Reads the measures on the device, which takes $EmulatorHealthSampleSeconds seconds (ConvertFrom-EmulatorHealthAnswer).
+# Assert-TestDevice must have accepted the serial.
+function Read-EmulatorHealth([string]$Serial) {
+    ConvertFrom-EmulatorHealthAnswer @(Invoke-SettingsCommand -Serial $Serial -Command (Format-EmulatorHealthCommand))
+}
+
+# Every gate (scripts\connected-test.ps1, voice-test.ps1, command-test.ps1, listen-check.ps1 and eval.ps1) calls this
+# before it starts on a device that Assert-TestDevice accepted. On kestrel-api37 it reads the measures and throws, with
+# the advice to cold-boot, when one is above its limit or when they cannot be read, because a degraded emulator also
+# answers badly; on it, it writes the reading. On the A71 it does nothing.
+function Assert-EmulatorHealthy([string]$Serial) {
+    if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { return }
+    $advice = "Cold-boot it with scripts\cold-boot.ps1 -Serial $Serial, and then run this again."
+    $reading = try {
+        Read-EmulatorHealth -Serial $Serial
+    } catch {
+        throw "Refusing to start on ${Serial}: the health of kestrel-api37 could not be read ($($_.Exception.Message)). $advice"
+    }
+    $problems = @(Get-EmulatorHealthProblems $reading)
+    if ($problems.Count -gt 0) {
+        throw "Refusing to start on ${Serial}: kestrel-api37 has degraded: $($problems -join '; '). $advice"
+    }
+    Write-Host "kestrel-api37 ($Serial) is healthy: $(Format-EmulatorHealth $reading)."
+}
+
+# The cold boot of kestrel-api37 ------------------------------------------------------------------------------------
+
+# Cold-boots kestrel-api37 on $Serial, without a window, and checks the owner's data around the boot; README asks for it
+# before each long device suite, because only a cold boot brings back an emulator that degraded (see above). In order:
+#   1. Assert-TestDevice, and a refusal of every device other than kestrel-api37;
+#   2. the owner's data before the boot (Get-OwnerDataState), which stops the boot when Kestrel answers in another form,
+#      as an older build does, and warns when Kestrel's profiles cannot be read, after which only the Google accounts
+#      are compared;
+#   3. Restart-KestrelEmulator -ColdBoot without a window, which closes nothing unless the emulator's console answers
+#      exactly kestrel-api37, closes it with 'adb emu kill', starts it from a cold boot with
+#      scripts\start-emulator.ps1 -ColdBoot, and checks that it came back headless under the same serial;
+#   4. the owner's data after the boot, compared with the data before it (Compare-OwnerData).
+# Throws with the reason when a step fails or the owner's data changed.
+function Invoke-KestrelColdBoot([string]$Serial) {
+    Assert-TestDevice -Serial $Serial
+    if (-not (Test-KestrelEmulatorDevice -Serial $Serial)) { throw "Refusing to cold-boot ${Serial}: only kestrel-api37 is cold-booted." }
+    $before = Get-OwnerDataState -Serial $Serial
+    if (-not $before.Profiles) {
+        Write-Warning "Could not read Kestrel's profiles on $Serial before the cold boot ($($before.ProfilesUnread)), so only the Google accounts are compared there."
+    }
+    $problem = Restart-KestrelEmulator -Serial $Serial -Window $false -ColdBoot
+    if ($problem) { throw "The cold boot of kestrel-api37 failed: $problem." }
+    $changes = @(Compare-OwnerData -Serial $Serial -Before $before -During 'the cold boot')
+    if ($changes.Count -gt 0) { throw ($changes -join ' ') }
+    Write-Host "kestrel-api37 ($Serial) was cold-booted; $(Format-OwnerDataState $before $Serial), as before."
 }

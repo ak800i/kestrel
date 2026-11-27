@@ -445,3 +445,160 @@ Describe 'Get-OwnerDataChange' {
             Should -BeExactly 'The number of Google accounts on emulator-5554 changed during the tests: 1 before, 2 now.'
     }
 }
+
+Describe 'The health of kestrel-api37' {
+    BeforeAll {
+        # An answer of Format-EmulatorHealthCommand's command, as kestrel-api37 gave it on 2026-11-27 (healthy: 57 ticks
+        # of the sensors HAL in 10.03 s), with the HAL's CPU ticks and the load average of the test.
+        function New-HealthAnswer([long]$SecondTicks = 5566, [string]$Load = '0.05 0.51 1.02 1/2920 5592', [string]$SecondPid = '487') {
+            @('pid=487', 'ticks=100', 'cpus=4'
+                'first=1221.23 3836.58 487 (android.hardwar) S 1 487 0 0 -1 4194560 842 0 18 0 70 5439 0 0 20 0 5 0 938 11156234240 1358'
+                "second=1231.26 3875.04 $SecondPid (android.hardwar) S 1 487 0 0 -1 4194560 842 0 18 0 0 $SecondTicks 0 0 20 0 5 0 938 11156234240 1358"
+                "load=$Load")
+        }
+        Mock Get-Adb { $fakeAdb }
+        Mock Start-Sleep {}
+        Mock Write-Host {}
+    }
+
+    BeforeEach {
+        $env:KESTREL_FAKE_ADB = Join-Path $TestDrive 'device.json'
+        Set-FakeDevice
+        $KestrelTestDevices.Clear()
+        Assert-TestDevice -Serial emulator-5554
+    }
+
+    AfterAll {
+        Remove-Item Env:\KESTREL_FAKE_ADB -ErrorAction SilentlyContinue
+    }
+
+    It 'reads the sensors HAL''s CPU use between the two samples, the load average over 5 minutes and the CPUs' {
+        $reading = ConvertFrom-EmulatorHealthAnswer (New-HealthAnswer)
+
+        [math]::Round($reading.SensorsCpuPercent, 2) | Should -Be 5.68
+        $reading.Load | Should -Be 0.51
+        $reading.Cpus | Should -Be 4
+        [math]::Round($reading.Seconds, 2) | Should -Be 10.03
+    }
+
+    It 'lets a healthy kestrel-api37 start, and says how healthy it is' {
+        Mock Invoke-SettingsCommand { New-HealthAnswer }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
+
+        Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter {
+            $Object -eq 'kestrel-api37 (emulator-5554) is healthy: the sensors HAL used 5.7 % of one CPU over 10.0 s, and the load average over 5 minutes was 0.51 on 4 CPUs.'
+        }
+    }
+
+    It 'refuses a degraded kestrel-api37 with each measure above its limit and the advice to cold-boot: <Name>' -ForEach @(
+        @{ Name = 'the sensors HAL'; Ticks = 5509 + 476; Load = '3.00 2.00 1.00 1/2920 5592'
+            Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL (android.hardware.sensors-service.multihal) used 47.5 % of one CPU over 10.0 s, above the limit of 30 %. Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again.' }
+        @{ Name = 'the load'; Ticks = 5566; Load = '9.00 8.53 5.95 4/2920 5592'
+            Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the load average over 5 minutes was 8.53 on 4 CPUs, above the limit of 6. Cold-boot it with *' }
+        @{ Name = 'both'; Ticks = 5509 + 900; Load = '12.39 9.64 7.36 4/2920 5592'
+            Message = 'Refusing to start on emulator-5554: kestrel-api37 has degraded: the sensors HAL * above the limit of 30 %; the load average * above the limit of 6. Cold-boot it with *' }
+    ) {
+        Mock Invoke-SettingsCommand { New-HealthAnswer -SecondTicks $Ticks -Load $Load }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Throw -ExpectedMessage $Message
+    }
+
+    It 'lets kestrel-api37 start at the limits, as in the first minutes after a cold boot' {
+        # 30 % of one CPU over 10.03 s is 300.9 ticks, and 6 is the limit of the load on 4 CPUs.
+        Mock Invoke-SettingsCommand { New-HealthAnswer -SecondTicks (5509 + 300) -Load '17.22 6.00 1.57 1/2920 5592' }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } | Should -Not -Throw
+    }
+
+    It 'refuses kestrel-api37 with the advice to cold-boot when the health cannot be read: <Name>' -ForEach @(
+        @{ Name = 'no sensors HAL'; Answer = @('pid=', 'ticks=100', 'cpus=4', 'first=1221.23 3836.58', 'second=1231.26 3875.04', 'load=0.05 0.51 1.02 1/2920 5592')
+            Message = '*no process ID of android.hardware.sensors-service.multihal*' }
+        @{ Name = 'a HAL that started again'; Answer = 'restarted'; Message = '*no second sample of android.hardware.sensors-service.multihal under the process ID 487*' }
+        @{ Name = 'no load'; Answer = 'noload'; Message = '*no load average*' }
+        @{ Name = 'no answer'; Answer = 'throws'; Message = '*Could not run*' }
+    ) {
+        Mock Invoke-SettingsCommand {
+            switch ($Answer) {
+                'restarted' { New-HealthAnswer -SecondPid '912' }
+                'noload' { New-HealthAnswer -Load '' }
+                'throws' { throw "Could not run 'p=...' on emulator-5554." }
+                default { $Answer }
+            }
+        }
+
+        { Assert-EmulatorHealthy -Serial emulator-5554 } |
+            Should -Throw -ExpectedMessage "Refusing to start on emulator-5554: the health of kestrel-api37 could not be read ($Message). Cold-boot it with scripts\cold-boot.ps1 -Serial emulator-5554, and then run this again."
+    }
+
+    It 'reads nothing on the A71' {
+        Set-FakeDevice -A71
+        Assert-TestDevice -Serial R58N66RVD7Z
+        Mock Invoke-SettingsCommand { throw 'no command may reach the A71' }
+
+        { Assert-EmulatorHealthy -Serial R58N66RVD7Z } | Should -Not -Throw
+
+        Should -Invoke Invoke-SettingsCommand -Times 0 -Exactly
+    }
+}
+
+Describe 'Invoke-KestrelColdBoot' {
+    BeforeAll {
+        Mock Write-Host {}
+        Mock Write-Warning {}
+    }
+
+    BeforeEach {
+        $steps = [System.Collections.Generic.List[string]]::new()
+        $state = [pscustomobject]@{ GoogleAccounts = 1; Profiles = [pscustomobject]@{ Profile = 'copilot'; Copilot = 1; Id = 'profile-1'; Credential = 'present' }; ProfilesUnread = $null }
+        Mock Assert-TestDevice { $steps.Add("Assert-TestDevice $Serial") }
+        Mock Test-KestrelEmulatorDevice { $true }
+        Mock Get-OwnerDataState { $steps.Add("Get-OwnerDataState $Serial"); $state }
+        Mock Restart-KestrelEmulator { $steps.Add("Restart-KestrelEmulator $Serial window=$Window cold=$ColdBoot") }
+        Mock Compare-OwnerData { $steps.Add("Compare-OwnerData $Serial during=$During") }
+    }
+
+    It 'checks the device, reads the owner''s data, cold-boots without a window and compares the owner''s data, in this order' {
+        Invoke-KestrelColdBoot -Serial emulator-5554
+
+        @($steps) | Should -BeExactly @(
+            'Assert-TestDevice emulator-5554'
+            'Get-OwnerDataState emulator-5554'
+            'Restart-KestrelEmulator emulator-5554 window=False cold=True'
+            'Compare-OwnerData emulator-5554 during=the cold boot'
+        )
+        Should -Invoke Compare-OwnerData -Times 1 -Exactly -ParameterFilter { $Before -eq $state }
+    }
+
+    It 'refuses every device other than kestrel-api37 before it reads or closes anything' {
+        Mock Test-KestrelEmulatorDevice { $false }
+
+        { Invoke-KestrelColdBoot -Serial R58N66RVD7Z } | Should -Throw -ExpectedMessage 'Refusing to cold-boot R58N66RVD7Z: only kestrel-api37 is cold-booted.'
+
+        @($steps) | Should -BeExactly @('Assert-TestDevice R58N66RVD7Z')
+    }
+
+    It 'does not close the emulator when the owner''s data cannot be read before the boot' {
+        Mock Get-OwnerDataState { throw [System.IO.InvalidDataException]::new('Not an answer of provider-standin: ''x''. Install the current debug build with scripts\install.ps1.') }
+
+        { Invoke-KestrelColdBoot -Serial emulator-5554 } | Should -Throw -ExpectedMessage 'Not an answer of provider-standin*'
+
+        Should -Invoke Restart-KestrelEmulator -Times 0 -Exactly
+    }
+
+    It 'throws with the reason when the emulator does not come back, and compares nothing' {
+        Mock Restart-KestrelEmulator { 'kestrel-api37 started again as ''emulator-5556'', not as emulator-5554' }
+
+        { Invoke-KestrelColdBoot -Serial emulator-5554 } |
+            Should -Throw -ExpectedMessage 'The cold boot of kestrel-api37 failed: kestrel-api37 started again as ''emulator-5556'', not as emulator-5554.'
+
+        Should -Invoke Compare-OwnerData -Times 0 -Exactly
+    }
+
+    It 'throws with each change when the owner''s data changed during the boot' {
+        Mock Compare-OwnerData { 'The number of Google accounts on emulator-5554 changed during the cold boot: 1 before, 0 now.' }
+
+        { Invoke-KestrelColdBoot -Serial emulator-5554 } |
+            Should -Throw -ExpectedMessage 'The number of Google accounts on emulator-5554 changed during the cold boot: 1 before, 0 now.'
+    }
+}

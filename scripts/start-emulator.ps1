@@ -1,7 +1,8 @@
 # Starts kestrel-api37 if it is not running, waits until Android has booted and prints its adb serial.
 # The emulator keeps running after this script ends.
 # -ColdBoot starts Android afresh instead of from the emulator's Quick Boot snapshot. Use it after closing a slow
-# emulator, because the snapshot would bring the slow state back.
+# emulator, because the snapshot would bring the slow state back. scripts\cold-boot.ps1 does both for a running
+# kestrel-api37, with the owner's data checked around the boot.
 # The emulator runs without a window (-no-window), because only its window links Android's clipboard to Windows'
 # clipboard. The window does so while the emulator's setting "Enable clipboard sharing" is on, and that setting is one
 # for every AVD of this Windows user (zoran too); the emulator has no command-line option, feature or AVD setting for it.
