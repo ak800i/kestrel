@@ -2065,6 +2065,22 @@ class RulesTest {
         }
     }
 
+    // Review of the speech-identity fix, finding 1: the end that leaves no speech settles a spoken final reply also when it
+    // starts a wait, where no window can open, so its text is released.
+    @Test
+    fun aSpokenFinalReplyIsReleasedWhenTheLastEndStartsAWait() {
+        val spoken = replay(switchAnswered(), Event.ChannelCame(8), switchedSays, Event.ConversationChanged(VoiceView(open = true)), Event.SpeechEnded(switched, spoken = true))
+        val spotted = Rules.next(spoken, Event.Spotted(Keyword.KESTREL))
+        assertEquals(Work.AWAITING_TASK, spotted.state.work)
+        val ended = Rules.next(spotted.state, Event.SpeechEnded(switchQuestion, spoken = false))
+
+        assertEquals(Work.AWAITING_TASK, ended.state.work)
+        assertEquals(listOf(Effect.WaitForTask()), ended.effects.filterIsInstance<Effect.WaitForTask>())
+        assertEquals(null, ended.state.finalReply)
+        assertEquals(1, (spotted.effects + ended.effects).count { it == Effect.NoFollowUp(8) })
+        assertTrue(ended.effects.none { it is Effect.Show && it.feedback is Feedback.FollowUp })
+    }
+
     // Plan 7F: the owner's Stop that does not come by voice is the same stop as a spoken one for Kestrel's speech.
     @Test
     fun theOwnersStopWithoutHisVoiceStopsKestrelsSpeech() {
