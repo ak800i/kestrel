@@ -293,7 +293,8 @@ class CardDeskTest {
     }
 
     // The second re-check's N2-M1: the debug hook's press goes through the desk's one entry for taps, so its Continue
-    // on the lock screen is held as the owner's is, says so, and answers with its own number at the unlock.
+    // on the lock screen is held as the owner's is, says so, and answers at the unlock with the number that the hook took
+    // for it, never the owner's next one (plan 7G).
     @Test
     fun theHooksContinueOnTheLockScreenIsHeldAsTheOwnersIs() = runTest {
         val desk = desk()
@@ -302,7 +303,7 @@ class CardDeskTest {
         overlay.lock()
         runCurrent()
 
-        val end = desk.withShown { shown, answer -> checkNotNull(shown).let { answer(CardChoice.Continue) } }
+        val end = desk.withShown { shown, answer -> checkNotNull(shown).let { answer(CardChoice.Continue, 77) } }
         runCurrent()
         assertEquals(TapEnd.HELD, end)
         assertEquals(listOf(CardDesk.UNLOCK_TO_CONTINUE), notices)
@@ -310,7 +311,8 @@ class CardDeskTest {
 
         overlay.unlock()
         runCurrent()
-        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
+        assertEquals(CardTap(CardChoice.Continue, 77), asking.await())
+        assertEquals(10L, taps)
     }
 
     // The third re-check's N3-N1: a tap is judged by the screen at the tap. A Continue tapped on an unlocked phone answers at
@@ -428,7 +430,7 @@ class CardDeskTest {
         runCurrent()
         overlay.lock()
 
-        val end = desk.withShown { shown, answer -> checkNotNull(shown).let { answer(CardChoice.Continue) } }
+        val end = desk.withShown { shown, answer -> checkNotNull(shown).let { answer(CardChoice.Continue, 77) } }
         runCurrent()
         assertEquals(TapEnd.REFUSED_UNFOLLOWED, end)
         assertEquals(listOf(CardDesk.UNLOCK_TO_CONTINUE), notices)
@@ -441,7 +443,7 @@ class CardDeskTest {
 
         overlay.tap(CardChoice.Continue)
         runCurrent()
-        assertEquals(CardTap(CardChoice.Continue, 2), asking.await())
+        assertEquals(CardTap(CardChoice.Continue, 1), asking.await())
     }
 
     // The fourth re-check's N4-M2: the source failing while a Continue is held drops it, so that it never waits across a
@@ -524,10 +526,11 @@ class CardDeskTest {
         assertNull(desk.withShown { shown, _ -> shown })
         desk.screenInFront(false)
         runCurrent()
-        desk.withShown { shown, answer -> if (shown != null) answer(CardChoice.Confirm) }
+        desk.withShown { shown, answer -> if (shown != null) answer(CardChoice.Confirm, 77) }
         runCurrent()
 
-        assertEquals(CardChoice.Confirm, asking.await().choice)
+        // The press carries the number that the hook took for it (plan 7G).
+        assertEquals(CardTap(CardChoice.Confirm, 77), asking.await())
         assertNull(desk.withShown { shown, _ -> shown })
         assertNull(desk.open.value)
     }

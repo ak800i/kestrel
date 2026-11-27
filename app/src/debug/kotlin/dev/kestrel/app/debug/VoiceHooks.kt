@@ -6,6 +6,7 @@ import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.agent.RoundEvidences
 import dev.kestrel.app.commands.EmergencyGuard
+import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.debug.TestHooks.HookError
 import dev.kestrel.app.listen.KokoroSpeed
 import dev.kestrel.app.listen.ListeningSetting
@@ -311,6 +312,16 @@ internal class VoiceHooks(private val graph: AppGraph) {
             install(graph)
             tags.untagged(event)
             return event
+        }
+
+        /**
+         * Starts the record of the steps ([install]) and returns what takes the number of a hook's own act that is not an
+         * input, as its press of a card (`CardPresser`): the next number among the inputs, noted as the hooks' before the
+         * act reaches Kestrel, so that it is never taken for the owner's (plan 7G).
+         */
+        fun hooksAct(graph: AppGraph): () -> Long {
+            install(graph)
+            return { InputIds.next().also(tags::untagged) }
         }
 
         /**

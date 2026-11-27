@@ -39,10 +39,13 @@ internal enum class CardPress {
  * shows a card, which then ignores taps for another. The press then goes through the desk's one entry for taps, so a
  * Continue on the lock screen is held exactly as the owner's is; the answer says what the desk did with it ([TapEnd]).
  * The press runs on [main], the main thread, which is the screen source's: the desk stamps it with the source's status
- * there, in order with the source's reports, as the owner's tap is stamped (plan 7F's fifth re-check).
+ * there, in order with the source's reports, as the owner's tap is stamped (plan 7F's fifth re-check). The press carries
+ * its own act's number among the inputs, which [hooksAct] takes and notes as the hooks' before the desk gets the press,
+ * so that the answer that it gives is never the owner's act (plan 7G).
  */
 internal class CardPresser(
     private val overlay: OverlayCards,
+    private val hooksAct: () -> Long,
     private val main: CoroutineContext = Dispatchers.Main.immediate,
 ) {
     suspend fun press(key: Int, kind: QuestionKind?, choice: CardChoice): CardPress =
@@ -54,7 +57,7 @@ internal class CardPresser(
             shown.card.key != key || shown.card.kind != kind -> CardPress.OTHER_CARD
             choice == CardChoice.Reply || !shown.card.takes(choice) -> CardPress.NO_BUTTON
             shown.shownMillis < 2 * CARD_ARMING_MILLIS -> CardPress.NOT_ARMED
-            else -> when (answer(choice)) {
+            else -> when (answer(choice, hooksAct())) {
                 TapEnd.ANSWERED -> CardPress.PRESSED
                 TapEnd.HELD -> CardPress.HELD
                 TapEnd.DROPPED_BY_SCREEN_OFF -> CardPress.SCREEN_OFF

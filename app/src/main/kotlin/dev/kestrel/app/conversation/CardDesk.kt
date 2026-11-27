@@ -85,7 +85,8 @@ internal interface SharedCards : OwnerCards {
  * after his unlock, which answers by its own status at once (decision 27).
  *
  * A tap that answers takes its number among the owner's inputs ([inputIds]) when it has come back from the card, before
- * any caller runs, and every caller that it answers gets that one number (plan 7F). A card that got no answer, because
+ * any caller runs, and every caller that it answers gets that one number (plan 7F); the debug hook's press carries the
+ * number that the hook took and noted as its own instead (plan 7G). A card that got no answer, because
  * no screen session was connected or the session closed, shows again when a screen session connects
  * ([OwnerScreen.connections]).
  */
@@ -188,15 +189,16 @@ internal class CardDesk(
     }
 
     // The card that the overlay shows and its answer in one block under the lock (review R3), for the debug hook's
-    // press (Task 13a): no other card takes the overlay between the hook's check and its answer. The press is the
-    // owner's tap: it goes through the one entry for taps, stamped with the source's status at the press.
-    override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> TapEnd) -> T): T =
+    // press (Task 13a): no other card takes the overlay between the hook's check and its answer. The press is a tap like
+    // the owner's: it goes through the one entry for taps, stamped with the source's status at the press, with the act's
+    // number that the hook took for it, so that the press is never the owner's act (plan 7G).
+    override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice, Long) -> TapEnd) -> T): T =
         synchronized(lock) {
             val mine = presented?.takeIf { !front.value }
-            block(mine?.let { ShownCard(it.card, clock() - it.at) }) { choice ->
+            block(mine?.let { ShownCard(it.card, clock() - it.at) }) { choice, act ->
                 if (mine != null && presented === mine) {
                     presented = null
-                    tapped(mine.card.key, choice, screen.screenStatus())
+                    tapped(mine.card.key, choice, screen.screenStatus()) { act }
                 } else {
                     TapEnd.WITHDRAWN
                 }
@@ -250,19 +252,21 @@ internal class CardDesk(
         } finally {
             synchronized(lock) { if (presented === mine) presented = null }
         } ?: return
-        tapped(shown.card.key, tap.choice, tap.status)
+        tapped(shown.card.key, tap.choice, tap.status, inputIds)
     }
 
     // The one entry for a tap on the card, the owner's or the debug hook's, with the screen source's status at the tap
-    // ([at]). It takes the tap's number among the owner's inputs as it reaches the desk (plan 7F).
-    private fun tapped(key: Int, choice: CardChoice, at: ScreenStatus): TapEnd = when (choice) {
+    // ([at]). It stamps the tap that answers with its number among the inputs ([act]) as it reaches the desk: the owner's
+    // next number, or the one that the debug hook took for its press (plan 7F; plan 7G). "Reply…" answers nothing and
+    // takes none.
+    private fun tapped(key: Int, choice: CardChoice, at: ScreenStatus, act: () -> Long): TapEnd = when (choice) {
         CardChoice.Reply -> {
             replyOpened(key)
             TapEnd.ANSWERED
         }
-        CardChoice.Continue -> continueTapped(key, CardTap(choice, inputIds()), at)
+        CardChoice.Continue -> continueTapped(key, CardTap(choice, act()), at)
         else -> {
-            deliver(key, CardTap(choice, inputIds()))
+            deliver(key, CardTap(choice, act()))
             TapEnd.ANSWERED
         }
     }
@@ -372,9 +376,10 @@ internal interface OverlayCards {
     /**
      * Runs [block] under the card desk's lock with the card that the overlay shows, or null while none does (also while
      * Kestrel's screen is in front), and with `answer`, which gives the choice to the desk's one entry for taps, as the
-     * owner's tap on a button does, and takes the card from the hook. `answer` returns what became of the tap
-     * ([TapEnd]): a Continue on the lock screen is held as the owner's is. No other card takes the overlay while [block]
-     * runs.
+     * owner's tap on a button does, and takes the card from the hook. `answer`'s second argument is the act's number
+     * among the inputs that the tap carries, which the hook took and noted as its own before the press (plan 7G), in place
+     * of the owner's next number. `answer` returns what became of the tap ([TapEnd]): a Continue on the lock screen is
+     * held as the owner's is. No other card takes the overlay while [block] runs.
      */
-    fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> TapEnd) -> T): T
+    fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice, Long) -> TapEnd) -> T): T
 }

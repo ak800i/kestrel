@@ -102,8 +102,8 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     /**
      * After a run: closes the run's conversation while it carries the hooks' mark ([closeOwn]) and deletes the hooks' own conversations (plan 7F's delete-typed,
      * which covers every input that a hook gives, tagged or not), so that no test conversation stays among the owner's past
-     * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no input of
-     * the owner's with his words or his choice has reached, never one of the owner's, and keeps its marks across a restart.
+     * conversations and their search. Kestrel deletes only a conversation that a hook's input opened and that no act of
+     * the owner's with his words or his choice (his input, or his tap on a card) has reached, never one of the owner's, and keeps its marks across a restart.
      * A conversation that does not close within [CLOSE], as after a long final reply, only gives [warn] a warning:
      * delete-typed keeps it marked, and the next run's restore or the series' cleanup ([deleteLeft]) deletes it. A deletion
      * that failed fails the restore that calls it.

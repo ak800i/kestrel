@@ -7,6 +7,7 @@ import dev.kestrel.app.orchestrator.Rules
 import dev.kestrel.app.orchestrator.State
 import dev.kestrel.commands.CommandResult
 import dev.kestrel.commands.Outcome
+import dev.kestrel.conversation.channel.DialogueEvent
 import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
@@ -292,28 +293,76 @@ class CommandTagsTest {
         val yes = OwnerInput(82, InputChannel.VOICE, InputIntent.Answer(ChannelAnswer.Yes), 0)
 
         val quiet = ConversationState()
-        switchAfterAnswer(quiet, OwnerInput(81, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), yes, command = 23, target = target)
+        switchAfterAnswer(quiet, OwnerInput(81, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), ConversationEvent.Input(yes), command = 23, target = target)
         assertEquals(listOf(target), gone)
 
         gone.clear()
         val open = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
-        switchAfterAnswer(open, OwnerInput(83, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), yes.copy(id = 84), command = 24, target = target)
+        switchAfterAnswer(open, OwnerInput(83, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), ConversationEvent.Input(yes.copy(id = 84)), command = 24, target = target)
         assertEquals(listOf(open.id, target), gone)
 
         gone.clear()
         val hooksYes = OwnerInput(86, InputChannel.TEXT, InputIntent.Answer(ChannelAnswer.Yes), 0)
         tags.untagged(hooksYes)
-        switchAfterAnswer(quiet, OwnerInput(85, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), hooksYes, command = 25, target = target)
+        switchAfterAnswer(quiet, OwnerInput(85, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), ConversationEvent.Input(hooksYes), command = 25, target = target)
         assertEquals(emptyList<ConversationId>(), gone)
     }
 
-    // A hook's switch into [target] from [before], as the conversation's machine steps it: the request asks, [answer] says
-    // yes, and the request's end switches with the request's own input.
-    private fun switchAfterAnswer(before: ConversationState, hooks: OwnerInput, answer: OwnerInput, command: Int, target: ConversationId) {
+    // Plan 7G's re-check of round 9 (Important 1): the owner's tap on the card over the app reaches the conversation only as
+    // the dialogue's answer with the tap's number, never as an input, and it is his choice as his spoken or typed "yes" is:
+    // it takes the mark from the conversation that the hook's switch moves into, and from the open one. A press that the
+    // hooks noted as theirs, and a tap that gave no answer, take nothing.
+    @Test
+    fun theOwnersTapOnTheCardOverTheAppTakesTheMarkAsHisSpokenAnswerDoes() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val target = ConversationId("fedcba9876543210fedcba9876543210")
+        val quiet = ConversationState()
+
+        switchAfterAnswer(quiet, OwnerInput(101, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Yes, 102), command = 31, target = target)
+        assertEquals(listOf(target), gone)
+
+        gone.clear()
+        val open = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+        switchAfterAnswer(open, OwnerInput(103, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Yes, 104), command = 32, target = target)
+        assertEquals(listOf(open.id, target), gone)
+
+        gone.clear()
+        tags.untagged(106L)
+        switchAfterAnswer(quiet, OwnerInput(105, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Yes, 106), command = 33, target = target)
+        switchAfterAnswer(quiet, OwnerInput(107, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0), tap(ChannelAnswer.Silence, 108), command = 34, target = target)
+        assertEquals(emptyList<ConversationId>(), gone)
+    }
+
+    // Plan 7G's re-check of round 9 (Important 1): the owner's tap on the card of "Continue the goal?" in a marked
+    // conversation takes its mark, as his spoken "yes" does; the hooks' press does not.
+    @Test
+    fun theOwnersTapOnTheCardOfContinueTheGoalTakesTheMark() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
+
+        tags.untagged(111L)
+        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 111), marked, MachineStep(marked, emptyList()))
+        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), marked, MachineStep(marked, emptyList()))
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 112), marked, MachineStep(marked, emptyList()))
+        assertEquals(listOf(marked.id), gone)
+    }
+
+    // The answer of question 1 that a tap on the card over the app gave, with the tap's number [act].
+    private fun tap(answer: ChannelAnswer, act: Long) = ConversationEvent.Dialogue(DialogueEvent.Answered(1, answer, tap = act))
+
+    // A hook's switch into [target] from [before], as the conversation's machine steps it: the request asks, [answer] gives
+    // the answer (an input, or the dialogue's answer from a card's tap), and the request's end switches with the request's
+    // own input.
+    private fun switchAfterAnswer(before: ConversationState, hooks: OwnerInput, answer: ConversationEvent, command: Int, target: ConversationId) {
         tags.untagged(hooks)
         val asking = before.copy(command = command, local = LocalRun(command, null, hooks))
         tags.onConversationStep(ConversationEvent.Input(hooks), before, MachineStep(asking, listOf(ConversationEffect.RunLocal(command, null, LocalRequest.ContinuePast("the bus"), hooks))))
-        tags.onConversationStep(ConversationEvent.Input(answer), asking, MachineStep(asking, listOf(ConversationEffect.AnswerQuestion(1, ChannelAnswer.Yes, leftScreen = false))))
+        val answering = if (answer is ConversationEvent.Input) listOf(ConversationEffect.AnswerQuestion(1, ChannelAnswer.Yes, leftScreen = false)) else emptyList()
+        tags.onConversationStep(answer, asking, MachineStep(asking, answering))
         tags.onConversationStep(ConversationEvent.LocalEnded(command, LocalOutcome.Switch(target)), asking, MachineStep(asking, listOf(ConversationEffect.SwitchTo(command, target, hooks))))
     }
 
@@ -337,8 +386,24 @@ class CommandTagsTest {
             ConversationEffect.StartGoal(27, 1, waited, "and the times"),
         )
         tags.onConversationStep(ConversationEvent.Switched(snapshot, "Continuing."), switching, MachineStep(moved, effects))
-
         assertEquals(emptyList<ConversationId>(), own)
+
+        // Plan 7G's re-check of round 9 (Minor 2): a conversation that the hooks' own "new conversation" and command, which
+        // both waited for the switch, open in the same step is the hooks', and only the switch's target stays unmarked.
+        val again = OwnerInput(93, InputChannel.TEXT, InputIntent.ContinueConversation(target), 0)
+        val fresh = OwnerInput(94, InputChannel.TEXT, InputIntent.NewConversation, 0)
+        val command = OwnerInput(95, InputChannel.TEXT, InputIntent.Command("open the maps"), 0)
+        listOf(again, fresh, command).forEach(tags::untagged)
+        val waitingTwo = ConversationState(command = 28, local = LocalRun(28, null, again), waiting = listOf(fresh, command))
+        val opened = ConversationState(id = ConversationId("ab".repeat(16)), command = 29)
+        val newEffects = listOf(
+            ConversationEffect.EndLocal(28, EndReason.FINISHED, "Continuing.", again),
+            ConversationEffect.OpenSwitched(snapshot),
+            ConversationEffect.Close(target),
+            ConversationEffect.StartGoal(29, 1, command, "open the maps"),
+        )
+        tags.onConversationStep(ConversationEvent.Switched(snapshot, "Continuing."), waitingTwo, MachineStep(opened, newEffects))
+        assertEquals(listOf(opened.id), own)
     }
 
     // Review M2 of Task 13a: a transcript that a hook sends without a tag, as agent-answer's spoken answer or voice heard's,

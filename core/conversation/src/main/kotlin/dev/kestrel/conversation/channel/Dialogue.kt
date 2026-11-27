@@ -20,8 +20,12 @@ interface Dialogue {
 sealed interface DialogueEvent {
     data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
 
-    /** Question [number] closed: answered, withdrawn or cancelled. */
-    data class Answered(val number: Int) : DialogueEvent
+    /**
+     * Question [number] closed: with the owner's [answer], or with none (null) when it was withdrawn or cancelled. [tap] is
+     * the number of the owner's tap among his inputs when a card gave the answer, and null when an input gave it, which
+     * reached the engine as its own event, or when nothing did (plan 7G): every answer reaches the engine with its source.
+     */
+    data class Answered(val number: Int, val answer: ChannelAnswer? = null, val tap: Long? = null) : DialogueEvent
 
     data class HandedOver(val number: Int) : DialogueEvent
 

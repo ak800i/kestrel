@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * moment Kestrel turns off; a card stays until what it shows has ended, also when Kestrel is on again, so that the
  * owner never loses a way to answer. The first answer wins, from a channel's card or from an input that the engine
  * hands over with [answer], and the others are withdrawn. [events] tells the engine when a question or a hand-over
- * opens and closes. A pause ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes
+ * opens and closes, and with which answer a question closed and, when a card gave it, the number of the owner's tap (plan
+ * 7G). A pause ([pause]) withdraws a goal's open question, whose answer is then `Interrupted`, and closes
  * the gate until [resume]; the conversation's own questions ([question]) are never withdrawn by it. [startWork] clears
  * what earlier work left: a pause that came after its round had ended, and a fresh look. After an answer that the owner
  * gave on Kestrel's own screen, whatever its kind, the gate returns `RESUMED` once, so that the run looks at the screen
@@ -235,15 +236,17 @@ class ConversationOwner(
         asking = draft.kind
         confirming = draft.confirmation?.category
         events(DialogueEvent.Asked(waiting.number, draft.kind))
+        var given: Given? = null
         try {
-            val given = race(asked, waiting.done)
-            if (given.leftScreen) synchronized(lock) { fresh = true }
-            given
+            race(asked, waiting.done).also {
+                given = it
+                if (it.leftScreen) synchronized(lock) { fresh = true }
+            }
         } finally {
             synchronized(lock) { if (openQuestion === waiting) openQuestion = null }
             asking = null
             confirming = null
-            events(DialogueEvent.Answered(waiting.number))
+            events(DialogueEvent.Answered(waiting.number, given?.answer, given?.tap))
         }
     }
 

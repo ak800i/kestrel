@@ -127,7 +127,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             ?: words.toIntOrNull()?.let(CardChoice::Pick)?.takeIf(card::takes)
             ?: throw HookError("the card has no button for the answer ${AgentHookAnswers.answerKind(words)}")
         val kind = asking?.let(AgentHookAnswers::asking) ?: "hand-over"
-        when (CardPresser(desk).press(card.key, card.kind, choice)) {
+        when (CardPresser(desk, VoiceHooks.hooksAct(graph)).press(card.key, card.kind, choice)) {
             CardPress.PRESSED -> Unit
             // The desk holds the press as the owner's tap: it answers by itself at the unlock within the same lock.
             CardPress.HELD -> return "held tag=$tag asking=$kind channel=card until=unlock"

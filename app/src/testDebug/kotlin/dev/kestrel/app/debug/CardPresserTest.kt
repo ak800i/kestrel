@@ -22,7 +22,11 @@ class CardPresserTest {
     // The screen source's thread, the main thread on the phone, on which the press must run.
     private val sourceThread = Executors.newSingleThreadExecutor { Thread(it, "screen-source") }.asCoroutineDispatcher()
     private val overlay = FakeOverlay()
-    private val presser = CardPresser(overlay, sourceThread)
+
+    // What happened, in order: the hooks' noting of each act's number and the desk's answer with the number that it got.
+    private val happened = mutableListOf<String>()
+    private var acts = 0L
+    private val presser = CardPresser(overlay, { (++acts).also { happened += "noted $it" } }, sourceThread)
 
     private fun press(key: Int, kind: QuestionKind?, choice: CardChoice) = runBlocking { presser.press(key, kind, choice) }
 
@@ -86,16 +90,30 @@ class CardPresserTest {
         assertEquals(listOf("screen-source"), overlay.threads.map { it.substringBefore(" @") })
     }
 
-    private class FakeOverlay : OverlayCards {
+    // Plan 7G's re-check of round 9 (Important 1): each press carries its own act's number, which the hooks noted as theirs
+    // before the desk got the press, so that the answer that it gives is never the owner's act; a refused press takes none.
+    @Test
+    fun eachPressCarriesAnActThatTheHooksNotedBeforeTheDeskGotIt() {
+        overlay.shown = ShownCard(confirmation, 2 * CARD_ARMING_MILLIS)
+
+        assertEquals(CardPress.NO_BUTTON, press(4, QuestionKind.CONFIRM, CardChoice.Yes))
+        assertEquals(CardPress.PRESSED, press(4, QuestionKind.CONFIRM, CardChoice.Confirm))
+        assertEquals(CardPress.PRESSED, press(4, QuestionKind.CONFIRM, CardChoice.Cancel))
+
+        assertEquals(listOf("noted 1", "answered Confirm with 1", "noted 2", "answered Cancel with 2"), happened)
+    }
+
+    private inner class FakeOverlay : OverlayCards {
         var shown: ShownCard? = null
         var end = TapEnd.ANSWERED
         val answers = mutableListOf<CardChoice>()
         val threads = mutableListOf<String>()
 
-        override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice) -> TapEnd) -> T): T {
+        override fun <T> withShown(block: (shown: ShownCard?, answer: (CardChoice, Long) -> TapEnd) -> T): T {
             threads += Thread.currentThread().name
-            return block(shown) { choice ->
+            return block(shown) { choice, act ->
                 answers += choice
+                happened += "answered $choice with $act"
                 end
             }
         }

@@ -139,9 +139,40 @@ class ConversationOwnerTest {
         voice.answers += ChannelAnswer.Yes
 
         assertEquals(Answer.Yes, owner.ask("Send it?", AnswerKind.YES_NO))
-        assertEquals(listOf(DialogueEvent.Asked(1, QuestionKind.YES_NO), DialogueEvent.Answered(1)), events)
+        assertEquals(listOf(DialogueEvent.Asked(1, QuestionKind.YES_NO), DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = 0)), events)
         assertNull(owner.asking)
         assertTrue(text.asked.isEmpty())
+    }
+
+    // Plan 7G: every answer reaches the engine with its source. A card's answer closes its question with the number of the
+    // owner's tap, which the card over the app gives once Kestrel is off; an input's answer, which reached the engine as its
+    // own event, closes it without a tap; a withdrawn question closes with its withdrawal and a cancelled one with none.
+    @Test
+    fun aQuestionClosesWithItsAnswerAndTheNumberOfTheTapThatGaveIt() = runTest {
+        kestrelOn.value = false
+        text.taps = { 41L }
+        text.answers += ChannelAnswer.Yes
+        assertEquals(ChannelAnswer.Yes, owner.question("Continue the conversation about the bus?", QuestionKind.SWITCH))
+        assertEquals(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = 41L), events.last())
+
+        val typed = async { owner.question("Delete the history?", QuestionKind.DELETE_HISTORY) }
+        runCurrent()
+        owner.answer(2, ChannelAnswer.No)
+        assertEquals(ChannelAnswer.No, typed.await())
+        assertEquals(DialogueEvent.Answered(2, ChannelAnswer.No, tap = null), events.last())
+
+        val withdrawn = async { owner.ask("Which one?", AnswerKind.FREE) }
+        runCurrent()
+        owner.pause()
+        assertEquals(Answer.Interrupted, withdrawn.await())
+        assertEquals(DialogueEvent.Answered(3, ChannelAnswer.Interrupted, tap = null), events.last())
+        owner.resume()
+
+        val cancelled = async { owner.question("Which one?", QuestionKind.FREE) }
+        runCurrent()
+        cancelled.cancel()
+        runCurrent()
+        assertEquals(DialogueEvent.Answered(4, answer = null, tap = null), events.last())
     }
 
     @Test
