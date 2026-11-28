@@ -17,9 +17,10 @@
         android:name=".debug.DebugKestrelApplication"
         tools:replace="android:name">
         <!-- Test hooks for adb (design spec, section 16.1), called with adb shell content call on content://dev.kestrel.hooks.
-             Only callers that hold DUMP, in practice adb shell, can acquire it, and TestHookProvider checks each call's
-             caller again, because Android checks no permission on a call. Release builds do not contain this provider,
-             and the audit checks that. -->
+             Only adb's shell (uid 2000) and root (uid 0) may use them: TestHookProvider checks the caller's uid on every
+             entry point (HookCallers) and refuses every app, also one that holds DUMP. DUMP here is a second layer: an
+             app without it cannot even acquire the provider. Release builds do not contain this provider, and the audit
+             checks that. -->
         <provider
             android:name=".debug.TestHookProvider"
             android:authorities="dev.kestrel.hooks"

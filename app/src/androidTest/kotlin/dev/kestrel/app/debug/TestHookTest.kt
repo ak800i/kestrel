@@ -141,16 +141,33 @@ class TestHookTest {
     fun anotherAppCannotSendCommands() = runBlocking {
         screen.open("HookProbeActivity", "Hook probe")
 
-        screen.awaitElement { it.label == "Probe refused" }
+        screen.awaitElement { it.label == "Probe refused at the acquisition" }
+        Unit
+    }
+
+    /**
+     * Another app that holds DUMP, as SystemUI or a privileged app of the phone's maker does, acquires the provider, and
+     * the provider's check of the caller's uid refuses its call through binder: only adb's shell and root may call.
+     */
+    @Test
+    fun anotherAppThatHoldsDumpIsRefusedOnItsCall() = runBlocking {
+        screen.shell("pm grant $PROBE $DUMP")
+        try {
+            screen.open("HookProbeActivity", "Hook probe")
+
+            screen.awaitElement { it.label == "Probe refused on the call" }
+        } finally {
+            screen.shell("pm revoke $PROBE $DUMP")
+        }
         Unit
     }
 
     /**
      * Kestrel's own app's uid may acquire its own provider, so only the provider's check of each call's caller refuses it:
-     * the app does not hold DUMP, and its call is no binder call.
+     * a call in Kestrel's own process is no binder call, so it carries Kestrel's own uid.
      */
     @Test
-    fun theHooksRefuseACallFromAnAppsUid() {
+    fun theHooksRefuseACallFromKestrelsOwnProcess() {
         val hooks = Uri.parse("content://${TestHookProvider.AUTHORITY}")
 
         assertThrows(SecurityException::class.java) { context.contentResolver.call(hooks, "STATE", null, null) }
@@ -174,5 +191,9 @@ class TestHookTest {
     private companion object {
         /** The end of the state's answer: the build's commit and whether its worktree had changes. */
         const val BUILD = "commit=([0-9a-f]{40}|unknown) dirty=(0|1|unknown)"
+
+        /** The fixture app, whose hook probe calls the provider as another app. */
+        const val PROBE = "dev.kestrel.testapp"
+        const val DUMP = "android.permission.DUMP"
     }
 }

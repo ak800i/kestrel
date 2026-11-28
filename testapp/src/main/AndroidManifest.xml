@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- For NotificationActivity's notification: the command tests grant it, and command-test.ps1 takes it back. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -7,7 +8,14 @@
          TypedBoundaryTest allow it with appops and put it back. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Lets the hook probe see Kestrel, so that only Kestrel's permission check can refuse it. -->
+    <!-- DUMP is a development permission, which only pm grant gives. TestHookTest gives it for one test, so that the hook
+         probe gets past the provider's acquisition and only the provider's check of its caller's uid can refuse it, and
+         takes it back. -->
+    <uses-permission
+        android:name="android.permission.DUMP"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Lets the hook probe see Kestrel, so that only Kestrel's checks can refuse it. -->
     <queries>
         <package android:name="dev.kestrel" />
     </queries>
