@@ -197,35 +197,40 @@ class GoalRulesTest : MachineTesting() {
     fun yesResumesAPausedGoalNoEndsItAndSilenceKeepsItHeld() {
         val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state
 
-        val yes = step(back, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
-        assertTrue(yes.has<ConversationEffect.ResumePausedGoal>())
+        // The dialogue's answer to the open question resumes or ends the goal in its own step, with the card's tap.
+        val yes = continueAnswered(back, 9, ChannelAnswer.Yes, tap = 77L)
+        assertEquals(ConversationEffect.ResumePausedGoal(OwnerAct(null, 77L)), yes.effect<ConversationEffect.ResumePausedGoal>())
         assertEquals(GoalPhase.ACTING, yes.state.goal!!.phase)
         assertFalse(yes.state.asksContinue)
+        assertNull(yes.state.question)
 
-        assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED), step(back, ConversationEvent.ContinueAnswered(ChannelAnswer.No)).effect<ConversationEffect.CancelGoal>())
+        assertEquals(ConversationEffect.CancelGoal(EndReason.CANCELLED), continueAnswered(back, 9, ChannelAnswer.No).effect<ConversationEffect.CancelGoal>())
 
-        val silence = step(back, ConversationEvent.ContinueAnswered(ChannelAnswer.Silence))
+        val silence = continueAnswered(back, 9, ChannelAnswer.Silence)
         assertEquals(GoalPhase.PAUSED, silence.state.goal!!.phase)
         assertFalse(silence.state.asksContinue)
         assertTrue(signal(signal(silence.state, PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).has<ConversationEffect.AskContinueGoal>())
+
+        // An ask that failed ends as an answer of nothing, which is silence.
+        val failed = continueAnswered(back, 9, answer = null)
+        assertEquals(GoalPhase.PAUSED, failed.state.goal!!.phase)
+        assertFalse(failed.state.asksContinue)
     }
 
-    // Re-check R1 of plan 7G's whole-plan review: a tap on "Continue the goal?"'s card reaches the conversation as the
-    // dialogue's answer and again in the ContinueAnswered that follows, so the state keeps it among the acts still to come
-    // until that step; a lock that withdraws the question drops it, and another question's tap is never kept.
+    // The second re-check of plan 7G's whole-plan review (F1): the answer of "Continue the goal?" counts only for the
+    // question that is open now. A lock withdraws question 9 and the unlock asks again as question 10; the late answer of
+    // question 9, a card's yes, then changes nothing, and question 10 still waits for its own answer.
     @Test
-    fun aCardsTapOnContinueTheGoalStaysPendingUntilItsContinueAnswered() {
+    fun aLateAnswerOfAWithdrawnContinueTheGoalChangesNothingAfterTheQuestionIsAskedAgain() {
         val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state
-        val answered = step(asked(back, 9, QuestionKind.CONTINUE_GOAL), ConversationEvent.Dialogue(DialogueEvent.Answered(9, ChannelAnswer.Yes, tap = 77L))).state
-        assertEquals(setOf(77L), answered.pendingActs)
+        val first = asked(back, 9, QuestionKind.CONTINUE_GOAL)
+        val again = asked(signal(signal(first, PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state, 10, QuestionKind.CONTINUE_GOAL)
 
-        val resumed = step(answered, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 77L))
-        assertTrue(resumed.has<ConversationEffect.ResumePausedGoal>())
-        assertEquals(emptySet<Long>(), resumed.state.pendingActs)
-        assertEquals(emptySet<Long>(), signal(answered, PhoneSignal.LOCKED).state.pendingActs)
+        val late = answered(again, 9, ChannelAnswer.Yes, tap = 77L)
 
-        val other = step(asked(acting(), 3, QuestionKind.YES_NO), ConversationEvent.Dialogue(DialogueEvent.Answered(3, ChannelAnswer.Yes, tap = 78L)))
-        assertEquals(emptySet<Long>(), other.state.pendingActs)
+        assertEquals(again, late.state)
+        assertTrue(late.effects.isEmpty())
+        assertTrue(answered(late.state, 10, ChannelAnswer.Yes).has<ConversationEffect.ResumePausedGoal>())
     }
 
     @Test
@@ -248,7 +253,7 @@ class GoalRulesTest : MachineTesting() {
         val locked = signal(answering, PhoneSignal.LOCKED)
         assertTrue(locked.has<ConversationEffect.CancelContinueQuestion>())
         assertNull(locked.state.question)
-        val late = step(locked.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
+        val late = answered(locked.state, 9, ChannelAnswer.Yes)
 
         assertFalse(late.has<ConversationEffect.ResumePausedGoal>())
         assertEquals(GoalPhase.PAUSED, checkNotNull(late.state.goal).phase)

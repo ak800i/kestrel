@@ -369,7 +369,7 @@ class ConversationOwner(
 }
 ```
 
-Every output takes its places when the engine emits it (`take`), and is routed at its turn (section 11): to the channel of the owner's latest input, with a spoken copy for a typed conversation when "Speak replies to typed commands" is on, and only shown for a spoken conversation while Kestrel is off. A typed conversation's questions, hand-overs and permission requests get the text channel's card; a spoken conversation's get it too from the moment Kestrel turns off, and "Continue the goal?" always (10.3). The first answer wins, and the others are withdrawn. A tap on a card is the owner's act of its moment: `:app` takes its number among his inputs when the tap reaches Kestrel, and the answer carries it (`CardAnswer.act`, `OwnerReply.tap`, `HandOverAnswer.act`, and on to `ContinueAnswered.tap`, `ResumeGoal.tap` and the round), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
+Every output takes its places when the engine emits it (`take`), and is routed at its turn (section 11): to the channel of the owner's latest input, with a spoken copy for a typed conversation when "Speak replies to typed commands" is on, and only shown for a spoken conversation while Kestrel is off. A typed conversation's questions, hand-overs and permission requests get the text channel's card; a spoken conversation's get it too from the moment Kestrel turns off, and "Continue the goal?" always (10.3). The first answer wins, and the others are withdrawn. A tap on a card is the owner's act of its moment: `:app` takes its number among his inputs when the tap reaches Kestrel, and the answer carries it (`CardAnswer.act`, `OwnerReply.tap`, `HandOverAnswer.act`, and on to the dialogue's `Answered.tap`, `ResumeGoal.tap` and the round), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
 
 ### 5.4 New ports and fields in `:core:agent`
 
@@ -543,7 +543,6 @@ data class ConversationState(
     val question: OpenQuestion? = null,    // the question that waits for the owner, with its number and kind
     val asksContinue: Boolean = false,     // "Continue the goal?" is asked or about to be
     val continueAnswer: OwnerInput? = null, // the input that answered "Continue the goal?", for the round that it resumes
-    val continueTap: Long? = null,         // the tap on its card that answered it: the dialogue's answer gives it, ContinueAnswered names it again
     val replyChannel: InputChannel = InputChannel.VOICE,
     val voiceOn: Boolean = true,           // Kestrel is on; while it is off, a spoken conversation's questions wait as typed ones do
     val quiet: QuietClock = QuietClock.Off,
@@ -560,8 +559,7 @@ data class ConversationState(
     val settings: ConversationSettings = ConversationSettings(),
     val safetyTestMode: Boolean = true,    // the Safety page's value now, which the next conversation takes
 ) {
-    val pendingInputs: List<OwnerInput>    // the inputs whose work a later step starts or drops: waiting, and continueAnswer; the hooks' tags follow it (plan 7G)
-    val pendingActs: Set<Long>             // the acts that a later step names again: pendingInputs' ids and continueTap; the hooks' claims follow it (plan 7G)
+    val pendingInputs: List<OwnerInput>    // the inputs whose work a later step starts or drops: waiting, and continueAnswer; the hooks' tags and claims follow it (plan 7G)
 }
 
 sealed interface QuietClock {
@@ -623,7 +621,6 @@ sealed interface ConversationEvent {
     data class Signal(val signal: PhoneSignal) : ConversationEvent
     data class SettingsChanged(val settings: ConversationSettings, val testMode: Boolean) : ConversationEvent
     data class Restored(val snapshot: ConversationSnapshot?, val previous: ProcessEnd = ProcessEnd.Other) : ConversationEvent
-    data class ContinueAnswered(val answer: ChannelAnswer, val tap: Long? = null) : ConversationEvent // tap: the card's (plan 7F)
     data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent // Reply, Quiet, Switch or Deleted
     data class Switched(val snapshot: ConversationSnapshot?, val sentence: String, val failed: Boolean = false) : ConversationEvent
     data object EndQuietTime : ConversationEvent                        // the hook conversation-control do=expire
@@ -631,7 +628,7 @@ sealed interface ConversationEvent {
 
 sealed interface DialogueEvent {                                        // from ConversationOwner
     data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
-    data class Answered(val number: Int, val answer: ChannelAnswer? = null, val tap: Long? = null) : DialogueEvent // closed: its answer
+    data class Answered(val number: Int, val answer: ChannelAnswer? = null, val tap: Long? = null) : DialogueEvent // closed: its answer; it counts only for the open question of that number, and for "Continue the goal?" it resumes or ends the goal in its own step, the one step of a card's tap (plan 7G)
                                                                         // (null: withdrawn or cancelled) and the card's tap (plan 7G)
     data class HandedOver(val number: Int) : DialogueEvent
     data class HandOverDone(val number: Int, val act: Long? = null) : DialogueEvent // act: the tap on the card's Continue or

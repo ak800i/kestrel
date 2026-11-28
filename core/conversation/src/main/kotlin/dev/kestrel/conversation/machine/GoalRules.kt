@@ -157,22 +157,24 @@ internal object GoalRules {
         }
     }
 
-    fun dialogue(state: ConversationState, event: DialogueEvent): MachineStep = when (event) {
+    /**
+     * The owner's dialogue: a question asked, answered, or a hand-over opened or ended. An answer counts only for the
+     * question that is open now, by its number, so the late end of a withdrawn question changes nothing. The answer to
+     * "Continue the goal?" resumes or ends the goal in its own step ([continueAnswered]), the one step in which its act, an
+     * input's answer or a tap on its card, reaches the conversation (plan 7G).
+     */
+    fun dialogue(state: ConversationState, event: DialogueEvent, now: Long): MachineStep = when (event) {
         is DialogueEvent.Asked -> asked(state, event)
         is DialogueEvent.Answered -> {
             val open = state.question
             if (open?.number != event.number) {
                 MachineStep(state)
             } else {
-                // A tap on "Continue the goal?"'s card is the owner's act for the ContinueAnswered that follows (plan 7G).
-                val tap = if (open.kind == QuestionKind.CONTINUE_GOAL && state.asksContinue) event.tap else state.continueTap
-                MachineStep(
-                    state.copy(
-                        question = null,
-                        goal = state.goal?.let { if (it.phase == GoalPhase.ASKING) it.copy(phase = GoalPhase.ACTING) else it },
-                        continueTap = tap,
-                    ),
+                val answered = state.copy(
+                    question = null,
+                    goal = state.goal?.let { if (it.phase == GoalPhase.ASKING) it.copy(phase = GoalPhase.ACTING) else it },
                 )
+                if (open.kind == QuestionKind.CONTINUE_GOAL) continueAnswered(answered, event.answer, event.tap, now) else MachineStep(answered)
             }
         }
         is DialogueEvent.HandedOver -> handedOver(state, event.number)
@@ -218,10 +220,12 @@ internal object GoalRules {
         }
     }
 
-    // The yes came from the owner's input (a spoken or typed yes, "Kestrel, continue") or from his tap on the card, whose
-    // number [tap] `:app` took as the tap reached Kestrel (plan 7F). An answer that comes after a lock, a call or "stop"
-    // withdrew the question changes nothing: the goal stays as that left it, and the owner's return asks again.
-    fun continueAnswered(state: ConversationState, answer: ChannelAnswer, tap: Long?, now: Long): MachineStep {
+    // The answer to the open "Continue the goal?" ([dialogue]): the yes came from the owner's input (a spoken or typed yes,
+    // "Kestrel, continue"), which waits in [ConversationState.continueAnswer], or from his tap on the card, whose number
+    // [tap] `:app` took as the tap reached Kestrel (plan 7F); no answer, as when the ask failed, is silence. A lock, a call or
+    // "stop" withdraws the question first, so its late answer names no open question and changes nothing: the goal stays
+    // as that left it, and the owner's return asks again.
+    private fun continueAnswered(state: ConversationState, answer: ChannelAnswer?, tap: Long?, now: Long): MachineStep {
         if (!state.asksContinue) return MachineStep(state)
         val input = state.continueAnswer
         val asked = state.withoutContinue()

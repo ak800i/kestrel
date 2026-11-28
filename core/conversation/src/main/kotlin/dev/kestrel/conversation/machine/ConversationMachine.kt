@@ -34,7 +34,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     fun next(state: ConversationState, event: ConversationEvent, now: Long): MachineStep {
         val step = when (event) {
             is ConversationEvent.Input -> input(state.copy(replyChannel = event.input.channel), event.input, now)
-            is ConversationEvent.Dialogue -> GoalRules.dialogue(state, event.event)
+            is ConversationEvent.Dialogue -> GoalRules.dialogue(state, event.event, now)
             is ConversationEvent.GoalEnded -> goalEnded(state, event.end, now)
             ConversationEvent.Touched -> GoalRules.touched(state)
             is ConversationEvent.BackgroundRefused -> GoalRules.backgroundRefused(state, event.command)
@@ -48,7 +48,6 @@ class ConversationMachine(private val ids: () -> ConversationId) {
             is ConversationEvent.Signal -> GoalRules.signal(state, event.signal, now)
             is ConversationEvent.SettingsChanged -> settingsChanged(state, event, now)
             is ConversationEvent.Restored -> restored(state, event.snapshot, event.previous, now)
-            is ConversationEvent.ContinueAnswered -> GoalRules.continueAnswered(state, event.answer, event.tap, now)
             is ConversationEvent.LocalEnded -> localEnded(state, event, now)
             is ConversationEvent.Switched -> switched(state, event, now)
             ConversationEvent.EndQuietTime -> if (state.quiet is QuietClock.Running) close(state) else MachineStep(state)

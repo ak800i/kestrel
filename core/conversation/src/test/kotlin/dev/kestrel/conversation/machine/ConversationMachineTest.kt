@@ -608,14 +608,14 @@ class ConversationMachineTest : MachineTesting() {
         assertEquals(ConversationEffect.StartTimer(Timer.HOLD, 1, GoalRules.HOLD_MILLIS - 60_000), held.effect<ConversationEffect.StartTimer>())
         assertTrue(held.has<ConversationEffect.AskContinueGoal>())
 
-        val yes = step(held.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
-        assertEquals(ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, null), yes.effect<ConversationEffect.ResumeGoal>())
+        val yes = continueAnswered(held.state, 1, ChannelAnswer.Yes, tap = 41L)
+        assertEquals(ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, null, tap = 41L), yes.effect<ConversationEffect.ResumeGoal>())
 
         // A yes that the owner said or typed resumes the goal for his input; only the card's yes has none.
         val said = spoken(InputIntent.Answer(ChannelAnswer.Yes))
         val answering = step(asked(held.state, 2, QuestionKind.CONTINUE_GOAL), said)
         assertEquals(ConversationEffect.AnswerQuestion(2, ChannelAnswer.Yes), answering.effect<ConversationEffect.AnswerQuestion>())
-        val resumed = step(answering.state, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes))
+        val resumed = answered(answering.state, 2, ChannelAnswer.Yes)
         assertEquals(ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, said.input), resumed.effect<ConversationEffect.ResumeGoal>())
         assertNull(resumed.state.continueAnswer)
     }

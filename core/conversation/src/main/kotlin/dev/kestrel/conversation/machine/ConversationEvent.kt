@@ -61,11 +61,6 @@ sealed interface ConversationEvent {
      */
     data class Restored(val snapshot: ConversationSnapshot?, val previous: ProcessEnd = ProcessEnd.Other) : ConversationEvent
 
-    /**
-     * The owner's answer to "Continue the goal?"; [tap] is the number of his tap on its card when the card gave it, which
-     * `:app` took as the tap reached Kestrel (plan 7F).
-     */
-    data class ContinueAnswered(val answer: ChannelAnswer, val tap: Long? = null) : ConversationEvent
 
     data class LocalEnded(val command: Int, val outcome: LocalOutcome) : ConversationEvent
 

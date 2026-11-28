@@ -95,9 +95,8 @@ internal class CommandTags {
     // the inputs that a session made of their clips (voice-clip), their presses of a card and their presses of the goal
     // notification's buttons. Every other act is the owner's (plan 7G). A claim lives as long as its act can still come up
     // in a step, and no count of newer claims ends it (the whole-plan review's M5): it goes after the step in which the
-    // conversation took its act, unless a later step names the act again (ConversationState.pendingActs: an input whose
-    // work the machine holds, or the tap on "Continue the goal?"'s card, which ContinueAnswered names after the dialogue's
-    // answer; re-check R1 of the whole-plan review) or the act started Kestrel's own request that runs, whose switch names it again when the request ends; it then goes
+    // conversation took its act, unless the machine holds the act's work for a later step (ConversationState.pendingInputs)
+    // or the act started Kestrel's own request that runs, whose switch names it again when the request ends; it then goes
     // after the step in which that work started, ended or was dropped ([release]). Nothing caps them: a claim whose act
     // never reached the conversation, as a press that a card or the notification refused, holds a number that no later act
     // carries (InputIds), so it can never make another act the hooks', and it goes with the process.
@@ -286,7 +285,7 @@ internal class CommandTags {
     /**
      * Notes which of the conversation's commands an input of a tagged transcript started (design 14.4 of sub-project 7),
      * in its own step or in a later one while its work was still to come ([ConversationState.pendingInputs]): a command
-     * that waited for the goal's end, or the answer to "Continue the goal?", whose round resumes two steps later. An
+     * that waited for the goal's end, or the answer to "Continue the goal?", whose round resumes with the question's own answer. An
      * input whose work neither started nor is still to come, as steering, a stop or an answer to another question, did
      * nothing that the tag counts, and neither did a held input once the machine dropped it.
      */
@@ -335,7 +334,7 @@ internal class CommandTags {
         // own input and the inputs that were pending before it are settled here: one whose work neither started nor is
         // still to come, as steering, a stop, an answer to another question or a held input that the step dropped, did
         // nothing that the tag counts.
-        val pending = step.state.pendingActs
+        val pending = step.state.pendingInputs.mapTo(HashSet()) { it.id }
         for (settled in listOfNotNull(given) + state.pendingInputs) {
             if (settled.id in started || settled.id in pending) continue
             val tag = inputs.remove(settled.id) ?: continue
@@ -344,14 +343,15 @@ internal class CommandTags {
         release(event, state, step)
     }
 
-    // The claims' lives (the whole-plan review's M5 and its re-check's R1): every act of the step, every act that the
-    // state named as still to come before it (ConversationState.pendingActs) and the input of the request that ran before
-    // it are settled once the step is over, unless a later step names the act again (pendingActs after the step) or it
-    // started Kestrel's own request that still runs. Only then does its claim go, so a hook's input that waits, or the
-    // hooks' tap on "Continue the goal?"'s card before its ContinueAnswered, is never the owner's.
+    // The claims' lives (the whole-plan review's M5): every act of the step, every input whose work waited before it
+    // (ConversationState.pendingInputs) and the input of the request that ran before it are settled once the step is over,
+    // unless the act's work is still to come (pendingInputs after the step) or it started Kestrel's own request that still
+    // runs. Only then does its claim go, so a hook's input that waits is never the owner's. Every other act reaches the
+    // conversation in one step only: a tap on a card answers its question in the dialogue's answer, also the tap that
+    // answers "Continue the goal?", whose goal resumes in that step (its re-checks' R1 and F1).
     private fun release(event: ConversationEvent, before: ConversationState, step: MachineStep) {
-        val live = step.state.pendingActs + listOfNotNull(step.state.local?.input?.id)
-        val settled = numbers(event, step) + before.pendingActs + listOfNotNull(before.local?.input?.id)
+        val live = step.state.pendingInputs.mapTo(HashSet()) { it.id } + listOfNotNull(step.state.local?.input?.id)
+        val settled = numbers(event, step) + before.pendingInputs.map { it.id } + listOfNotNull(before.local?.input?.id)
         for (number in settled) if (number !in live) claimed.remove(number)
     }
 
@@ -376,7 +376,7 @@ internal class CommandTags {
     // stops, steers, switches or asks something else of Kestrel. They are the input of [event], spoken, typed, a tap on the
     // conversation screen or a button of the goal notification, the inputs that the step's work starts for, and a tap on a
     // card over the app, which reaches the conversation with its number and never as an input: the answer of a question
-    // (the dialogue's answer, or the answer to "Continue the goal?") or the Continue or Cancel that ended a hand-over. The
+    // (the dialogue's answer, also to "Continue the goal?") or the Continue or Cancel that ended a hand-over. The
     // end of a wait (Silence) and a withdrawn question (Interrupted) answer nothing, so they are no acts.
     private fun acts(event: ConversationEvent, step: MachineStep): List<Long> =
         inputsOf(event, step).filter(::isAct).map { it.id } + listOfNotNull(tapOf(event)?.takeIf { it.answered }?.number)
@@ -389,15 +389,14 @@ internal class CommandTags {
     private fun inputsOf(event: ConversationEvent, step: MachineStep): List<OwnerInput> =
         listOfNotNull((event as? ConversationEvent.Input)?.input) + step.effects.mapNotNull { work(it)?.second }
 
-    // The tap on a card over the app that [event] carries, with whether it answered: a question's answer, the answer to
-    // "Continue the goal?", or the Continue or Cancel that ended a hand-over.
+    // The tap on a card over the app that [event] carries, with whether it answered: a question's answer, also to "Continue
+    // the goal?", or the Continue or Cancel that ended a hand-over.
     private fun tapOf(event: ConversationEvent): Tap? = when (event) {
         is ConversationEvent.Dialogue -> when (val dialogue = event.event) {
             is DialogueEvent.Answered -> dialogue.tap?.let { Tap(it, answers(dialogue.answer)) }
             is DialogueEvent.HandOverDone -> dialogue.act?.let { Tap(it, answered = true) }
             else -> null
         }
-        is ConversationEvent.ContinueAnswered -> event.tap?.let { Tap(it, answers(event.answer)) }
         else -> null
     }
 

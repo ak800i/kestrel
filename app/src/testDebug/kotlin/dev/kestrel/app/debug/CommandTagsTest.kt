@@ -32,10 +32,13 @@ import dev.kestrel.conversation.machine.OpenQuestion
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
+import dev.kestrel.conversation.model.GoalHold
 import dev.kestrel.conversation.model.GoalPhase
+import dev.kestrel.conversation.model.GoalState
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
+import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.RoundEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -182,8 +185,8 @@ class CommandTagsTest {
     }
 
     // Plan 7G's resume-after-death task: after a restart, "Kestrel, continue" answers the open "Continue the goal?" with
-    // yes. The machine holds that answer (continueAnswer) and resumes the goal's round for it two steps later, so its tag
-    // waits for the round's command.
+    // yes. The machine holds that answer (continueAnswer) and resumes the goal's round for it in the step of the question's
+    // own answer, one step later, so its tag waits for the round's command.
     private fun continueAnswered(tag: String): Pair<OwnerInput, ConversationState> {
         step(Event.Toggle)
         step(Event.ConversationChanged(VoiceView(open = true, goal = GoalPhase.INTERRUPTED, asking = QuestionKind.CONTINUE_GOAL, question = 1)))
@@ -196,8 +199,6 @@ class CommandTagsTest {
         val held = asking.copy(continueAnswer = input)
         tags.onConversationStep(ConversationEvent.Input(input), asking, MachineStep(held, listOf(ConversationEffect.AnswerQuestion(1, ChannelAnswer.Yes))))
         assertEquals(CommandTags.Role.CONVERSE, tags.tagged(tag)?.role)
-        tags.onConversationStep(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes)), held, MachineStep(held))
-        assertEquals(CommandTags.Role.CONVERSE, tags.tagged(tag)?.role)
         return input to held
     }
 
@@ -206,7 +207,7 @@ class CommandTagsTest {
         val (input, held) = continueAnswered("continue")
 
         val resumed = ConversationEffect.ResumeGoal(1, ResumeCause.RESTART, null, input)
-        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), held, MachineStep(ConversationState(command = 1), listOf(resumed)))
+        tags.onConversationStep(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes)), held, MachineStep(ConversationState(command = 1), listOf(resumed)))
 
         assertEquals(CommandTags.Tagged(CommandTags.Role.TASK, 0, "continue", task = 1), tags.tagged("continue"))
     }
@@ -215,7 +216,7 @@ class CommandTagsTest {
     fun aHeldInputsTagCountsNothingOnceTheMachineDropsItsWork() {
         // The goal had ended meanwhile, so the answer resumes nothing.
         val (_, held) = continueAnswered("late")
-        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), held, MachineStep(ConversationState()))
+        tags.onConversationStep(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes)), held, MachineStep(ConversationState()))
         assertEquals(CommandTags.Role.NONE, tags.tagged("late")?.role)
 
         // A command that waited for the goal's end, which "stop" then dropped with the goal.
@@ -427,55 +428,63 @@ class CommandTagsTest {
     }
 
     // Plan 7G's re-check of round 9 (Important 1): the owner's tap on the card of "Continue the goal?" in a marked
-    // conversation takes its mark, as his spoken "yes" does. The tap reaches the conversation in both of its steps, as the
-    // engine gives it: the dialogue's answer, then ContinueAnswered with the same number.
+    // conversation takes its mark, as his spoken "yes" does. The tap reaches the conversation in one step, the dialogue's
+    // answer, which resumes the goal (the second re-check's F1).
     @Test
     fun theOwnersTapOnTheCardOfContinueTheGoalTakesTheMark() {
         val gone = mutableListOf<ConversationId>()
         tags.ownerConversation = { gone += it }
 
-        answerContinue(InputIds.next())
+        val resumed = giveInOrder(tap(ChannelAnswer.Yes, InputIds.next()))
 
-        assertEquals(listOf(continueAsked.id, continueAsked.id), gone)
+        assertEquals(GoalPhase.ACTING, resumed.goal?.phase)
+        assertEquals(listOf(continueAsked.id), gone)
     }
 
-    // Re-check R1 of plan 7G's whole-plan review: the hooks' tap on "Continue the goal?"'s card keeps its claim from the
-    // dialogue's answer until the ContinueAnswered that names the same number one step later (ConversationState.pendingActs),
-    // so the mark stays through both steps; a yes without a tap takes nothing either.
+    // Plan 7G's whole-plan review, re-checks R1 and F1: the hooks' tap on "Continue the goal?"'s card is theirs in the one
+    // step that it reaches the conversation, also when a lock comes right after it, where the engine once posted a second
+    // event with the same number, or right before it, when the lock withdrew the question and the late answer changes
+    // nothing. Neither order takes the mark, and a yes without a tap takes nothing either.
     @Test
-    fun theHooksTapOnTheCardOfContinueTheGoalStaysTheirsThroughBothOfItsSteps() {
+    fun theHooksTapOnTheCardOfContinueTheGoalStaysTheirsAlsoWithALockBeforeOrAfterIt() {
         val gone = mutableListOf<ConversationId>()
         tags.ownerConversation = { gone += it }
-        val hooks = InputIds.next()
-        tags.claim(hooks)
+        val locked = ConversationEvent.Signal(PhoneSignal.LOCKED)
 
-        answerContinue(hooks)
-        answerContinue(null)
+        val first = InputIds.next().also(tags::claim)
+        val paused = giveInOrder(tap(ChannelAnswer.Yes, first), locked)
+        assertEquals(GoalPhase.PAUSED, paused.goal?.phase)
 
+        val second = InputIds.next().also(tags::claim)
+        val late = giveInOrder(locked, tap(ChannelAnswer.Yes, second))
+        assertEquals(GoalPhase.PAUSED, late.goal?.phase)
+        assertFalse(late.asksContinue)
+
+        giveInOrder(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = null)))
         assertEquals(emptyList<ConversationId>(), gone)
     }
 
-    // A marked conversation that asks "Continue the goal?" as question 1.
+    // A marked conversation whose goal the lock paused, and which now asks "Continue the goal?" as question 1.
     private val continueAsked = ConversationState(
         id = ConversationId("0123456789abcdef0123456789abcdef"),
+        command = 5,
+        goal = GoalState(1, GoalPhase.PAUSED, 0, GoalHold.LOCK, command = 5),
         asksContinue = true,
         question = OpenQuestion(1, QuestionKind.CONTINUE_GOAL),
     )
 
-    // The answer yes to [continueAsked] as the engine gives it, through the machine's own rules: with a card's tap
-    // [number], the dialogue's answer and then ContinueAnswered with the same number; without one (a spoken or typed yes,
-    // whose input the test leaves out), ContinueAnswered alone.
-    private fun answerContinue(number: Long?) {
+    // Gives [events] to [continueAsked] in their order, through the machine's own rules, as the engine's inbox gives them,
+    // and returns the state that they leave.
+    private fun giveInOrder(vararg events: ConversationEvent): ConversationState {
         val machine = ConversationMachine { ConversationId("ab".repeat(16)) }
-        val events = listOfNotNull(number?.let { tap(ChannelAnswer.Yes, it) }, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, number))
         var state = continueAsked
         for (event in events) {
             val step = machine.next(state, event, 0)
             tags.onConversationStep(event, state, step)
             state = step.state
         }
+        return state
     }
-
     // The answer of question 1 that a tap on the card over the app gave, with the tap's number [act].
     private fun tap(answer: ChannelAnswer, act: Long) = ConversationEvent.Dialogue(DialogueEvent.Answered(1, answer, tap = act))
 
@@ -628,7 +637,6 @@ class CommandTagsTest {
             }
         } + listOf(
             InputIds.next().let { ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = it)) to it },
-            InputIds.next().let { ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = it) to it },
             InputIds.next().let { ConversationEvent.Dialogue(DialogueEvent.HandOverDone(2, act = it)) to it },
         )
         fun give(event: ConversationEvent) = tags.onConversationStep(event, marked, MachineStep(marked, emptyList()))

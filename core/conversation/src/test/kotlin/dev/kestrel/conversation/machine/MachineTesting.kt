@@ -5,6 +5,7 @@ import dev.kestrel.agent.TaskReport
 import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.DialogueEvent
 import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
@@ -50,6 +51,14 @@ abstract class MachineTesting {
 
     protected fun asked(state: ConversationState, number: Int, kind: QuestionKind): ConversationState =
         step(state, ConversationEvent.Dialogue(DialogueEvent.Asked(number, kind))).state
+
+    /** The dialogue's answer [answer] to question [number], with the card's [tap] when a card gave it. */
+    protected fun answered(state: ConversationState, number: Int, answer: ChannelAnswer?, tap: Long? = null): MachineStep =
+        step(state, ConversationEvent.Dialogue(DialogueEvent.Answered(number, answer, tap)))
+
+    /** "Continue the goal?" asked on [state] as question [number] and answered with [answer], as the dialogue gives it. */
+    protected fun continueAnswered(state: ConversationState, number: Int, answer: ChannelAnswer?, tap: Long? = null): MachineStep =
+        answered(asked(state, number, QuestionKind.CONTINUE_GOAL), number, answer, tap)
 
     /** An open conversation without a goal, whose quiet clock runs: its first command ended and its reply was shown. */
     protected fun idleOpen(): ConversationState {
