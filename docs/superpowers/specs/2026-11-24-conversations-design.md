@@ -364,7 +364,8 @@ class ConversationOwner(
     val asking: QuestionKind?                      // the open question's kind, the open confirmation's category and the
     val confirming: Category?                      //   open hand-over's kind, which the hook agent-state reads
     val handOverKind: HandOverKind?
-    // and OwnerPort's say, ask, confirm, handOver, askPermission, gate and leaveKestrel, and Dialogue's question
+    // and OwnerPort's say, ask, confirm, handOver, askPermission, gate and leaveKestrel, and Dialogue's question, whose kind is a
+    // RequestQuestion (SWITCH or DELETE_HISTORY): it has no CONTINUE_GOAL, so askContinue is the one way to ask that (plan 7G)
 }
 ```
 

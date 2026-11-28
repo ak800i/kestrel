@@ -6,6 +6,7 @@ import dev.kestrel.agent.port.ConfirmEnd
 import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.testing.FakeChannel
@@ -152,10 +153,10 @@ class ConversationOwnerTest {
         kestrelOn.value = false
         text.taps = { 41L }
         text.answers += ChannelAnswer.Yes
-        assertEquals(ChannelAnswer.Yes, owner.question("Continue the conversation about the bus?", QuestionKind.SWITCH))
+        assertEquals(ChannelAnswer.Yes, owner.question("Continue the conversation about the bus?", RequestQuestion.SWITCH))
         assertEquals(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = 41L), events.last())
 
-        val typed = async { owner.question("Delete the history?", QuestionKind.DELETE_HISTORY) }
+        val typed = async { owner.question("Delete the history?", RequestQuestion.DELETE_HISTORY) }
         runCurrent()
         owner.answer(2, ChannelAnswer.No)
         assertEquals(ChannelAnswer.No, typed.await())
@@ -168,7 +169,7 @@ class ConversationOwnerTest {
         assertEquals(DialogueEvent.Answered(3, ChannelAnswer.Interrupted, tap = null), events.last())
         owner.resume()
 
-        val cancelled = async { owner.question("Which one?", QuestionKind.FREE) }
+        val cancelled = async { owner.question("Continue the conversation about the bus?", RequestQuestion.SWITCH) }
         runCurrent()
         cancelled.cancel()
         runCurrent()
@@ -300,13 +301,15 @@ class ConversationOwnerTest {
         assertEquals(confirmation, voice.asked.first().confirmation)
 
         // The confirmation is open only once it is asked, after the question before it.
-        val before = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        val before = async { owner.askContinue(1) }
         runCurrent()
         val pending = async { owner.confirm(confirmation) }
         runCurrent()
         assertNull(owner.confirming)
-        owner.answer(voice.asked.last().number, ChannelAnswer.Yes)
-        assertEquals(ChannelAnswer.Yes, before.await())
+        val continueGoal = voice.asked.last().number
+        owner.answer(continueGoal, ChannelAnswer.Yes)
+        before.await()
+        assertTrue(DialogueEvent.Answered(continueGoal, ChannelAnswer.Yes, tap = null) in events)
         runCurrent()
         assertEquals(Category.SENDING, owner.confirming)
         owner.answer(voice.asked.last().number, ChannelAnswer.No)
@@ -360,11 +363,14 @@ class ConversationOwnerTest {
         runCurrent()
         assertTrue(voice.handOvers.isEmpty())
 
-        val answer = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        val answer = async { owner.askContinue(2) }
         runCurrent()
-        assertEquals(QuestionKind.CONTINUE_GOAL, voice.asked.single().kind)
-        owner.answer(voice.asked.single().number, ChannelAnswer.Yes)
-        assertEquals(ChannelAnswer.Yes, answer.await())
+        val asked = voice.asked.single()
+        assertEquals(QuestionKind.CONTINUE_GOAL, asked.kind)
+        assertEquals(DialogueEvent.Asked(asked.number, QuestionKind.CONTINUE_GOAL, ask = 2), events.last())
+        owner.answer(asked.number, ChannelAnswer.Yes)
+        answer.await()
+        assertEquals(DialogueEvent.Answered(asked.number, ChannelAnswer.Yes, tap = null), events.last())
 
         owner.resume()
         runCurrent()
@@ -393,17 +399,21 @@ class ConversationOwnerTest {
 
     @Test
     fun continueTheGoalIsAlsoACardInASpokenConversationAndNoPauseWithdrawsIt() = runTest {
-        val answer = async { owner.question("Continue the goal?", QuestionKind.CONTINUE_GOAL) }
+        val answer = async { owner.askContinue(7) }
         runCurrent()
 
         owner.pause()
         runCurrent()
 
         assertFalse(answer.isCompleted)
-        assertEquals(QuestionKind.CONTINUE_GOAL, voice.asked.single().kind)
+        val number = voice.asked.single().number
+        // The question carries the number of the machine's ask, so that only the running ask opens it (plan 7G).
+        assertEquals(DialogueEvent.Asked(number, QuestionKind.CONTINUE_GOAL, ask = 7), events.filterIsInstance<DialogueEvent.Asked>().single())
+        assertEquals(ConversationTexts.CONTINUE_GOAL, voice.asked.single().text)
         assertEquals(QuestionKind.CONTINUE_GOAL, text.asked.single().kind)
-        owner.answer(voice.asked.single().number, ChannelAnswer.Yes)
-        assertEquals(ChannelAnswer.Yes, answer.await())
+        owner.answer(number, ChannelAnswer.Yes)
+        answer.await()
+        assertEquals(DialogueEvent.Answered(number, ChannelAnswer.Yes, tap = null), events.last())
     }
 
     @Test

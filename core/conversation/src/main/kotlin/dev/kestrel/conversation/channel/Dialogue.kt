@@ -4,7 +4,8 @@ import dev.kestrel.conversation.model.ChannelAnswer
 
 /**
  * The conversation's own dialogue with the owner, outside a goal's run (design 5.3 of sub-project 7): Kestrel's own
- * requests and "Continue the goal?" say things and ask questions of every kind, which a pause never withdraws.
+ * requests say things and ask their questions, which a pause never withdraws. "Continue the goal?" is not among them: only
+ * `ConversationOwner.askContinue` asks it, with the number of the machine's ask (plan 7G).
  */
 interface Dialogue {
     suspend fun say(text: String)
@@ -13,7 +14,17 @@ interface Dialogue {
      * Asks [text] of [kind], spoken as [spoken], with a pick's [choices], which its card shows as buttons, and its [highest]
      * number, which its card's keypad keeps to (design 10.3; 0 for no range).
      */
-    suspend fun question(text: String, kind: QuestionKind, spoken: String = text, choices: List<String> = emptyList(), highest: Int = 0): ChannelAnswer
+    suspend fun question(text: String, kind: RequestQuestion, spoken: String = text, choices: List<String> = emptyList(), highest: Int = 0): ChannelAnswer
+}
+
+/**
+ * The kinds of question that Kestrel's own requests ask through [Dialogue.question]: the switch to a past conversation and
+ * "Delete the history?". It has no member for "Continue the goal?", so that the compiler keeps that question to
+ * `ConversationOwner.askContinue`, the one way to ask it with its ask's number (plan 7G).
+ */
+enum class RequestQuestion(val kind: QuestionKind) {
+    SWITCH(QuestionKind.SWITCH),
+    DELETE_HISTORY(QuestionKind.DELETE_HISTORY),
 }
 
 /** What [ConversationOwner] tells the engine about its dialogue, so that the machine knows what waits for the owner. */

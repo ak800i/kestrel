@@ -10,7 +10,7 @@ import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.commands.text.Normalizer
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.Dialogue
-import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.channel.RequestQuestion
 import dev.kestrel.conversation.engine.ConversationClock
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.store.ConversationLookup
@@ -64,7 +64,7 @@ class LocalRequests(
 
     private suspend fun deleteHistory(dialogue: Dialogue, stored: suspend () -> Unit): LocalOutcome {
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
-        if (dialogue.question(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
+        if (dialogue.question(question, RequestQuestion.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}") != ChannelAnswer.Yes) return LocalOutcome.Quiet
         return if (deleteAll(stored)) LocalOutcome.Deleted(ConversationTexts.HISTORY_DELETED) else LocalOutcome.Reply(ConversationTexts.HISTORY_NOT_DELETED)
     }
 
@@ -96,7 +96,7 @@ class LocalRequests(
         }
         val day = ConversationTexts.day(match.openedAtWall, clock.zone())
         val question = ConversationTexts.switchQuestion(day, ScreenText.cut(match.firstRequest, FIRST_REQUEST))
-        return if (dialogue.question(question, QuestionKind.SWITCH) == ChannelAnswer.Yes) LocalOutcome.Switch(match.id) else LocalOutcome.Quiet
+        return if (dialogue.question(question, RequestQuestion.SWITCH) == ChannelAnswer.Yes) LocalOutcome.Switch(match.id) else LocalOutcome.Quiet
     }
 
     override fun toString(): String = "LocalRequests"

@@ -10,7 +10,7 @@ import dev.kestrel.agent.testing.FakeMemory
 import dev.kestrel.agent.testing.FakeOwner
 import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.channel.Dialogue
-import dev.kestrel.conversation.channel.QuestionKind
+import dev.kestrel.conversation.channel.RequestQuestion
 import dev.kestrel.conversation.context.RecordText
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.CommandRecord
@@ -33,11 +33,11 @@ import java.io.IOException
 class LocalRequestsTest {
     private class FakeDialogue : Dialogue {
         val answers = ArrayDeque<ChannelAnswer>()
-        val asked = mutableListOf<Triple<String, QuestionKind, String>>()
+        val asked = mutableListOf<Triple<String, RequestQuestion, String>>()
 
         override suspend fun say(text: String) = Unit
 
-        override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer {
+        override suspend fun question(text: String, kind: RequestQuestion, spoken: String, choices: List<String>, highest: Int): ChannelAnswer {
             asked += Triple(text, kind, spoken)
             return answers.removeFirstOrNull() ?: ChannelAnswer.Silence
         }
@@ -103,7 +103,7 @@ class LocalRequestsTest {
         assertEquals(LocalOutcome.Switch(id(1)), local.run(LocalRequest.ContinuePast("the trip"), owner, dialogue) {})
 
         val (text, kind) = dialogue.asked.single()
-        assertEquals(QuestionKind.SWITCH, kind)
+        assertEquals(RequestQuestion.SWITCH, kind)
         assertEquals(ConversationTexts.switchQuestion("Thursday, 19 November", ScreenText.cut(request, LocalRequests.FIRST_REQUEST)), text)
         assertTrue(text.startsWith("Continue the conversation from Thursday, 19 November, about 'Plan the trip"))
     }
@@ -154,7 +154,7 @@ class LocalRequestsTest {
         assertTrue(archive.keyErased)
         assertTrue(search.search(HistoryQuery("Ambar")).matches.isEmpty())
         val question = ConversationTexts.DELETE_HISTORY_QUESTION
-        assertEquals(Triple(question, QuestionKind.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
+        assertEquals(Triple(question, RequestQuestion.DELETE_HISTORY, "$question ${ConversationTexts.SAY_YES_OR_NO}"), dialogue.asked.first())
     }
 
     // Design 9.7 of sub-project 7: when the archive's transaction does not commit, nothing is deleted (the logs go in

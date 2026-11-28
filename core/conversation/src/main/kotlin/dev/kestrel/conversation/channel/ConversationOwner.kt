@@ -135,8 +135,8 @@ class ConversationOwner(
         }
     }
 
-    override suspend fun question(text: String, kind: QuestionKind, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =
-        dialogue(Draft(text, kind, spoken, choices = choices, highest = highest), goal = false).answer
+    override suspend fun question(text: String, kind: RequestQuestion, spoken: String, choices: List<String>, highest: Int): ChannelAnswer =
+        dialogue(Draft(text, kind.kind, spoken, choices = choices, highest = highest), goal = false).answer
 
     /**
      * Asks "Continue the goal?" for the machine's ask [ask] (plan 7G), whose number its `Asked` carries, so that only the
