@@ -617,8 +617,9 @@ function Invoke-Adb {
     }
 }
 
-# content call prints its errors, such as a missing provider, to its error output, which the device's shell joins to the
-# answer, so that ConvertFrom-HookCallOutput can name them.
+# content call prints its errors, such as a missing provider, a refused caller or a call that Kestrel's process did not
+# live to answer, to its error output, which the device's shell joins to the answer, so that ConvertFrom-HookCallOutput
+# can tell them apart.
 $hookAnswer = ConvertFrom-HookCallOutput (Invoke-Adb shell "$call 2>&1")
 $data = $hookAnswer.Text
 switch ($hookAnswer.Code) {
@@ -643,6 +644,6 @@ switch ($hookAnswer.Code) {
             $data
         }
     }
+    # Kestrel's own error answer, whose text is the reason; ConvertFrom-HookCallOutput reads no other code.
     1 { throw $data }
-    default { throw "Unexpected answer code $($hookAnswer.Code) from the device: $data" }
 }

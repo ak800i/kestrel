@@ -1084,6 +1084,24 @@ class RunnerTest {
         assertTrue(closed.text(), closed.text().endsWith(" asked=free reason=asked"))
     }
 
+    // Plan 7G's review of the hooks' transport, I2: Kestrel's process ended during the answer's call, so the answer may
+    // have reached Kestrel. It is recorded as lost, as an answer that adb lost, never as Kestrel's refusal, which records
+    // nothing.
+    @Test
+    fun aCancelWhoseCallDiedWithKestrelsProcessIsLostNotRefused() {
+        val open = "phase=running work=running-task handOver=none confirming=none"
+        fun answers() = run.adb.hookCalls("AGENT_ANSWER").size
+        run.adb.hook("AGENT_STATE") { if (answers() > 0) "$open asking=none question=none" else "$open asking=free question=free" }
+        val cancelled = "state=done end=CANCELLED steps=2 workMs=4000 credits=0.00 confirmed=0 unconfirmed=0 shareItems=0 beforeTestMode=0 " +
+            "model=scripted in=10 out=2 cacheRead=0 cacheWrite=0"
+        run.adb.hook("AGENT_TASK") { if (answers() > 0) cancelled else "state=running" }
+        run.adb.dieNext("--method AGENT_ANSWER ")
+
+        val ended = runner().run(task(), "[]", 1, "maple heron")
+
+        assertEquals(1, answers())
+        assertTrue(ended.text(), ended.text().endsWith(" asked=free reason=asked"))
+    }
     @Test
     fun aRunsDetailLineNamesItsAnswersKestrelsCountsAndWhatARestorePutBack() {
         val questions = ArrayDeque(listOf("phase=running asking=yes-no work=running-task handOver=none confirming=none question=yes-no"))

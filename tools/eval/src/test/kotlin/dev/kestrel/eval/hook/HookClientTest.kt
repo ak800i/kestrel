@@ -14,7 +14,7 @@ import org.junit.Test
 /**
  * The hooks' transport, `content call` (plan 7G's amendment "The hooks' transport"), its answer and the hooks that read or
  * act (design D3 of sub-project 6). The outputs in [theAnswersOfContentCallOnKestrelApi37] are real ones of `content call`
- * on kestrel-api37, captured once with TestHookProvider.
+ * on kestrel-api37, captured once with TestHookProvider, as are [FakeAdb.DEAD_CALL] and [FakeAdb.REFUSED_CALLER].
  */
 class HookClientTest {
     private val adb = FakeAdb()
@@ -60,8 +60,40 @@ class HookClientTest {
             assertThrows(HookError::class.java) { HookClient.answer("x", "Result: Bundle[{code=1, text=error: unknown command 'LINE1\nLINE2'}]") }.message,
         )
         assertThrows(HookSilent::class.java) { HookClient.answer("state", FakeAdb.NO_HOOKS.trimEnd()) }
-        val other = assertThrows(HookError::class.java) { HookClient.answer("state", "Result: null") }
-        assertEquals("The device's answer to state was not a hook's answer: Result: null", other.message)
+    }
+
+    // Plan 7G's review of the hooks' transport, I2: only code 1 is Kestrel's refusal. A call that failed on its way, as when
+    // Kestrel's process ended during it, is lost, because Kestrel may have acted; a refused caller is its own failure.
+    @Test
+    fun theFailuresOfContentCallOnKestrelApi37AreLostOrARefusedCallerNeverKestrelsRefusal() {
+        assertEquals(
+            "The answer of agent-answer was lost: android.os.DeadObjectException",
+            assertThrows(HookLost::class.java) { HookClient.answer("agent-answer", FakeAdb.DEAD_CALL.trimEnd()) }.message,
+        )
+        assertEquals(
+            "Kestrel refused the caller of state: java.lang.SecurityException: Permission Denial: Do not have permission in call " +
+                "getContentProviderExternal() from pid=4343, uid=10353 requires android.permission.ACCESS_CONTENT_PROVIDERS_EXTERNALLY. " +
+                "Only adb's shell (uid 2000) and root (uid 0) may use its test hooks.",
+            assertThrows(HookCallerRefused::class.java) { HookClient.answer("state", FakeAdb.REFUSED_CALLER.trimEnd()) }.message,
+        )
+        assertEquals(
+            "The answer of state was lost: its answer had the unknown code 2: x",
+            assertThrows(HookLost::class.java) { HookClient.answer("state", "Result: Bundle[{code=2, text=x}]") }.message,
+        )
+        assertEquals("The answer of state was lost: Result: null", assertThrows(HookLost::class.java) { HookClient.answer("state", "Result: null") }.message)
+    }
+
+    @Test
+    fun aHookThatReadsIsAskedAgainAfterADeadCallAndOneThatActsIsLost() {
+        adb.hook("PROVIDER_STANDIN") { "standin=off profile=copilot copilot=1 id=profile-1 credential=present" }
+        adb.hook("SCREEN_TAP") { "tapped=true count=1" }
+        adb.dieNext("--method PROVIDER_STANDIN")
+        adb.dieNext("--method SCREEN_TAP")
+
+        assertEquals("copilot", hooks.providerStandin().profile)
+        assertThrows(HookLost::class.java) { hooks.screenTap("Send") }
+        assertEquals(2, adb.hookCalls("PROVIDER_STANDIN").size)
+        assertEquals(1, adb.hookCalls("SCREEN_TAP").size)
     }
 
     @Test

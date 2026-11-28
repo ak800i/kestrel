@@ -40,14 +40,18 @@ class Device(
     private val property = if (test.kind == DeviceKind.EMULATOR) "ro.boot.qemu.avd_name" else "ro.product.model"
     private val pattern = if (test.kind == DeviceKind.EMULATOR) DeviceGuard.EMULATOR_AVD else "${DeviceGuard.A71_MODEL}*"
 
-    /** A command that only reads, such as `getprop`, `settings get`, `dumpsys` or `content query`. */
-    fun read(command: String, timeout: Duration = TIMEOUT): List<String> = repeated(command, timeout)
+    /**
+     * A command that only reads, such as `getprop`, `settings get`, `dumpsys` or `content query`. [lost] names the reason
+     * when an answer that adb gave is still a lost one, as a call of the debug hooks that failed on the device, and the read
+     * is then tried again like one whose answer adb lost.
+     */
+    fun read(command: String, timeout: Duration = TIMEOUT, lost: (List<String>) -> String? = { null }): List<String> = repeated(command, timeout, lost)
 
     /**
      * A command that does the same when it runs twice: `settings put`, `cmd uimode night`, `cmd notification set_dnd`,
      * `svc`, `am force-stop`, `pm grant`, `pm revoke`, `appops set` and `rm -f`.
      */
-    fun idempotent(command: String, timeout: Duration = TIMEOUT): List<String> = repeated(command, timeout)
+    fun idempotent(command: String, timeout: Duration = TIMEOUT): List<String> = repeated(command, timeout) { null }
 
     /** A command that runs once; null when its answer was lost, also when it failed on the device. */
     fun once(command: String, timeout: Duration = TIMEOUT): List<String>? = when (val answer = attempt(command, timeout)) {
@@ -114,12 +118,12 @@ class Device(
         throw DeviceCommandFailed("adb ${args.first()} failed on $serial: $reason")
     }
 
-    private fun repeated(command: String, timeout: Duration): List<String> {
+    private fun repeated(command: String, timeout: Duration, lost: (List<String>) -> String?): List<String> {
         var reason = "no answer"
         for (attempt in 0 until TRIES) {
             if (attempt > 0 && !pause()) break
             when (val answer = attempt(command, timeout)) {
-                is Answer.Done -> return answer.lines
+                is Answer.Done -> reason = lost(answer.lines) ?: return answer.lines
                 is Answer.Lost -> reason = answer.reason
             }
         }

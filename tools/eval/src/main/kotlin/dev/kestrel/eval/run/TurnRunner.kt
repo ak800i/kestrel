@@ -269,7 +269,9 @@ internal class TurnRunner(
 
     /**
      * Sends an answer that acts once: [Delivery.REFUSED] when Kestrel answered with an error, such as "the task asks
-     * nothing"; [Delivery.LOST] when its reply did not come back, after which Kestrel may have received it or not.
+     * nothing"; [Delivery.LOST] when its reply did not come back, as when Kestrel's process ended during the call, after
+     * which Kestrel may have received it or not. A refused caller ([dev.kestrel.eval.hook.HookCallerRefused]) is no
+     * delivery's outcome: no hook can work, so it stops the series.
      */
     private fun deliver(answer: () -> HookAnswer): Delivery = try {
         answer()

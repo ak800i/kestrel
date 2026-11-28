@@ -85,6 +85,7 @@ class FakeAdb(
     )
     private val hookCalls = mutableListOf<Pair<String, Map<String, String>>>()
     private val lost = mutableListOf<Regex>()
+    private val dying = mutableListOf<Regex>()
 
     /** Answers a command that matches [pattern] (the newest rule wins) with its output, or null for a failed command. */
     fun on(pattern: String, reply: (MatchResult) -> String?) {
@@ -109,6 +110,14 @@ class FakeAdb(
     /** Loses the next answer of a command that matches [pattern]: the command reached the device, but adb gave no answer. */
     fun loseNext(pattern: String) {
         lost.add(Regex(pattern))
+    }
+
+    /**
+     * Ends Kestrel's process during the next call of a hook that matches [pattern]: the hook ran, but `content call` prints
+     * [DEAD_CALL] instead of its answer, as on kestrel-api37 when Kestrel's process ended during a call.
+     */
+    fun dieNext(pattern: String) {
+        dying.add(Regex(pattern))
     }
 
     /**
@@ -143,6 +152,12 @@ class FakeAdb(
             // The command ran on the device; only its answer is lost.
             onDevice(inner)
             return ShellResult(255, "", "error: closed")
+        }
+        val death = dying.firstOrNull { it.containsMatchIn(inner) }
+        if (death != null) {
+            dying.remove(death)
+            onDevice(inner)
+            return ShellResult(0, "$DEAD_CALL\nkestrel-end\n", "")
         }
         val output = onDevice(inner) ?: return ShellResult(1, "", "the command failed")
         val text = if (output.isEmpty() || output.endsWith("\n")) output else "$output\n"
@@ -278,6 +293,38 @@ class FakeAdb(
             "java.lang.IllegalStateException: Could not find provider: dev.kestrel.hooks\n" +
             "\tat com.android.commands.content.Content\$Command.execute(Content.java:519)\n" +
             "\tat com.android.commands.content.Content.main(Content.java:735)\n"
+
+        /** What `content call` printed on kestrel-api37 when Kestrel's process ended during the call (`kill -9` during WATCH). */
+        const val DEAD_CALL = "Error while accessing provider:dev.kestrel.hooks\n" +
+            "android.os.DeadObjectException\n" +
+            "\tat android.os.BinderProxy.transactNative(Native Method)\n" +
+            "\tat android.os.BinderProxy.transact(BinderProxy.java:626)\n" +
+            "\tat android.content.ContentProviderProxy.call(ContentProviderNative.java:764)\n" +
+            "\tat com.android.commands.content.Content\$CallCommand.onExecute(Content.java:599)\n" +
+            "\tat com.android.commands.content.Content\$Command.execute(Content.java:522)\n" +
+            "\tat com.android.commands.content.Content.main(Content.java:735)\n" +
+            "\tat com.android.internal.os.RuntimeInit.nativeFinishInit(Native Method)\n" +
+            "\tat com.android.internal.os.RuntimeInit.main(RuntimeInit.java:367)\n"
+
+        /** What `content call` printed on kestrel-api37 for a caller that is not adb's shell (`run-as dev.kestrel content call`). */
+        const val REFUSED_CALLER = "Error while accessing provider:dev.kestrel.hooks\n" +
+            "java.lang.SecurityException: Permission Denial: Do not have permission in call getContentProviderExternal() from pid=4343, " +
+            "uid=10353 requires android.permission.ACCESS_CONTENT_PROVIDERS_EXTERNALLY\n" +
+            "\tat android.os.Parcel.createExceptionOrNull(Parcel.java:3392)\n" +
+            "\tat android.os.Parcel.createException(Parcel.java:3376)\n" +
+            "\tat android.os.Parcel.readException(Parcel.java:3359)\n" +
+            "\tat android.os.Parcel.readException(Parcel.java:3301)\n" +
+            "\tat android.app.IActivityManager\$Stub\$Proxy.getContentProviderExternal(IActivityManager.java:8487)\n" +
+            "\tat com.android.commands.content.Content\$Command.execute(Content.java:516)\n" +
+            "\tat com.android.commands.content.Content.main(Content.java:735)\n" +
+            "\tat com.android.internal.os.RuntimeInit.nativeFinishInit(Native Method)\n" +
+            "\tat com.android.internal.os.RuntimeInit.main(RuntimeInit.java:367)\n" +
+            "Caused by: android.os.RemoteException: Remote stack trace:\n" +
+            "\tat com.android.server.wm.Session\$\$ExternalSyntheticBUOutline1.m(R8\$\$SyntheticClass:0)\n" +
+            "\tat com.android.server.am.ActivityManagerService.enforceCallingPermission(ActivityManagerService.java:6997)\n" +
+            "\tat com.android.server.am.ContentProviderHelper.getContentProviderExternal(ContentProviderHelper.java:157)\n" +
+            "\tat com.android.server.am.ActivityManagerService.getContentProviderExternal(ActivityManagerService.java:7857)\n" +
+            "\tat android.app.IActivityManager\$Stub.onTransact(IActivityManager.java:4376)\n"
 
         private val GUARD = Regex("case \\$\\(getprop (\\S+)\\) in (\\S+)\\) (.*) && echo && echo kestrel-end;; \\*\\) echo kestrel-refused;; esac", RegexOption.DOT_MATCHES_ALL)
         private val GETPROP = Regex("getprop (\\S+)")
