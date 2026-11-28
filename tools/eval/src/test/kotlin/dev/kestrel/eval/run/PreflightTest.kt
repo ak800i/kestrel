@@ -134,7 +134,13 @@ class PreflightTest {
     @Test
     fun anAccessibilityServiceThatIsOffOrKestrelNotListeningIsARefusal() {
         run.adb.hook("STATE") { "screen=off testMode=on" }
-        assertEquals("Kestrel's accessibility service is off on emulator-5554. Turn it on first.", assertThrows(Refusal::class.java) { preflight().prepare(false) }.message)
+        val off = run.clock.time
+        assertEquals(
+            "Kestrel's accessibility service is off on emulator-5554: it was not bound within 30 s. Turn it on first.",
+            assertThrows(Refusal::class.java) { preflight().prepare(false) }.message,
+        )
+        // The wait reads until less than one 1 s poll of its 30 s is left, and never past them.
+        assertTrue((run.clock.time - off).inWholeSeconds in 29..30)
 
         run.adb.hook("STATE") { "screen=on testMode=on" }
         run.adb.hook("VOICE_STATE") { "mode=off session=closed" }
@@ -144,6 +150,18 @@ class PreflightTest {
         assertTrue((run.clock.time - start).inWholeSeconds in 87..90)
     }
 
+    // Plan 7G's review of the hooks' transport, M1: the hook's content call starts Kestrel's process after a cold boot, and
+    // Android binds the accessibility service only after that, so the first state can answer screen=off; the preparation
+    // waits for screen=on instead of refusing at once.
+    @Test
+    fun theAccessibilityServiceThatBindsAfterKestrelsStartIsWaitedFor() {
+        var states = 0
+        run.adb.hook("STATE") { if (++states <= 2) "screen=off testMode=on" else "screen=on testMode=on" }
+
+        preflight().prepare(needsTestApp = false)
+
+        assertTrue(states > 2)
+    }
     // The whole-plan review of plan 7G, I2: the wait for listening keeps the rule of every wait, so a slow adb ends it at its
     // 90 s, not after a full timeout of each read.
     @Test

@@ -38,7 +38,9 @@ class Preflight(
             }
             installer.install(device.serial, testApp = true)
         }
-        if (hooks.state()["screen"] != "on") throw Refusal("Kestrel's accessibility service is off on ${device.serial}. Turn it on first.")
+        if (!waitScreen()) {
+            throw Refusal("Kestrel's accessibility service is off on ${device.serial}: it was not bound within ${SCREEN.inWholeSeconds} s. Turn it on first.")
+        }
         conversationHooks()
         testModeOn()
         try {
@@ -61,6 +63,17 @@ class Preflight(
             quietly { hooks.until(deadline).voiceState() }?.get("mode") == "listening"
         }
         check(listening) { "Kestrel is not listening on ${device.serial}. Turn on its accessibility service and listening first." }
+    }
+
+    /**
+     * Waits up to 30 s until Kestrel's accessibility service is bound (state answers `screen=on`). The hook's content call
+     * starts Kestrel's process when it does not run, as after a cold boot, an install or a force-stop, and Android binds
+     * the service only after the process has started, so the first answer can be `screen=off`. The wait keeps plan 7G's
+     * rule for every wait, as [waitListening] does: each read gets only the time that is left, and an answer that Kestrel
+     * or adb did not give is "not yet".
+     */
+    private fun waitScreen(): Boolean = clock.waitUntil(SCREEN, SCREEN_EVERY) { deadline ->
+        quietly { hooks.until(deadline).state() }?.get("screen") == "on"
     }
 
     private fun testModeOn() {
@@ -134,5 +147,7 @@ class Preflight(
         const val KESTREL = "dev.kestrel"
         val LISTENING = 90.seconds
         val LISTENING_EVERY = 3.seconds
+        val SCREEN = 30.seconds
+        val SCREEN_EVERY = 1.seconds
     }
 }
