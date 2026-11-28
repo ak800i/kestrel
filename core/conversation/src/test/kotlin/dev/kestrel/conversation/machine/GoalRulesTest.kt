@@ -26,6 +26,7 @@ import dev.kestrel.conversation.model.PhoneSignal
 import dev.kestrel.conversation.model.RoundEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -231,6 +232,28 @@ class GoalRulesTest : MachineTesting() {
         assertEquals(again, late.state)
         assertTrue(late.effects.isEmpty())
         assertTrue(answered(late.state, 10, ChannelAnswer.Yes).has<ConversationEffect.ResumePausedGoal>())
+    }
+
+    // The third re-check of plan 7G's whole-plan review (G1): each ask of "Continue the goal?" has its own number. The
+    // question of an ask that a lock cancelled before it was asked, and its answer of nothing, arrive after the unlock's new
+    // ask; they change nothing, and the owner's answer to the new ask's question resumes the goal with his tap.
+    @Test
+    fun aCancelledAsksLateQuestionAndItsAnswerOfNothingLeaveTheNewAskToTheOwner() {
+        val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED)
+        val first = back.effect<ConversationEffect.AskContinueGoal>().ask
+        val again = signal(signal(back.state, PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED)
+        val second = again.effect<ConversationEffect.AskContinueGoal>().ask
+        assertNotEquals(first, second)
+
+        val stale = step(again.state, ConversationEvent.Dialogue(DialogueEvent.Asked(9, QuestionKind.CONTINUE_GOAL, ask = first)))
+        assertEquals(again.state, stale.state)
+        val nothing = answered(stale.state, 9, answer = null)
+        assertEquals(again.state, nothing.state)
+
+        val asking = step(nothing.state, ConversationEvent.Dialogue(DialogueEvent.Asked(10, QuestionKind.CONTINUE_GOAL, ask = second))).state
+        val yes = answered(asking, 10, ChannelAnswer.Yes, tap = 88L)
+        assertEquals(ConversationEffect.ResumePausedGoal(OwnerAct(null, 88L)), yes.effect<ConversationEffect.ResumePausedGoal>())
+        assertEquals(GoalPhase.ACTING, yes.state.goal!!.phase)
     }
 
     @Test

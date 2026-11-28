@@ -64,7 +64,7 @@ sealed interface ConversationEffect {
     data class EndHandOver(val number: Int, val end: HandOverEnd, val act: OwnerAct? = null) : ConversationEffect
 
     /** Asks "Continue the goal?" (design 6.5 and 6.7). */
-    data object AskContinueGoal : ConversationEffect
+    data class AskContinueGoal(val ask: Int) : ConversationEffect
 
     /** Withdraws "Continue the goal?". */
     data object CancelContinueQuestion : ConversationEffect

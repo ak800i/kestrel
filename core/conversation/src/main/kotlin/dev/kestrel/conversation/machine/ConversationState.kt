@@ -13,8 +13,9 @@ import dev.kestrel.conversation.model.RecordRef
  * The conversation's state (design 6.1 of sub-project 7). At most one conversation is open: [id] is null when none is, and
  * the next command opens one. [testMode] was fixed when it opened or was continued, from [safetyTestMode], the Safety
  * page's value now (design 12.4). [commands] counts its records; [command] numbers, in this process, each input that
- * started or resumed a goal or ran a local request. [question] waits for the owner; [asksContinue] is set while
- * "Continue the goal?" is asked or about to be. [replying] is the command whose final reply is being spoken or shown;
+ * started or resumed a goal or ran a local request. [question] waits for the owner; [continueAsk] is the number of the ask
+ * of "Continue the goal?" that runs or is about to ([asksContinue]), so that only that ask's question opens and is
+ * answered, never an older ask's that a lock or a call cancelled. [replying] is the command whose final reply is being spoken or shown;
  * until the owner is there ([PhoneState.present]), [heldReports] are the goals' final replies, oldest first, and
  * [heldWords] a held goal's round report with how to go on, each waiting for him (design 6.4). [local] is a local request
  * or a switch that runs; [waiting] are the commands and Kestrel's own requests, oldest first, that wait for the goal that
@@ -35,7 +36,7 @@ data class ConversationState(
     val command: Int = 0,
     val goal: GoalState? = null,
     val question: OpenQuestion? = null,
-    val asksContinue: Boolean = false,
+    val continueAsk: Int? = null,
     val continueAnswer: OwnerInput? = null,
     val replyChannel: InputChannel = InputChannel.VOICE,
     val voiceOn: Boolean = true,
@@ -60,8 +61,15 @@ data class ConversationState(
      */
     val pendingInputs: List<OwnerInput> get() = waiting + listOfNotNull(continueAnswer)
 
-    /** The state without "Continue the goal?": not asked, and no answer held for the round that it would resume. */
-    internal fun withoutContinue(): ConversationState = copy(asksContinue = false, continueAnswer = null)
+    /** Whether "Continue the goal?" is asked or about to be. */
+    val asksContinue: Boolean get() = continueAsk != null
+
+    /**
+     * The state without "Continue the goal?": not asked, with no open question of an ask, and no answer held for the round
+     * that it would resume. It is the one way in which an ask ends, so the late answer of an ended ask names no open question.
+     */
+    internal fun withoutContinue(): ConversationState =
+        copy(continueAsk = null, continueAnswer = null, question = question?.takeUnless { it.kind == QuestionKind.CONTINUE_GOAL })
 }
 
 /** The open conversation's id: a goal and its records belong to the open conversation only. */
@@ -89,8 +97,11 @@ data class PhoneState(val locked: Boolean = false, val ringing: Boolean = false,
     val present: Boolean get() = known && !away
 }
 
-/** Each timer's newest number, so that the end of an older timer changes nothing, as the Orchestrator's timers do. */
-data class Timers(val quiet: Int = 0, val hold: Int = 0, val handOver: Int = 0, val question: Int = 0)
+/**
+ * Each timer's newest number, so that the end of an older timer changes nothing, as the Orchestrator's timers do, and the
+ * newest ask of "Continue the goal?" ([continueAsk]), so that an older ask's question changes nothing either.
+ */
+data class Timers(val quiet: Int = 0, val hold: Int = 0, val handOver: Int = 0, val question: Int = 0, val continueAsk: Int = 0)
 
 /** The machine's timers: the quiet time (D18), a held goal's 30 minutes (D17), a hand-over's 3 minutes and a typed wait (D21). */
 enum class Timer { QUIET, HOLD, HAND_OVER, QUESTION }

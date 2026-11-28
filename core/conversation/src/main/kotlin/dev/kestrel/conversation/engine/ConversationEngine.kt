@@ -12,7 +12,6 @@ import dev.kestrel.conversation.channel.ChannelOutput
 import dev.kestrel.conversation.channel.ConversationOwner
 import dev.kestrel.conversation.channel.OwnerChannel
 import dev.kestrel.conversation.channel.TakenOutput
-import dev.kestrel.conversation.channel.QuestionKind
 import dev.kestrel.conversation.context.RecordBuilder
 import dev.kestrel.conversation.context.RecordCondenser
 import dev.kestrel.conversation.context.RecordText
@@ -552,7 +551,7 @@ class ConversationEngine(
                 effect.act?.let(::actedFor)
                 owner.endHandOver(effect.number, effect.end)
             }
-            ConversationEffect.AskContinueGoal -> askContinue()
+            is ConversationEffect.AskContinueGoal -> askContinue(effect.ask)
             ConversationEffect.CancelContinueQuestion -> continueJob?.cancel()
             is ConversationEffect.Output -> emit(effect.output)
             is ConversationEffect.AddLine -> edit(effect.conversation, effect.record) {
@@ -667,13 +666,14 @@ class ConversationEngine(
         post(ConversationEvent.GoalEnded(end))
     }
 
-    // "Continue the goal?" through the owner's dialogue, whose own answer, with its question's number, resumes or ends the
-    // goal on the machine (GoalRules.dialogue); a failed ask ends as an answer of nothing, which is silence there.
-    private fun askContinue() {
+    // "Continue the goal?" for the machine's ask [ask], through the owner's dialogue, whose own answer, with its question's
+    // number, resumes or ends the goal on the machine (GoalRules.dialogue). A failed ask ends as an answer of nothing,
+    // which is silence for the ask that runs; an older ask's question, which a lock or a call cancelled, changes nothing.
+    private fun askContinue(ask: Int) {
         continueJob?.cancel()
         continueJob = scope.launch {
             try {
-                owner.reply(ConversationTexts.CONTINUE_GOAL, QuestionKind.CONTINUE_GOAL)
+                owner.askContinue(ask)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

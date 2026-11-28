@@ -306,7 +306,6 @@ fun interface OutputSlot { suspend fun show(output: ChannelOutput) }   // an out
 fun interface TakenOutput { suspend fun show() }                        // an output with its channels' places (ConversationOwner.take)
 
 data class CardAnswer(val answer: ChannelAnswer, val act: Long)        // a card's answer, with the number of the owner's tap (6.5)
-data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)       // the answer to a question of the conversation's own; tap: when a card gave it
 data class HandOverAnswer(val end: HandOverEnd, val act: Long?)        // act: the tap on the card's Continue or Cancel; null when it ended by itself
 enum class HandOverPart { OWN, CARD }                                  // the owner's channel's hand-over, or only its card on the text channel
 
@@ -356,7 +355,7 @@ class ConversationOwner(
     private val events: (DialogueEvent) -> Unit,
 ) : OwnerPort, Dialogue {
     fun take(output: ChannelOutput): TakenOutput   // the output's places on every channel, taken as the engine emits it (11)
-    suspend fun reply(text: String, kind: QuestionKind): OwnerReply // the conversation's own question, with the card's tap
+    suspend fun askContinue(ask: Int)  // "Continue the goal?" for the machine's ask; its answer reaches the machine only as the dialogue's Answered (plan 7G)
     fun answer(number: Int, answer: ChannelAnswer, leftScreen: Boolean = false)
     fun endHandOver(number: Int, end: HandOverEnd)
     fun pause()                                    // withdraws a goal's open question and closes the gate until resume()
@@ -369,7 +368,7 @@ class ConversationOwner(
 }
 ```
 
-Every output takes its places when the engine emits it (`take`), and is routed at its turn (section 11): to the channel of the owner's latest input, with a spoken copy for a typed conversation when "Speak replies to typed commands" is on, and only shown for a spoken conversation while Kestrel is off. A typed conversation's questions, hand-overs and permission requests get the text channel's card; a spoken conversation's get it too from the moment Kestrel turns off, and "Continue the goal?" always (10.3). The first answer wins, and the others are withdrawn. A tap on a card is the owner's act of its moment: `:app` takes its number among his inputs when the tap reaches Kestrel, and the answer carries it (`CardAnswer.act`, `OwnerReply.tap`, `HandOverAnswer.act`, and on to the dialogue's `Answered.tap`, `ResumeGoal.tap` and the round), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
+Every output takes its places when the engine emits it (`take`), and is routed at its turn (section 11): to the channel of the owner's latest input, with a spoken copy for a typed conversation when "Speak replies to typed commands" is on, and only shown for a spoken conversation while Kestrel is off. A typed conversation's questions, hand-overs and permission requests get the text channel's card; a spoken conversation's get it too from the moment Kestrel turns off, and "Continue the goal?" always (10.3). The first answer wins, and the others are withdrawn. A tap on a card is the owner's act of its moment: `:app` takes its number among his inputs when the tap reaches Kestrel, and the answer carries it (`CardAnswer.act`, then the dialogue's `Answered.tap`, or `HandOverAnswer.act`, and on to `ResumeGoal.tap`, `ResumePausedGoal`'s act and the round), so that a round that the tap lets act never cancels an instant command that the owner started after his tap (6.5; plan 7F). The task run traces its own dialogue into the open command's record (section 8.1), so `ConversationOwner` does not trace it again; it puts only the conversation's own outputs into the record: the replies to local requests, "Continue the goal?" and the switch question. The conversation screen draws the record.
 
 ### 5.4 New ports and fields in `:core:agent`
 
@@ -541,7 +540,7 @@ data class ConversationState(
     val command: Int = 0,                  // the number, in this process, of each input that started or resumed a goal or ran a local request
     val goal: GoalState? = null,
     val question: OpenQuestion? = null,    // the question that waits for the owner, with its number and kind
-    val asksContinue: Boolean = false,     // "Continue the goal?" is asked or about to be
+    val continueAsk: Int? = null,          // the number of the ask of "Continue the goal?" that runs or is about to (asksContinue); only its question opens (plan 7G)
     val continueAnswer: OwnerInput? = null, // the input that answered "Continue the goal?", for the round that it resumes
     val replyChannel: InputChannel = InputChannel.VOICE,
     val voiceOn: Boolean = true,           // Kestrel is on; while it is off, a spoken conversation's questions wait as typed ones do
@@ -555,7 +554,7 @@ data class ConversationState(
     val waiting: List<OwnerInput> = emptyList(), // commands and Kestrel's own requests that wait for the goal that "stop" ends, or for the local request that runs; each runs in its turn
     val closeAfterWork: Boolean = false,   // test mode changed: close once the goal or the local request has ended
     val phone: PhoneState = PhoneState(),  // locked, ringing, in a call; the owner is "present" once known to be none of these
-    val timers: Timers = Timers(),         // each timer's newest number
+    val timers: Timers = Timers(),         // each timer's newest number, and the newest ask of "Continue the goal?"
     val settings: ConversationSettings = ConversationSettings(),
     val safetyTestMode: Boolean = true,    // the Safety page's value now, which the next conversation takes
 ) {
@@ -627,9 +626,8 @@ sealed interface ConversationEvent {
 }
 
 sealed interface DialogueEvent {                                        // from ConversationOwner
-    data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
-    data class Answered(val number: Int, val answer: ChannelAnswer? = null, val tap: Long? = null) : DialogueEvent // closed: its answer; it counts only for the open question of that number, and for "Continue the goal?" it resumes or ends the goal in its own step, the one step of a card's tap (plan 7G)
-                                                                        // (null: withdrawn or cancelled) and the card's tap (plan 7G)
+    data class Asked(val number: Int, val kind: QuestionKind, val ask: Int? = null) : DialogueEvent // ask: the ask of "Continue the goal?" that the question belongs to (plan 7G)
+    data class Answered(val number: Int, val answer: ChannelAnswer? = null, val tap: Long? = null) : DialogueEvent // closed: its answer (null: withdrawn, cancelled or failed) and the card's tap; it counts only for the open question of that number, and for the running ask's "Continue the goal?" it resumes or ends the goal in its own step, the one step of a card's tap, where null is silence (plan 7G)
     data class HandedOver(val number: Int) : DialogueEvent
     data class HandOverDone(val number: Int, val act: Long? = null) : DialogueEvent // act: the tap on the card's Continue or
                                                                         // Cancel that ended it (plan 7G)
@@ -638,7 +636,7 @@ sealed interface DialogueEvent {                                        // from 
 
 The machine is one function, `ConversationMachine.next(state, event, now)`, which gives the new state and its effects (`ConversationEffect`), in order:
 - for goals: `StartGoal(command, record, input, text)`, `ResumeGoal(command, cause, steer, input, tap)`, `SteerGoal(text, channel)`, `PauseGoal`, `ResumePausedGoal`, `InterruptGoal(cause)`, `CancelGoal(reason, sentence)` and `EndHeldGoal(reason)`;
-- for the owner's dialogue: `AnswerQuestion(number, answer, leftScreen)`, `EndHandOver(number, end)`, `AskContinueGoal`, `CancelContinueQuestion` and `Output(output)`;
+- for the owner's dialogue: `AnswerQuestion(number, answer, leftScreen)`, `EndHandOver(number, end)`, `AskContinueGoal(ask)`, `CancelContinueQuestion` and `Output(output)`;
 - for the records: `AddLine(conversation, record, kind, text, channel)` and `EndRecord(conversation, record, end, answer)`; each names the record with its conversation, because the same step may close it;
 - for Kestrel's own requests: `RunLocal(command, record, request, input)`, `CancelLocal`, `EndLocal(command, end, answer, input)`, `SwitchTo(command, id, input)`, `OpenSwitched(snapshot)` and `UndoSwitch` (a "stop" that came while the store switched: the store puts both conversations back as they were);
 - and `StartTimer(timer, number, millis)`, `Close(id, keep)` and `Persist`.

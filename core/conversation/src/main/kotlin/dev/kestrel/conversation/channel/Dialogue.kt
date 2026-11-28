@@ -18,10 +18,15 @@ interface Dialogue {
 
 /** What [ConversationOwner] tells the engine about its dialogue, so that the machine knows what waits for the owner. */
 sealed interface DialogueEvent {
-    data class Asked(val number: Int, val kind: QuestionKind) : DialogueEvent
+    /**
+     * Question [number] of [kind] is asked; [ask] is the number of the machine's ask of "Continue the goal?" that the
+     * question belongs to (`AskContinueGoal`, plan 7G), and null for every other question.
+     */
+    data class Asked(val number: Int, val kind: QuestionKind, val ask: Int? = null) : DialogueEvent
 
     /**
-     * Question [number] closed: with the owner's [answer], or with none (null) when it was withdrawn or cancelled. [tap] is
+     * Question [number] closed: with the owner's [answer], or with none (null) when it was withdrawn, cancelled or failed;
+     * for the open "Continue the goal?" of the ask that runs, none is silence (plan 7G). [tap] is
      * the number of the owner's tap among his inputs when a card gave the answer, and null when an input gave it, which
      * reached the engine as its own event, or when nothing did (plan 7G): every answer reaches the engine with its source.
      */

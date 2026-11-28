@@ -29,6 +29,8 @@ import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.LocalRun
 import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.machine.OpenQuestion
+import dev.kestrel.conversation.machine.OwnerAct
+import dev.kestrel.conversation.machine.Timers
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
@@ -195,7 +197,7 @@ class CommandTagsTest {
         val input = inputsOf(step(heard)).single()
         assertEquals(InputIntent.Answer(ChannelAnswer.Yes, question = 1), input.intent)
 
-        val asking = ConversationState(asksContinue = true)
+        val asking = ConversationState(continueAsk = 1)
         val held = asking.copy(continueAnswer = input)
         tags.onConversationStep(ConversationEvent.Input(input), asking, MachineStep(held, listOf(ConversationEffect.AnswerQuestion(1, ChannelAnswer.Yes))))
         assertEquals(CommandTags.Role.CONVERSE, tags.tagged(tag)?.role)
@@ -435,9 +437,9 @@ class CommandTagsTest {
         val gone = mutableListOf<ConversationId>()
         tags.ownerConversation = { gone += it }
 
-        val resumed = giveInOrder(tap(ChannelAnswer.Yes, InputIds.next()))
+        val resumed = giveInOrder(tap(ChannelAnswer.Yes, InputIds.next())).single()
 
-        assertEquals(GoalPhase.ACTING, resumed.goal?.phase)
+        assertEquals(GoalPhase.ACTING, resumed.state.goal?.phase)
         assertEquals(listOf(continueAsked.id), gone)
     }
 
@@ -451,14 +453,20 @@ class CommandTagsTest {
         tags.ownerConversation = { gone += it }
         val locked = ConversationEvent.Signal(PhoneSignal.LOCKED)
 
+        // The tap's own step resumes the goal with the tap, which only the answer to the open question does; the lock then
+        // pauses the goal that acts again.
         val first = InputIds.next().also(tags::claim)
-        val paused = giveInOrder(tap(ChannelAnswer.Yes, first), locked)
-        assertEquals(GoalPhase.PAUSED, paused.goal?.phase)
+        val (resumed, paused) = giveInOrder(tap(ChannelAnswer.Yes, first), locked)
+        assertEquals(listOf(ConversationEffect.ResumePausedGoal(OwnerAct(null, first))), resumed.effects.filterIsInstance<ConversationEffect.ResumePausedGoal>())
+        assertEquals(GoalPhase.ACTING, resumed.state.goal?.phase)
+        assertTrue(paused.effects.any { it is ConversationEffect.PauseGoal })
+        assertEquals(GoalPhase.PAUSED, paused.state.goal?.phase)
 
         val second = InputIds.next().also(tags::claim)
-        val late = giveInOrder(locked, tap(ChannelAnswer.Yes, second))
-        assertEquals(GoalPhase.PAUSED, late.goal?.phase)
-        assertFalse(late.asksContinue)
+        val (_, late) = giveInOrder(locked, tap(ChannelAnswer.Yes, second))
+        assertTrue(late.effects.isEmpty())
+        assertEquals(GoalPhase.PAUSED, late.state.goal?.phase)
+        assertFalse(late.state.asksContinue)
 
         giveInOrder(ConversationEvent.Dialogue(DialogueEvent.Answered(1, ChannelAnswer.Yes, tap = null)))
         assertEquals(emptyList<ConversationId>(), gone)
@@ -469,22 +477,24 @@ class CommandTagsTest {
         id = ConversationId("0123456789abcdef0123456789abcdef"),
         command = 5,
         goal = GoalState(1, GoalPhase.PAUSED, 0, GoalHold.LOCK, command = 5),
-        asksContinue = true,
+        continueAsk = 1,
         question = OpenQuestion(1, QuestionKind.CONTINUE_GOAL),
+        timers = Timers(continueAsk = 1),
     )
 
     // Gives [events] to [continueAsked] in their order, through the machine's own rules, as the engine's inbox gives them,
-    // and returns the state that they leave.
-    private fun giveInOrder(vararg events: ConversationEvent): ConversationState {
+    // and returns each event's step.
+    private fun giveInOrder(vararg events: ConversationEvent): List<MachineStep> {
         val machine = ConversationMachine { ConversationId("ab".repeat(16)) }
         var state = continueAsked
-        for (event in events) {
-            val step = machine.next(state, event, 0)
-            tags.onConversationStep(event, state, step)
-            state = step.state
+        return events.map { event ->
+            machine.next(state, event, 0).also { step ->
+                tags.onConversationStep(event, state, step)
+                state = step.state
+            }
         }
-        return state
     }
+
     // The answer of question 1 that a tap on the card over the app gave, with the tap's number [act].
     private fun tap(answer: ChannelAnswer, act: Long) = ConversationEvent.Dialogue(DialogueEvent.Answered(1, answer, tap = act))
 

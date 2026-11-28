@@ -49,8 +49,9 @@ abstract class MachineTesting {
     protected fun ended(state: ConversationState, report: TaskReport = TaskReport(EndReason.FINISHED), sentence: String? = "Done."): MachineStep =
         step(state, ConversationEvent.GoalEnded(RoundEnd(state.goal!!.command, report, answer = sentence, reply = sentence)))
 
+    /** Question [number] of [kind] asked on [state]; "Continue the goal?" for the ask that runs ([ConversationState.continueAsk]). */
     protected fun asked(state: ConversationState, number: Int, kind: QuestionKind): ConversationState =
-        step(state, ConversationEvent.Dialogue(DialogueEvent.Asked(number, kind))).state
+        step(state, ConversationEvent.Dialogue(DialogueEvent.Asked(number, kind, state.continueAsk.takeIf { kind == QuestionKind.CONTINUE_GOAL }))).state
 
     /** The dialogue's answer [answer] to question [number], with the card's [tap] when a card gave it. */
     protected fun answered(state: ConversationState, number: Int, answer: ChannelAnswer?, tap: Long? = null): MachineStep =

@@ -66,11 +66,6 @@ fun interface TakenOutput {
  */
 data class CardAnswer(val answer: ChannelAnswer, val act: Long)
 
-/**
- * The owner's answer to a question of the conversation's own, and [tap], the number of his tap on its card when a card gave
- * it; null when the answer came as an input, which has its own number (plan 7F).
- */
-data class OwnerReply(val answer: ChannelAnswer, val tap: Long?)
 
 /**
  * How a hand-over ended on a channel (design 10.3 of sub-project 7): [end], and [act], the number among the owner's inputs

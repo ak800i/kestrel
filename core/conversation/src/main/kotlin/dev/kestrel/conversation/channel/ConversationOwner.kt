@@ -7,6 +7,7 @@ import dev.kestrel.agent.port.Gate
 import dev.kestrel.agent.port.HandOverEnd
 import dev.kestrel.agent.port.OwnerPort
 import dev.kestrel.agent.port.PermissionEnd
+import dev.kestrel.conversation.ConversationTexts
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.safety.Category
@@ -82,6 +83,7 @@ class ConversationOwner(
         val confirmation: Confirmation? = null,
         val choices: List<String> = emptyList(),
         val highest: Int = 0,
+        val ask: Int? = null,
     )
 
     private val turns = Mutex()
@@ -137,11 +139,14 @@ class ConversationOwner(
         dialogue(Draft(text, kind, spoken, choices = choices, highest = highest), goal = false).answer
 
     /**
-     * Asks [text] of [kind] as [question] does, and returns the answer with the number of the owner's tap on its card when
-     * a card gave it (plan 7F). "Continue the goal?" asks through it, so that the round that a yes on its card resumes acts
-     * for the moment of the tap (design 6.5 of sub-project 7).
+     * Asks "Continue the goal?" for the machine's ask [ask] (plan 7G), whose number its `Asked` carries, so that only the
+     * ask that runs opens the question. Its answer, with the number of the owner's tap on its card when a card gave it,
+     * reaches the machine only as the dialogue's `Answered`, which resumes or ends the goal in that one step, so that the
+     * round that a yes on its card resumes acts for the moment of the tap (design 6.5 of sub-project 7); it returns nothing.
      */
-    suspend fun reply(text: String, kind: QuestionKind): OwnerReply = dialogue(Draft(text, kind), goal = false).let { OwnerReply(it.answer, it.tap) }
+    suspend fun askContinue(ask: Int) {
+        dialogue(Draft(ConversationTexts.CONTINUE_GOAL, QuestionKind.CONTINUE_GOAL, ask = ask), goal = false)
+    }
 
     override suspend fun ask(question: String, kind: AnswerKind, choices: List<String>, highest: Int): Answer =
         answerOf(dialogue(Draft(question, kindOf(kind), choices = choices, highest = highest), goal = true).answer)
@@ -235,7 +240,7 @@ class ConversationOwner(
         )
         asking = draft.kind
         confirming = draft.confirmation?.category
-        events(DialogueEvent.Asked(waiting.number, draft.kind))
+        events(DialogueEvent.Asked(waiting.number, draft.kind, draft.ask))
         var given: Given? = null
         try {
             race(asked, waiting.done).also {

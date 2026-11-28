@@ -268,7 +268,7 @@ internal object GoalRules {
             MachineStep(state)
         } else {
             MachineStep(
-                state.withoutContinue().copy(question = state.question?.takeUnless { it.kind == QuestionKind.CONTINUE_GOAL }),
+                state.withoutContinue(),
                 listOf(ConversationEffect.CancelContinueQuestion),
             )
         }
@@ -286,11 +286,13 @@ internal object GoalRules {
         return if (on) MachineStep(timed) else MachineStep(timed, listOf(ConversationEffect.StartTimer(Timer.QUESTION, number, waitFor(open.kind))))
     }
 
+    // Each ask has its own number, which its question carries ([asked]); a new ask ends an older one first.
     private fun askContinue(state: ConversationState): MachineStep {
         val goal = state.goal ?: return MachineStep(state)
+        val ask = state.timers.continueAsk + 1
         return MachineStep(
-            state.withoutContinue().copy(asksContinue = true),
-            listOf(ConversationEffect.AskContinueGoal, ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null)),
+            state.withoutContinue().copy(continueAsk = ask, timers = state.timers.copy(continueAsk = ask)),
+            listOf(ConversationEffect.AskContinueGoal(ask), ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null)),
         )
     }
 
@@ -334,7 +336,10 @@ internal object GoalRules {
 
     // A question opened: a goal that acts now asks (the conversation's own questions leave its phase alone), and a typed
     // conversation's question waits as D21 says. Every question gets the next number, so an older wait changes nothing.
+    // "Continue the goal?" opens only for the ask that runs: an older ask's question, which a lock or a call cancelled
+    // before it was asked, changes nothing, and so does its answer of nothing.
     private fun asked(state: ConversationState, event: DialogueEvent.Asked): MachineStep {
+        if (event.kind == QuestionKind.CONTINUE_GOAL && (event.ask == null || event.ask != state.continueAsk)) return MachineStep(state)
         val goal = state.goal
         val asking = if (goal != null && goal.phase == GoalPhase.ACTING && event.kind != QuestionKind.CONTINUE_GOAL) goal.copy(phase = GoalPhase.ASKING) else goal
         val number = state.timers.question + 1
