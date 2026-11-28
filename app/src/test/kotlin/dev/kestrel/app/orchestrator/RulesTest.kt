@@ -2081,6 +2081,25 @@ class RulesTest {
         assertTrue(ended.effects.none { it is Effect.Show && it.feedback is Feedback.FollowUp })
     }
 
+    // Review of 1b762e1d: the window's own condition declines while the conversation's question waits for its answer, so a
+    // spoken final reply whose last end starts that wait is released, and no window opens beside the question.
+    @Test
+    fun noWindowOpensBesideAVoiceQuestionThatWaitsForItsAnswer() {
+        val question = Reply.Question(4, "Shall I keep it?")
+        val asked = Rules.next(open, Event.ChannelAsks(4, question.text, QuestionKind.YES_NO)).state
+        val said = Rules.next(asked, Event.ChannelSays(5, "Done.", arrival = 1, final = true)).state
+        val spoken = Rules.next(said, Event.SpeechEnded(done, spoken = true)).state
+        assertEquals(FinalReply(5, spoken = true), spoken.finalReply)
+
+        val ended = Rules.next(spoken, Event.SpeechEnded(question, spoken = true))
+        assertEquals(VoiceQuestion(4, QuestionKind.YES_NO), ended.state.voiceQuestion)
+        assertEquals(Work.IDLE, ended.state.work)
+        assertEquals(null, ended.state.finalReply)
+        assertTrue(Effect.WaitForAnswer() in ended.effects)
+        assertTrue(Effect.NoFollowUp(5) in ended.effects)
+        assertTrue(ended.effects.none { it is Effect.Show && it.feedback is Feedback.FollowUp })
+    }
+
     // Plan 7F: the owner's Stop that does not come by voice is the same stop as a spoken one for Kestrel's speech.
     @Test
     fun theOwnersStopWithoutHisVoiceStopsKestrelsSpeech() {

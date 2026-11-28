@@ -1221,11 +1221,11 @@ object Rules {
     // while any speech plays: then the owner has all of "Yes?" or of the conversation's question to start the answer.
     // Design 6.6 of sub-project 7: only the final reply's own end decides its follow-up window, because the ends of two
     // speeches may come in either order, as a withdrawn question's after the final reply that came while it was spoken.
-    // Spoken to its end, the reply is settled at the end that leaves no speech, whichever speech's end that is: its window
-    // opens there (followUp), unless that end starts a wait for a command or an answer or the window cannot open, and then
-    // withoutFollowUp releases its text. Not spoken
-    // to its end, because the owner or a call stopped it, Android refused or interrupted it, or no voice session could
-    // speak it, it opens none: the owner did not hear it, and its text stays on the bar.
+    // Spoken to its end, the reply is settled once, at the end that leaves no speech, whichever speech's end that is and
+    // after whichever wait that end starts: its window opens there when it can (followUp, which declines while a wait for
+    // a command or an answer runs), and otherwise withoutFollowUp releases its text. Not spoken to its end, because the
+    // owner or a call stopped it, Android refused or interrupted it, or no voice session could speak it, it opens none:
+    // the owner did not hear it, and its text stays on the bar.
     private fun speechEnded(state: State, event: Event.SpeechEnded): Step {
         val finalReply = state.finalReply?.let { final ->
             when {
@@ -1235,22 +1235,21 @@ object Rules {
             }
         }
         val ended = state.copy(speeches = maxOf(0, state.speeches - 1), finalReply = finalReply)
-        val wait = when {
+        val step = when {
             state.speeches == 1 && state.work == Work.AWAITING_TASK -> waitForTask(ended)
             state.speeches == 1 && state.voiceQuestion != null -> waitForAnswer(ended)
-            else -> null
+            else -> stayOff(ended)
         }
-        val settled = finalReply?.takeIf { it.spoken && ended.speeches == 0 } ?: return wait ?: stayOff(ended)
-        // A wait for a command or an answer takes the owner's next utterance, so no window opens beside it.
-        if (wait != null) return wait.then { Step(it.copy(finalReply = null)) }
-        return stayOff(ended.copy(finalReply = null)).then { followUp(it, settled.reply) }
+        val settled = finalReply?.takeIf { it.spoken && ended.speeches == 0 } ?: return step
+        return step.then { followUp(it.copy(finalReply = null), settled.reply) }
     }
 
     // Design 6.6 of sub-project 7: once Kestrel has finished speaking final reply number [reply], the next utterance is a
     // command without the name, for the window's length, while Kestrel can hear it (followsUp), also in the paused mode.
-    // The bar counts the seconds down over the reply's text.
+    // The bar counts the seconds down over the reply's text. A wait for a command or for the answer to the conversation's
+    // question takes the owner's next utterance, so no window opens beside it.
     private fun followUp(state: State, reply: Int): Step {
-        if (state.followUpMillis <= 0 || state.work != Work.IDLE || !followsUp(state)) return Step(state)
+        if (state.followUpMillis <= 0 || state.work != Work.IDLE || state.voiceQuestion != null || !followsUp(state)) return Step(state)
         val seconds = ((state.followUpMillis + 999) / 1_000).toInt()
         return Step(
             state.copy(work = Work.FOLLOWING_UP, followUp = state.followUp + 1),
