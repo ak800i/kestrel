@@ -156,7 +156,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
      * work.
      */
     fun stopWork(): WorkStop {
-        var given = false
+        var stopSent = false
         var end = WorkStop.OPEN
         clock.waitUntil(STOP, POLL) { deadline ->
             val hooks = hooks.until(deadline)
@@ -165,7 +165,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
                 work(state) == null -> WorkStop.ENDED
                 state["typed"] != "yes" -> WorkStop.OWNERS
                 else -> {
-                    if (!given) given = stopTyped(hooks)
+                    if (!stopSent) stopSent = stopTyped(hooks)
                     WorkStop.OPEN
                 }
             }
@@ -191,7 +191,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
     // lost may have reached Kestrel; a second one changes nothing, so the next read decides, as it does after a refusal.
     private fun expire(hooks: Hooks) {
         try {
-            hooks.conversationControl("expire-typed")
+            hooks.expireTyped()
         } catch (e: HookLost) {
             // Read back by the next conversation-state.
         }

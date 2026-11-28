@@ -5,9 +5,9 @@ import dev.kestrel.eval.device.Device
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
 import dev.kestrel.eval.device.Refusal
+import dev.kestrel.eval.device.waitUntil
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.hook.HookLost
-import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.task.Fixtures
 import kotlin.time.Duration.Companion.seconds
@@ -61,22 +61,15 @@ class Preflight(
      * Waits up to 90 s until Kestrel listens: before the first run, and before each run, because Kestrel's process may
      * have ended since the run before, as when it crashed; Android then binds its accessibility service again and Kestrel
      * goes back to its stored listening mode by itself. No step or restore takes back one of Kestrel's permissions or its
-     * notification access, which would end its process too: they are the evaluation's kept set ([EvalPermissions]).
+     * notification access, which would end its process too: they are the evaluation's kept set ([EvalPermissions]). The wait
+     * keeps plan 7G's rule for every wait: each read gets only the time that is left, so a slow adb cannot stretch it, and
+     * an answer that Kestrel or adb did not give is "not yet", read again within the wait.
      */
     fun waitListening() {
-        val deadline = clock.elapsed() + LISTENING
-        while (true) {
-            val mode = try {
-                hooks.voiceState()["mode"]
-            } catch (e: HookSilent) {
-                null
-            } catch (e: HookError) {
-                null
-            }
-            if (mode == "listening") return
-            check(clock.elapsed() < deadline) { "Kestrel is not listening on ${device.serial}. Turn on its accessibility service and listening first." }
-            clock.sleep(3.seconds)
+        val listening = clock.waitUntil(LISTENING, LISTENING_EVERY) { deadline ->
+            quietly { hooks.until(deadline).voiceState() }?.get("mode") == "listening"
         }
+        check(listening) { "Kestrel is not listening on ${device.serial}. Turn on its accessibility service and listening first." }
     }
 
     private fun testModeOn() {
@@ -149,5 +142,6 @@ class Preflight(
     private companion object {
         const val KESTREL = "dev.kestrel"
         val LISTENING = 90.seconds
+        val LISTENING_EVERY = 3.seconds
     }
 }

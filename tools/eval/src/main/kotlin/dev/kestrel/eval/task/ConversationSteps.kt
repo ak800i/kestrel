@@ -15,7 +15,7 @@ import kotlin.time.Duration.Companion.seconds
  * the end of its quiet time, so that the next command opens a new one ([ConversationGuard.close]).
  */
 data object EndQuietTime : TurnAction {
-    override fun run(scope: RunScope) = ConversationGuard(scope.hooks, scope.clock).close()
+    override fun run(scope: RunScope) = scope.conversations.close()
 
     override fun toString() = "the end of the quiet time"
 }
@@ -147,8 +147,9 @@ data object CrashGuardPassed : Setup {
      * restore's time is stored.
      */
     fun left(answer: HookAnswer, margin: Duration): Duration? {
-        val ago = answer["restoredAgo"]?.takeIf { it != "none" }?.toLong() ?: return null
-        val guard = checkNotNull(answer["guard"]?.toLong()) { "voice-restore gave no guard." }
+        val restored = answer["restoredAgo"]?.takeIf { it != "none" } ?: return null
+        val ago = checkNotNull(restored.toLongOrNull()) { "voice-restore gave no number of seconds in restoredAgo=." }
+        val guard = checkNotNull(answer["guard"]?.toLongOrNull()) { "voice-restore gave no number of seconds in guard=." }
         val left = guard.seconds + margin - ago.seconds
         return left.takeIf { it.isPositive() }
     }

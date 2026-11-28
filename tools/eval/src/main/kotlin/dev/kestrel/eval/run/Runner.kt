@@ -118,7 +118,7 @@ class Runner(
      * them after Ctrl+C, and returns the run line.
      */
     fun run(task: Task, script: String?, number: Int, marker: String): RunLine {
-        val scope = RunScope(device, hooks, restores, clock, console, config, work, RunValues(marker, name = options.name))
+        val scope = RunScope(device, hooks, restores, clock, console, config, work, RunValues(marker, name = options.name), conversations)
         val state = RunState(scope.putBack, scope.commands)
         current = number to state
         val mark = restores.mark()

@@ -8,6 +8,7 @@ import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.Asked
 import dev.kestrel.eval.run.Console
+import dev.kestrel.eval.run.ConversationGuard
 import dev.kestrel.eval.run.Restores
 import dev.kestrel.eval.run.SentCommand
 import java.net.URLEncoder
@@ -68,6 +69,8 @@ class RunScope(
     /** A folder of this computer for the run's files, such as the filled script and the test photos. */
     val work: Path,
     val values: RunValues,
+    /** The series' guard of Kestrel's conversation, which a turn uses to close the open one ([ConversationGuard.close]). */
+    val conversations: ConversationGuard,
     /** What a setup read for the run's checks, such as the Wi-Fi page's activity or the alarms before the run. */
     val notes: MutableMap<String, String> = mutableMapOf(),
     /** The settings that a restore found changed by the run and put back, which the run's detail line names (T6). */
@@ -90,7 +93,7 @@ class RunScope(
      * now, so that a check reads through it as through the run's scope and no read outlives the wait.
      */
     fun until(deadline: Deadline): RunScope =
-        RunScope(device.until(deadline), hooks.until(deadline), restores, clock, console, config, work, values, notes, putBack, commands).also { it.tag = tag }
+        RunScope(device.until(deadline), hooks.until(deadline), restores, clock, console, config, work, values, conversations, notes, putBack, commands).also { it.tag = tag }
 }
 
 /** What a setup step found: the device is ready, or it cannot run the task ([Untestable], which skips the run). */

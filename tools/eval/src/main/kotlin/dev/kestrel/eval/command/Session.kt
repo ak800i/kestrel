@@ -39,7 +39,7 @@ class Session(private val environment: Environment, serial: String) {
     val work: Path = environment.root.resolve("build").resolve("eval").resolve(serial)
 
     // The series' guard of Kestrel's conversation: its runs tell it their commands, and the preflight's cleanup reads them.
-    private val conversations = ConversationGuard(hooks, environment.clock)
+    val conversations = ConversationGuard(hooks, environment.clock)
     val preflight = Preflight(device, hooks, restores, environment.clock, Installer(environment.root, environment.processes), conversations)
 
     /**

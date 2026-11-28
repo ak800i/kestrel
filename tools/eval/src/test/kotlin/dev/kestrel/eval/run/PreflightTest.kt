@@ -11,6 +11,8 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Paths
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /** What every run needs before it, the live gate and the guard of the emulator's account and profile (design D1, D5 and D7 of sub-project 6). */
 class PreflightTest {
@@ -139,6 +141,26 @@ class PreflightTest {
         run.adb.hook("VOICE_STATE") { "mode=off session=closed" }
         assertThrows(Refusal::class.java) { preflight().prepare(false) }
         assertTrue(run.clock.time.inWholeSeconds >= 90)
+    }
+
+    // The whole-plan review of plan 7G, I2: the wait for listening keeps the rule of every wait, so a slow adb ends it at its
+    // 90 s, not after a full timeout of each read.
+    @Test
+    fun theWaitForListeningEndsAtItsDeadlineHoweverSlowAdbIs() {
+        run.adb.hook("VOICE_STATE") { "mode=off session=closed" }
+        run.adb.slow(run.clock, 2.minutes) { "VOICE_STATE" in it }
+        val start = run.clock.time
+        assertThrows(IllegalStateException::class.java) { preflight().waitListening() }
+        assertEquals(90.seconds, run.clock.time - start)
+    }
+
+    // I2 too: three lost answers end one read (Device.read's tries), which the wait takes for "not yet": it reads again and
+    // finds Kestrel listening.
+    @Test
+    fun theWaitForListeningReadsAgainAfterAnAnswerThatAdbLost() {
+        repeat(3) { run.adb.loseNext("VOICE_STATE") }
+        preflight().waitListening()
+        assertEquals(4, run.adb.commands.count { "VOICE_STATE" in it })
     }
 
     @Test

@@ -206,4 +206,15 @@ class ConversationStepsTest {
         scope.notes[ClockFree.BEFORE] = first
         assertTrue(OnlyAlarmAt(7, 30).passes(scope, HookAnswer.EMPTY))
     }
+
+    // The whole-plan review of plan 7G (nit): an answer of voice-restore whose times are no numbers fails with a message
+    // that names the pair, not with a NumberFormatException.
+    @Test
+    fun aVoiceRestoreAnswerWithoutNumbersFailsWithItsPairsName() {
+        assertEquals(null, CrashGuardPassed.left(HookAnswer("restoredAgo=none guard=120"), CrashGuardPassed.MARGIN))
+        val ago = assertThrows(IllegalStateException::class.java) { CrashGuardPassed.left(HookAnswer("restoredAgo=soon guard=120"), CrashGuardPassed.MARGIN) }
+        assertEquals("voice-restore gave no number of seconds in restoredAgo=.", ago.message)
+        val guard = assertThrows(IllegalStateException::class.java) { CrashGuardPassed.left(HookAnswer("restoredAgo=3 guard=long"), CrashGuardPassed.MARGIN) }
+        assertEquals("voice-restore gave no number of seconds in guard=.", guard.message)
+    }
 }

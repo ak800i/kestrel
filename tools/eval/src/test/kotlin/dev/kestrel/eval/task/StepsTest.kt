@@ -163,7 +163,7 @@ class StepsTest {
             thread.start()
             while (!restores.stopping) Thread.sleep(1)
         }
-        val scope = RunScope(run.device, run.hooks, restores, run.clock, run.console, config, run.scope.work, RunValues("maple heron"))
+        val scope = RunScope(run.device, run.hooks, restores, run.clock, run.console, config, run.scope.work, RunValues("maple heron"), run.conversations)
         return scope to { hook!! }
     }
 

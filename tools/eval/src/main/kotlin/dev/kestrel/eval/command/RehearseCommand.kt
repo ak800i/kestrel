@@ -43,7 +43,7 @@ class RehearseCommand(private val environment: Environment, private val command:
     private fun rehearse(session: Session, task: Task): Pair<String, String> {
         val scope = RunScope(
             session.device, session.hooks, session.restores, environment.clock, session.console, session.config, session.work,
-            RunValues(Markers().next(emptyList())),
+            RunValues(Markers().next(emptyList())), session.conversations,
         )
         val mark = session.restores.mark()
         val before = mutableMapOf<String, String>()

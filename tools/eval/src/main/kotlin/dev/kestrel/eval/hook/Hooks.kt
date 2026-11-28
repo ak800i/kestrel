@@ -183,11 +183,12 @@ class Hooks(private val client: HookClient) {
     fun conversationState(): HookAnswer = read("conversation-state")
 
     /**
-     * conversation-control --es do [action] (design 14.4 of sub-project 7), a control that acts once: `new` starts a new
-     * conversation, `expire` ends the quiet time at once while its clock runs, and `expire-typed` does so only for the
-     * hooks' own conversation (plan 7G). A round's limits have their own calls ([conversationLimits], [limitsCheck]).
+     * conversation-control --es do expire-typed (plan 7G): ends the quiet time at once while its clock runs, and only for the
+     * hooks' own conversation, whose mark Kestrel checks on the conversation's loop at that moment; answers `expire=sent`, or
+     * `expire=not-typed` when the open conversation is not theirs. It acts once. The evaluation never sends the plain
+     * `expire`, which ends any conversation's quiet time, nor `new`; `scripts\hook.ps1` sends them by hand.
      */
-    fun conversationControl(action: String): HookAnswer = act("conversation-control", Extra.Text("do", action))
+    fun expireTyped(): HookAnswer = act("conversation-control", Extra.Text("do", "expire-typed"))
 
     /**
      * conversation-control --es do limits (plan 7D): sets a round's limits to [limits], "<replies>/<minutes>/<credits>", or
