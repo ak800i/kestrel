@@ -71,11 +71,13 @@ class HookSilent(command: String) : Exception("Kestrel did not answer $command. 
 class HookLost(command: String, reason: String? = null) : Exception("The answer of $command was lost" + (reason?.let { ": $it" } ?: "."))
 
 /**
- * Kestrel refused the hooks' caller: its provider answers only adb's shell (uid 2000) and root (uid 0). No hook can
- * work for this caller, so this stops the series instead of counting as one hook's refusal.
+ * The hooks' caller was refused, with a SecurityException whose line [reason] names who refused it. Through `content
+ * call`, that is Android, before the call reaches Kestrel: it lets only adb's shell and root call a provider from the
+ * command line (`getContentProviderExternal`), and Kestrel's provider lets the same two through. No hook can work for
+ * this caller, so this stops the series instead of counting as one hook's refusal.
  */
 class HookCallerRefused(command: String, reason: String) :
-    Exception("Kestrel refused the caller of $command: $reason. Only adb's shell (uid 2000) and root (uid 0) may use its test hooks.")
+    Exception("The hooks' caller was refused for $command: $reason. Only adb's shell (uid 2000) and root (uid 0) may use Kestrel's test hooks.")
 
 /** What `content call` printed for a hook, read as one outcome of the transport ([HookClient.outcome]). */
 sealed interface HookOutcome {
@@ -88,7 +90,7 @@ sealed interface HookOutcome {
     /** No provider has the hooks' authority: a Kestrel without hooks, or none. */
     data object NoHooks : HookOutcome
 
-    /** A SecurityException: Kestrel, or Android at the acquisition, refused the caller. */
+    /** A SecurityException: the caller was refused, by Android before the call reached Kestrel, or by Kestrel's provider. */
     data class CallerRefused(val reason: String) : HookOutcome
 
     /** Any other output, such as a DeadObjectException when Kestrel's process ended during the call. */

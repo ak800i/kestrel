@@ -136,9 +136,13 @@ class TestHookTest {
         assertTrue(reply.text, failure(reply).startsWith("error: add --es key"))
     }
 
-    /** Another app, without DUMP, cannot even acquire the hooks' provider. */
+    /**
+     * Another app, without DUMP, cannot even acquire the hooks' provider. The test takes DUMP from the probe first, because
+     * a test process that ended during [anotherAppThatHoldsDumpIsRefusedOnItsCall] could not take it back.
+     */
     @Test
     fun anotherAppCannotSendCommands() = runBlocking {
+        revokeProbeDump()
         screen.open("HookProbeActivity", "Hook probe")
 
         screen.awaitElement { it.label == "Probe refused at the acquisition" }
@@ -151,13 +155,10 @@ class TestHookTest {
      */
     @Test
     fun anotherAppThatHoldsDumpIsRefusedOnItsCall() = runBlocking {
-        screen.shell("pm grant $PROBE $DUMP")
-        try {
+        withProbeDump {
             screen.open("HookProbeActivity", "Hook probe")
 
             screen.awaitElement { it.label == "Probe refused on the call" }
-        } finally {
-            screen.shell("pm revoke $PROBE $DUMP")
         }
         Unit
     }
@@ -171,6 +172,23 @@ class TestHookTest {
         val hooks = Uri.parse("content://${TestHookProvider.AUTHORITY}")
 
         assertThrows(SecurityException::class.java) { context.contentResolver.call(hooks, "STATE", null, null) }
+    }
+
+    /**
+     * Runs [block] while the hook probe holds DUMP, and takes DUMP back afterwards, also when [block] fails. A test process
+     * that ends during [block] cannot, so [anotherAppCannotSendCommands] and scripts\connected-test.ps1 take it back too.
+     */
+    private inline fun <T> withProbeDump(block: () -> T): T {
+        screen.shell("pm grant $PROBE $DUMP")
+        try {
+            return block()
+        } finally {
+            revokeProbeDump()
+        }
+    }
+
+    private fun revokeProbeDump() {
+        screen.shell("pm revoke $PROBE $DUMP")
     }
 
     /** Sends a command the way scripts/hook.ps1 does, with content call from the shell. */

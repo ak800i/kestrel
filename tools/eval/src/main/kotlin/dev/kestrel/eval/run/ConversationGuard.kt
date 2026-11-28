@@ -70,7 +70,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
         var learned = false
         val closed = clock.waitUntil(within, POLL) { deadline ->
             val hooks = hooks.until(deadline)
-            val state = quietly { hooks.conversationState() } ?: return@waitUntil false
+            val state = unlessLost { hooks.conversationState() } ?: return@waitUntil false
             // Kestrel's own request may run while no conversation is open, as a switch that asks before it moves into a
             // past conversation.
             if (state["open"] != "yes" && !requestRuns(state)) return@waitUntil true
@@ -160,7 +160,7 @@ class ConversationGuard(private val hooks: Hooks, private val clock: Clock) {
         var end = WorkStop.OPEN
         clock.waitUntil(STOP, POLL) { deadline ->
             val hooks = hooks.until(deadline)
-            val state = quietly { hooks.conversationState() } ?: return@waitUntil false
+            val state = unlessLost { hooks.conversationState() } ?: return@waitUntil false
             end = when {
                 work(state) == null -> WorkStop.ENDED
                 state["typed"] != "yes" -> WorkStop.OWNERS

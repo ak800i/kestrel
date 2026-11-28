@@ -2,8 +2,8 @@
 # fake-adb.cmd runs it in its own process, as adb runs.
 # It understands 'adb -s <serial> get-state', 'adb -s <serial> shell getprop <property>' for the properties that
 # Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands, the 'cmd statusbar
-# set-tiles', the package commands ('pm list packages', 'dumpsys package', 'pm uninstall' and 'am
-# force-stop') and 'dumpsys account' that the helpers send, also inside the check of Format-TestDeviceCommand. It
+# set-tiles', the package commands ('pm list packages', 'dumpsys package', 'pm uninstall', 'pm grant', 'pm revoke' and
+# 'am force-stop') and 'dumpsys account' that the helpers send, also inside the check of Format-TestDeviceCommand. It
 # keeps the device's state in the JSON file whose path is in the environment variable KESTREL_FAKE_ADB:
 #   avd         the device's ro.boot.qemu.avd_name, empty for a phone
 #   model       the device's ro.product.model
@@ -12,6 +12,8 @@
 #               writes the list to sysui_qs_tiles, and SystemUI writes its own list back over a 'settings put' of that
 #               setting. Otherwise SystemUI follows the setting, and set-tiles changes nothing.
 #   packages    the installed packages, each with its first-install time, which 'dumpsys package' shows for user 0
+#   granted     each package's granted install permissions, such as :testapp's DUMP after 'pm grant', which 'dumpsys package'
+#               shows as its install permissions and 'pm grant' and 'pm revoke' change
 #   accounts    how many Google accounts 'dumpsys account' lists
 #   sdk         the device's ro.build.version.sdk; 37 when it is missing
 #   accessibility  Android's accessibility manager, as AOSP's AccessibilityManagerService keeps it: the components that it
@@ -64,6 +66,8 @@ $settings = [ordered]@{}
 foreach ($property in $state.settings.PSObject.Properties) { $settings[$property.Name] = [string]$property.Value }
 $packages = [ordered]@{}
 if ($state.packages) { foreach ($property in $state.packages.PSObject.Properties) { $packages[$property.Name] = [string]$property.Value } }
+$granted = [ordered]@{}
+if ($state.granted) { foreach ($property in $state.granted.PSObject.Properties) { $granted[$property.Name] = [string[]]@(@($property.Value) | Where-Object { $_ }) } }
 $accounts = [int]$state.accounts
 $accessibility = [ordered]@{}
 foreach ($set in 'bound', 'binding', 'crashed', 'neverBinds', 'requestsButton', 'pendingUnbind') {
@@ -77,7 +81,7 @@ $refused = @(@($state.refused) | Where-Object { $null -ne $_ } | ForEach-Object 
 
 function Save-State {
     $json = ConvertTo-Json -Depth 3 -InputObject ([ordered]@{
-            avd = $avd; model = $model; sdk = $sdk; settings = $settings; packages = $packages; accounts = $accounts; accessibility = $accessibility
+            avd = $avd; model = $model; sdk = $sdk; settings = $settings; packages = $packages; granted = $granted; accounts = $accounts; accessibility = $accessibility
             keepsTiles = $keepsTiles; failures = $failures; calls = [string[]]$calls; refused = [string[]]$refused
         })
     [IO.File]::WriteAllText($statePath, $json)
@@ -180,8 +184,18 @@ if ($deviceCommand -match '^getprop (\S+)$') {
     if ($packages.Contains($Matches[1])) {
         $lines = @('Packages:', "  Package [$($Matches[1])] (1a2b3c):", '    versionCode=1 minSdk=31 targetSdk=37',
             '    User 0: ceDataInode=4242 installed=true hidden=false suspended=false stopped=false', '      installReason=0',
-            "      firstInstallTime=$($packages[$Matches[1]])", '      uninstallReason=0')
+            "      firstInstallTime=$($packages[$Matches[1]])", '      uninstallReason=0', '    install permissions:') +
+            @(@($granted[$Matches[1]]) | Where-Object { $_ } | ForEach-Object { "      ${_}: granted=true" })
     }
+} elseif ($deviceCommand -match '^pm (grant|revoke) (\S+) (\S+)$') {
+    if (-not $packages.Contains($Matches[2])) {
+        Save-State
+        [Console]::Error.WriteLine("Exception occurred while executing '$($Matches[1])':")
+        [Console]::Error.WriteLine("java.lang.IllegalArgumentException: Unknown package: $($Matches[2])")
+        exit 255
+    }
+    $held = @(@($granted[$Matches[2]]) | Where-Object { $_ -and $_ -ne $Matches[3] })
+    $granted[$Matches[2]] = [string[]]$(if ($Matches[1] -eq 'grant') { $held + $Matches[3] } else { $held })
 } elseif ($deviceCommand -match '^pm uninstall (\S+)$') {
     if (-not $packages.Contains($Matches[1])) {
         # The device's shell then skips the marker.

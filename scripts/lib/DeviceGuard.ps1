@@ -312,6 +312,28 @@ function Complete-TestPackages([string]$Serial, $Before) {
     $right
 }
 
+# The command that takes the development permission DUMP back from the fixture app. Only the device test
+# TestHookTest.anotherAppThatHoldsDumpIsRefusedOnItsCall gives it, with 'pm grant', and takes it back itself, which it
+# cannot do when the test's process ends during the test.
+$ProbeDumpRevoke = 'pm revoke dev.kestrel.testapp android.permission.DUMP'
+
+# Takes DUMP back from the fixture app dev.kestrel.testapp when it is installed and holds it, so that no run of the device
+# tests leaves it to the next one. Returns whether the fixture app does not hold DUMP afterwards; when it still does, or
+# the device could not be read, it warns with the command that takes DUMP back by hand.
+function Revoke-ProbeDump([string]$Serial) {
+    $reason = ''
+    try {
+        if ((Get-KestrelPackageNames -Serial $Serial) -notcontains 'dev.kestrel.testapp') { return $true }
+        $holds = { @(Get-GrantedPermissions -Dump @(Invoke-SettingsCommand -Serial $Serial -Command 'dumpsys package dev.kestrel.testapp') -Permissions 'android.permission.DUMP').Count -gt 0 }
+        if (& $holds) { Invoke-SettingsCommand -Serial $Serial -Command $ProbeDumpRevoke | Out-Null }
+        if (-not (& $holds)) { return $true }
+    } catch {
+        $reason = " ($($_.Exception.Message))"
+    }
+    Write-Warning "Could not take DUMP back from dev.kestrel.testapp on $Serial$reason. Run: & '$((Get-Adb) -replace "'", "''")' -s $Serial shell $ProbeDumpRevoke"
+    $false
+}
+
 # The owner's data on kestrel-api37 ---------------------------------------------------------------------------------
 
 # Whether the serial is kestrel-api37, which holds the owner's own Google account and Kestrel's Copilot profile, which no

@@ -18,6 +18,8 @@
 #     this comes before Kestrel is stopped;
 #   - it stops Kestrel ('am force-stop'), which stays stopped at the end, and puts back the device's accessibility
 #     settings;
+#   - it takes the permission DUMP back from the fixture app dev.kestrel.testapp, which one test gives it and takes back
+#     itself, unless the test's process ended during the test (Revoke-ProbeDump);
 #   - it checks that Kestrel was not uninstalled or installed again, either of which deletes Kestrel's data. Kestrel's
 #     first-install time in 'dumpsys package' shows both, and nothing else: a 'pm clear', or a test that deletes
 #     Kestrel's stores in its process, leaves the time as it was;
@@ -56,6 +58,7 @@ if ($ownerBefore -and -not $ownerBefore.Profiles) {
 # The commands that put the device back by hand (Get-AccessibilityRestoreCommands): the list of services first, and
 # they delete the list and the switch if these were not there before.
 $byHand = @(Get-AccessibilityRestoreCommands -Saved $saved)
+$byHand += $ProbeDumpRevoke
 $byHand += Format-TestPackageRemoval -Keep $packagesBefore.TestPackages
 # The script runs in the caller's PowerShell, so ANDROID_SERIAL is put back afterwards.
 $callerSerial = $env:ANDROID_SERIAL
@@ -100,9 +103,10 @@ try {
             if ($null -ne $services -and $services -notlike '*dev.kestrel/*') { break }
             Start-Sleep -Milliseconds 500
         }
-        # A run whose tests passed still fails when the device keeps changed settings, when Kestrel was uninstalled or
-        # installed again, or when a test package stays.
+        # A run whose tests passed still fails when the device keeps changed settings, when the fixture app keeps DUMP,
+        # when Kestrel was uninstalled or installed again, or when a test package stays.
         if (-not (Restore-AccessibilitySettings -Serial $Serial -Saved $saved) -and $code -eq 0) { $code = 1 }
+        if (-not (Revoke-ProbeDump -Serial $Serial) -and $code -eq 0) { $code = 1 }
         if (-not (Complete-TestPackages -Serial $Serial -Before $packagesBefore) -and $code -eq 0) { $code = 1 }
         $restored = $true
     } finally {

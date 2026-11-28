@@ -71,9 +71,9 @@ class HookClientTest {
             assertThrows(HookLost::class.java) { HookClient.answer("agent-answer", FakeAdb.DEAD_CALL.trimEnd()) }.message,
         )
         assertEquals(
-            "Kestrel refused the caller of state: java.lang.SecurityException: Permission Denial: Do not have permission in call " +
+            "The hooks' caller was refused for state: java.lang.SecurityException: Permission Denial: Do not have permission in call " +
                 "getContentProviderExternal() from pid=4343, uid=10353 requires android.permission.ACCESS_CONTENT_PROVIDERS_EXTERNALLY. " +
-                "Only adb's shell (uid 2000) and root (uid 0) may use its test hooks.",
+                "Only adb's shell (uid 2000) and root (uid 0) may use Kestrel's test hooks.",
             assertThrows(HookCallerRefused::class.java) { HookClient.answer("state", FakeAdb.REFUSED_CALLER.trimEnd()) }.message,
         )
         assertEquals(

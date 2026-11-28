@@ -13,12 +13,13 @@ BeforeAll {
     . "$PSScriptRoot\..\lib\DeviceGuard.ps1"
     $fakeAdb = Join-Path $PSScriptRoot 'fake-adb.cmd'
 
-    # Gives the fake device these packages, each with its first-install time, and this number of Google accounts, and
-    # makes its next commands fail as often as -Failures says. It is kestrel-api37, or the Galaxy A71 with -A71.
-    function Set-FakeDevice([System.Collections.IDictionary]$Packages = @{}, [int]$Accounts = 1, [int]$Failures = 0, [switch]$A71) {
+    # Gives the fake device these packages, each with its first-install time, their granted install permissions
+    # (-Granted), and this number of Google accounts, and makes its next commands fail as often as -Failures says. It is
+    # kestrel-api37, or the Galaxy A71 with -A71.
+    function Set-FakeDevice([System.Collections.IDictionary]$Packages = @{}, [System.Collections.IDictionary]$Granted = @{}, [int]$Accounts = 1, [int]$Failures = 0, [switch]$A71) {
         $state = [ordered]@{
             avd = $(if ($A71) { '' } else { 'kestrel-api37' }); model = $(if ($A71) { 'SM-A715F' } else { 'sdk_gphone64_x86_64' })
-            settings = @{}; packages = $Packages; accounts = $Accounts; keepsTiles = $false; failures = $Failures; calls = @(); refused = @()
+            settings = @{}; packages = $Packages; granted = $Granted; accounts = $Accounts; keepsTiles = $false; failures = $Failures; calls = @(); refused = @()
         }
         [IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))
     }
@@ -264,6 +265,36 @@ Describe 'The helpers that read and change the device' {
             $errors | Should -HaveCount 1
             "$($errors[0])" | Should -BeLike $Message
             $output[-1] | Should -BeFalse
+        }
+
+        It 'takes DUMP back from the fixture app that holds it, and only DUMP, and returns $true' {
+            Set-FakeDevice -Packages @{ 'dev.kestrel.testapp' = '2026-11-21 09:00:00' } -Granted @{ 'dev.kestrel.testapp' = @('android.permission.DUMP', 'android.permission.INTERNET') }
+
+            Revoke-ProbeDump -Serial emulator-5554 | Should -BeTrue
+
+            @((Get-FakeDevice).granted.'dev.kestrel.testapp') | Should -BeExactly @('android.permission.INTERNET')
+        }
+
+        It 'sends no revoke and returns $true when the fixture app <Name>' -ForEach @(
+            @{ Name = 'does not hold DUMP'; Packages = @{ 'dev.kestrel.testapp' = '2026-11-21 09:00:00' } }
+            @{ Name = 'is not installed'; Packages = @{ 'dev.kestrel' = '2026-11-20 10:11:12' } }
+        ) {
+            Set-FakeDevice -Packages $Packages
+
+            Revoke-ProbeDump -Serial emulator-5554 | Should -BeTrue
+
+            @((Get-FakeDevice).calls | Where-Object { $_ -like 'pm revoke*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'returns $false and warns with the command that takes DUMP back by hand when it cannot read the device' {
+            Set-FakeDevice -Packages @{ 'dev.kestrel.testapp' = '2026-11-21 09:00:00' } -Failures 10
+            Mock Write-Warning {}
+
+            Revoke-ProbeDump -Serial emulator-5554 | Should -BeFalse
+
+            Should -Invoke Write-Warning -Times 1 -Exactly -ParameterFilter {
+                $Message -like "Could not take DUMP back from dev.kestrel.testapp on emulator-5554 (*). Run: & '$fakeAdb' -s emulator-5554 shell pm revoke dev.kestrel.testapp android.permission.DUMP"
+            }
         }
 
         It 'returns $false and warns with the command that removes the test packages by hand when it cannot read them' {

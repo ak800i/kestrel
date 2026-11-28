@@ -39,9 +39,9 @@ function Stop-HookCall([string]$ErrorId, [string]$Message) {
 # text, which 'content' prints as 'Result: Bundle[{code=<code>, text=<text>}]', code first; the text is all that stands
 # between 'text=' and the last '}]', so it may hold any character, also '}]' and line breaks. Every other output is one of
 # content's errors, told apart as :tools:eval's HookClient.outcome tells them: a missing provider, as a release build or
-# no Kestrel at all (KestrelHookSilent); a SecurityException, a refused caller (KestrelHookCallerRefused); and any other
-# failure of the call, such as a DeadObjectException when Kestrel's process ended during the call, or an unknown code,
-# which is lost: Kestrel may have acted, so the caller reads the state back before it sends a hook that acts again
+# no Kestrel at all (KestrelHookSilent); a SecurityException, a refused caller, which through content call is Android's
+# refusal before the call reaches Kestrel (KestrelHookCallerRefused); and any other failure of the call, such as a
+# DeadObjectException when Kestrel's process ended during the call, or an unknown code, which is lost: Kestrel may have acted, so the caller reads the state back before it sends a hook that acts again
 # (KestrelHookLost).
 function ConvertFrom-HookCallOutput([string]$Output) {
     $match = [regex]::Match($Output, '(?s)\AResult: Bundle\[\{code=(-?\d+), text=(.*)\}\]\s*\z')
@@ -52,6 +52,6 @@ function ConvertFrom-HookCallOutput([string]$Output) {
     }
     if ($Output -match 'Could not find provider: dev\.kestrel\.hooks') { Stop-HookCall KestrelHookSilent 'Kestrel did not answer: it has no test hooks. Install a debug build with scripts\install.ps1.' }
     $refusal = [regex]::Match($Output, '(?m)^java\.lang\.SecurityException\b.*$')
-    if ($refusal.Success) { Stop-HookCall KestrelHookCallerRefused "Kestrel refused the hook's caller: $($refusal.Value.Trim()). Only adb's shell (uid 2000) and root (uid 0) may use its test hooks." }
+    if ($refusal.Success) { Stop-HookCall KestrelHookCallerRefused "The hook's caller was refused: $($refusal.Value.Trim()). Only adb's shell (uid 2000) and root (uid 0) may use Kestrel's test hooks." }
     Stop-HookCall KestrelHookLost "The hook's call was lost: it reached the device but no answer of Kestrel's came back, as when Kestrel's process ended during the call. Kestrel may have acted: read its state back before you send the hook again.`n$Output"
 }

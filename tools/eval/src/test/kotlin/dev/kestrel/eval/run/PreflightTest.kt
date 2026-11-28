@@ -4,6 +4,8 @@ import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.device.ShellResult
+import dev.kestrel.eval.hook.HookError
+import dev.kestrel.eval.hook.HookSilent
 import dev.kestrel.eval.hook.ProviderState
 import dev.kestrel.eval.task.FakeRun
 import org.junit.Assert.assertEquals
@@ -161,6 +163,38 @@ class PreflightTest {
         preflight().prepare(needsTestApp = false)
 
         assertTrue(states > 2)
+    }
+    // The re-check of the hooks' transport, M1: only a lost answer is "not yet". A Kestrel without hooks and Kestrel's own
+    // error answer are answers, so the wait stops at once with their own message instead of calling the service off.
+    @Test
+    fun theWaitForTheAccessibilityServiceStopsAtOnceWhenKestrelHasNoHooks() {
+        run.adb.on("--method STATE ") { FakeAdb.NO_HOOKS }
+        val start = run.clock.time
+
+        assertThrows(HookSilent::class.java) { preflight().prepare(false) }
+
+        assertEquals(start, run.clock.time)
+    }
+
+    @Test
+    fun theWaitForTheAccessibilityServiceStopsAtOnceOnKestrelsErrorAndReadsAgainOnlyAfterALostAnswer() {
+        run.adb.hookFails("STATE", "the command failed: IllegalStateException")
+        val start = run.clock.time
+        assertEquals("the command failed: IllegalStateException", assertThrows(HookError::class.java) { preflight().prepare(false) }.message)
+        assertEquals(start, run.clock.time)
+
+        run.adb.hook("STATE") { "screen=on testMode=on" }
+        repeat(3) { run.adb.dieNext("--method STATE") }
+        preflight().prepare(false)
+        assertTrue(run.clock.time > start)
+    }
+
+    @Test
+    fun theWaitForListeningStopsAtOnceOnKestrelsErrorAnswer() {
+        run.adb.hookFails("VOICE_STATE", "the command failed: IllegalStateException")
+        val start = run.clock.time
+        assertThrows(HookError::class.java) { preflight().waitListening() }
+        assertEquals(start, run.clock.time)
     }
     // The whole-plan review of plan 7G, I2: the wait for listening keeps the rule of every wait, so a slow adb ends it at its
     // 90 s, not after a full timeout of each read.

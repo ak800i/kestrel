@@ -5,7 +5,7 @@ import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.hook.HookLost
 import dev.kestrel.eval.hook.Hooks
 import dev.kestrel.eval.run.ConversationGuard
-import dev.kestrel.eval.run.quietly
+import dev.kestrel.eval.run.unlessLost
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -133,7 +133,7 @@ data object CrashGuardPassed : Setup {
     override fun apply(scope: RunScope): SetupResult {
         val deadline = Deadline(scope.clock, WAIT)
         while (true) {
-            val answer = quietly { scope.hooks.until(deadline).voiceRestore() }
+            val answer = unlessLost { scope.hooks.until(deadline).voiceRestore() }
             val wait = if (answer == null) LOOK else left(answer, MARGIN) ?: return SetupResult.Ready
             if (wait >= deadline.left) {
                 throw SetupFailed("Kestrel's guard against a crash loop did not pass within ${WAIT.inWholeSeconds} s (voice-restore: ${answer?.text ?: "no answer"}).")

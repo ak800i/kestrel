@@ -120,7 +120,7 @@ internal class TurnRunner(
 
     /** Waits up to [FOLLOW_UP] by the clock for Kestrel's follow-up window (design 6.6), which opens once its spoken final reply has ended. */
     private fun followUpOpen(): Boolean =
-        clock.waitUntil(FOLLOW_UP, WINDOW_POLL) { deadline -> quietly { hooks.until(deadline).voiceState() }?.get("followUp") == "open" }
+        clock.waitUntil(FOLLOW_UP, WINDOW_POLL) { deadline -> unlessLost { hooks.until(deadline).voiceState() }?.get("followUp") == "open" }
 
     /**
      * Gives Kestrel a new command through [send] with a new tag. A lost answer is read back: the command exists, or it did

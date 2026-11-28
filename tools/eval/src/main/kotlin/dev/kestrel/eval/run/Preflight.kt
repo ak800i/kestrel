@@ -60,7 +60,7 @@ class Preflight(
      */
     fun waitListening() {
         val listening = clock.waitUntil(LISTENING, LISTENING_EVERY) { deadline ->
-            quietly { hooks.until(deadline).voiceState() }?.get("mode") == "listening"
+            unlessLost { hooks.until(deadline).voiceState() }?.get("mode") == "listening"
         }
         check(listening) { "Kestrel is not listening on ${device.serial}. Turn on its accessibility service and listening first." }
     }
@@ -73,7 +73,7 @@ class Preflight(
      * or adb did not give is "not yet".
      */
     private fun waitScreen(): Boolean = clock.waitUntil(SCREEN, SCREEN_EVERY) { deadline ->
-        quietly { hooks.until(deadline).state() }?.get("screen") == "on"
+        unlessLost { hooks.until(deadline).state() }?.get("screen") == "on"
     }
 
     private fun testModeOn() {

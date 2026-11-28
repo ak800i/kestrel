@@ -73,7 +73,7 @@ Describe 'The hooks'' transport' {
 
         { ConvertFrom-HookCallOutput $dead } | Should -Throw "The hook's call was lost:*Kestrel may have acted*android.os.DeadObjectException*" -ErrorId KestrelHookLost
         { ConvertFrom-HookCallOutput $refused } |
-            Should -Throw "Kestrel refused the hook's caller: java.lang.SecurityException: Permission Denial:*ACCESS_CONTENT_PROVIDERS_EXTERNALLY. Only adb's shell (uid 2000) and root (uid 0) may use its test hooks." -ErrorId KestrelHookCallerRefused
+            Should -Throw "The hook's caller was refused: java.lang.SecurityException: Permission Denial:*ACCESS_CONTENT_PROVIDERS_EXTERNALLY. Only adb's shell (uid 2000) and root (uid 0) may use Kestrel's test hooks." -ErrorId KestrelHookCallerRefused
         { ConvertFrom-HookCallOutput 'Result: Bundle[{code=2, text=x}]' } | Should -Throw "The hook's call was lost: its answer had the unknown code 2.*" -ErrorId KestrelHookLost
     }
 }

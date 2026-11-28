@@ -37,6 +37,7 @@ Describe 'connected-test.ps1' {
             '    ''reinstall'' { $state.packages.''dev.kestrel'' = ''2026-11-24 17:00:00'' }'
             '    ''test-apk'' { $state.packages | Add-Member -NotePropertyName ''dev.kestrel.test'' -NotePropertyValue ''2026-11-24 17:00:00'' }'
             '    ''account'' { $state.accounts = 0 }'
+            '    ''probe-dump'' { $state | Add-Member -NotePropertyName granted -NotePropertyValue @{ ''dev.kestrel.testapp'' = @(''android.permission.DUMP'') } -Force }'
             '}'
             '[IO.File]::WriteAllText($env:KESTREL_FAKE_ADB, (ConvertTo-Json -Depth 3 -InputObject $state))'
             'exit 0'
@@ -122,6 +123,16 @@ Describe 'connected-test.ps1' {
         $run.Code | Should -Be 0
         @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).packages.PSObject.Properties.Name) | Sort-Object |
             Should -BeExactly @('dev.kestrel', 'dev.kestrel.testapp')
+    }
+
+    # The re-check of the hooks' transport, M2: a test process that ended during anotherAppThatHoldsDumpIsRefusedOnItsCall
+    # leaves the fixture app with DUMP, which the script takes back.
+    It 'takes DUMP back from the fixture app that a run left with it' {
+        $run = Invoke-ConnectedTest -Arguments @(':app:connectedDebugAndroidTest') -Change 'probe-dump'
+
+        $run.Code | Should -Be 0
+        $run.Warnings | Should -BeNullOrEmpty
+        @(([IO.File]::ReadAllText($env:KESTREL_FAKE_ADB) | ConvertFrom-Json).granted.'dev.kestrel.testapp') | Should -BeNullOrEmpty
     }
 
     It 'ends with exit code 1 and names the loss when Kestrel was <Name>, although Gradle passed' -ForEach @(
