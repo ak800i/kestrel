@@ -105,7 +105,7 @@ The scripts use the adb of the Android SDK. To use the same adb for the commands
 
 ### Test hooks
 
-Debug builds contain test hooks that only adb can use (design spec, section 16.1). `scripts\hook.ps1` sends a command and prints the answer, and the comment at the top of the script lists every command. It needs PowerShell 7.3 or newer (`pwsh`), because Windows PowerShell 5.1 drops double quotes from the text that it passes to adb. The screen commands need Kestrel's accessibility service, which you can turn on in Settings > Accessibility, or with adb (this replaces the list of enabled services):
+Debug builds contain test hooks that only adb can use (design spec, section 16.1). `scripts\hook.ps1` sends a command and prints the answer, and the comment at the top of the script lists every command. It sends each command as `adb shell content call --uri content://dev.kestrel.hooks --method <COMMAND> --extra <name>:<type>:<value> ...` to Kestrel's debug-only `TestHookProvider`, which answers only callers that hold `android.permission.DUMP`, such as adb's shell; `-PrintCall` prints that call without sending it. The call itself starts Kestrel's process, also after `am force-stop`, so no script needs to open Kestrel first. It needs PowerShell 7.3 or newer (`pwsh`), because Windows PowerShell 5.1 drops double quotes from the text that it passes to adb. The screen commands need Kestrel's accessibility service, which you can turn on in Settings > Accessibility, or with adb (this replaces the list of enabled services):
 
 ```powershell
 & $adb -s $serial shell settings put secure enabled_accessibility_services dev.kestrel/dev.kestrel.app.KestrelAccessibilityService

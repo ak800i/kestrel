@@ -79,6 +79,10 @@ These are this plan's readings of the design where it leaves a choice open, or w
 
 The code texts of Tasks 3 and 4 below are as those tasks built them. The whole-plan review's fixes, in commits after `7c44ac99`, change `Rules.stopsWorkFirst`, `idle`, `whileAwaitingTask`, `spotted`, `answer`, `stopGoal` (now `stopWork`), `followsUp`, `endFollowUp` and `duringCommand`, `Listening.openSettingsOrSayWhy`, `storedConversationSettings`, `AppGoalEnvironment.evidences`, `CommandTests.start`, `VoiceTests.startListening` and `AgentTests`, and Task 2's `ScreenTurns` (`startCommand(job, since, letGo): Boolean`, `stopped(job)`, `commandEnded()`, `roundHolds()`, `take(after): Boolean`, `release()`), with plan 7B's `ScreenTurn` (`take(after: Long?): Boolean`, `release()`), the Rules' `Event.ScreenHeld` and `Feedback.GoalBusy`, `RunningGoal.actedFor`, `ScreenTakingGoal`, the machine's `OwnerAct` on `ResumePausedGoal` and `EndHandOver`, the engine's `inputIds`, plan 7A's `GoalPort.takeScreen` and `releaseScreen` and `TaskRun.waitForOwner` (which the pause gate, the hand-overs and `DataSteps`' permission and access requests use), and `:app`'s `WatchedGoal`, as the entries above say.
 
+## Amendment of plan 7G (the hooks' transport)
+
+"Not in this plan" says that this plan's hooks answer through `TestHookReceiver`, as every hook did. Plan 7G's amendment "The hooks' transport" replaced that receiver with the debug-only `TestHookProvider`: every hook, `conversation-state` and `conversation-control` among them, is now `adb shell content call --uri content://dev.kestrel.hooks --method <COMMAND> --extra <name>:<type>:<value> ...`, with the same commands, options and answers; `scripts\hook.ps1` sends it. Task 8's commands are its record.
+
 ## File structure
 
 | File | Responsibility |
