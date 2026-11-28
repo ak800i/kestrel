@@ -159,12 +159,22 @@ internal object GoalRules {
 
     fun dialogue(state: ConversationState, event: DialogueEvent): MachineStep = when (event) {
         is DialogueEvent.Asked -> asked(state, event)
-        is DialogueEvent.Answered ->
-            if (state.question?.number != event.number) {
+        is DialogueEvent.Answered -> {
+            val open = state.question
+            if (open?.number != event.number) {
                 MachineStep(state)
             } else {
-                MachineStep(state.copy(question = null, goal = state.goal?.let { if (it.phase == GoalPhase.ASKING) it.copy(phase = GoalPhase.ACTING) else it }))
+                // A tap on "Continue the goal?"'s card is the owner's act for the ContinueAnswered that follows (plan 7G).
+                val tap = if (open.kind == QuestionKind.CONTINUE_GOAL && state.asksContinue) event.tap else state.continueTap
+                MachineStep(
+                    state.copy(
+                        question = null,
+                        goal = state.goal?.let { if (it.phase == GoalPhase.ASKING) it.copy(phase = GoalPhase.ACTING) else it },
+                        continueTap = tap,
+                    ),
+                )
             }
+        }
         is DialogueEvent.HandedOver -> handedOver(state, event.number)
         is DialogueEvent.HandOverDone -> {
             val goal = state.goal
@@ -214,7 +224,7 @@ internal object GoalRules {
     fun continueAnswered(state: ConversationState, answer: ChannelAnswer, tap: Long?, now: Long): MachineStep {
         if (!state.asksContinue) return MachineStep(state)
         val input = state.continueAnswer
-        val asked = state.copy(asksContinue = false, continueAnswer = null)
+        val asked = state.withoutContinue()
         val goal = asked.goal
         if (goal == null || goal.hold == null || goal.ending != null) return MachineStep(asked)
         return when (answer) {
@@ -254,7 +264,7 @@ internal object GoalRules {
             MachineStep(state)
         } else {
             MachineStep(
-                state.copy(asksContinue = false, continueAnswer = null, question = state.question?.takeUnless { it.kind == QuestionKind.CONTINUE_GOAL }),
+                state.withoutContinue().copy(question = state.question?.takeUnless { it.kind == QuestionKind.CONTINUE_GOAL }),
                 listOf(ConversationEffect.CancelContinueQuestion),
             )
         }
@@ -275,7 +285,7 @@ internal object GoalRules {
     private fun askContinue(state: ConversationState): MachineStep {
         val goal = state.goal ?: return MachineStep(state)
         return MachineStep(
-            state.copy(asksContinue = true, continueAnswer = null),
+            state.withoutContinue().copy(asksContinue = true),
             listOf(ConversationEffect.AskContinueGoal, ConversationEffect.AddLine(state.openId, goal.record, LineKind.KESTREL_ASKED, ConversationTexts.CONTINUE_GOAL, null)),
         )
     }

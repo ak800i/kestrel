@@ -95,8 +95,9 @@ internal class CommandTags {
     // the inputs that a session made of their clips (voice-clip), their presses of a card and their presses of the goal
     // notification's buttons. Every other act is the owner's (plan 7G). A claim lives as long as its act can still come up
     // in a step, and no count of newer claims ends it (the whole-plan review's M5): it goes after the step in which the
-    // conversation took its act, unless the machine holds the act's work for a later step (ConversationState.pendingInputs)
-    // or the act started Kestrel's own request that runs, whose switch names it again when the request ends; it then goes
+    // conversation took its act, unless a later step names the act again (ConversationState.pendingActs: an input whose
+    // work the machine holds, or the tap on "Continue the goal?"'s card, which ContinueAnswered names after the dialogue's
+    // answer; re-check R1 of the whole-plan review) or the act started Kestrel's own request that runs, whose switch names it again when the request ends; it then goes
     // after the step in which that work started, ended or was dropped ([release]). Nothing caps them: a claim whose act
     // never reached the conversation, as a press that a card or the notification refused, holds a number that no later act
     // carries (InputIds), so it can never make another act the hooks', and it goes with the process.
@@ -334,22 +335,23 @@ internal class CommandTags {
         // own input and the inputs that were pending before it are settled here: one whose work neither started nor is
         // still to come, as steering, a stop, an answer to another question or a held input that the step dropped, did
         // nothing that the tag counts.
-        val pending = step.state.pendingInputs.mapTo(HashSet()) { it.id }
+        val pending = step.state.pendingActs
         for (settled in listOfNotNull(given) + state.pendingInputs) {
             if (settled.id in started || settled.id in pending) continue
             val tag = inputs.remove(settled.id) ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
         }
-        release(event, state, step, pending)
+        release(event, state, step)
     }
 
-    // The claims' lives (the whole-plan review's M5): every act of the step, and every act whose work waited before it or
-    // that started the request that ran before it, is settled once the step is over, unless its work is still to come
-    // ([pending]) or it started Kestrel's own request that still runs. Only then does its claim go, so a hook's input that
-    // waits is never the owner's.
-    private fun release(event: ConversationEvent, before: ConversationState, step: MachineStep, pending: Set<Long>) {
-        val live = pending + listOfNotNull(step.state.local?.input?.id)
-        val settled = numbers(event, step) + before.pendingInputs.map { it.id } + listOfNotNull(before.local?.input?.id)
+    // The claims' lives (the whole-plan review's M5 and its re-check's R1): every act of the step, every act that the
+    // state named as still to come before it (ConversationState.pendingActs) and the input of the request that ran before
+    // it are settled once the step is over, unless a later step names the act again (pendingActs after the step) or it
+    // started Kestrel's own request that still runs. Only then does its claim go, so a hook's input that waits, or the
+    // hooks' tap on "Continue the goal?"'s card before its ContinueAnswered, is never the owner's.
+    private fun release(event: ConversationEvent, before: ConversationState, step: MachineStep) {
+        val live = step.state.pendingActs + listOfNotNull(step.state.local?.input?.id)
+        val settled = numbers(event, step) + before.pendingActs + listOfNotNull(before.local?.input?.id)
         for (number in settled) if (number !in live) claimed.remove(number)
     }
 

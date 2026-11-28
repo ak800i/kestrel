@@ -210,6 +210,24 @@ class GoalRulesTest : MachineTesting() {
         assertTrue(signal(signal(silence.state, PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).has<ConversationEffect.AskContinueGoal>())
     }
 
+    // Re-check R1 of plan 7G's whole-plan review: a tap on "Continue the goal?"'s card reaches the conversation as the
+    // dialogue's answer and again in the ContinueAnswered that follows, so the state keeps it among the acts still to come
+    // until that step; a lock that withdraws the question drops it, and another question's tap is never kept.
+    @Test
+    fun aCardsTapOnContinueTheGoalStaysPendingUntilItsContinueAnswered() {
+        val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state
+        val answered = step(asked(back, 9, QuestionKind.CONTINUE_GOAL), ConversationEvent.Dialogue(DialogueEvent.Answered(9, ChannelAnswer.Yes, tap = 77L))).state
+        assertEquals(setOf(77L), answered.pendingActs)
+
+        val resumed = step(answered, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 77L))
+        assertTrue(resumed.has<ConversationEffect.ResumePausedGoal>())
+        assertEquals(emptySet<Long>(), resumed.state.pendingActs)
+        assertEquals(emptySet<Long>(), signal(answered, PhoneSignal.LOCKED).state.pendingActs)
+
+        val other = step(asked(acting(), 3, QuestionKind.YES_NO), ConversationEvent.Dialogue(DialogueEvent.Answered(3, ChannelAnswer.Yes, tap = 78L)))
+        assertEquals(emptySet<Long>(), other.state.pendingActs)
+    }
+
     @Test
     fun aLockDuringContinueTheGoalWithdrawsTheQuestionUntilTheNextUnlock() {
         val back = signal(signal(acting(), PhoneSignal.LOCKED).state, PhoneSignal.UNLOCKED).state

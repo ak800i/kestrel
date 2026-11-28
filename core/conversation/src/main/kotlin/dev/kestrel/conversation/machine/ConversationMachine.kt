@@ -261,13 +261,12 @@ class ConversationMachine(private val ids: () -> ConversationId) {
         val snapshot = event.snapshot ?: return done.then { reply(it, run.command, event.sentence) }.then(::closeIfAsked).then { runWaiting(it, now) }
         return done.then { MachineStep(it, listOf(ConversationEffect.OpenSwitched(snapshot))) }.then { current ->
             // A switch runs only without a goal (design 6.4), so the conversation that it leaves has none to end.
-            val opened = current.copy(
+            val opened = current.withoutContinue().copy(
                 id = snapshot.id,
                 openedAtWall = snapshot.openedAtWall,
                 testMode = current.safetyTestMode,
                 continuedAtWall = snapshot.continuedAtWall ?: now,
                 commands = snapshot.records.size,
-                asksContinue = false,
                 quiet = QuietClock.Off,
                 closeAfterWork = false,
             )
@@ -362,7 +361,7 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     // The one way in which a goal leaves the state: its record gets its end and final words first, in the same step, so that
     // a step that also closes the conversation stores the record ended (review of Task 10: I1).
     private fun endGoal(state: ConversationState, goal: GoalState, end: EndReason, answer: String?): MachineStep = MachineStep(
-        state.copy(goal = null, question = null, asksContinue = false, heldWords = null),
+        state.withoutContinue().copy(goal = null, question = null, heldWords = null),
         listOf(ConversationEffect.EndRecord(state.openId, goal.record, end, answer)),
     )
 
@@ -371,13 +370,12 @@ class ConversationMachine(private val ids: () -> ConversationId) {
     private fun close(state: ConversationState, keep: Boolean = true): MachineStep {
         val id = state.id ?: return MachineStep(state)
         check(state.goal == null && state.local == null) { "A conversation closes only after the end of its work was recorded" }
-        val closed = state.copy(
+        val closed = state.withoutContinue().copy(
             id = null,
             openedAtWall = 0,
             testMode = state.safetyTestMode,
             continuedAtWall = null,
             commands = 0,
-            asksContinue = false,
             heldWords = null,
             quiet = QuietClock.Off,
             closeAfterWork = false,

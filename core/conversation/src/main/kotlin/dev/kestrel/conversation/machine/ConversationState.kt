@@ -20,7 +20,9 @@ import dev.kestrel.conversation.model.RecordRef
  * or a switch that runs; [waiting] are the commands and Kestrel's own requests, oldest first, that wait for the goal that
  * "stop" ended or for the local request, and each runs in its turn; [closeAfterWork] closes the conversation once its
  * goal or its local request has ended and its record holds the end, after a change of test mode. [continueAnswer] is the owner's input
- * that answered "Continue the goal?", for the round that it resumes. [voiceOn] is whether Kestrel is on (its listening
+ * that answered "Continue the goal?", for the round that it resumes, and [continueTap] the number of his tap on the
+ * question's card that answered it, which the dialogue's answer gives and the later `ContinueAnswered` names again; both
+ * go with the question ([withoutContinue]). [voiceOn] is whether Kestrel is on (its listening
  * mode is not `OFF`, so the voice can speak a question and hear its answer, also in the paused mode); while it is off, a
  * spoken conversation's questions wait as typed ones do (decision 10 of plan 7B). The engine sets it before it restores.
  * toString prints no words.
@@ -36,6 +38,7 @@ data class ConversationState(
     val question: OpenQuestion? = null,
     val asksContinue: Boolean = false,
     val continueAnswer: OwnerInput? = null,
+    val continueTap: Long? = null,
     val replyChannel: InputChannel = InputChannel.VOICE,
     val voiceOn: Boolean = true,
     val quiet: QuietClock = QuietClock.Off,
@@ -58,6 +61,17 @@ data class ConversationState(
      * starts each one's work, as the `StartGoal`, `ResumeGoal`, `RunLocal` or `SwitchTo` that names it, or drops it.
      */
     val pendingInputs: List<OwnerInput> get() = waiting + listOfNotNull(continueAnswer)
+
+    /**
+     * The numbers of the owner's acts that a later step names again: the ids of [pendingInputs], and [continueTap], the tap
+     * on "Continue the goal?"'s card, which reaches the conversation first as the dialogue's answer and then with the
+     * `ContinueAnswered` that resumes or ends the goal. The debug hooks keep their claim of such an act until that step
+     * (plan 7G); release builds read nothing of it.
+     */
+    val pendingActs: Set<Long> get() = pendingInputs.mapTo(LinkedHashSet()) { it.id } + listOfNotNull(continueTap)
+
+    /** The state without "Continue the goal?": not asked, and no answer or tap held for the round that it would resume. */
+    internal fun withoutContinue(): ConversationState = copy(asksContinue = false, continueAnswer = null, continueTap = null)
 }
 
 /** The open conversation's id: a goal and its records belong to the open conversation only. */

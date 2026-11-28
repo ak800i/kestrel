@@ -24,9 +24,11 @@ import dev.kestrel.conversation.local.LocalOutcome
 import dev.kestrel.conversation.local.LocalRequest
 import dev.kestrel.conversation.machine.ConversationEffect
 import dev.kestrel.conversation.machine.ConversationEvent
+import dev.kestrel.conversation.machine.ConversationMachine
 import dev.kestrel.conversation.machine.ConversationState
 import dev.kestrel.conversation.machine.LocalRun
 import dev.kestrel.conversation.machine.MachineStep
+import dev.kestrel.conversation.machine.OpenQuestion
 import dev.kestrel.conversation.model.ChannelAnswer
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.ConversationSnapshot
@@ -425,20 +427,53 @@ class CommandTagsTest {
     }
 
     // Plan 7G's re-check of round 9 (Important 1): the owner's tap on the card of "Continue the goal?" in a marked
-    // conversation takes its mark, as his spoken "yes" does; the hooks' press does not.
+    // conversation takes its mark, as his spoken "yes" does. The tap reaches the conversation in both of its steps, as the
+    // engine gives it: the dialogue's answer, then ContinueAnswered with the same number.
     @Test
     fun theOwnersTapOnTheCardOfContinueTheGoalTakesTheMark() {
         val gone = mutableListOf<ConversationId>()
         tags.ownerConversation = { gone += it }
-        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"))
 
-        tags.claim(111L)
-        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 111), marked, MachineStep(marked, emptyList()))
-        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = null), marked, MachineStep(marked, emptyList()))
+        answerContinue(InputIds.next())
+
+        assertEquals(listOf(continueAsked.id, continueAsked.id), gone)
+    }
+
+    // Re-check R1 of plan 7G's whole-plan review: the hooks' tap on "Continue the goal?"'s card keeps its claim from the
+    // dialogue's answer until the ContinueAnswered that names the same number one step later (ConversationState.pendingActs),
+    // so the mark stays through both steps; a yes without a tap takes nothing either.
+    @Test
+    fun theHooksTapOnTheCardOfContinueTheGoalStaysTheirsThroughBothOfItsSteps() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val hooks = InputIds.next()
+        tags.claim(hooks)
+
+        answerContinue(hooks)
+        answerContinue(null)
+
         assertEquals(emptyList<ConversationId>(), gone)
+    }
 
-        tags.onConversationStep(ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, tap = 112), marked, MachineStep(marked, emptyList()))
-        assertEquals(listOf(marked.id), gone)
+    // A marked conversation that asks "Continue the goal?" as question 1.
+    private val continueAsked = ConversationState(
+        id = ConversationId("0123456789abcdef0123456789abcdef"),
+        asksContinue = true,
+        question = OpenQuestion(1, QuestionKind.CONTINUE_GOAL),
+    )
+
+    // The answer yes to [continueAsked] as the engine gives it, through the machine's own rules: with a card's tap
+    // [number], the dialogue's answer and then ContinueAnswered with the same number; without one (a spoken or typed yes,
+    // whose input the test leaves out), ContinueAnswered alone.
+    private fun answerContinue(number: Long?) {
+        val machine = ConversationMachine { ConversationId("ab".repeat(16)) }
+        val events = listOfNotNull(number?.let { tap(ChannelAnswer.Yes, it) }, ConversationEvent.ContinueAnswered(ChannelAnswer.Yes, number))
+        var state = continueAsked
+        for (event in events) {
+            val step = machine.next(state, event, 0)
+            tags.onConversationStep(event, state, step)
+            state = step.state
+        }
     }
 
     // The answer of question 1 that a tap on the card over the app gave, with the tap's number [act].

@@ -543,6 +543,7 @@ data class ConversationState(
     val question: OpenQuestion? = null,    // the question that waits for the owner, with its number and kind
     val asksContinue: Boolean = false,     // "Continue the goal?" is asked or about to be
     val continueAnswer: OwnerInput? = null, // the input that answered "Continue the goal?", for the round that it resumes
+    val continueTap: Long? = null,         // the tap on its card that answered it: the dialogue's answer gives it, ContinueAnswered names it again
     val replyChannel: InputChannel = InputChannel.VOICE,
     val voiceOn: Boolean = true,           // Kestrel is on; while it is off, a spoken conversation's questions wait as typed ones do
     val quiet: QuietClock = QuietClock.Off,
@@ -559,7 +560,8 @@ data class ConversationState(
     val settings: ConversationSettings = ConversationSettings(),
     val safetyTestMode: Boolean = true,    // the Safety page's value now, which the next conversation takes
 ) {
-    val pendingInputs: List<OwnerInput>    // the inputs whose work a later step starts or drops: waiting, and continueAnswer; the hooks' tags and claims follow it (plan 7G)
+    val pendingInputs: List<OwnerInput>    // the inputs whose work a later step starts or drops: waiting, and continueAnswer; the hooks' tags follow it (plan 7G)
+    val pendingActs: Set<Long>             // the acts that a later step names again: pendingInputs' ids and continueTap; the hooks' claims follow it (plan 7G)
 }
 
 sealed interface QuietClock {
