@@ -259,8 +259,11 @@
 #                                           answered ... channel=card, or held ... channel=card until=unlock for a Continue
 #                                           pressed on the lock screen, which answers by itself at the unlock within that
 #                                           lock; an error leaves the question open
-#   agent-script -File name.json | -Clear   installs plan 5A's scripted model from files/agent-scripts/name.json in
-#                                           Kestrel's files folder (:tools:eval copies it there), or removes it
+#   agent-script -File name.json [-Check] | -Clear
+#                                           installs plan 5A's scripted model from files/agent-scripts/name.json in
+#                                           Kestrel's files folder (:tools:eval copies it there), or removes it; with
+#                                           -Check (plan 7G) only reads the script by the scripted model's rules and
+#                                           installs nothing: script=valid replies=<n>, or an error that names the fault
 #   agent-state -Tag k                      the task's phase, its open question's kind, Kestrel's work, the hand-over, the
 #                                           category of the open confirmation, and the question's source (question=yes-no,
 #                                           free, pick-number, screenshot, limit, switch, delete-history, continue-goal or
@@ -457,6 +460,7 @@ param(
     [ValidatePattern('^\d+/\d+/\d+$')][string]$Limits,
     [ValidateSet('voice', 'text', 'card')][string]$Channel,
     [switch]$HandOver,
+    [switch]$Check,
     [switch]$PrintCall
 )
 $ErrorActionPreference = 'Stop'
@@ -489,6 +493,8 @@ if ($Command -eq 'conversation-type' -and -not $Tag -and ($Model -or $Live -or $
 if ($HandOver -and -not ($Command -eq 'voice-task' -and $Seconds -gt 0 -and $Reply)) { throw '-HandOver needs voice-task -Seconds and -Reply.' }
 if ($Do -and $Command -notin @('conversation-control', 'goal-control')) { throw '-Do needs conversation-control or goal-control.' }
 if ($Channel -and $Command -ne 'agent-answer') { throw '-Channel needs agent-answer.' }
+# agent-script's check reads the script that -File names, and installs nothing.
+if ($Check -and -not ($Command -eq 'agent-script' -and $File -and -not $Clear)) { throw '-Check needs agent-script -File, without -Clear.' }
 if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { $_ }).Count -ne 1) {
     throw 'clipboard needs exactly one of -Save, -Restore and -Clear.'
 }
@@ -585,6 +591,7 @@ if ($Do) { $extras += "--es do $($Do.ToLowerInvariant())" }
 if ($Limits) { $extras += "--es limits $Limits" }
 if ($Channel) { $extras += "--es channel $($Channel.ToLowerInvariant())" }
 if ($HandOver) { $extras += '--ez handover true' }
+if ($Check) { $extras += '--ez check true' }
 
 $hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
 $broadcast = (@("am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction") + $extras) -join ' '

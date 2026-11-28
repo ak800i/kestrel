@@ -46,16 +46,16 @@
 #             -Reboot, the check first waits until 2 minutes have passed since the restart check's crash. The holders
 #             of the role and the settings assistant, voice_interaction_service and voice_recognition_service are put
 #             back afterwards.
-#   reboot    with -Reboot: listening comes back after a reboot. On a phone, the script runs 'adb reboot'. On an emulator,
-#             'adb reboot' has crashed or frozen this computer's emulator in about half of the runs, also soon after a
-#             cold boot, so the script instead closes it through Stop-KestrelEmulator ('sync' in Android, then 'adb
-#             emu kill', and the wait until its qemu process has ended), and starts it again with
-#             scripts\start-emulator.ps1 -ColdBoot, which must give it the same serial and Kestrel's APK. For Kestrel, both end its process with the device and connect its accessibility service after
-#             the start. Start a run with -Reboot on an emulator from a cold boot too: run
-#             scripts\cold-boot.ps1 -Serial $serial first. When the
-#             device does not come back ('adb reboot' or 'adb emu kill' has not returned within its limit, or the device
-#             does not answer within 5 minutes), the script puts nothing back on it: it lists what is left with the
-#             commands that put it back by hand, and ends with exit code 1.
+#   reboot    with -Reboot: listening comes back after a reboot. On a phone, the script runs 'adb reboot'. On an
+#             emulator, 'adb reboot' has crashed or frozen this computer's emulator in about half of the runs, also soon
+#             after a cold boot, so the script instead closes it through Stop-KestrelEmulator ('sync' in Android, then
+#             'adb emu kill', and the wait until its qemu process has ended), and starts it again with
+#             scripts\start-emulator.ps1 -ColdBoot, which must give it the same serial and Kestrel's APK. For Kestrel,
+#             both end its process with the device and connect its accessibility service after the start. Start a run
+#             with -Reboot on an emulator from a cold boot too: run scripts\cold-boot.ps1 -Serial $serial first. When
+#             the device does not come back ('adb reboot' or 'adb emu kill' has not returned within its limit, or the
+#             device does not answer within 5 minutes), the script puts nothing back on it: it lists what is left with
+#             the commands that put it back by hand, and ends with exit code 1.
 # Kestrel is in the background for each check, and it listens with its own microphone. Every check except the settings
 # check also checks in 'dumpsys audio' that Android did not silence Kestrel's recording. The script reads Kestrel's state
 # with 'scripts\hook.ps1 voice-state', which never contains what Kestrel heard, and prints one line for each check that

@@ -217,4 +217,25 @@ Describe 'hook.ps1' {
         $exit | Should -Be 0
         $output | Should -BeExactly 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_LIVE --ez on false'
     }
+
+    # The whole-plan review of plan 7G, M4: agent-script's check, which reads a script and installs nothing.
+    It 'sends agent-script -File -Check as the hook''s check and refuses -Check without -File, with -Clear or with another command' {
+        $hook = Join-Path $PSScriptRoot '..\hook.ps1'
+        $ErrorActionPreference = 'Continue'
+
+        # -PrintCall ends the hook before its device check, which would start adb's server.
+        $check = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-script -File task.json -Check -PrintCall 2>&1) -join "`n"
+        $checkExit = $LASTEXITCODE
+        $noFile = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-script -Check 2>&1) -join "`n"
+        $noFileExit = $LASTEXITCODE
+        $clear = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-script -File task.json -Check -Clear 2>&1) -join "`n"
+        $elsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-state -Tag t1 -Check 2>&1) -join "`n"
+
+        $checkExit | Should -Be 0
+        $check | Should -BeExactly "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_SCRIPT --es file 'task.json' --ez check true"
+        $noFileExit | Should -Not -Be 0
+        $noFile | Should -BeLike '*-Check needs agent-script -File, without -Clear.*'
+        $clear | Should -BeLike '*-Check needs agent-script -File, without -Clear.*'
+        $elsewhere | Should -BeLike '*-Check needs agent-script -File, without -Clear.*'
+    }
 }
