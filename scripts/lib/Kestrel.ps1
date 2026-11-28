@@ -683,6 +683,20 @@ function Test-KestrelApk([string]$Serial) {
 # kestrel-api37, and a large install leaves more to write.
 $EmulatorSyncSeconds = 120
 
+# The one exception to closing kestrel-api37 through Stop-KestrelEmulator, as README and AGENTS.md give it: a
+# kestrel-api37 that does not answer 'adb shell', so that the sync cannot run. Only the operator closes it, with
+# 'emu kill' alone; an agent stops and reports it. That close can lose what Android had not written yet, such as the
+# last install, so the operator checks Kestrel's APK, the Google accounts and Kestrel's profile after the boot, and
+# decides whether to install Kestrel again. Ends without a full stop, as the reasons that hold it do.
+function Get-UnansweredEmulatorAdvice([string]$Serial) {
+    $adb = (Get-Adb) -replace "'", "''"
+    "If kestrel-api37 does not answer 'adb shell', only the operator closes it, with & '$adb' -s $Serial emu kill, and an agent " +
+        "stops and reports it. Then wait until its qemu process has ended, start it with scripts\start-emulator.ps1 -ColdBoot, and " +
+        "check & '$adb' -s $Serial shell pm path dev.kestrel (it must name a base.apk), the Google accounts and Kestrel's profile, " +
+        'because that close can lose what Android had not written yet, such as the last install; whether to install Kestrel ' +
+        'again with scripts\install.ps1 is the operator''s decision'
+}
+
 # Closes the emulator kestrel-api37 on $Serial: every script closes it only through this function, and
 # scripts\stop-emulator.ps1 is the operator's way to it. It closes nothing unless the console names kestrel-api37.
 # It first runs 'sync' in Android, which writes every file that Android still holds in its memory to the emulator's disk
@@ -694,12 +708,13 @@ $EmulatorSyncSeconds = 120
 # reboot ('adb reboot') has crashed or frozen this computer's emulator in about half of the runs
 # (scripts\listen-check.ps1), so its power-off ('reboot -p'), which takes the same way through Android, is not used
 # either. When the sync fails or does not return, the emulator stays open, because closing it could lose the owner's
-# data. Returns nothing when the emulator's process has ended, and otherwise why not.
+# data, and the reason gives the one exception to the rule (Get-UnansweredEmulatorAdvice). Returns nothing when the
+# emulator's process has ended, and otherwise why not.
 function Stop-KestrelEmulator([string]$Serial) {
     if (-not (Test-KestrelEmulatorConsole -Serial $Serial)) { return "$Serial is not the emulator kestrel-api37, so it was not closed" }
     $adb = Get-Adb
     $sync = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'shell', 'sync' -TimeoutSeconds $EmulatorSyncSeconds
-    $unsynced = 'so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost'
+    $unsynced = "so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost. $(Get-UnansweredEmulatorAdvice -Serial $Serial)"
     if (-not $sync.Completed) { return "'adb shell sync' did not return within $EmulatorSyncSeconds s, $unsynced" }
     if ($sync.ExitCode -ne 0) { return "'adb shell sync' ended with exit code $($sync.ExitCode), $unsynced" }
     $kill = Invoke-TimedProcess -FilePath $adb -ArgumentList '-s', $Serial, 'emu', 'kill' -TimeoutSeconds 30

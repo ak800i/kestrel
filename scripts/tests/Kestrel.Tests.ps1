@@ -892,12 +892,16 @@ Describe 'Stopping kestrel-api37 after Android wrote its disk' {
         @($calls) | Should -BeExactly @('emu avd name', 'shell sync', 'emu kill')
     }
 
-    It 'leaves the emulator open when sync fails or does not return' {
+    It 'leaves the emulator open when sync fails or does not return, and names the operator''s close of an emulator that does not answer' {
         $device.Sync = [pscustomobject]@{ Completed = $true; ExitCode = 1; Output = '' }
-        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' ended with exit code 1, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost"
+        $advice = "If kestrel-api37 does not answer 'adb shell', only the operator closes it, with & 'adb' -s emulator-5554 emu kill, and an agent stops and reports it. " +
+            "Then wait until its qemu process has ended, start it with scripts\start-emulator.ps1 -ColdBoot, and check & 'adb' -s emulator-5554 shell pm path dev.kestrel " +
+            "(it must name a base.apk), the Google accounts and Kestrel's profile, because that close can lose what Android had not written yet, such as the last install; " +
+            "whether to install Kestrel again with scripts\install.ps1 is the operator's decision"
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' ended with exit code 1, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost. $advice"
 
         $device.Sync = [pscustomobject]@{ Completed = $false; ExitCode = $null; Output = '' }
-        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' did not return within 120 s, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost"
+        Stop-KestrelEmulator -Serial 'emulator-5554' | Should -BeExactly "'adb shell sync' did not return within 120 s, so kestrel-api37 was not closed, because what Android has not written to its disk yet would be lost. $advice"
 
         @($calls) | Should -Not -Contain 'emu kill'
     }
