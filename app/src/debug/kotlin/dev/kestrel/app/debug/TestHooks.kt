@@ -1,10 +1,9 @@
 package dev.kestrel.app.debug
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.content.pm.LauncherApps
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.UserManager
@@ -24,57 +23,56 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
 
-/** A test hook's answer, which becomes the broadcast's result code and data. */
+/** A test hook's answer: [OK] and the answer's text, or [FAILED] and the reason; [TestHookProvider] returns it to the caller. */
 internal data class HookReply(val code: Int, val text: String) {
     companion object {
-        /** The result code of a command that failed. A command that never ran keeps the initial code, 0. */
+        const val OK = 0
         const val FAILED = 1
 
-        fun ok(text: String) = HookReply(Activity.RESULT_OK, text)
+        fun ok(text: String) = HookReply(OK, text)
 
         fun failed(message: String) = HookReply(FAILED, "error: $message")
     }
 }
 
 /**
- * Runs the test-hook commands (design spec, section 16.1). The intent's action is [ACTION_PREFIX] followed by the
- * command, and its extras are the arguments; `scripts/hook.ps1` lists them.
+ * Runs the test-hook commands (design spec, section 16.1): the command, such as `GOAL_CONTROL`, with its arguments in
+ * [extras], as [TestHookProvider] passes them on; `scripts/hook.ps1` lists them.
  */
 internal class TestHooks(private val graph: AppGraph, private val context: Context) {
     private val cacheDir: File get() = context.cacheDir
 
-    suspend fun run(intent: Intent): HookReply = try {
-        HookReply.ok(answer(intent))
+    suspend fun run(command: String, extras: Bundle): HookReply = try {
+        HookReply.ok(answer(command, extras))
     } catch (error: HookError) {
         HookReply.failed(error.message)
     }
 
-    private suspend fun answer(intent: Intent): String {
-        val command = intent.action.orEmpty().removePrefix(ACTION_PREFIX)
+    private suspend fun answer(command: String, extras: Bundle): String {
         if (command == "STATE") return state()
-        if (command == "TEST_MODE") return testMode(intent)
-        if (command == "CRASH") return crash(intent.requiredText())
-        if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, intent)
-        if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, intent)
-        if (command in ExpectHooks.COMMANDS) return ExpectHooks(graph).run(command, intent)
-        if (command in ScreenHooks.COMMANDS) return ScreenHooks(graph).run(command, intent)
-        if (command in EvalHooks.COMMANDS) return EvalHooks(graph, context).run(command, intent)
-        if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, intent)
-        if (command in ProviderHooks.COMMANDS) return ProviderHooks(graph).run(command, intent)
-        if (command in AgentHooks.COMMANDS) return AgentHooks(graph, context).run(command, intent)
-        if (command in GoalServiceHooks.COMMANDS) return GoalServiceHooks(graph, context).run(command, intent)
-        if (command in ConversationHooks.COMMANDS) return ConversationHooks(graph).run(command, intent)
+        if (command == "TEST_MODE") return testMode(extras)
+        if (command == "CRASH") return crash(extras.requiredText())
+        if (command in SpikeHooks.COMMANDS) return SpikeHooks(context, graph).run(command, extras)
+        if (command in VoiceHooks.COMMANDS) return VoiceHooks(graph).run(command, extras)
+        if (command in ExpectHooks.COMMANDS) return ExpectHooks(graph).run(command, extras)
+        if (command in ScreenHooks.COMMANDS) return ScreenHooks(graph).run(command, extras)
+        if (command in EvalHooks.COMMANDS) return EvalHooks(graph, context).run(command, extras)
+        if (command in SessionHooks.COMMANDS) return SessionHooks(graph, context).run(command, extras)
+        if (command in ProviderHooks.COMMANDS) return ProviderHooks(graph).run(command, extras)
+        if (command in AgentHooks.COMMANDS) return AgentHooks(graph, context).run(command, extras)
+        if (command in GoalServiceHooks.COMMANDS) return GoalServiceHooks(graph, context).run(command, extras)
+        if (command in ConversationHooks.COMMANDS) return ConversationHooks(graph).run(command, extras)
         if (command == "PROFILES") return profiles()
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val actions = session.actions
         return when (command) {
             "SNAPSHOT" -> save(ScreenJson.encode(session.snapshots.current().snapshot))
-            "TAP" -> done(tap(session, intent))
-            "TYPE" -> done(actions.setText(target(session, intent), intent.requiredText()))
-            "SCROLL" -> done(actions.scroll(intent.choice<ScrollDirection>(EXTRA_DIRECTION), optionalTarget(session, intent)))
-            "GLOBAL" -> done(actions.global(intent.choice<GlobalAction>(EXTRA_ACTION)))
+            "TAP" -> done(tap(session, extras))
+            "TYPE" -> done(actions.setText(target(session, extras), extras.requiredText()))
+            "SCROLL" -> done(actions.scroll(extras.choice<ScrollDirection>(EXTRA_DIRECTION), optionalTarget(session, extras)))
+            "GLOBAL" -> done(actions.global(extras.choice<GlobalAction>(EXTRA_ACTION)))
             "OVERLAY" -> {
-                overlay(session, intent)
+                overlay(session, extras)
                 state()
             }
             // How many snapshots the screen layer built and how long they took, for the A71 session (design spec, 8.3).
@@ -107,7 +105,7 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
 
     /**
      * Writes a snapshot to Kestrel's cache and answers with the file's path in Kestrel's data folder, because a
-     * broadcast's answer must stay under Android's limit of about 1 MB. `scripts/hook.ps1` reads the file with
+     * call's answer travels in one binder transaction, which must stay under Android's limit of about 1 MB. `scripts/hook.ps1` reads the file with
      * `run-as` and deletes it.
      */
     private suspend fun save(json: String): String = withContext(Dispatchers.IO) {
@@ -148,33 +146,33 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
             "none"
         }
 
-    private suspend fun testMode(intent: Intent): String {
-        if (!intent.hasExtra(EXTRA_ON)) throw HookError("add --ez on true or --ez on false")
-        val on = intent.getBooleanExtra(EXTRA_ON, true)
+    private suspend fun testMode(extras: Bundle): String {
+        if (!extras.containsKey(EXTRA_ON)) throw HookError("add --ez on true or --ez on false")
+        val on = extras.getBoolean(EXTRA_ON, true)
         graph.settings.set(SettingKeys.SAFETY, graph.settings.get(SettingKeys.SAFETY).copy(testMode = on))
         return "testMode=${onOff(on)}"
     }
 
-    private suspend fun tap(session: ScreenSession, intent: Intent): ActionResult {
-        val long = intent.getBooleanExtra(EXTRA_LONG, false)
-        if (intent.hasExtra(EXTRA_X) || intent.hasExtra(EXTRA_Y)) {
-            if (!intent.hasExtra(EXTRA_X) || !intent.hasExtra(EXTRA_Y)) throw HookError("add both --ei x and --ei y")
-            val x = intent.getIntExtra(EXTRA_X, 0)
-            val y = intent.getIntExtra(EXTRA_Y, 0)
+    private suspend fun tap(session: ScreenSession, extras: Bundle): ActionResult {
+        val long = extras.getBoolean(EXTRA_LONG, false)
+        if (extras.containsKey(EXTRA_X) || extras.containsKey(EXTRA_Y)) {
+            if (!extras.containsKey(EXTRA_X) || !extras.containsKey(EXTRA_Y)) throw HookError("add both --ei x and --ei y")
+            val x = extras.getInt(EXTRA_X, 0)
+            val y = extras.getInt(EXTRA_Y, 0)
             return if (long) session.actions.longPressAt(x, y) else session.actions.tapAt(x, y)
         }
-        val key = target(session, intent)
+        val key = target(session, extras)
         return if (long) session.actions.longPress(key) else session.actions.tap(key)
     }
 
-    private suspend fun overlay(session: ScreenSession, intent: Intent) {
-        when (intent.getStringExtra(EXTRA_SHOW)) {
+    private suspend fun overlay(session: ScreenSession, extras: Bundle) {
+        when (extras.getString(EXTRA_SHOW)) {
             "numbers" -> session.showNumbers(NumbersMode.ALL)
             "unlabeled" -> session.showNumbers(NumbersMode.UNLABELED)
             "labels" -> session.showLabels()
             "grid" -> session.showGrid()
             // Through the bar's one writer, so that it knows whose text the bar shows (plan 7F).
-            "feedback" -> graph.feedbackBar.show(intent.requiredText())
+            "feedback" -> graph.feedbackBar.show(extras.requiredText())
             "none" -> {
                 session.hideNumbers()
                 session.hideLabels()
@@ -185,13 +183,13 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
     }
 
     /** The element that the extras name: by its key, or by its number while the numbers show. */
-    private suspend fun target(session: ScreenSession, intent: Intent): String =
-        optionalTarget(session, intent) ?: throw HookError("add --es key <element key> or --ei number <number>")
+    private suspend fun target(session: ScreenSession, extras: Bundle): String =
+        optionalTarget(session, extras) ?: throw HookError("add --es key <element key> or --ei number <number>")
 
-    private suspend fun optionalTarget(session: ScreenSession, intent: Intent): String? {
-        intent.getStringExtra(EXTRA_KEY)?.let { return it }
-        if (!intent.hasExtra(EXTRA_NUMBER)) return null
-        val number = intent.getIntExtra(EXTRA_NUMBER, 0)
+    private suspend fun optionalTarget(session: ScreenSession, extras: Bundle): String? {
+        extras.getString(EXTRA_KEY)?.let { return it }
+        if (!extras.containsKey(EXTRA_NUMBER)) return null
+        val number = extras.getInt(EXTRA_NUMBER, 0)
         val badges = withContext(Dispatchers.Main) { session.numberBadges }
         return badges.firstOrNull { it.number == number }?.key ?: throw HookError("no element shows the number $number")
     }
@@ -201,10 +199,10 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
         is ActionResult.Failed -> throw HookError(result.reason)
     }
 
-    private fun Intent.requiredText(): String = getStringExtra(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
+    private fun Bundle.requiredText(): String = getString(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
 
-    private inline fun <reified T : Enum<T>> Intent.choice(name: String): T {
-        val value = getStringExtra(name)?.replace('-', '_')
+    private inline fun <reified T : Enum<T>> Bundle.choice(name: String): T {
+        val value = getString(name)?.replace('-', '_')
         return enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) }
             ?: throw HookError("add --es $name with one of ${enumValues<T>().joinToString { it.name.lowercase() }}")
     }
@@ -215,7 +213,6 @@ internal class TestHooks(private val graph: AppGraph, private val context: Conte
     class HookError(override val message: String) : Exception(message)
 
     companion object {
-        const val ACTION_PREFIX = "dev.kestrel.hook."
         const val SNAPSHOT_FILE = "hook-snapshot.json"
         private const val CRASH_DELAY_MILLIS = 500L
         private const val EXTRA_KEY = "key"

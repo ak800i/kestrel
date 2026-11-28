@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.commands.TextFields
 import dev.kestrel.app.debug.TestHooks.HookError
@@ -17,36 +17,36 @@ import kotlinx.coroutines.withContext
  * section 5).
  */
 internal class ScreenHooks(private val graph: AppGraph) {
-    suspend fun run(command: String, intent: Intent): String {
+    suspend fun run(command: String, extras: Bundle): String {
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         return when (command) {
-            "SCREEN_HAS" -> screenHas(session, intent)
-            "FIELD" -> field(session, intent)
+            "SCREEN_HAS" -> screenHas(session, extras)
+            "FIELD" -> field(session, extras)
             else -> throw HookError("unknown command '$command'")
         }
     }
 
-    private suspend fun screenHas(session: ScreenSession, intent: Intent): String {
+    private suspend fun screenHas(session: ScreenSession, extras: Bundle): String {
         val states = try {
-            ScreenQuery.states(intent.getStringExtra(EXTRA_STATE))
+            ScreenQuery.states(extras.getString(EXTRA_STATE))
         } catch (e: IllegalArgumentException) {
             throw HookError("add --es state with some of ${ScreenQuery.STATES.joinToString()}")
         }
         val filter = ScreenQuery.Filter(
-            packageName = intent.getStringExtra(EXTRA_PACKAGE),
-            viewId = intent.getStringExtra(EXTRA_VIEW_ID),
-            label = intent.getStringExtra(EXTRA_LABEL),
-            contains = intent.getStringExtra(EXTRA_CONTAINS),
-            className = intent.getStringExtra(EXTRA_CLASS),
+            packageName = extras.getString(EXTRA_PACKAGE),
+            viewId = extras.getString(EXTRA_VIEW_ID),
+            label = extras.getString(EXTRA_LABEL),
+            contains = extras.getString(EXTRA_CONTAINS),
+            className = extras.getString(EXTRA_CLASS),
             states = states,
         )
-        val template = intent.getStringExtra(EXTRA_TEMPLATE)
+        val template = extras.getString(EXTRA_TEMPLATE)
         if (template != null && LABEL !in template) throw HookError("add $LABEL to the template")
         val snapshot = session.snapshots.current().snapshot
         val badges = withContext(Dispatchers.Main) { session.numberBadges }
         val answer = ScreenQuery.answer(snapshot, badges, filter)
         if (template == null) return answer
-        val tag = intent.getStringExtra(EXTRA_TAG) ?: throw HookError("add --es tag <tag> to send the template")
+        val tag = extras.getString(EXTRA_TAG) ?: throw HookError("add --es tag <tag> to send the template")
         // The name stays on the phone: it goes only into the transcript that Kestrel hears.
         val name = ScreenQuery.matches(snapshot, filter).firstOrNull()?.let { ScreenQuery.firstName(it) }
             ?: throw HookError("nothing on the screen matches")
@@ -59,9 +59,9 @@ internal class ScreenHooks(private val graph: AppGraph) {
     }
 
     // The focused text field, or the first reachable one whose view ID contains --es viewId, compared with --es expected.
-    private suspend fun field(session: ScreenSession, intent: Intent): String {
-        val expected = intent.getStringExtra(EXTRA_EXPECTED) ?: throw HookError("add --es expected <text>")
-        val viewId = intent.getStringExtra(EXTRA_VIEW_ID)
+    private suspend fun field(session: ScreenSession, extras: Bundle): String {
+        val expected = extras.getString(EXTRA_EXPECTED) ?: throw HookError("add --es expected <text>")
+        val viewId = extras.getString(EXTRA_VIEW_ID)
         val snapshot = session.snapshots.current().snapshot
         val element = if (viewId == null) {
             TextFields.focused(snapshot)

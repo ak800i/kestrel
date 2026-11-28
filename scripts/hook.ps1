@@ -1,5 +1,6 @@
 # Sends a test-hook command to Kestrel's debug build on a test device and prints the answer (design spec,
-# section 16.1). Commands and their options:
+# section 16.1). The command goes as 'content call' to Kestrel's TestHookProvider (scripts\lib\HookCall.ps1), and each
+# option as one of its typed extras. Commands and their options:
 #   state                                   whether the screen layer runs, test mode and the overlays, and (plan 4D) the
 #                                           grid's size, the magnification and whether the keyboard shows; and the
 #                                           build's commit=<commit> dirty=<0|1>, unknown for a build without them
@@ -353,7 +354,7 @@
 #                                           their conversation, or their request while none is open, as Kestrel checks
 #                                           their mark (stop=sent), and leaves the owner's (stop=none)
 # -Number picks an element by the number that the numbers overlay shows on it.
-# -PrintCall checks the arguments as every call does, then prints the broadcast that the hook would send and stops before
+# -PrintCall checks the arguments as every call does, then prints the content call that the hook would run and stops before
 # it looks for the device, so a test can see that a valid call passes every argument check; the checks that need the
 # device (clipboard -Clear on kestrel-api37, provider-delete) do not run.
 # Example: scripts\hook.ps1 -Serial emulator-5554 tap -Number 3
@@ -502,101 +503,98 @@ if ($Command -eq 'clipboard' -and @(@($Save, $Restore, $Clear) | Where-Object { 
 $clipboardClearRefused = "clipboard -Clear was refused on ${Serial}: only the emulator kestrel-api37 may empty the clipboard."
 if ($Command -eq 'clipboard' -and $Clear -and $Serial -notlike 'emulator-*') { throw $clipboardClearRefused }
 
-# The device's shell reads the command line, so every text value is quoted for it.
-function ConvertTo-ShellText([string]$Value) { "'" + $Value.Replace("'", "'\''") + "'" }
+. "$PSScriptRoot\lib\HookCall.ps1"
 
 $extras = @()
-if ($Key) { $extras += "--es key $(ConvertTo-ShellText $Key)" }
-if ($PSBoundParameters.ContainsKey('Number')) { $extras += "--ei number $Number" }
-if ($X -ge 0) { $extras += "--ei x $X" }
-if ($Y -ge 0) { $extras += "--ei y $Y" }
-if ($Long) { $extras += '--ez long true' }
-if ($PSBoundParameters.ContainsKey('Text')) { $extras += "--es text $(ConvertTo-ShellText $Text)" }
-if ($Direction) { $extras += "--es direction $(ConvertTo-ShellText $Direction)" }
-if ($Action) { $extras += "--es action $(ConvertTo-ShellText $Action)" }
-if ($Show) { $extras += "--es show $(ConvertTo-ShellText $Show)" }
-if ($On) { $extras += "--ez on $On" }
-if ($Source) { $extras += "--es source $(ConvertTo-ShellText $Source)" }
-if ($DelaySeconds -ge 0) { $extras += "--ei delay $DelaySeconds" }
-if ($Seconds -gt 0) { $extras += "--ei seconds $Seconds" }
-if ($Clear) { $extras += '--ez clear true' }
-if ($Create) { $extras += "--es create $(ConvertTo-ShellText $Create)" }
+if ($Key) { $extras += Format-HookExtra key s $Key }
+if ($PSBoundParameters.ContainsKey('Number')) { $extras += Format-HookExtra number i $Number }
+if ($X -ge 0) { $extras += Format-HookExtra x i $X }
+if ($Y -ge 0) { $extras += Format-HookExtra y i $Y }
+if ($Long) { $extras += Format-HookExtra long b true }
+if ($PSBoundParameters.ContainsKey('Text')) { $extras += Format-HookExtra text s $Text }
+if ($Direction) { $extras += Format-HookExtra direction s $Direction }
+if ($Action) { $extras += Format-HookExtra action s $Action }
+if ($Show) { $extras += Format-HookExtra show s $Show }
+if ($On) { $extras += Format-HookExtra on b $On }
+if ($Source) { $extras += Format-HookExtra source s $Source }
+if ($DelaySeconds -ge 0) { $extras += Format-HookExtra delay i $DelaySeconds }
+if ($Seconds -gt 0) { $extras += Format-HookExtra seconds i $Seconds }
+if ($Clear) { $extras += Format-HookExtra clear b true }
+if ($Create) { $extras += Format-HookExtra create s $Create }
 # ValidateSet accepts any letter case, and the hook only lower case.
-if ($Send) { $extras += "--es event $(ConvertTo-ShellText $Send.ToLowerInvariant())" }
-if ($Named) { $extras += '--ez named true' }
+if ($Send) { $extras += Format-HookExtra event s ($Send.ToLowerInvariant()) }
+if ($Named) { $extras += Format-HookExtra named b true }
 # In the invariant culture, whose decimal separator is always '.'.
-if ($Boost -ge 0) { $extras += "--ef boost $($Boost.ToString([Globalization.CultureInfo]::InvariantCulture))" }
-if ($Threshold -ge 0) { $extras += "--ef threshold $($Threshold.ToString([Globalization.CultureInfo]::InvariantCulture))" }
-if ($File) { $extras += "--es file $(ConvertTo-ShellText $File)" }
-if ($Voice) { $extras += "--es voice $(ConvertTo-ShellText $Voice.ToLowerInvariant())" }
-if ($PSBoundParameters.ContainsKey('Expected')) { $extras += "--es expected $(ConvertTo-ShellText $Expected)" }
-if ($Kind) { $extras += "--es kind $(ConvertTo-ShellText $Kind)" }
-if ($Spotted) { $extras += '--ez spotted true' }
-if ($AfterName) { $extras += '--ez afterName true' }
-if ($Reveal) { $extras += '--ez reveal true' }
-if ($Load) { $extras += '--ez load true' }
-if ($Close) { $extras += '--ez close true' }
-if ($Result) { $extras += '--ez result true' }
-if ($Reply) { $extras += "--es reply $(ConvertTo-ShellText $Reply)" }
-if ($NoBoost) { $extras += '--ez noBoost true' }
-if ($Group) { $extras += "--es group $(ConvertTo-ShellText $Group)" }
-if ($PSBoundParameters.ContainsKey('Labels')) { $extras += "--es labels $(ConvertTo-ShellText $Labels)" }
-if ($PSBoundParameters.ContainsKey('Contacts')) { $extras += "--es contacts $(ConvertTo-ShellText $Contacts)" }
-if ($NoLabels) { $extras += '--ez noLabels true' }
-if ($ScreenLabels) { $extras += '--ez screenLabels true' }
-if ($Case) { $extras += "--es case $(ConvertTo-ShellText $Case.ToLowerInvariant())" }
-if ($Model) { $extras += "--es model $(ConvertTo-ShellText $Model)" }
-if ($Headers) { $extras += "--es headers $(ConvertTo-ShellText $Headers)" }
-if ($MessagesPath) { $extras += "--es messagesPath $(ConvertTo-ShellText $MessagesPath)" }
-# ValidateSet accepts any letter case, and Android's --ez only lower case.
-if ($RequireVerbs) { $extras += "--ez requireVerbs $($RequireVerbs.ToLowerInvariant())" }
-if ($EarbudMicrophone) { $extras += "--ez earbudMicrophone $($EarbudMicrophone.ToLowerInvariant())" }
-if ($Tag) { $extras += "--es tag $(ConvertTo-ShellText $Tag)" }
-if ($Live) { $extras += '--ez live true' }
-if ($Quiet) { $extras += '--ez quiet true' }
-if ($NoRun) { $extras += '--ez noRun true' }
-if ($Package) { $extras += "--es package $(ConvertTo-ShellText $Package)" }
-if ($ViewId) { $extras += "--es viewId $(ConvertTo-ShellText $ViewId)" }
-if ($PSBoundParameters.ContainsKey('Label')) { $extras += "--es label $(ConvertTo-ShellText $Label)" }
-if ($PSBoundParameters.ContainsKey('Contains')) { $extras += "--es contains $(ConvertTo-ShellText $Contains)" }
-if ($ClassName) { $extras += "--es class $(ConvertTo-ShellText $ClassName)" }
-if ($State) { $extras += "--es state $(ConvertTo-ShellText $State)" }
-if ($Template) { $extras += "--es template $(ConvertTo-ShellText $Template)" }
-if ($Save) { $extras += '--ez save true' }
-if ($Restore) { $extras += '--ez restore true' }
+if ($Boost -ge 0) { $extras += Format-HookExtra boost f ($Boost.ToString([Globalization.CultureInfo]::InvariantCulture)) }
+if ($Threshold -ge 0) { $extras += Format-HookExtra threshold f ($Threshold.ToString([Globalization.CultureInfo]::InvariantCulture)) }
+if ($File) { $extras += Format-HookExtra file s $File }
+if ($Voice) { $extras += Format-HookExtra voice s ($Voice.ToLowerInvariant()) }
+if ($PSBoundParameters.ContainsKey('Expected')) { $extras += Format-HookExtra expected s $Expected }
+if ($Kind) { $extras += Format-HookExtra kind s $Kind }
+if ($Spotted) { $extras += Format-HookExtra spotted b true }
+if ($AfterName) { $extras += Format-HookExtra afterName b true }
+if ($Reveal) { $extras += Format-HookExtra reveal b true }
+if ($Load) { $extras += Format-HookExtra load b true }
+if ($Close) { $extras += Format-HookExtra close b true }
+if ($Result) { $extras += Format-HookExtra result b true }
+if ($Reply) { $extras += Format-HookExtra reply s $Reply }
+if ($NoBoost) { $extras += Format-HookExtra noBoost b true }
+if ($Group) { $extras += Format-HookExtra group s $Group }
+if ($PSBoundParameters.ContainsKey('Labels')) { $extras += Format-HookExtra labels s $Labels }
+if ($PSBoundParameters.ContainsKey('Contacts')) { $extras += Format-HookExtra contacts s $Contacts }
+if ($NoLabels) { $extras += Format-HookExtra noLabels b true }
+if ($ScreenLabels) { $extras += Format-HookExtra screenLabels b true }
+if ($Case) { $extras += Format-HookExtra case s ($Case.ToLowerInvariant()) }
+if ($Model) { $extras += Format-HookExtra model s $Model }
+if ($Headers) { $extras += Format-HookExtra headers s $Headers }
+if ($MessagesPath) { $extras += Format-HookExtra messagesPath s $MessagesPath }
+if ($RequireVerbs) { $extras += Format-HookExtra requireVerbs b $RequireVerbs }
+if ($EarbudMicrophone) { $extras += Format-HookExtra earbudMicrophone b $EarbudMicrophone }
+if ($Tag) { $extras += Format-HookExtra tag s $Tag }
+if ($Live) { $extras += Format-HookExtra live b true }
+if ($Quiet) { $extras += Format-HookExtra quiet b true }
+if ($NoRun) { $extras += Format-HookExtra noRun b true }
+if ($Package) { $extras += Format-HookExtra package s $Package }
+if ($ViewId) { $extras += Format-HookExtra viewId s $ViewId }
+if ($PSBoundParameters.ContainsKey('Label')) { $extras += Format-HookExtra label s $Label }
+if ($PSBoundParameters.ContainsKey('Contains')) { $extras += Format-HookExtra contains s $Contains }
+if ($ClassName) { $extras += Format-HookExtra class s $ClassName }
+if ($State) { $extras += Format-HookExtra state s $State }
+if ($Template) { $extras += Format-HookExtra template s $Template }
+if ($Save) { $extras += Format-HookExtra save b true }
+if ($Restore) { $extras += Format-HookExtra restore b true }
 # sub-project 5B: agent extras
-if ($PSBoundParameters.ContainsKey('Marker')) { $extras += "--es marker $(ConvertTo-ShellText $Marker)" }
-if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += "--es recipient $(ConvertTo-ShellText $Recipient)" }
-if ($PSBoundParameters.ContainsKey('Digits')) { $extras += "--es digits $(ConvertTo-ShellText $Digits)" }
-if ($Answer) { $extras += "--es answer $(ConvertTo-ShellText $Answer)" }
+if ($PSBoundParameters.ContainsKey('Marker')) { $extras += Format-HookExtra marker s $Marker }
+if ($PSBoundParameters.ContainsKey('Recipient')) { $extras += Format-HookExtra recipient s $Recipient }
+if ($PSBoundParameters.ContainsKey('Digits')) { $extras += Format-HookExtra digits s $Digits }
+if ($Answer) { $extras += Format-HookExtra answer s $Answer }
 # ValidateSet accepts any letter case, and the hook compares the category's wire name in lower case.
-if ($Confirming) { $extras += "--es confirming $($Confirming.ToLowerInvariant())" }
-if ($Field) { $extras += "--es field $Field" }
+if ($Confirming) { $extras += Format-HookExtra confirming s ($Confirming.ToLowerInvariant()) }
+if ($Field) { $extras += Format-HookExtra field s $Field }
 # ValidateSet accepts any letter case, and the hook takes the rule and the branch in capitals.
-if ($Rule) { $extras += "--es rule $($Rule.ToUpperInvariant())" }
-if ($Branch) { $extras += "--es branch $($Branch.ToUpperInvariant())" }
+if ($Rule) { $extras += Format-HookExtra rule s ($Rule.ToUpperInvariant()) }
+if ($Branch) { $extras += Format-HookExtra branch s ($Branch.ToUpperInvariant()) }
 # These four may be empty, which clears them, so they count whenever they are given.
-if ($PSBoundParameters.ContainsKey('OwnerEmails')) { $extras += "--es ownerEmails $(ConvertTo-ShellText $OwnerEmails)" }
-if ($PSBoundParameters.ContainsKey('ViberSelfChatName')) { $extras += "--es viberSelfChatName $(ConvertTo-ShellText $ViberSelfChatName)" }
-if ($PSBoundParameters.ContainsKey('WhatsappOwnName')) { $extras += "--es whatsappOwnName $(ConvertTo-ShellText $WhatsappOwnName)" }
-if ($PSBoundParameters.ContainsKey('SelfChatAliases')) { $extras += "--es selfChatAliases $(ConvertTo-ShellText $SelfChatAliases)" }
-if ($Add) { $extras += '--ez add true' }
-if ($Remove) { $extras += '--ez remove true' }
-if ($Has) { $extras += '--ez has true' }
-if ($Tool) { $extras += "--es tool $($Tool.ToLowerInvariant())" }
+if ($PSBoundParameters.ContainsKey('OwnerEmails')) { $extras += Format-HookExtra ownerEmails s $OwnerEmails }
+if ($PSBoundParameters.ContainsKey('ViberSelfChatName')) { $extras += Format-HookExtra viberSelfChatName s $ViberSelfChatName }
+if ($PSBoundParameters.ContainsKey('WhatsappOwnName')) { $extras += Format-HookExtra whatsappOwnName s $WhatsappOwnName }
+if ($PSBoundParameters.ContainsKey('SelfChatAliases')) { $extras += Format-HookExtra selfChatAliases s $SelfChatAliases }
+if ($Add) { $extras += Format-HookExtra add b true }
+if ($Remove) { $extras += Format-HookExtra remove b true }
+if ($Has) { $extras += Format-HookExtra has b true }
+if ($Tool) { $extras += Format-HookExtra tool s ($Tool.ToLowerInvariant()) }
 # sub-project 5C: live extras
-if ($Revoke) { $extras += "--es revoke $(ConvertTo-ShellText $Revoke)" }
+if ($Revoke) { $extras += Format-HookExtra revoke s $Revoke }
 # sub-project 7: conversation extras; ValidateSet accepts any letter case, and the hooks only lower case.
-if ($Do) { $extras += "--es do $($Do.ToLowerInvariant())" }
-if ($Limits) { $extras += "--es limits $Limits" }
-if ($Channel) { $extras += "--es channel $($Channel.ToLowerInvariant())" }
-if ($HandOver) { $extras += '--ez handover true' }
-if ($Check) { $extras += '--ez check true' }
+if ($Do) { $extras += Format-HookExtra do s ($Do.ToLowerInvariant()) }
+if ($Limits) { $extras += Format-HookExtra limits s $Limits }
+if ($Channel) { $extras += Format-HookExtra channel s ($Channel.ToLowerInvariant()) }
+if ($HandOver) { $extras += Format-HookExtra handover b true }
+if ($Check) { $extras += Format-HookExtra check b true }
 
-$hookAction = 'dev.kestrel.hook.' + $Command.ToUpperInvariant().Replace('-', '_')
-$broadcast = (@("am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a $hookAction") + $extras) -join ' '
+$call = Format-HookCall -Command $Command -Extras $extras
 if ($PrintCall) {
-    $broadcast
+    $call
     return
 }
 
@@ -619,15 +617,14 @@ function Invoke-Adb {
     }
 }
 
-$output = Invoke-Adb shell $broadcast
-
-$match = [regex]::Match($output, '(?s)Broadcast completed: result=(-?\d+)(?:, data="(.*)")?\s*$')
-if (-not $match.Success) { throw "Unexpected answer from the device:`n$output" }
-$data = $match.Groups[2].Value
-switch ([int]$match.Groups[1].Value) {
-    -1 {
+# content call prints its errors, such as a missing provider, to its error output, which the device's shell joins to the
+# answer, so that ConvertFrom-HookCallOutput can name them.
+$hookAnswer = ConvertFrom-HookCallOutput (Invoke-Adb shell "$call 2>&1")
+$data = $hookAnswer.Text
+switch ($hookAnswer.Code) {
+    0 {
         if ($Command -eq 'snapshot') {
-            # A snapshot can be larger than a broadcast's answer, so Kestrel answers with the path of a file in its own
+            # A snapshot can be larger than a call's answer, so Kestrel answers with the path of a file in its own
             # storage, which only a debug build lets adb read. adb shell passes on the exit code of run-as; adb exec-out
             # would answer with run-as's error text and exit code 0, as if the text were the snapshot. The answer goes into
             # the device's command line, so only the path that Kestrel's hook writes is accepted.
@@ -646,6 +643,6 @@ switch ([int]$match.Groups[1].Value) {
             $data
         }
     }
-    0 { throw 'Kestrel did not answer. Install a debug build with scripts\install.ps1.' }
-    default { throw $data }
+    1 { throw $data }
+    default { throw "Unexpected answer code $($hookAnswer.Code) from the device: $data" }
 }

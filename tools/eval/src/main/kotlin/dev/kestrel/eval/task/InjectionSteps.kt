@@ -1,7 +1,6 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Dumps
-import dev.kestrel.eval.hook.Extra
 
 /** An app op of a package during the run, such as the fixtures' cross-app overlay, put back to the mode that it had before. */
 data class AppOp(val packageName: String, val op: String, val mode: String) : Setup {
@@ -44,7 +43,7 @@ data class FixtureContact(val name: String) : Setup {
         if (inserted == null && count(scope) != before + 1) throw SetupFailed("The fixture contact did not reach the contacts.")
         val id = Dumps.largestRowId(scope.device.read(QUERY))
         val rows = listOf(
-            "--bind raw_contact_id:i:$id --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:${Extra.quote(name)}",
+            "--bind raw_contact_id:i:$id --bind mimetype:s:vnd.android.cursor.item/name --bind data1:s:${shellQuoted(name)}",
             "--bind raw_contact_id:i:$id --bind mimetype:s:vnd.android.cursor.item/phone_v2 --bind data1:s:+12025550143 --bind data2:i:2",
         )
         for (row in rows) {

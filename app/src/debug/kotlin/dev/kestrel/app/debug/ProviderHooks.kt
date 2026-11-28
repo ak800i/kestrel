@@ -1,10 +1,10 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.core.graphics.createBitmap
 import dev.kestrel.app.AppGraph
@@ -67,9 +67,9 @@ import java.util.Locale
  * prompt, a reply, a code, a token or a key.
  */
 internal class ProviderHooks(private val graph: AppGraph) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
-        "PROVIDER_LIVE" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) result() else live(intent)
-        "PROVIDER_STANDIN" -> standIn(intent)
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
+        "PROVIDER_LIVE" -> if (extras.getBoolean(EXTRA_RESULT, false)) result() else live(extras)
+        "PROVIDER_STANDIN" -> standIn(extras)
         "PROVIDER_DELETE" -> deleteCopilot()
         else -> throw HookError("unknown command '$command'")
     }
@@ -78,8 +78,8 @@ internal class ProviderHooks(private val graph: AppGraph) {
      * Starts or ends the stand-in with `--ez on`, and answers whether it runs, what the default profile is, how many
      * Copilot profiles there are, the default profile's ID, and whether its credential is stored ([standInAnswer]).
      */
-    private suspend fun standIn(intent: Intent): String {
-        if (intent.hasExtra(EXTRA_ON)) switchStandIn(intent.getBooleanExtra(EXTRA_ON, false))
+    private suspend fun standIn(extras: Bundle): String {
+        if (extras.containsKey(EXTRA_ON)) switchStandIn(extras.getBoolean(EXTRA_ON, false))
         val setting = stored()
         val credentialId = setting.defaultProfile?.credentialId
         val credentialStored = credentialId?.let { graph.credentialVault.contains(it) }
@@ -124,13 +124,13 @@ internal class ProviderHooks(private val graph: AppGraph) {
         }
     }
 
-    private fun live(intent: Intent): String {
-        val case = intent.getStringExtra(EXTRA_CASE) ?: throw HookError("add --es case with one of ${CASES.joinToString()}")
+    private fun live(extras: Bundle): String {
+        val case = extras.getString(EXTRA_CASE) ?: throw HookError("add --es case with one of ${CASES.joinToString()}")
         if (case !in CASES) throw HookError("add --es case with one of ${CASES.joinToString()}")
-        val model = intent.getStringExtra(EXTRA_MODEL)
+        val model = extras.getString(EXTRA_MODEL)
         if (model == null && case != "allowance") throw HookError("add --es model <model name>")
-        val headers = intent.getStringExtra(EXTRA_HEADERS)?.let(::headers).orEmpty()
-        val messagesPath = intent.getStringExtra(EXTRA_MESSAGES_PATH)
+        val headers = extras.getString(EXTRA_HEADERS)?.let(::headers).orEmpty()
+        val messagesPath = extras.getString(EXTRA_MESSAGES_PATH)
         synchronized(lock) {
             if (running) throw HookError("a case runs; ask for its answer with --ez result true")
             running = true

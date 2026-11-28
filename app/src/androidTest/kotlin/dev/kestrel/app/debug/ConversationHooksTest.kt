@@ -1,6 +1,6 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.EndReason
 import dev.kestrel.agent.goal.GoalLimits
@@ -21,7 +21,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
-/** The conversation's hooks of debug builds (design 14.4 of sub-project 7), called as TestHookReceiver calls them. */
+/** The conversation's hooks of debug builds (design 14.4 of sub-project 7), called as TestHookProvider calls them. */
 class ConversationHooksTest {
     @get:Rule
     val screen = ScreenServiceRule()
@@ -122,8 +122,8 @@ class ConversationHooksTest {
     }
 
     private fun hook(command: String, vararg extras: Pair<String, String>): String {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in extras) intent.putExtra(key, value)
-        return runBlocking { TestHooks(AgentTests.graph, context).run(intent) }.text
+        val arguments = Bundle()
+        for ((key, value) in extras) arguments.putString(key, value)
+        return runBlocking { TestHooks(AgentTests.graph, context).run(command, arguments) }.text
     }
 }

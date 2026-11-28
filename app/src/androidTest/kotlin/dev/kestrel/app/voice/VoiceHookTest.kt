@@ -1,7 +1,6 @@
 package dev.kestrel.app.voice
 
-import android.app.Activity
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
@@ -25,7 +24,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** The listening hooks of debug builds (design spec, section 16.1), called as TestHookReceiver calls them. */
+/** The listening hooks of debug builds (design spec, section 16.1), called as TestHookProvider calls them. */
 class VoiceHookTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val listening = VoiceTests.graph.listening
@@ -42,7 +41,7 @@ class VoiceHookTest {
         val sent = hook("VOICE", "event" to "heard", "text" to "Kestrel, open the settings.", named = true)
         val state = hook("VOICE_STATE")
 
-        assertEquals(HookReply(Activity.RESULT_OK, "sent heard"), sent)
+        assertEquals(HookReply(HookReply.OK, "sent heard"), sent)
         assertTrue(state.text, STATE_WHILE_OFF.matches(state.text))
     }
 
@@ -143,7 +142,7 @@ class VoiceHookTest {
         try {
             assertEquals(
                 HookReply(
-                    Activity.RESULT_OK,
+                    HookReply.OK,
                     "quiet: Kestrel hears only the silent clip microphone from its next start, until voice-clip -Clear or the end of its process",
                 ),
                 hook("VOICE_CLIP", quiet = true),
@@ -191,8 +190,8 @@ class VoiceHookTest {
                 assertTrue("The voice session did not open", VoiceTests.waitUntil(60_000) { listening.sessionOpen.value })
 
                 assertEquals("expecting tag=$tag seconds=15", hook("VOICE_EXPECT", "text" to "Scroll down.", "tag" to tag).text)
-                assertEquals(Activity.RESULT_OK, hook("VOICE_CLIP", "text" to "Hello there, how are you today?").code)
-                assertEquals(Activity.RESULT_OK, hook("VOICE_CLIP", "text" to "Scroll down.").code)
+                assertEquals(HookReply.OK, hook("VOICE_CLIP", "text" to "Hello there, how are you today?").code)
+                assertEquals(HookReply.OK, hook("VOICE_CLIP", "text" to "Scroll down.").code)
 
                 val done = VoiceTests.waitUntil(30_000) { !hook("VOICE_EXPECT", "tag" to tag, result = true).text.startsWith("waiting") }
                 assertTrue("The expectation did not end", done)
@@ -239,7 +238,7 @@ class VoiceHookTest {
         try {
             val reply = hook("VOICE_CLIP", "text" to "Kestrel.")
 
-            assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+            assertEquals(reply.text, HookReply.OK, reply.code)
             assertTrue(reply.text, reply.text.contains("from Kestrel's next start"))
             assertSame(VoiceHooks.microphone, listening.microphones())
             val state = hook("VOICE_STATE").text
@@ -258,12 +257,12 @@ class VoiceHookTest {
         VoiceTests.assumeModels(Engine.TTS)
         val previous = listening.microphones
         try {
-            assertEquals(Activity.RESULT_OK, hook("VOICE_CLIP", "text" to "Kestrel.").code)
+            assertEquals(HookReply.OK, hook("VOICE_CLIP", "text" to "Kestrel.").code)
 
             val reply = hook("VOICE_CLIP", clear = true)
 
             assertEquals(
-                HookReply(Activity.RESULT_OK, "dropped the waiting clips; Kestrel uses its own microphone again from its next start"),
+                HookReply(HookReply.OK, "dropped the waiting clips; Kestrel uses its own microphone again from its next start"),
                 reply,
             )
             assertSame(previous, listening.microphones)
@@ -316,7 +315,7 @@ class VoiceHookTest {
     }
 
     /**
-     * Runs a hook command as TestHookReceiver does, with string extras, the boolean extras `named`, `clear`, `quiet` and
+     * Runs a hook command as TestHookProvider does, with string extras, the boolean extras `named`, `clear`, `quiet` and
      * `result` and the integer extra `number`.
      */
     private fun hook(
@@ -328,14 +327,14 @@ class VoiceHookTest {
         quiet: Boolean = false,
         result: Boolean = false,
     ): HookReply {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in extras) intent.putExtra(key, value)
-        if (number != null) intent.putExtra("number", number)
-        if (named) intent.putExtra("named", true)
-        if (clear) intent.putExtra("clear", true)
-        if (quiet) intent.putExtra("quiet", true)
-        if (result) intent.putExtra("result", true)
-        return runBlocking { TestHooks(VoiceTests.graph, context).run(intent) }
+        val arguments = Bundle()
+        for ((key, value) in extras) arguments.putString(key, value)
+        if (number != null) arguments.putInt("number", number)
+        if (named) arguments.putBoolean("named", true)
+        if (clear) arguments.putBoolean("clear", true)
+        if (quiet) arguments.putBoolean("quiet", true)
+        if (result) arguments.putBoolean("result", true)
+        return runBlocking { TestHooks(VoiceTests.graph, context).run(command, arguments) }
     }
 
     /** Records with the hooks' microphone for up to [timeoutMillis], and returns whether a frame was not silent. */

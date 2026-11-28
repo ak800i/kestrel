@@ -199,7 +199,7 @@ class RunnerTest {
         kestrel.planned += FakeConversation.Command(continues = true, asks = listOf("asking=yes-no confirming=none question=switch"))
         var stalling = true
         kestrel.onInput = { if (it == "stop") stalling = false }
-        run.adb.slow(run.clock, 2.minutes) { stalling && ("hook.AGENT_TASK" in it || "hook.AGENT_STATE" in it) }
+        run.adb.slow(run.clock, 2.minutes) { stalling && ("--method AGENT_TASK " in it || "--method AGENT_STATE " in it) }
         val switch = task(answers = Answers(switches = true)).copy(turns = listOf(Turn.Say(Request("continue the conversation about my latest SMS"))))
 
         val failures = runner().runAll(switch, "[]", 2)
@@ -257,7 +257,7 @@ class RunnerTest {
         var first = -1
         run.adb.hook("VOICE") {
             first = run.adb.timeouts.size
-            run.adb.slow(run.clock, 2.minutes) { "hook.AGENT_TASK" in it }
+            run.adb.slow(run.clock, 2.minutes) { "--method AGENT_TASK " in it }
             "sent"
         }
 
@@ -271,7 +271,7 @@ class RunnerTest {
     @Test
     fun theFollowLoopsReadEndsAtTheCommandsLimitOnASlowDevice() {
         run.adb.hook("VOICE") {
-            run.adb.slow(run.clock, 7.seconds) { "hook.AGENT_TASK" in it || "hook.AGENT_STATE" in it }
+            run.adb.slow(run.clock, 7.seconds) { "--method AGENT_TASK " in it || "--method AGENT_STATE " in it }
             "sent"
         }
         run.adb.hook("AGENT_TASK") { "state=running" }
@@ -596,9 +596,9 @@ class RunnerTest {
         var installs = 0
         run.adb.hookWith("AGENT_SCRIPT") { extras ->
             when {
-                extras["clear"] == "true" -> -1 to "script=none"
+                extras["clear"] == "true" -> FakeAdb.ANSWERED to "script=none"
                 ++installs == 1 -> 1 to "error: the script is refused (InvalidScript): Reply 2 of the script has keys that the scripted model does not know: require."
-                else -> -1 to "script=installed replies=2"
+                else -> FakeAdb.ANSWERED to "script=installed replies=2"
             }
         }
 
@@ -727,13 +727,12 @@ class RunnerTest {
         var stopped = false
         var reads = 0
         // Kestrel registers the tag only after two reads of the stop restore.
-        run.adb.on("dev\\.kestrel\\.hook\\.AGENT_TASK") {
-            val answer = when {
-                stopped -> "-1, data=\"state=done end=STOPPED steps=1 workMs=2000 credits=0.00\""
-                ++reads <= 2 -> "1, data=\"no task has the tag t1\""
-                else -> "-1, data=\"state=running\""
+        run.adb.hookWith("AGENT_TASK") {
+            when {
+                stopped -> FakeAdb.ANSWERED to "state=done end=STOPPED steps=1 workMs=2000 credits=0.00"
+                ++reads <= 2 -> FakeAdb.FAILED to "no task has the tag t1"
+                else -> FakeAdb.ANSWERED to "state=running"
             }
-            "Broadcasting: Intent { act=dev.kestrel.hook.AGENT_TASK }\nBroadcast completed: result=$answer"
         }
         var interrupted = false
         // Kestrel shows the command's goal in the hooks' own conversation once it registered the tag.
@@ -881,13 +880,13 @@ class RunnerTest {
     @Test
     fun aLostTranscriptIsReadBackAndNeverSentTwice() {
         run.adb.hook("AGENT_TASK") { done }
-        run.adb.loseNext("hook.VOICE")
+        run.adb.loseNext("--method VOICE ")
 
         assertEquals(Reason.OK, runner().run(task(), "[]", 1, "maple heron").reason)
         assertEquals(1, run.adb.hookCalls("VOICE").size)
 
         run.adb.hookFails("AGENT_TASK", "no task has the tag t2")
-        run.adb.loseNext("hook.VOICE")
+        run.adb.loseNext("--method VOICE ")
         val lost = runner().run(task(), "[]", 2, "cedar otter")
         assertEquals(Reason.STOPPED, lost.reason)
         assertEquals(2, run.adb.hookCalls("VOICE").size)
@@ -1070,7 +1069,7 @@ class RunnerTest {
 
         // The task ended at the first poll after the lost reply.
         run.adb.hook("AGENT_TASK") { if (answers() > sent) cancelled else "state=running" }
-        run.adb.loseNext("hook.AGENT_ANSWER")
+        run.adb.loseNext("--method AGENT_ANSWER ")
         val ended = runner().run(task(), "[]", 1, "maple heron")
         assertEquals(1, answers())
         assertTrue(ended.text(), ended.text().endsWith(" asked=free reason=asked"))
@@ -1079,7 +1078,7 @@ class RunnerTest {
         sent = answers()
         var polls = 0
         run.adb.hook("AGENT_TASK") { if (answers() > sent && ++polls > 4) cancelled else "state=running" }
-        run.adb.loseNext("hook.AGENT_ANSWER")
+        run.adb.loseNext("--method AGENT_ANSWER ")
         val closed = runner().run(task(), "[]", 2, "cedar otter")
         assertEquals(sent + 1, answers())
         assertTrue(closed.text(), closed.text().endsWith(" asked=free reason=asked"))

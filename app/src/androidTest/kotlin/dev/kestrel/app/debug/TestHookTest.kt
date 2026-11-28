@@ -1,5 +1,6 @@
 package dev.kestrel.app.debug
 
+import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
@@ -11,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -34,9 +36,9 @@ class TestHookTest {
     fun adbSwitchesTestMode() = runBlocking {
         val original = graph.settings.get(SettingKeys.SAFETY)
         try {
-            assertEquals("testMode=off", answer(hook("TEST_MODE --ez on false")))
+            assertEquals("testMode=off", answer(hook("TEST_MODE", "on" to false)))
             assertFalse(graph.settings.get(SettingKeys.SAFETY).testMode)
-            assertEquals("testMode=on", answer(hook("TEST_MODE --ez on true")))
+            assertEquals("testMode=on", answer(hook("TEST_MODE", "on" to true)))
             assertTrue(graph.settings.get(SettingKeys.SAFETY).testMode)
         } finally {
             graph.settings.set(SettingKeys.SAFETY, original)
@@ -61,7 +63,7 @@ class TestHookTest {
     fun adbScrollsAList() = runBlocking {
         screen.open("ScrollActivity", "Scroll fixture")
 
-        assertEquals("done: action", answer(hook("SCROLL --es direction down")))
+        assertEquals("done: action", answer(hook("SCROLL", "direction" to "down")))
 
         screen.awaitElement { it.label == "Row 25" }
         Unit
@@ -70,7 +72,7 @@ class TestHookTest {
     @Test
     fun adbAcceptsNamesWithHyphens() {
         // Play/pause changes nothing on the screen while no media plays, so later tests find their fixtures.
-        assertEquals("done: global_action", answer(hook("GLOBAL --es action play-pause")))
+        assertEquals("done: global_action", answer(hook("GLOBAL", "action" to "play-pause")))
     }
 
     @Test
@@ -80,17 +82,17 @@ class TestHookTest {
 
         val reply = hook("SNAPSHOT")
 
-        assertTrue(reply, reply.contains("result=1, data=\"error: Kestrel's accessibility service is off\""))
+        assertEquals("error: Kestrel's accessibility service is off", failure(reply))
     }
 
     @Test
     fun adbShowsNumbersAndTapsOne() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
         val send = screen.awaitElement { it.label == "SEND" && it.clickable }
-        answer(hook("OVERLAY --es show numbers"))
+        answer(hook("OVERLAY", "show" to "numbers"))
         val number = screen.session.numberBadges.first { it.key == send.key }.number
 
-        assertEquals("done: action", answer(hook("TAP --ei number $number")))
+        assertEquals("done: action", answer(hook("TAP", "number" to number)))
 
         screen.awaitElement { it.label == "Clicked Send" }
         Unit
@@ -102,38 +104,39 @@ class TestHookTest {
         screen.awaitElement { it.label == "SEND" && it.clickable }
 
         assertTrue(Regex(".* gridSize=none magnification=none keyboard=(shown|hidden) $BUILD").matches(answer(hook("STATE"))))
-        answer(hook("OVERLAY --es show grid"))
+        answer(hook("OVERLAY", "show" to "grid"))
         try {
             assertTrue(Regex(".* gridSize=\\d+x4 magnification=none keyboard=(shown|hidden) $BUILD").matches(answer(hook("STATE"))))
         } finally {
-            answer(hook("OVERLAY --es show none"))
+            answer(hook("OVERLAY", "show" to "none"))
         }
-        val send = answer(hook("SCREEN_HAS --es label SEND --es state clickable"))
+        val send = answer(hook("SCREEN_HAS", "label" to "SEND", "state" to "clickable"))
         val line = Regex("count=[1-9]\\d* number=none bounds=\\d+,\\d+,\\d+,\\d+ first=\\S+ app=\\S+ appTitle=\\S+ windows=\\d+")
         assertTrue(send, line.matches(send))
-        assertTrue(answer(hook("SCREEN_HAS --es label no-such-label")).startsWith("count=0 number=none bounds=none first=none "))
-        assertTrue(hook("SCREEN_HAS --es state shiny").contains("result=1, data=\"error: add --es state with some of checked"))
+        assertTrue(answer(hook("SCREEN_HAS", "label" to "no-such-label")).startsWith("count=0 number=none bounds=none first=none "))
+        assertTrue(failure(hook("SCREEN_HAS", "state" to "shiny")).startsWith("error: add --es state with some of checked"))
 
         // field compares the text on the phone; the key holds no space, which the shell command splits at.
         val message = screen.awaitElement { it.viewId?.endsWith(":id/message_field") == true }
-        assertTrue(answer(hook("TYPE --es key ${message.key} --es text hello")).startsWith("done: "))
-        val field = answer(hook("FIELD --es expected hello --es viewId message_field"))
+        assertTrue(answer(hook("TYPE", "key" to message.key, "text" to "hello")).startsWith("done: "))
+        val field = answer(hook("FIELD", "expected" to "hello", "viewId" to "message_field"))
         assertTrue(field, Regex("field=found equal=true length=5 start=\\d+ end=\\d+ password=false").matches(field))
-        assertTrue(answer(hook("FIELD --es expected other --es viewId message_field")).startsWith("field=found equal=false length=5 "))
+        assertTrue(answer(hook("FIELD", "expected" to "other", "viewId" to "message_field")).startsWith("field=found equal=false length=5 "))
         // A template's {label} is filled on the phone and sent as a tagged transcript (Kestrel is off, so it starts nothing).
         val tag = "t${System.nanoTime()}"
-        assertTrue(answer(hook("SCREEN_HAS --es label SEND --es template {label} --es tag $tag")).endsWith(" sent=$tag"))
-        assertTrue(answer(hook("VOICE_STATE --es tag $tag")).startsWith("tag=$tag role="))
-        assertTrue(hook("SCREEN_HAS --es label SEND --es template x --es tag u$tag").contains("result=1, data=\"error: add {label} to the template"))
+        assertTrue(answer(hook("SCREEN_HAS", "label" to "SEND", "template" to "{label}", "tag" to tag)).endsWith(" sent=$tag"))
+        assertTrue(answer(hook("VOICE_STATE", "tag" to tag)).startsWith("tag=$tag role="))
+        assertTrue(failure(hook("SCREEN_HAS", "label" to "SEND", "template" to "x", "tag" to "u$tag")).startsWith("error: add {label} to the template"))
     }
 
     @Test
     fun aFailedCommandSaysWhy() {
-        val reply = hook("TYPE --es text hello")
+        val reply = hook("TYPE", "text" to "hello")
 
-        assertTrue(reply, reply.contains("result=1, data=\"error: add --es key"))
+        assertTrue(reply.text, failure(reply).startsWith("error: add --es key"))
     }
 
+    /** Another app, without DUMP, cannot even acquire the hooks' provider. */
     @Test
     fun anotherAppCannotSendCommands() = runBlocking {
         screen.open("HookProbeActivity", "Hook probe")
@@ -142,14 +145,30 @@ class TestHookTest {
         Unit
     }
 
-    /** Sends a command the way scripts/hook.ps1 does. */
-    private fun hook(command: String): String =
-        screen.shell("am broadcast -n ${ScreenServiceRule.KESTREL}/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command")
+    /**
+     * Kestrel's own app's uid may acquire its own provider, so only the provider's check of each call's caller refuses it:
+     * the app does not hold DUMP, and its call is no binder call.
+     */
+    @Test
+    fun theHooksRefuseACallFromAnAppsUid() {
+        val hooks = Uri.parse("content://${TestHookProvider.AUTHORITY}")
 
-    /** The data of a successful answer. */
-    private fun answer(reply: String): String {
-        assertTrue(reply, reply.contains("result=-1, data=\""))
-        return reply.substringAfter("data=\"").substringBeforeLast('"')
+        assertThrows(SecurityException::class.java) { context.contentResolver.call(hooks, "STATE", null, null) }
+    }
+
+    /** Sends a command the way scripts/hook.ps1 does, with content call from the shell. */
+    private fun hook(command: String, vararg extras: Pair<String, Any>): HookReply = ShellHooks(screen::shell).call(command, *extras)
+
+    /** The text of a successful answer. */
+    private fun answer(reply: HookReply): String {
+        assertEquals(reply.text, HookReply.OK, reply.code)
+        return reply.text
+    }
+
+    /** The text of an error's answer. */
+    private fun failure(reply: HookReply): String {
+        assertEquals(reply.text, HookReply.FAILED, reply.code)
+        return reply.text
     }
 
     private companion object {

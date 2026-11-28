@@ -32,7 +32,7 @@ internal object ConversationHookAnswers {
     }
 
     /**
-     * Why conversation-type may not type words without [tag] when the call's [extras] (the names of its intent's extras)
+     * Why conversation-type may not type words without [tag] when the call's [extras] (the names of its extras)
      * hold one of the options `--es model`, `--ez live` and `--es marker`: only a tag links its options to the typed
      * input, so an untagged one would drop them without a word (Task 13's review M1). Null when it may. The answer names
      * the options that the call gave, never their values.

@@ -2,8 +2,8 @@ package dev.kestrel.app.debug
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -61,7 +61,7 @@ class ClipboardHookTest {
     }
 
     private fun hook(flag: String): String =
-        runBlocking { TestHooks(graph, context).run(Intent(TestHooks.ACTION_PREFIX + "CLIPBOARD").putExtra(flag, true)) }.text
+        runBlocking { TestHooks(graph, context).run("CLIPBOARD", Bundle().apply { putBoolean(flag, true) }) }.text
 
     private fun waitUntil(timeoutMillis: Long, condition: () -> Boolean): Boolean {
         val end = SystemClock.uptimeMillis() + timeoutMillis

@@ -224,7 +224,7 @@ class StepsTest {
                 else -> { keys.remove(key); "keys=${keys.size}" }
             }
         }
-        run.adb.loseNext("--ez add true")
+        run.adb.loseNext("--extra 'add:b:true'")
 
         MemoryAlias("{name}", "the Telegram chat 'Saved Messages'").apply(run.scope)
         assertEquals(setOf("Mira"), keys)

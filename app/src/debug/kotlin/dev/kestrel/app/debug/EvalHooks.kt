@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
 import android.content.Context
-import android.content.Intent
+import android.os.Bundle
 import android.os.Debug
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
@@ -51,13 +51,13 @@ import kotlin.math.roundToInt
  * [GENERATED]. They log nothing.
  */
 internal class EvalHooks(private val graph: AppGraph, private val context: Context) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
-        "VOICE_SYNTH" -> if (intent.getBooleanExtra(EXTRA_CLOSE, false)) closeVoice() else synthesize(intent)
-        "VOICE_RECORD" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) recordingResult() else record(intent)
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
+        "VOICE_SYNTH" -> if (extras.getBoolean(EXTRA_CLOSE, false)) closeVoice() else synthesize(extras)
+        "VOICE_RECORD" -> if (extras.getBoolean(EXTRA_RESULT, false)) recordingResult() else record(extras)
         "VOICE_EVAL" -> when {
-            intent.getBooleanExtra(EXTRA_LOAD, false) -> load()
-            intent.getBooleanExtra(EXTRA_CLOSE, false) -> closeRecognizer()
-            else -> evaluate(intent)
+            extras.getBoolean(EXTRA_LOAD, false) -> load()
+            extras.getBoolean(EXTRA_CLOSE, false) -> closeRecognizer()
+            else -> evaluate(extras)
         }
         else -> throw HookError("unknown command '$command'")
     }
@@ -66,8 +66,8 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         File(context.getExternalFilesDir(null) ?: throw HookError("Kestrel's external files folder is not available"), FOLDER)
             .apply { mkdirs() }
 
-    private fun clip(intent: Intent): File {
-        val name = intent.getStringExtra(EXTRA_FILE)
+    private fun clip(extras: Bundle): File {
+        val name = extras.getString(EXTRA_FILE)
         if (name == null || !CLIP_NAME.matches(name)) throw HookError("add --es file with a name of letters, digits, '-' and '_'")
         return File(folder(), "$name.wav")
     }
@@ -77,10 +77,10 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         if (graph.listening.sessionOpen.value) throw HookError("turn Kestrel off first, with voice -Send off")
     }
 
-    private suspend fun synthesize(intent: Intent): String {
-        val text = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text <text>")
-        val file = clip(intent)
-        val choice = when (intent.getStringExtra(EXTRA_VOICE) ?: "piper") {
+    private suspend fun synthesize(extras: Bundle): String {
+        val text = extras.getString(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text <text>")
+        val file = clip(extras)
+        val choice = when (extras.getString(EXTRA_VOICE) ?: "piper") {
             "piper" -> VoiceChoice.PIPER
             "kokoro" -> VoiceChoice.KOKORO
             else -> throw HookError("add --es voice with piper or kokoro")
@@ -115,9 +115,9 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
 
     // Answers once the microphone records, so that the A71 session asks the owner to speak only then; the recording goes
     // on in the background, longer than a hook may run.
-    private fun record(intent: Intent): String {
-        val file = clip(intent)
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, 0)
+    private fun record(extras: Bundle): String {
+        val file = clip(extras)
+        val seconds = extras.getInt(EXTRA_SECONDS, 0)
         if (seconds !in 1..MAX_RECORDING_SECONDS) throw HookError("add --ei seconds with 1 to $MAX_RECORDING_SECONDS")
         requireOff()
         synchronized(lock) {
@@ -254,15 +254,15 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         return "closed the recogniser"
     }
 
-    private suspend fun evaluate(intent: Intent): String {
-        val file = clip(intent)
-        val reveal = intent.getBooleanExtra(EXTRA_REVEAL, false)
+    private suspend fun evaluate(extras: Bundle): String {
+        val file = clip(extras)
+        val reveal = extras.getBoolean(EXTRA_REVEAL, false)
         // What Kestrel heard in an owner's recording never leaves the device (section 16.4).
         if (reveal && !file.name.startsWith(GENERATED)) {
             throw HookError("only a generated clip, whose name starts with $GENERATED, may show what Kestrel heard")
         }
-        val expected = intent.getStringExtra(EXTRA_EXPECTED) ?: throw HookError("add --es expected <text>")
-        val kind = intent.getStringExtra(EXTRA_KIND) ?: throw HookError("add --es kind with the expected request, or $SKIP")
+        val expected = extras.getString(EXTRA_EXPECTED) ?: throw HookError("add --es expected <text>")
+        val kind = extras.getString(EXTRA_KIND) ?: throw HookError("add --es kind with the expected request, or $SKIP")
         requireOff()
         if (!file.isFile) throw HookError("there is no clip ${file.name}")
         val samples = try {
@@ -272,15 +272,15 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         }
         // The labels of the screen in front, for the A71 session's transcription time on a busy screen; they never leave
         // the device. Otherwise the labels of the line's scene, which scripts\voice-eval.ps1 passes.
-        val labels = if (intent.getBooleanExtra(EXTRA_SCREEN_LABELS, false)) {
+        val labels = if (extras.getBoolean(EXTRA_SCREEN_LABELS, false)) {
             graph.screen.value?.let { BoostWordBudget.screenNames(it.snapshots.current().snapshot) }.orEmpty()
         } else {
-            intent.getStringExtra(EXTRA_LABELS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+            extras.getString(EXTRA_LABELS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
         }
         return evaluationLock.withLock {
             val ready = synchronized(lock) { evaluation as? Evaluation.Ready }
                 ?: throw HookError("load the recogniser first with --ez load true, until it answers ready")
-            withContext(Dispatchers.Default) { compare(ready, samples, expected, kind, intent, reveal, labels) }
+            withContext(Dispatchers.Default) { compare(ready, samples, expected, kind, extras, reveal, labels) }
         }
     }
 
@@ -289,7 +289,7 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         samples: FloatArray,
         expected: String,
         kind: String,
-        intent: Intent,
+        extras: Bundle,
         reveal: Boolean,
         labels: List<String>,
     ): String {
@@ -310,10 +310,10 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
         // A line of the corpus also gets the command vocabulary and its scene's labels as the screen's, as each
         // utterance of Kestrel's voice session does (design spec, section 8.3), unless noLabels leaves them out to show
         // their effect. Without any boost words on request, to show theirs (plan 2C-3's final review, item 3).
-        val group = intent.getStringExtra(EXTRA_GROUP)
+        val group = extras.getString(EXTRA_GROUP)
         val words = when {
-            intent.getBooleanExtra(EXTRA_NO_BOOST, false) -> emptyList()
-            group == null || intent.getBooleanExtra(EXTRA_NO_LABELS, false) -> ready.words
+            extras.getBoolean(EXTRA_NO_BOOST, false) -> emptyList()
+            group == null || extras.getBoolean(EXTRA_NO_LABELS, false) -> ready.words
             else -> BoostWordBudget.combine(ready.words, labels, CommandVocabulary.BOOST)
         }
         val heard = if (speech.isEmpty()) "" else recognizer.transcribe(speech, words).text
@@ -326,8 +326,8 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
             kindOf(
                 Requests.read(
                     heard,
-                    spotted = intent.getBooleanExtra(EXTRA_SPOTTED, false),
-                    afterName = intent.getBooleanExtra(EXTRA_AFTER_NAME, false),
+                    spotted = extras.getBoolean(EXTRA_SPOTTED, false),
+                    afterName = extras.getBoolean(EXTRA_AFTER_NAME, false),
                 ),
             )
         }
@@ -337,7 +337,7 @@ internal class EvalHooks(private val graph: AppGraph, private val context: Conte
             else -> "wrong"
         }
         // The contacts that the call lines name go only to the contact matcher, never to the recogniser.
-        val contacts = intent.getStringExtra(EXTRA_CONTACTS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: labels
+        val contacts = extras.getString(EXTRA_CONTACTS)?.split(';')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: labels
         val answer = "words=${errors.words} substitutions=${errors.substitutions} deletions=${errors.deletions} " +
             "insertions=${errors.insertions} request=$request read=$read millis=$millis seconds=${seconds(speech.size)} " +
             "pss=${Debug.getPss() / 1024} parts=${parts.size} twice=$twice" +

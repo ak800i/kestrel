@@ -1,8 +1,8 @@
 package dev.kestrel.app.debug
 
 import android.content.Context
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.telecom.TelecomManager
 import dev.kestrel.agent.memory.Fact
 import dev.kestrel.agent.memory.FactKind
@@ -46,22 +46,22 @@ import java.time.LocalDate
  */
 internal class AgentTaskHooks(private val graph: AppGraph, private val context: Context) {
     // agent-task -Result -Tag k [--es marker] [--es recipient] [--es digits]
-    fun task(intent: Intent): String {
-        if (!intent.getBooleanExtra(EXTRA_RESULT, false)) throw HookError("add --ez result true")
-        val (_, number) = taggedTask(intent)
+    fun task(extras: Bundle): String {
+        if (!extras.getBoolean(EXTRA_RESULT, false)) throw HookError("add --ez result true")
+        val (_, number) = taggedTask(extras)
         val outcome = graph.conversations.outcome(number) ?: return "state=running"
         val round = graph.goalEnvironment.evidences?.of(number) ?: RoundEvidences.Evidence()
         val ended = AgentHookAnswers.Ended(outcome.report, outcome.answer, round.touches, round.signals, round.witness)
-        return AgentHookAnswers.result(ended, intent.getStringExtra(EXTRA_MARKER), intent.getStringExtra(EXTRA_RECIPIENT), intent.getStringExtra(EXTRA_DIGITS))
+        return AgentHookAnswers.result(ended, extras.getString(EXTRA_MARKER), extras.getString(EXTRA_RECIPIENT), extras.getString(EXTRA_DIGITS))
     }
 
     // agent-answer -Tag k --es answer <yes|no|confirm|cancel|continue|n|text:…> [--es confirming <category>]
     // [--es channel text|card], as the owner's voice would answer, with --es channel text as he answers on the conversation
     // screen's copy of the card, and with --es channel card as he taps the card over the app (Task 13a); an answer to a
     // confirmation other than no or cancel needs the category that agent-state read.
-    suspend fun answer(intent: Intent): String {
-        val (tag, number) = taggedTask(intent)
-        val reply = intent.getStringExtra(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
+    suspend fun answer(extras: Bundle): String {
+        val (tag, number) = taggedTask(extras)
+        val reply = extras.getString(EXTRA_ANSWER) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
         val words = AgentHookAnswers.words(reply) ?: throw HookError("add --es answer with yes, no, confirm, cancel, continue, a number or text:<words>")
         if (VoiceHooks.refused(words, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
         val view = graph.conversations.view.value
@@ -71,8 +71,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         // A script never answers another task's question (design D28; review C2-I3).
         if (asking == null && !handedOver) throw HookError("the task of tag $tag asks nothing")
         val confirming = graph.conversations.owner.confirming?.takeIf { asking == QuestionKind.CONFIRM }
-        AgentHookAnswers.answerRefusal(asking, words, confirming, intent.getStringExtra(EXTRA_CONFIRMING))?.let { throw HookError(it) }
-        when (val channel = intent.getStringExtra(EXTRA_CHANNEL)) {
+        AgentHookAnswers.answerRefusal(asking, words, confirming, extras.getString(EXTRA_CONFIRMING))?.let { throw HookError(it) }
+        when (val channel = extras.getString(EXTRA_CHANNEL)) {
             null, "voice" -> Unit
             "text" -> return typedAnswer(tag, words, question, asking)
             "card" -> return cardAnswer(tag, words, question, asking)
@@ -146,36 +146,36 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     }
     // agent-script --es file <name> [--ez check true] | --ez clear true
     // With check, the script is read by the scripted model's rules and not installed (plan 7G).
-    suspend fun script(intent: Intent): String {
-        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
+    suspend fun script(extras: Bundle): String {
+        if (extras.getBoolean(EXTRA_CLEAR, false)) {
             graph.roundModels.modelOverride = null
             return "script=none"
         }
-        val name = intent.getStringExtra(EXTRA_FILE)?.takeIf { SCRIPT_NAME.matches(it) }
+        val name = extras.getString(EXTRA_FILE)?.takeIf { SCRIPT_NAME.matches(it) }
             ?: throw HookError("add --es file with the name of a script in files/agent-scripts, such as task.json")
         val text = withContext(Dispatchers.IO) {
             File(File(context.filesDir, SCRIPTS), name).takeIf { it.isFile }?.readText()
         } ?: throw HookError("files/$SCRIPTS has no script $name")
         val model = AgentScripts.model(text)
-        if (intent.getBooleanExtra(EXTRA_CHECK, false)) return "script=valid replies=${model.left}"
+        if (extras.getBoolean(EXTRA_CHECK, false)) return "script=valid replies=${model.left}"
         graph.roundModels.modelOverride = model
         return "script=installed replies=${model.left}"
     }
 
     // agent-state -Tag k
-    fun state(intent: Intent): String {
-        val (_, number) = taggedTask(intent)
+    fun state(extras: Bundle): String {
+        val (_, number) = taggedTask(extras)
         val owner = graph.conversations.owner
         val open = AgentHookAnswers.Open(owner.handOverKind, owner.confirming, owner.asking)
         return AgentHookAnswers.state(number, graph.conversations.view.value, graph.listening.state.value.work, open)
     }
 
     // agent-cache --es field <anthropicMarks|responsesExplicit|chatCopilotMarks> --ez on <true|false>
-    suspend fun cache(intent: Intent): String {
-        val field = intent.getStringExtra(EXTRA_FIELD)
+    suspend fun cache(extras: Bundle): String {
+        val field = extras.getString(EXTRA_FIELD)
         if (field != null) {
-            if (!intent.hasExtra(EXTRA_ON)) throw HookError("add --ez on true or --ez on false")
-            val on = intent.getBooleanExtra(EXTRA_ON, true)
+            if (!extras.containsKey(EXTRA_ON)) throw HookError("add --ez on true or --ez on false")
+            val on = extras.getBoolean(EXTRA_ON, true)
             val fields = graph.settings.get(SettingKeys.AGENT_CACHE_FIELDS)
             val changed = when (field.lowercase()) {
                 "anthropicmarks" -> fields.copy(anthropicMarks = on)
@@ -191,9 +191,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     }
 
     // agent-touch-source [--es rule <NONE|FIELD|CREDITS> --es branch <A|B>]: stored, and given to the connected session.
-    suspend fun touchSource(intent: Intent): String {
-        val rule = intent.getStringExtra(EXTRA_RULE)
-        val branch = intent.getStringExtra(EXTRA_BRANCH)
+    suspend fun touchSource(extras: Bundle): String {
+        val rule = extras.getString(EXTRA_RULE)
+        val branch = extras.getString(EXTRA_BRANCH)
         if (rule != null || branch != null) {
             val stored = graph.settings.get(SettingKeys.TOUCH_RULE)
             val source = TouchSource(
@@ -210,11 +210,11 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     }
 
     // agent-settings [--es ownerEmails a,b] [--es viberSelfChatName t] [--es whatsappOwnName t] [--es selfChatAliases pkg=pkg]
-    suspend fun settings(intent: Intent): String {
+    suspend fun settings(extras: Bundle): String {
         // Only its named keys; another key is refused by its name, never with its value (design D18; review B3 nit 3).
-        intent.extras?.keySet()?.firstOrNull { it !in SETTINGS_KEYS }?.let { throw HookError("agent-settings has no key $it") }
+        extras.keySet().firstOrNull { it !in SETTINGS_KEYS }?.let { throw HookError("agent-settings has no key $it") }
         // The aliases are read first, so that an invalid one leaves every setting as it was.
-        val aliases = intent.getStringExtra(KEY_ALIASES)?.let { text ->
+        val aliases = extras.getString(KEY_ALIASES)?.let { text ->
             try {
                 AgentHookAnswers.aliases(text)
             } catch (e: IllegalArgumentException) {
@@ -222,9 +222,9 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
             }
         }
         var safety = graph.settings.get(SettingKeys.SAFETY)
-        intent.getStringExtra(KEY_EMAILS)?.let { text -> safety = safety.copy(ownerEmails = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }
-        intent.getStringExtra(KEY_VIBER)?.let { safety = safety.copy(viberSelfChatName = it.trim().ifEmpty { VIBER_DEFAULT }) }
-        intent.getStringExtra(KEY_WHATSAPP)?.let { safety = safety.copy(whatsappOwnName = it.trim().ifEmpty { null }) }
+        extras.getString(KEY_EMAILS)?.let { text -> safety = safety.copy(ownerEmails = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }
+        extras.getString(KEY_VIBER)?.let { safety = safety.copy(viberSelfChatName = it.trim().ifEmpty { VIBER_DEFAULT }) }
+        extras.getString(KEY_WHATSAPP)?.let { safety = safety.copy(whatsappOwnName = it.trim().ifEmpty { null }) }
         graph.settings.set(SettingKeys.SAFETY, safety)
         aliases?.let { graph.goalEnvironment.selfChatAliases = it }
         return "ownerEmails=${safety.ownerEmails.size} viberSelfChatName=${if (safety.viberSelfChatName != VIBER_DEFAULT) "set" else "unset"} " +
@@ -233,30 +233,30 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
 
     // agent-memory --ez add true --es key k --es text v | --ez remove true --es key k | --ez has true --es key k: a test alias,
     // answered by keys only; has answers only whether a fact with the key exists (design D17 of sub-project 6).
-    suspend fun memory(intent: Intent): String {
-        val key = intent.getStringExtra(EXTRA_KEY)?.trim()?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es key <key>")
+    suspend fun memory(extras: Bundle): String {
+        val key = extras.getString(EXTRA_KEY)?.trim()?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es key <key>")
         val memory = graph.memory
         return when {
-            intent.getBooleanExtra(EXTRA_ADD, false) -> {
-                val value = intent.getStringExtra(EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es text <value>")
+            extras.getBoolean(EXTRA_ADD, false) -> {
+                val value = extras.getString(EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() } ?: throw HookError("add --es text <value>")
                 memory.saveFact(Fact(key, value, FactKind.ALIAS, System.currentTimeMillis()))
                 "keys=${memory.facts().size} added=${key.replace(Regex("\\s+"), "_")}"
             }
-            intent.getBooleanExtra(EXTRA_REMOVE, false) -> {
+            extras.getBoolean(EXTRA_REMOVE, false) -> {
                 memory.deleteFact(key)
                 "keys=${memory.facts().size}"
             }
-            intent.getBooleanExtra(EXTRA_HAS, false) -> "has=${AgentHookAnswers.has(memory.facts().map { it.key }, key)}"
+            extras.getBoolean(EXTRA_HAS, false) -> "has=${AgentHookAnswers.has(memory.facts().map { it.key }, key)}"
             else -> throw HookError("add --ez add true, --ez remove true or --ez has true")
         }
     }
 
     // agent-data --es tool <list_sms|list_calls|find_media|list_notifications> [--es text <argument>]: counts only.
-    suspend fun data(intent: Intent): String {
-        val argument = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() }
+    suspend fun data(extras: Bundle): String {
+        val argument = extras.getString(EXTRA_TEXT)?.takeIf { it.isNotBlank() }
         val agentFree = AgentFreeApps.from(graph.settings.get(SettingKeys.AGENT_FREE_APPS))
         val port = AndroidDataPort(context, isAgentFree = agentFree::isAgentFree)
-        val tool = intent.getStringExtra(EXTRA_TOOL)
+        val tool = extras.getString(EXTRA_TOOL)
         val result = when (tool) {
             "list_sms" -> port.listSms(argument, LIMIT)
             "list_calls" -> port.listCalls(LIMIT)
@@ -341,11 +341,11 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     // or long press, on the first element of the front window whose label equals the text or holds it, compared on the
     // phone (design D17 of sub-project 6). With a package it acts only while that app is in front, and the press checks the
     // front app again on every snapshot that it acts on, so that it never lands in an app that came to the front meanwhile.
-    suspend fun tap(intent: Intent): String {
-        val label = intent.getStringExtra(EXTRA_LABEL)?.takeIf { it.isNotEmpty() }
-        val contains = intent.getStringExtra(EXTRA_CONTAINS)?.takeIf { it.isNotEmpty() }
+    suspend fun tap(extras: Bundle): String {
+        val label = extras.getString(EXTRA_LABEL)?.takeIf { it.isNotEmpty() }
+        val contains = extras.getString(EXTRA_CONTAINS)?.takeIf { it.isNotEmpty() }
         if ((label == null) == (contains == null)) throw HookError("add --es label <text> or --es contains <text>")
-        val wanted = intent.getStringExtra(EXTRA_PACKAGE)?.takeIf { it.isNotEmpty() }
+        val wanted = extras.getString(EXTRA_PACKAGE)?.takeIf { it.isNotEmpty() }
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         val snapshot = session.snapshots.current().snapshot
         val front = ScreenTree.frontWindow(snapshot) ?: return "tapped=false count=0"
@@ -359,7 +359,7 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
         }
         val target = matches.firstOrNull()?.let { snapshot.elements[it] } ?: return "tapped=false count=0"
         val guard = wanted?.let { app -> { screen: ScreenSnapshot -> ScreenTree.frontWindow(screen)?.packageName == app } }
-        val result = if (intent.getBooleanExtra(EXTRA_LONG, false)) {
+        val result = if (extras.getBoolean(EXTRA_LONG, false)) {
             session.actions.longPress(target.key, guard = guard)
         } else {
             session.actions.tap(target.key, guard = guard)
@@ -368,8 +368,8 @@ internal class AgentTaskHooks(private val graph: AppGraph, private val context: 
     }
 
     // The task number of the transcript with the hook's tag (plan 4D's H1).
-    private fun taggedTask(intent: Intent): Pair<String, Int> {
-        val tag = intent.getStringExtra(EXTRA_TAG) ?: throw HookError("add --es tag <tag>")
+    private fun taggedTask(extras: Bundle): Pair<String, Int> {
+        val tag = extras.getString(EXTRA_TAG) ?: throw HookError("add --es tag <tag>")
         val number = VoiceHooks.tags.tagged(tag)?.task?.takeIf { it > 0 } ?: throw HookError("no task has the tag $tag")
         return tag to number
     }

@@ -29,7 +29,9 @@ import java.util.IdentityHashMap
  * delivery may take, and no longer: a press's claim [PRESS_MILLIS] after the press's last hand-over to SystemUI, whose
  * broadcast arrives within milliseconds, and `tap` settles it before it answers ([Press.settle]): it waits for the
  * broadcast until the claim's end and then drops a claim that no broadcast used, so no claim of a press outlives the
- * hook's answer; `send-later`'s claim [LATER_MILLIS] after the alarm's trigger time, because its broadcast may first
+ * hook's answer. The broadcast can arrive while the hook waits, because the hooks answer through a provider's call
+ * (`TestHookProvider`), which holds none of Kestrel's broadcasts. `send-later`'s claim lives [LATER_MILLIS] after the
+ * alarm's trigger time, because its broadcast may first
  * start Kestrel's process. Each claim carries this boot's count ([boot], `Settings.Global.BOOT_COUNT`), because the
  * elapsed realtime starts again at a restart of the phone, so a claim of another boot is dropped. [file] is the record of
  * the armed claims for every process: a claim leaves it when it is used, settled, taken back or expires, so a process that

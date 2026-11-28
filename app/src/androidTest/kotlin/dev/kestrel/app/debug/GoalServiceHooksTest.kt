@@ -1,6 +1,6 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.agent.testing.ScriptedModel
@@ -24,8 +24,11 @@ import org.junit.runner.RunWith
 /**
  * The goal service's hooks on kestrel-api37 (plan 7E): goal-service-state in kinds and counts, the audio-focus request's
  * answer, and goal-control's press of the held goal's Continue in SystemUI's shade, which resumes the goal as the owner's
- * tap would. The focus that the instrumented process gets proves nothing about Android's hardening; this checks only that
- * the hook answers, and Task 8 runs it outside the instrumentation. `AgentTests.stop` ends whatever "stop" stops.
+ * tap would. The press goes through the hooks' real transport, `content call` from the shell ([ShellHooks]), because the
+ * press waits for the button's broadcast to Kestrel, which only a transport that holds no broadcast of Kestrel's can get
+ * (plan 7G's amendment "The hooks' transport"); the other calls run [TestHooks] in the test's process. The focus that
+ * the instrumented process gets proves nothing about Android's hardening; this checks only that the hook answers, and
+ * Task 8 runs it outside the instrumentation. `AgentTests.stop` ends whatever "stop" stops.
  */
 @RunWith(AndroidJUnit4::class)
 class GoalServiceHooksTest {
@@ -100,7 +103,10 @@ class GoalServiceHooksTest {
         }) { "The touch did not hold the goal" }
         val starts = graph.goalForeground.status().starts
 
-        assertEquals("tapped=continue expanded=none shade=closed claim=used", hook("GOAL_CONTROL", "do" to "tap", "action" to "continue"))
+        assertEquals(
+            HookReply(HookReply.OK, "tapped=continue expanded=none shade=closed claim=used"),
+            ShellHooks(screen::shell).call("GOAL_CONTROL", "do" to "tap", "action" to "continue"),
+        )
 
         check(VoiceTests.waitUntil(30_000) { model.calls == 2 }) { "The goal did not go on" }
         check(VoiceTests.waitUntil(15_000) { graph.goalForeground.status().starts == starts + 1 }) { "The goal service was not started again" }
@@ -111,8 +117,8 @@ class GoalServiceHooksTest {
     }
 
     private fun hook(command: String, vararg extras: Pair<String, String>): String {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in extras) intent.putExtra(key, value)
-        return runBlocking { TestHooks(graph, context).run(intent) }.text
+        val arguments = Bundle()
+        for ((key, value) in extras) arguments.putString(key, value)
+        return runBlocking { TestHooks(graph, context).run(command, arguments) }.text
     }
 }

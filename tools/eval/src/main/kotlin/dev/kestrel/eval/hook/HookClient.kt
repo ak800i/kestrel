@@ -4,23 +4,35 @@ import dev.kestrel.eval.device.Deadline
 import dev.kestrel.eval.device.Device
 import kotlin.time.Duration.Companion.seconds
 
-/** An extra of a hook's broadcast: `--es` text, `--ei` number or `--ez` flag. */
+/** An argument of a hook: one of `content call`'s typed extras, a text (`s`), a number (`i`) or a flag (`b`). */
 sealed interface Extra {
     val name: String
 
-    /** The extra as the device's shell reads it. */
-    fun shell(): String
+    /** The extra's type letter in `content call`'s `<name>:<type>:<value>`. */
+    val type: String
+
+    /** The extra's value as text. */
+    val text: String
+
+    /**
+     * The extra as the device's shell reads it, `--extra '<name>:<type>:<value>'`, with `\` and `:` in the value escaped as
+     * `content` reads them, as scripts\lib\HookCall.ps1's Format-HookExtra writes it.
+     */
+    fun shell(): String = "--extra " + quote("$name:$type:" + text.replace("\\", "\\\\").replace(":", "\\:"))
 
     data class Text(override val name: String, val value: String) : Extra {
-        override fun shell(): String = "--es $name ${quote(value)}"
+        override val type: String get() = "s"
+        override val text: String get() = value
     }
 
     data class Number(override val name: String, val value: Int) : Extra {
-        override fun shell(): String = "--ei $name $value"
+        override val type: String get() = "i"
+        override val text: String get() = value.toString()
     }
 
     data class Flag(override val name: String, val value: Boolean) : Extra {
-        override fun shell(): String = "--ez $name $value"
+        override val type: String get() = "b"
+        override val text: String get() = value.toString()
     }
 
     companion object {
@@ -48,40 +60,54 @@ class HookAnswer(val text: String) {
 /** Kestrel answered the hook with an error, whose reason the device gave. */
 class HookError(message: String) : Exception(message)
 
-/** Kestrel did not answer the hook (result 0), as when it is stopped or not a debug build. */
+/** Kestrel did not answer the hook, because it has no test hooks: it is not installed, or not a debug build. */
 class HookSilent(command: String) : Exception("Kestrel did not answer $command. Install a debug build with scripts\\install.ps1.")
 
 /** The answer of a hook that acts was lost; the caller reads the state back instead of sending it again. */
 class HookLost(command: String) : Exception("The answer of $command was lost.")
 
 /**
- * The debug hooks' broadcast (design D3 of sub-project 6): `am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver
- * -a dev.kestrel.hook.<COMMAND> <extras>`, as scripts\hook.ps1 sends it. A hook that reads ([retry]) goes through
- * [Device.read], one that acts through [Device.once]. The answer is `Broadcast completed: result=<code>, data="<text>"`:
- * -1 is an answer, 0 means that Kestrel did not answer, and any other code is an error whose data is the reason.
+ * The debug hooks' transport (design D3 of sub-project 6; plan 7G's amendment "The hooks' transport"): `content call --uri
+ * content://dev.kestrel.hooks --method <COMMAND> <extras>`, which Kestrel's debug-only TestHookProvider answers, as
+ * scripts\hook.ps1 sends it, with `content`'s error output joined to its answer. A hook that reads ([retry]) goes through
+ * [Device.read], one that acts through [Device.once]. The answer is `Result: Bundle[{code=<code>, text=<text>}]`: code 0
+ * is an answer and 1 an error whose text is the reason; the text is all that stands between `text=` and the last `}]`, so
+ * it may hold any character. `content` says "Could not find provider" when Kestrel has no hooks ([HookSilent]).
  */
 class HookClient(private val device: Device) {
     /** The hooks for a wait that ends at [deadline] ([Device.until]). */
     fun until(deadline: Deadline): HookClient = HookClient(device.until(deadline))
 
     fun call(command: String, extras: List<Extra>, retry: Boolean): HookAnswer {
-        val broadcast = broadcast(command, extras)
-        val lines = if (retry) device.read(broadcast, TIMEOUT) else device.once(broadcast, TIMEOUT) ?: throw HookLost(command)
-        val match = ANSWER.find(lines.joinToString("\n")) ?: throw HookError("The device's answer to $command was not a broadcast's answer.")
-        val data = match.groupValues[2]
-        return when (match.groupValues[1].toInt()) {
-            -1 -> HookAnswer(data)
-            0 -> throw HookSilent(command)
-            else -> throw HookError(data)
-        }
+        val call = command(command, extras) + " 2>&1"
+        val lines = if (retry) device.read(call, TIMEOUT) else device.once(call, TIMEOUT) ?: throw HookLost(command)
+        return answer(command, lines.joinToString("\n"))
     }
 
     companion object {
         private val TIMEOUT = 60.seconds
-        private val ANSWER = Regex("Broadcast completed: result=(-?\\d+)(?:, data=\"(.*)\")?\\s*$", RegexOption.DOT_MATCHES_ALL)
+        private const val AUTHORITY = "dev.kestrel.hooks"
+        private const val ANSWERED = 0
+        private const val FAILED = 1
+        private val RESULT = Regex("Result: Bundle\\[\\{code=(-?\\d+), text=(.*)\\}\\]\\s*", RegexOption.DOT_MATCHES_ALL)
 
-        fun broadcast(command: String, extras: List<Extra>): String =
-            "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.${command.uppercase().replace('-', '_')}" +
-                extras.joinToString("") { " " + it.shell() }
+        /** The device command of the hook [command], such as goal-control, whose method is GOAL_CONTROL. */
+        fun command(command: String, extras: List<Extra>): String =
+            "content call --uri content://$AUTHORITY --method ${command.uppercase().replace('-', '_')}" + extras.joinToString("") { " " + it.shell() }
+
+        /** The hook [command]'s answer in [output], what `content call` printed with its errors. */
+        fun answer(command: String, output: String): HookAnswer {
+            val match = RESULT.matchEntire(output)
+            if (match == null) {
+                if ("Could not find provider: $AUTHORITY" in output) throw HookSilent(command)
+                throw HookError("The device's answer to $command was not a hook's answer: $output")
+            }
+            val text = match.groupValues[2]
+            return when (match.groupValues[1].toInt()) {
+                ANSWERED -> HookAnswer(text)
+                FAILED -> throw HookError(text)
+                else -> throw HookError("The device's answer to $command had the unknown code ${match.groupValues[1]}: $text")
+            }
+        }
     }
 }

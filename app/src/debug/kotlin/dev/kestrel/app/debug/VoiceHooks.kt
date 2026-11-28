@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.agent.RoundEvidences
@@ -31,22 +31,22 @@ import java.util.Locale
  * contain what was said. `scripts/hook.ps1` lists them.
  */
 internal class VoiceHooks(private val graph: AppGraph) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
-        "VOICE" -> event(intent)
-        "VOICE_STATE" -> intent.getStringExtra(EXTRA_TAG)?.let { tagState(it) } ?: state(intent)
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
+        "VOICE" -> event(extras)
+        "VOICE_STATE" -> extras.getString(EXTRA_TAG)?.let { tagState(it) } ?: state(extras)
         "VOICE_CLIP" -> when {
-            intent.getBooleanExtra(EXTRA_CLEAR, false) -> clear()
-            intent.getBooleanExtra(EXTRA_QUIET, false) -> quiet()
-            else -> clip(intent)
+            extras.getBoolean(EXTRA_CLEAR, false) -> clear()
+            extras.getBoolean(EXTRA_QUIET, false) -> quiet()
+            else -> clip(extras)
         }
-        "VOICE_CALL_COMMANDS" -> callCommands(intent)
-        "VOICE_CHOICE" -> voiceChoice(intent)
+        "VOICE_CALL_COMMANDS" -> callCommands(extras)
+        "VOICE_CHOICE" -> voiceChoice(extras)
         "VOICE_RESTORE" -> VoiceRestore.answer(graph.settings.get(SettingKeys.LISTENING).restoredAt, System.currentTimeMillis())
         else -> throw HookError("unknown command '$command'")
     }
 
-    private suspend fun event(intent: Intent): String {
-        val name = intent.getStringExtra(EXTRA_EVENT)
+    private suspend fun event(extras: Bundle): String {
+        val name = extras.getString(EXTRA_EVENT)
         val event = when (name) {
             "toggle" -> Event.Toggle
             "pause" -> Event.Pause
@@ -61,14 +61,14 @@ internal class VoiceHooks(private val graph: AppGraph) {
             }
             "screen-on" -> Event.Screen(on = true)
             "screen-off" -> Event.Screen(on = false)
-            "heard" -> heard(intent)
+            "heard" -> heard(extras)
             else -> throw HookError("add --es event with one of ${EVENTS.joinToString()}")
         }
-        val given = intent.getStringExtra(EXTRA_TAG)
+        val given = extras.getString(EXTRA_TAG)
         if (given != null) {
             if (event !is Event.Heard) throw HookError("only a transcript takes a tag; add --es event heard")
-            val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
-            tag(graph, given, event, taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER)))
+            val live = if (extras.containsKey(EXTRA_LIVE)) extras.getBoolean(EXTRA_LIVE, false) else null
+            tag(graph, given, event, taskOptions(extras.getString(EXTRA_MODEL), live, extras.getString(EXTRA_MARKER)))
         } else if (event is Event.Heard) {
             untagged(graph, event)
         }
@@ -77,10 +77,10 @@ internal class VoiceHooks(private val graph: AppGraph) {
     }
 
     // Plan 4D: "yes, call" reaches Kestrel only on an emulator, never on a phone (process rule 10).
-    private fun heard(intent: Intent): Event.Heard {
-        val text = text(intent)
+    private fun heard(extras: Bundle): Event.Heard {
+        val text = text(extras)
         if (refused(text, Build.HARDWARE)) throw HookError(YES_CALL_REFUSED)
-        return Event.Heard(text, intent.getBooleanExtra(EXTRA_NAMED, false))
+        return Event.Heard(text, extras.getBoolean(EXTRA_NAMED, false))
     }
 
     // What the transcript with [tag] did (plan 4D, hook H1; 2026-11-20-a71-checks-4d-interfaces.md, section 2): never words.
@@ -132,11 +132,11 @@ internal class VoiceHooks(private val graph: AppGraph) {
     // its number, its kind and how it ended, never its words. With a number, latest= gives the latest command's number,
     // so that a check of the A71 sessions sees how many commands started after its own. followUp= says whether the
     // follow-up window is open (design 6.6 and 14.4 of sub-project 7).
-    private fun state(intent: Intent): String {
+    private fun state(extras: Bundle): String {
         val state = graph.listening.state.value
         val session = if (graph.listening.sessionOpen.value) "open" else "closed"
         val clips = if (graph.listening.microphones === clipFactory) "on" else "off"
-        val asked = intent.getIntExtra(EXTRA_NUMBER, 0)
+        val asked = extras.getInt(EXTRA_NUMBER, 0)
         val number = if (asked > 0) asked else state.command
         val recent = graph.listening.recentCommand(number)
         val runningNow = number == state.command && state.work == Work.RUNNING_COMMAND
@@ -155,8 +155,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
             "session=$session clips=$clips"
     }
 
-    private suspend fun clip(intent: Intent): String {
-        val text = text(intent)
+    private suspend fun clip(extras: Bundle): String {
+        val text = text(extras)
         if (text.isBlank()) throw HookError("add a text that is not blank")
         // Plan 4D: Kestrel hears this text, so a phone never gets "yes, call" (process rule 10).
         if (refused(text, Build.HARDWARE)) throw HookError(YES_CALL_REFUSED)
@@ -167,7 +167,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
             throw HookError("the voice model is missing; run scripts\\push-models.ps1")
         }
         if (samples.size == PADDING) throw HookError("the voice said nothing for the text")
-        // The receiver's time limit cannot stop a synthesis, so a hook that ran out of time changes nothing.
+        // The hook call's time limit cannot stop a synthesis, so a hook that ran out of time changes nothing.
         currentCoroutineContext().ensureActive()
         val clips = microphone
         synchronized(lock) {
@@ -212,9 +212,9 @@ internal class VoiceHooks(private val graph: AppGraph) {
     // Reads the stored choice "Commands during a call", or stores it first with --ez on, so that listen-check.ps1 can
     // check the call commands during a call and put the choice back (design spec, section 8.7). Kestrel takes a change
     // a moment later, as it takes one from the page "Listening and activation".
-    private suspend fun callCommands(intent: Intent): String {
-        if (intent.hasExtra(EXTRA_ON)) {
-            val on = intent.getBooleanExtra(EXTRA_ON, false)
+    private suspend fun callCommands(extras: Bundle): String {
+        if (extras.containsKey(EXTRA_ON)) {
+            val on = extras.getBoolean(EXTRA_ON, false)
             val stored = graph.settings.get(SettingKeys.LISTENING_OPTIONS)
             graph.settings.set(SettingKeys.LISTENING_OPTIONS, stored.copy(callCommands = on))
         }
@@ -225,8 +225,8 @@ internal class VoiceHooks(private val graph: AppGraph) {
     // Kestrel's memory while it listens with Kokoro and put the owner's choice back (design spec, sections 5.3 and 15). A
     // new voice counts from Kestrel's next start. kokoroFailed: Kokoro was chosen, and Piper spoke instead the last time
     // that a voice session opened.
-    private suspend fun voiceChoice(intent: Intent): String {
-        intent.getStringExtra(EXTRA_VOICE)?.let { name ->
+    private suspend fun voiceChoice(extras: Bundle): String {
+        extras.getString(EXTRA_VOICE)?.let { name ->
             val voice = when (name) {
                 "piper" -> VoiceChoice.PIPER
                 "kokoro" -> VoiceChoice.KOKORO
@@ -249,7 +249,7 @@ internal class VoiceHooks(private val graph: AppGraph) {
         return factor?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "none"
     }
 
-    private fun text(intent: Intent): String = intent.getStringExtra(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
+    private fun text(extras: Bundle): String = extras.getString(EXTRA_TEXT) ?: throw HookError("add --es text <text>")
 
     companion object {
         val COMMANDS = setOf("VOICE", "VOICE_STATE", "VOICE_CLIP", "VOICE_CALL_COMMANDS", "VOICE_CHOICE", "VOICE_RESTORE")

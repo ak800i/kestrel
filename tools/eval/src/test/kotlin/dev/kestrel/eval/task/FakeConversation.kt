@@ -235,9 +235,9 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
         val tag = extras.getValue("tag")
         val plan = plans[tag]
         if (plan == null || tag in lost) return 1 to "no task has the tag $tag"
-        if (extras.keys.any { it in COMPARED }) return -1 to "state=done marker=1 recipient=match digits=1"
-        if (tag != running) return -1 to plan.end
-        if (waiting != Until.NOTHING || questions.getValue(tag).isNotEmpty() || reads-- > 0) return -1 to "state=running"
+        if (extras.keys.any { it in COMPARED }) return FakeAdb.ANSWERED to "state=done marker=1 recipient=match digits=1"
+        if (tag != running) return FakeAdb.ANSWERED to plan.end
+        if (waiting != Until.NOTHING || questions.getValue(tag).isNotEmpty() || reads-- > 0) return FakeAdb.ANSWERED to "state=running"
         running = null
         switching = false
         goal = when {
@@ -246,7 +246,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             else -> "none"
         }
         followUp = windows && tag in spoken
-        return -1 to plan.end
+        return FakeAdb.ANSWERED to plan.end
     }
 
     private fun state(tag: String): Pair<Int, String> {
@@ -264,7 +264,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             switching = false
         }
         val checklist = if (phase == "ended") "none" else plan.checklist
-        return -1 to "phase=$phase work=idle handOver=none ${question ?: "asking=none confirming=none question=none"} checklist=$checklist " +
+        return FakeAdb.ANSWERED to "phase=$phase work=idle handOver=none ${question ?: "asking=none confirming=none question=none"} checklist=$checklist " +
             "conversation=${if (open) "open" else "closed"}"
     }
 
@@ -281,7 +281,7 @@ class FakeConversation(adb: FakeAdb, private val clock: () -> Duration = { Durat
             if (extras["answer"] == "yes") switchBack() else switching = false
         }
         answers += extras.getValue("answer") + (channel?.let { "/$it" } ?: "")
-        return -1 to "answered tag=$tag" + (channel?.let { " channel=$it" } ?: "")
+        return FakeAdb.ANSWERED to "answered tag=$tag" + (channel?.let { " channel=$it" } ?: "")
     }
 
     private fun control(extras: Map<String, String>): String = when (extras["do"]) {

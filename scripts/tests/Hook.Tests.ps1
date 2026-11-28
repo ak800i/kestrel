@@ -107,10 +107,10 @@ Describe 'hook.ps1' {
         $output | Should -BeLike '*agent-memory -Has needs -Key; give the key to look for.*'
     }
 
-    It 'accepts network-allowlist and agent-task -Digits, passes every argument check and prints the broadcast' {
+    It 'accepts network-allowlist and agent-task -Digits, passes every argument check and prints the content call' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
-        $receiver = 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.'
+        $hookCall = 'content call --uri content://dev.kestrel.hooks --method '
 
         # -PrintCall stops after the argument checks, before the device check, which would start adb's server.
         $allowlist = (& pwsh -NoProfile -File $hook -Serial no-such-device network-allowlist -PrintCall 2>&1) -join "`n"
@@ -119,35 +119,35 @@ Describe 'hook.ps1' {
         $digitsExit = $LASTEXITCODE
 
         $allowlistExit | Should -Be 0
-        $allowlist | Should -BeExactly "${receiver}NETWORK_ALLOWLIST"
+        $allowlist | Should -BeExactly "${hookCall}NETWORK_ALLOWLIST"
         $digitsExit | Should -Be 0
-        $digits | Should -BeExactly "${receiver}AGENT_TASK --ez result true --es tag 't1' --es digits '2025550143'"
+        $digits | Should -BeExactly "${hookCall}AGENT_TASK --extra 'result:b:true' --extra 'tag:s:t1' --extra 'digits:s:2025550143'"
     }
 
-    It 'accepts the hooks of the conversations and their options, passes every argument check and prints the broadcast' {
+    It 'accepts the hooks of the conversations and their options, passes every argument check and prints the content call' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
-        $receiver = 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.'
+        $hookCall = 'content call --uri content://dev.kestrel.hooks --method '
 
         # -PrintCall stops after the argument checks, before the device check, which would start adb's server, so a check
         # that wrongly refuses a valid call fails the test.
         $calls = @(
             @{ Call = @('conversation-state'); Sent = 'CONVERSATION_STATE' },
-            @{ Call = @('conversation-control', '-Do', 'limits', '-Limits', '50/5/10'); Sent = 'CONVERSATION_CONTROL --es do limits --es limits 50/5/10' },
-            @{ Call = @('conversation-control', '-Do', 'delete-typed'); Sent = 'CONVERSATION_CONTROL --es do delete-typed' },
+            @{ Call = @('conversation-control', '-Do', 'limits', '-Limits', '50/5/10'); Sent = "CONVERSATION_CONTROL --extra 'do:s:limits' --extra 'limits:s:50/5/10'" },
+            @{ Call = @('conversation-control', '-Do', 'delete-typed'); Sent = "CONVERSATION_CONTROL --extra 'do:s:delete-typed'" },
             @{ Call = @('voice-restore'); Sent = 'VOICE_RESTORE' },
             @{
                 Call = @('conversation-type', '-Text', 'Find the number of Ana Test.', '-Tag', 't1', '-Live', '-Model', 'gpt-6-luna', '-Marker', 'maple heron')
-                Sent = "CONVERSATION_TYPE --es text 'Find the number of Ana Test.' --es model 'gpt-6-luna' --es tag 't1' --ez live true --es marker 'maple heron'"
+                Sent = "CONVERSATION_TYPE --extra 'text:s:Find the number of Ana Test.' --extra 'model:s:gpt-6-luna' --extra 'tag:s:t1' --extra 'live:b:true' --extra 'marker:s:maple heron'"
             },
             @{ Call = @('goal-service-state'); Sent = 'GOAL_SERVICE_STATE' },
-            @{ Call = @('goal-control', '-Do', 'tap', '-Action', 'stop'); Sent = "GOAL_CONTROL --es action 'stop' --es do tap" },
-            @{ Call = @('goal-control', '-Do', 'send-later', '-Action', 'cancel'); Sent = "GOAL_CONTROL --es action 'cancel' --es do send-later" },
-            @{ Call = @('goal-control', '-Do', 'refuse-off'); Sent = 'GOAL_CONTROL --es do refuse-off' },
-            @{ Call = @('goal-control', '-Do', 'stop-typed'); Sent = 'GOAL_CONTROL --es do stop-typed' },
-            @{ Call = @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'); Sent = "VOICE_TASK --ei seconds 5 --es reply 'stand-in' --ez handover true" },
-            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'); Sent = "AGENT_ANSWER --es tag 't1' --es answer 'yes' --es channel text" },
-            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card'); Sent = "AGENT_ANSWER --es tag 't1' --es answer 'confirm' --es channel card" }
+            @{ Call = @('goal-control', '-Do', 'tap', '-Action', 'stop'); Sent = "GOAL_CONTROL --extra 'action:s:stop' --extra 'do:s:tap'" },
+            @{ Call = @('goal-control', '-Do', 'send-later', '-Action', 'cancel'); Sent = "GOAL_CONTROL --extra 'action:s:cancel' --extra 'do:s:send-later'" },
+            @{ Call = @('goal-control', '-Do', 'refuse-off'); Sent = "GOAL_CONTROL --extra 'do:s:refuse-off'" },
+            @{ Call = @('goal-control', '-Do', 'stop-typed'); Sent = "GOAL_CONTROL --extra 'do:s:stop-typed'" },
+            @{ Call = @('voice-task', '-Seconds', '5', '-Reply', 'stand-in', '-HandOver'); Sent = "VOICE_TASK --extra 'seconds:i:5' --extra 'reply:s:stand-in' --extra 'handover:b:true'" },
+            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'yes', '-Channel', 'text'); Sent = "AGENT_ANSWER --extra 'tag:s:t1' --extra 'answer:s:yes' --extra 'channel:s:text'" },
+            @{ Call = @('agent-answer', '-Tag', 't1', '-Answer', 'confirm', '-Channel', 'card'); Sent = "AGENT_ANSWER --extra 'tag:s:t1' --extra 'answer:s:confirm' --extra 'channel:s:card'" }
         )
         foreach ($case in $calls) {
             $call = $case.Call
@@ -155,7 +155,7 @@ Describe 'hook.ps1' {
             $exit = $LASTEXITCODE
 
             $exit | Should -Be 0 -Because ($call -join ' ')
-            $output | Should -BeExactly "$receiver$($case.Sent)"
+            $output | Should -BeExactly "$hookCall$($case.Sent)"
         }
     }
 
@@ -205,7 +205,7 @@ Describe 'hook.ps1' {
         $channelElsewhere | Should -BeLike '*-Channel needs agent-answer.*'
     }
 
-    It 'accepts agent-live, which opens and closes the live session of sitting 2, passes every argument check and prints the broadcast' {
+    It 'accepts agent-live, which opens and closes the live session of sitting 2, passes every argument check and prints the content call' {
         $hook = Join-Path $PSScriptRoot '..\hook.ps1'
         $ErrorActionPreference = 'Continue'
 
@@ -215,7 +215,7 @@ Describe 'hook.ps1' {
         $exit = $LASTEXITCODE
 
         $exit | Should -Be 0
-        $output | Should -BeExactly 'am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_LIVE --ez on false'
+        $output | Should -BeExactly "content call --uri content://dev.kestrel.hooks --method AGENT_LIVE --extra 'on:b:false'"
     }
 
     # The whole-plan review of plan 7G, M4: agent-script's check, which reads a script and installs nothing.
@@ -232,7 +232,7 @@ Describe 'hook.ps1' {
         $elsewhere = (& pwsh -NoProfile -File $hook -Serial no-such-device agent-state -Tag t1 -Check 2>&1) -join "`n"
 
         $checkExit | Should -Be 0
-        $check | Should -BeExactly "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_SCRIPT --es file 'task.json' --ez check true"
+        $check | Should -BeExactly "content call --uri content://dev.kestrel.hooks --method AGENT_SCRIPT --extra 'file:s:task.json' --extra 'check:b:true'"
         $noFileExit | Should -Not -Be 0
         $noFile | Should -BeLike '*-Check needs agent-script -File, without -Clear.*'
         $clear | Should -BeLike '*-Check needs agent-script -File, without -Clear.*'

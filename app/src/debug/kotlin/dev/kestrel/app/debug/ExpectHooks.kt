@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.debug.TestHooks.HookError
@@ -21,25 +21,25 @@ import dev.kestrel.commands.Commands
  * on the phone's clock and kinds, never what Kestrel heard.
  */
 internal class ExpectHooks(private val graph: AppGraph) {
-    fun run(command: String, intent: Intent): String = when (command) {
-        "VOICE_EXPECT" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) result(tag(intent)) else expect(intent)
+    fun run(command: String, extras: Bundle): String = when (command) {
+        "VOICE_EXPECT" -> if (extras.getBoolean(EXTRA_RESULT, false)) result(tag(extras)) else expect(extras)
         else -> throw HookError("unknown command '$command'")
     }
 
-    private fun tag(intent: Intent): String = intent.getStringExtra(EXTRA_TAG) ?: throw HookError("add --es tag <tag>")
+    private fun tag(extras: Bundle): String = extras.getString(EXTRA_TAG) ?: throw HookError("add --es tag <tag>")
 
-    private fun expect(intent: Intent): String {
-        val tag = tag(intent)
+    private fun expect(extras: Bundle): String {
+        val tag = tag(extras)
         if (!TAG.matches(tag)) throw HookError("add --es tag with 1 to 32 letters, digits, '-' and '_'")
-        val text = intent.getStringExtra(EXTRA_TEXT) ?: throw HookError("add -Text with words")
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_SECONDS)
+        val text = extras.getString(EXTRA_TEXT) ?: throw HookError("add -Text with words")
+        val seconds = extras.getInt(EXTRA_SECONDS, DEFAULT_SECONDS)
         if (seconds !in 1..MAX_SECONDS) throw HookError("add --ei seconds with 1 to $MAX_SECONDS")
-        val noRun = intent.getBooleanExtra(EXTRA_NO_RUN, false)
+        val noRun = extras.getBoolean(EXTRA_NO_RUN, false)
         if (!noRun && VoiceHooks.refused(text, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
         // As voice-eval reads them: without contacts, the labels are the contacts too.
-        val corpus = intent.getStringExtra(EXTRA_GROUP)?.let { group ->
-            val labels = names(intent.getStringExtra(EXTRA_LABELS))
-            CorpusLine(group, labels, intent.getStringExtra(EXTRA_CONTACTS)?.let { names(it) } ?: labels)
+        val corpus = extras.getString(EXTRA_GROUP)?.let { group ->
+            val labels = names(extras.getString(EXTRA_LABELS))
+            CorpusLine(group, labels, extras.getString(EXTRA_CONTACTS)?.let { names(it) } ?: labels)
         }
         val listening = graph.listening
         if (!listening.sessionOpen.value) throw HookError("Kestrel's voice session is not open")

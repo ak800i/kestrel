@@ -13,8 +13,9 @@ class ManifestScannerTest {
                     <service
                         android:name="dev.kestrel.app.KestrelAccessibilityService"
                         android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" />
-                    <receiver
-                        android:name="dev.kestrel.app.debug.TestHookReceiver"
+                    <provider
+                        android:name="dev.kestrel.app.debug.TestHookProvider"
+                        android:authorities="dev.kestrel.hooks"
                         android:exported="true"
                         android:permission="android.permission.DUMP" />
                     <receiver
@@ -25,6 +26,6 @@ class ManifestScannerTest {
             </manifest>
         """.trimIndent()
 
-        assertEquals(listOf("dev.kestrel.app.debug.TestHookReceiver"), findTestHooks(manifest, "dev.kestrel"))
+        assertEquals(listOf("dev.kestrel.app.debug.TestHookProvider"), findTestHooks(manifest, "dev.kestrel"))
     }
 }

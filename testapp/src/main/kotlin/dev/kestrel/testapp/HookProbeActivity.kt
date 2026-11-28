@@ -1,25 +1,25 @@
 package dev.kestrel.testapp
 
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 
 /**
- * Sends a test-hook command to Kestrel's debug build the way any other app could, and shows whether Kestrel
- * answered. Kestrel's receiver requires android.permission.DUMP, so it must not answer (design spec, section 16.1).
+ * Calls a test hook of Kestrel's debug build the way any other app could, through the hooks' provider, and shows whether
+ * Kestrel answered. The provider requires android.permission.DUMP, so it must refuse (design spec, section 16.1); a
+ * missing provider is no refusal, so it shows apart.
  */
 class HookProbeActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val status = fixturePage("Hook probe").addStatus()
-        val command = Intent("dev.kestrel.hook.STATE").setClassName("dev.kestrel", "dev.kestrel.app.debug.TestHookReceiver")
-        val answer = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                status.text = if (resultData == null) "Probe refused" else "Probe answered"
-            }
+        status.text = try {
+            contentResolver.call(Uri.parse("content://dev.kestrel.hooks"), "STATE", null, null)
+            "Probe answered"
+        } catch (e: SecurityException) {
+            "Probe refused"
+        } catch (e: IllegalArgumentException) {
+            "Probe found no provider"
         }
-        sendOrderedBroadcast(command, null, answer, null, RESULT_CANCELED, null, null)
     }
 }

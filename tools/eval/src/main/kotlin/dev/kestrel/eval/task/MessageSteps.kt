@@ -2,7 +2,6 @@ package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.DeviceKind
 import dev.kestrel.eval.device.Dumps
-import dev.kestrel.eval.hook.Extra
 import dev.kestrel.eval.hook.HookAnswer
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -86,7 +85,7 @@ data object TestNotification : Setup {
         val byHand = "Run: adb -s ${scope.device.serial} shell am start -n $ACTIVITY --ez cancel true"
         scope.restores.push("the test notification cancelled", byHand) { scope.device.idempotent("am start -W -n $ACTIVITY --ez cancel true") }
         scope.restores.change("the test notification posted", byHand) {
-            scope.device.idempotent("am start -W -n $ACTIVITY ${Extra.Text("marker", scope.values.marker).shell()}")
+            scope.device.idempotent("am start -W -n $ACTIVITY --es marker ${shellQuoted(scope.values.marker)}")
         }
         repeat(10) {
             if (scope.device.read("dumpsys notification").any { RECORD.containsMatchIn(it) }) return SetupResult.Ready

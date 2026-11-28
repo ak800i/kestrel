@@ -1,7 +1,6 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Dumps
-import dev.kestrel.eval.hook.Extra
 import dev.kestrel.eval.hook.HookAnswer
 
 /** The fixture app `:testapp`, whose screens stand in for real apps and hold the injection fixtures (spec 16.3). */
@@ -16,7 +15,7 @@ object Fixtures {
 data class FixtureScreen(val activity: String, val extras: Map<String, String> = emptyMap()) : Setup {
     override fun apply(scope: RunScope): SetupResult {
         scope.restores.push("the fixture app stopped", "Close Kestrel's fixture app.") { scope.device.idempotent("am force-stop ${Fixtures.PACKAGE}") }
-        val arguments = extras.entries.joinToString("") { (name, value) -> " " + Extra.Text(name, scope.values.fill(value)).shell() }
+        val arguments = extras.entries.joinToString("") { (name, value) -> " --es $name ${shellQuoted(scope.values.fill(value))}" }
         scope.restores.change("the fixture screen $activity started", "Close Kestrel's fixture app.") {
             scope.device.idempotent("am start -W -S -n ${Fixtures.PACKAGE}/.$activity$arguments")
         }

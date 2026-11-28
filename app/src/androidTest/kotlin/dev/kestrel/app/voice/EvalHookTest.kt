@@ -1,7 +1,6 @@
 package dev.kestrel.app.voice
 
-import android.app.Activity
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
@@ -17,7 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** The hooks of the voice corpus (design spec, section 16.4), called as TestHookReceiver calls them. */
+/** The hooks of the voice corpus (design spec, section 16.4), called as TestHookProvider calls them. */
 class EvalHookTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val folder = File(context.getExternalFilesDir(null), EvalHooks.FOLDER)
@@ -46,7 +45,7 @@ class EvalHookTest {
         val answer = hook("VOICE_EVAL", *extras, flags = setOf("spotted"))
         val revealed = hook("VOICE_EVAL", *extras, flags = setOf("spotted", "reveal"))
 
-        assertEquals(answer.text, Activity.RESULT_OK, answer.code)
+        assertEquals(answer.text, HookReply.OK, answer.code)
         // Whether the clip was heard and read right depends on the models, the boost words and the processor, and the
         // corpus measures it; this test checks only the hook's mechanics (review of plan 2D's Task 8, M1).
         assertTrue(answer.text, ANSWER.matches(answer.text))
@@ -83,7 +82,7 @@ class EvalHookTest {
             reply
         }
 
-        assertEquals(result.text, Activity.RESULT_OK, result.code)
+        assertEquals(result.text, HookReply.OK, result.code)
         assertTrue(result.text, RECORDED.matches(result.text))
         // 44 bytes of header and two bytes a sample, for about a second at 16 kHz.
         val clip = File(folder, "eval-test.wav")
@@ -97,18 +96,18 @@ class EvalHookTest {
         assertEquals(HookReply(HookReply.FAILED, "error: add --es file with a name of letters, digits, '-' and '_'"), reply)
     }
 
-    /** Runs a hook command as TestHookReceiver does, with string extras, int extras and boolean extras that are true. */
+    /** Runs a hook command as TestHookProvider does, with string extras, int extras and boolean extras that are true. */
     private fun hook(
         command: String,
         vararg extras: Pair<String, String>,
         ints: Map<String, Int> = emptyMap(),
         flags: Set<String> = emptySet(),
     ): HookReply {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in extras) intent.putExtra(key, value)
-        for ((key, value) in ints) intent.putExtra(key, value)
-        for (flag in flags) intent.putExtra(flag, true)
-        return runBlocking { TestHooks(VoiceTests.graph, context).run(intent) }
+        val arguments = Bundle()
+        for ((key, value) in extras) arguments.putString(key, value)
+        for ((key, value) in ints) arguments.putInt(key, value)
+        for (flag in flags) arguments.putBoolean(flag, true)
+        return runBlocking { TestHooks(VoiceTests.graph, context).run(command, arguments) }
     }
 
     private companion object {

@@ -8,9 +8,9 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
@@ -65,7 +65,7 @@ import kotlin.math.roundToInt
  * NOTICES let the A71 sessions put back the owner's options and take away Kestrel's notices at their end.
  */
 internal class SessionHooks(private val graph: AppGraph, private val context: Context) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
         "VOICE_COUNTS" -> graph.listening.state.value.let {
             val counts = graph.listening.voiceCounts.describe()
             "waits=${it.wait} tasks=${graph.conversations.view.value.command} lastTaskWords=${VoiceHooks.tags.lastGoalWords} " +
@@ -74,13 +74,13 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         "VOICE_TIMES" -> times()
         "VOICE_ROUTE" -> "earbud=${if (graph.listening.currentOptions.value.earbudMicrophone) "on" else "off"} " +
             (graph.latestMicrophone?.routeReport() ?: "microphone=none")
-        "VOICE_SPOTTER" -> spotter(intent)
-        "VOICE_TASK" -> if (intent.getBooleanExtra(EXTRA_CLEAR, false)) clearTask() else task(intent)
-        "VOICE_ECHO" -> if (intent.getBooleanExtra(EXTRA_RESULT, false)) echoResult() else startEcho(intent)
-        "OWNER_OPTIONS" -> ownerOptions(intent)
-        "NOTICES" -> notices(intent)
-        "CHECK_NOTICE" -> checkNotice(intent)
-        "CLIPBOARD" -> clipboard(intent)
+        "VOICE_SPOTTER" -> spotter(extras)
+        "VOICE_TASK" -> if (extras.getBoolean(EXTRA_CLEAR, false)) clearTask() else task(extras)
+        "VOICE_ECHO" -> if (extras.getBoolean(EXTRA_RESULT, false)) echoResult() else startEcho(extras)
+        "OWNER_OPTIONS" -> ownerOptions(extras)
+        "NOTICES" -> notices(extras)
+        "CHECK_NOTICE" -> checkNotice(extras)
+        "CLIPBOARD" -> clipboard(extras)
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -89,14 +89,14 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
      * microphone" (ListeningOptions), after storing --ez requireVerbs and --ez earbudMicrophone, so that a session puts them
      * back at its end, also after a failure, a skip or Ctrl+C. Kestrel takes a change a moment later, as from its pages.
      */
-    private suspend fun ownerOptions(intent: Intent): String {
-        if (intent.hasExtra(EXTRA_REQUIRE_VERBS)) {
+    private suspend fun ownerOptions(extras: Bundle): String {
+        if (extras.containsKey(EXTRA_REQUIRE_VERBS)) {
             val commands = graph.settings.get(SettingKeys.COMMANDS)
-            graph.settings.set(SettingKeys.COMMANDS, commands.copy(requireVerbs = intent.getBooleanExtra(EXTRA_REQUIRE_VERBS, false)))
+            graph.settings.set(SettingKeys.COMMANDS, commands.copy(requireVerbs = extras.getBoolean(EXTRA_REQUIRE_VERBS, false)))
         }
-        if (intent.hasExtra(EXTRA_EARBUD_MICROPHONE)) {
+        if (extras.containsKey(EXTRA_EARBUD_MICROPHONE)) {
             val listening = graph.settings.get(SettingKeys.LISTENING_OPTIONS)
-            graph.settings.set(SettingKeys.LISTENING_OPTIONS, listening.copy(earbudMicrophone = intent.getBooleanExtra(EXTRA_EARBUD_MICROPHONE, false)))
+            graph.settings.set(SettingKeys.LISTENING_OPTIONS, listening.copy(earbudMicrophone = extras.getBoolean(EXTRA_EARBUD_MICROPHONE, false)))
         }
         val requireVerbs = graph.settings.get(SettingKeys.COMMANDS).requireVerbs
         val earbud = graph.settings.get(SettingKeys.LISTENING_OPTIONS).earbudMicrophone
@@ -108,10 +108,10 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
      * service is off, "Open Kestrel's settings") are in the shade, after cancelling them with --ez clear, so that a session
      * takes away the notices that its steps caused, at its end. The listening and sign-in notifications stay.
      */
-    private suspend fun notices(intent: Intent): String {
+    private suspend fun notices(extras: Bundle): String {
         val manager = context.getSystemService(NotificationManager::class.java) ?: throw HookError("the notification service is missing")
         val notices = setOf(ProblemNotifications.STOPPED_ID, ProblemNotifications.ACCESSIBILITY_ID, ProblemNotifications.SETTINGS_ID)
-        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
+        if (extras.getBoolean(EXTRA_CLEAR, false)) {
             notices.forEach(manager::cancel)
             // Android takes them away a moment later, so the answer waits up to 2 s for that.
             withTimeoutOrNull(CHECK_WAIT_MILLIS) {
@@ -130,11 +130,11 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
      * (plan 4D, H6). Its text has two lines, so that One UI offers to expand it. Answers whether it is in the shade, after
      * waiting up to 2 s for Android to post or take it away.
      */
-    private suspend fun checkNotice(intent: Intent): String {
+    private suspend fun checkNotice(extras: Bundle): String {
         val manager = context.getSystemService(NotificationManager::class.java) ?: throw HookError("the notification service is missing")
         fun shown() = manager.activeNotifications.any { it.id == CHECK_ID }
-        if (intent.hasExtra(EXTRA_ON)) {
-            val on = intent.getBooleanExtra(EXTRA_ON, false)
+        if (extras.containsKey(EXTRA_ON)) {
+            val on = extras.getBoolean(EXTRA_ON, false)
             if (on) {
                 if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     throw HookError("Kestrel may not post notifications; allow them first")
@@ -175,10 +175,10 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
      * never empties the owner's clipboard on a phone. The answers hold kinds only, never the content, and nothing is
      * written anywhere.
      */
-    private suspend fun clipboard(intent: Intent): String = withContext(Dispatchers.Main) {
+    private suspend fun clipboard(extras: Bundle): String = withContext(Dispatchers.Main) {
         val manager = context.getSystemService(ClipboardManager::class.java) ?: throw HookError("the clipboard service is missing")
         when {
-            intent.getBooleanExtra(EXTRA_SAVE, false) -> {
+            extras.getBoolean(EXTRA_SAVE, false) -> {
                 if (saved != null) return@withContext "clip=held saved=false"
                 val timeline = graph.timeline
                 val focused = withTimeoutOrNull(CHECK_WAIT_MILLIS) {
@@ -190,7 +190,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                 saved = clip
                 "clip=${kindOf(clip)} saved=true"
             }
-            intent.getBooleanExtra(EXTRA_RESTORE, false) -> {
+            extras.getBoolean(EXTRA_RESTORE, false) -> {
                 val held = saved ?: return@withContext "restored=false"
                 try {
                     manager.setPrimaryClip(held)
@@ -203,7 +203,7 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
                 saved = null
                 "restored=true"
             }
-            intent.getBooleanExtra(EXTRA_CLEAR, false) -> {
+            extras.getBoolean(EXTRA_CLEAR, false) -> {
                 if (clearRefused(Build.HARDWARE)) throw HookError(CLEAR_REFUSED)
                 manager.clearPrimaryClip()
                 "cleared=true"
@@ -232,12 +232,12 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
     }
 
     // The spotter's boost and threshold, after storing --ef boost and --ef threshold (plan 2E).
-    private fun spotter(intent: Intent): String {
-        if (intent.hasExtra(EXTRA_BOOST) || intent.hasExtra(EXTRA_THRESHOLD)) {
+    private fun spotter(extras: Bundle): String {
+        if (extras.containsKey(EXTRA_BOOST) || extras.containsKey(EXTRA_THRESHOLD)) {
             val now = graph.voice.keywordTuning
             graph.voice.keywordTuning = try {
-                val boost = intent.getFloatExtra(EXTRA_BOOST, now.boost)
-                KeywordTuning(boost, intent.getFloatExtra(EXTRA_THRESHOLD, now.threshold))
+                val boost = extras.getFloat(EXTRA_BOOST, now.boost)
+                KeywordTuning(boost, extras.getFloat(EXTRA_THRESHOLD, now.threshold))
             } catch (e: IllegalArgumentException) {
                 throw HookError("add --ef boost from 0.5 to 10 and --ef threshold from 0.01 to 0.5")
             }
@@ -246,14 +246,14 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         return "boost=${tuning.boost} threshold=${tuning.threshold}"
     }
 
-    private fun task(intent: Intent): String {
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, 0)
+    private fun task(extras: Bundle): String {
+        val seconds = extras.getInt(EXTRA_SECONDS, 0)
         if (seconds !in 1..MAX_TASK_SECONDS) throw HookError("add --ei seconds with 1 to $MAX_TASK_SECONDS")
-        val reply = intent.getStringExtra(EXTRA_REPLY)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es reply <text>")
+        val reply = extras.getString(EXTRA_REPLY)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es reply <text>")
         // The goal's words are counted as a count, never kept, so that the session can tell a dictated goal that was split.
         VoiceHooks.install(graph)
         // --ez handover true: the round first hands the owner a payment step (plan 7F's Task 14, Step 8a).
-        val handOver = intent.getBooleanExtra(EXTRA_HANDOVER, false)
+        val handOver = extras.getBoolean(EXTRA_HANDOVER, false)
         graph.goalEnvironment.standIn = StandInRound(seconds, reply, handOver)
         return StandInRound.answer(seconds, reply.length, handOver)
     }
@@ -263,9 +263,9 @@ internal class SessionHooks(private val graph: AppGraph, private val context: Co
         return "each goal's round runs on the phone again"
     }
 
-    private fun startEcho(intent: Intent): String {
-        val text = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text <text>")
-        val choice = when (intent.getStringExtra(EXTRA_VOICE) ?: "piper") {
+    private fun startEcho(extras: Bundle): String {
+        val text = extras.getString(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text <text>")
+        val choice = when (extras.getString(EXTRA_VOICE) ?: "piper") {
             "piper" -> VoiceChoice.PIPER
             "kokoro" -> VoiceChoice.KOKORO
             else -> throw HookError("add --es voice with piper or kokoro")

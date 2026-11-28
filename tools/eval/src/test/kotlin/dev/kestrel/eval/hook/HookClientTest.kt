@@ -11,18 +11,57 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The hooks' broadcast, its answer and the hooks that read or act (design D3 of sub-project 6), against recorded answers. */
+/**
+ * The hooks' transport, `content call` (plan 7G's amendment "The hooks' transport"), its answer and the hooks that read or
+ * act (design D3 of sub-project 6). The outputs in [theAnswersOfContentCallOnKestrelApi37] are real ones of `content call`
+ * on kestrel-api37, captured once with TestHookProvider.
+ */
 class HookClientTest {
     private val adb = FakeAdb()
     private val hooks = Hooks(HookClient(Device(adb, TestDevice("emulator-5554", DeviceKind.EMULATOR, 37), FakeClock())))
 
     @Test
-    fun theBroadcastQuotesEveryTextAsHookPs1Does() {
+    fun theCallQuotesEveryTextAsHookPs1Does() {
         assertEquals(
-            "am broadcast -n dev.kestrel/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.AGENT_MEMORY --ez add true --es key 'Ana' --es text 'the chat '\\''Saved Messages'\\'''",
-            HookClient.broadcast("agent-memory", listOf(Extra.Flag("add", true), Extra.Text("key", "Ana"), Extra.Text("text", "the chat 'Saved Messages'"))),
+            "content call --uri content://dev.kestrel.hooks --method AGENT_MEMORY --extra 'add:b:true' --extra 'key:s:Ana' " +
+                "--extra 'text:s:the chat '\\''Saved Messages'\\'''",
+            HookClient.command("agent-memory", listOf(Extra.Flag("add", true), Extra.Text("key", "Ana"), Extra.Text("text", "the chat 'Saved Messages'"))),
         )
-        assertEquals("--ei number 3", Extra.Number("number", 3).shell())
+        assertEquals("--extra 'number:i:3'", Extra.Number("number", 3).shell())
+        // On kestrel-api37, voice-state with this extra answered "error: no transcript has the tag it's a:b\c".
+        assertEquals("--extra 'tag:s:it'\\''s a\\:b\\\\c'", Extra.Text("tag", "it's a:b\\c").shell())
+    }
+
+    @Test
+    fun theAnswersOfContentCallOnKestrelApi37() {
+        assertEquals(
+            "standin=off profile=copilot copilot=1 id=profile-b568f281-684a-42db-8f75-405ccca77931 credential=present",
+            HookClient.answer(
+                "provider-standin",
+                "Result: Bundle[{code=0, text=standin=off profile=copilot copilot=1 id=profile-b568f281-684a-42db-8f75-405ccca77931 credential=present}]",
+            ).text,
+        )
+        assertEquals(
+            "error: add --es do with one of tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed",
+            assertThrows(HookError::class.java) {
+                HookClient.answer(
+                    "goal-control",
+                    "Result: Bundle[{code=1, text=error: add --es do with one of tap, touch, speak, focus, refuse, refuse-off, send-later or stop-typed}]",
+                )
+            }.message,
+        )
+        // The text is all that stands between "text=" and the last "}]", also the format's own marks and line breaks.
+        assertEquals(
+            "error: unknown command 'X}], code=0, text=Y'",
+            assertThrows(HookError::class.java) { HookClient.answer("x", "Result: Bundle[{code=1, text=error: unknown command 'X}], code=0, text=Y'}]") }.message,
+        )
+        assertEquals(
+            "error: unknown command 'LINE1\nLINE2'",
+            assertThrows(HookError::class.java) { HookClient.answer("x", "Result: Bundle[{code=1, text=error: unknown command 'LINE1\nLINE2'}]") }.message,
+        )
+        assertThrows(HookSilent::class.java) { HookClient.answer("state", FakeAdb.NO_HOOKS.trimEnd()) }
+        val other = assertThrows(HookError::class.java) { HookClient.answer("state", "Result: null") }
+        assertEquals("The device's answer to state was not a hook's answer: Result: null", other.message)
     }
 
     @Test
@@ -48,7 +87,7 @@ class HookClientTest {
     }
 
     @Test
-    fun anErrorCodeGivesTheReasonAndResultZeroMeansThatKestrelDidNotAnswer() {
+    fun anErrorCodeGivesTheReasonAndAMissingProviderMeansThatKestrelDidNotAnswer() {
         adb.hookFails("AGENT_STATE", "no task has the tag t9")
 
         assertEquals("no task has the tag t9", assertThrows(HookError::class.java) { hooks.agentState("t9") }.message)

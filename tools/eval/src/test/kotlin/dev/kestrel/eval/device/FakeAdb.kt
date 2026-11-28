@@ -7,7 +7,7 @@ import kotlin.time.Duration
  * the debug hooks by action, and every command that reached it. A guarded command runs only when the guard's property
  * matches its pattern, as on a real device; [loseNext] loses the next answer of a matching command, as adb does when a
  * device goes away for a moment, [slow] makes every command take time on a [FakeClock], and [hookCalls] gives the extras
- * of each broadcast.
+ * of each hook's call.
  */
 class FakeAdb(
     override val serial: String = "emulator-5554",
@@ -78,12 +78,12 @@ class FakeAdb(
     // By default no conversation is open, none of the hooks' own is left, and so no goal or request of theirs runs to stop
     // (design 14.4 of sub-project 7; plan 7G).
     private val hooks = mutableMapOf<String, (Map<String, String>) -> Pair<Int, String>>(
-        "CONVERSATION_STATE" to { _ -> -1 to NO_CONVERSATION },
-        "CONVERSATION_CONTROL" to { _ -> -1 to NOTHING_DELETED },
-        "GOAL_CONTROL" to { extras -> -1 to if (extras["do"] == "stop-typed") "stop=none" else "${extras["do"]}=sent" },
-        "VOICE_RESTORE" to { _ -> -1 to "restoredAgo=none guard=120" },
+        "CONVERSATION_STATE" to { _ -> ANSWERED to NO_CONVERSATION },
+        "CONVERSATION_CONTROL" to { _ -> ANSWERED to NOTHING_DELETED },
+        "GOAL_CONTROL" to { extras -> ANSWERED to if (extras["do"] == "stop-typed") "stop=none" else "${extras["do"]}=sent" },
+        "VOICE_RESTORE" to { _ -> ANSWERED to "restoredAgo=none guard=120" },
     )
-    private val broadcasts = mutableListOf<Pair<String, Map<String, String>>>()
+    private val hookCalls = mutableListOf<Pair<String, Map<String, String>>>()
     private val lost = mutableListOf<Regex>()
 
     /** Answers a command that matches [pattern] (the newest rule wins) with its output, or null for a failed command. */
@@ -91,19 +91,19 @@ class FakeAdb(
         handlers.add(0, Regex(pattern) to reply)
     }
 
-    /** Answers the debug hook [action] (such as AGENT_TASK) with `name=value` pairs, as result -1. */
-    fun hook(action: String, answer: (Map<String, String>) -> String) {
-        hooks[action] = { extras -> -1 to answer(extras) }
+    /** Answers the debug hook [method] (such as AGENT_TASK) with `name=value` pairs, as code 0. */
+    fun hook(method: String, answer: (Map<String, String>) -> String) {
+        hooks[method] = { extras -> ANSWERED to answer(extras) }
     }
 
-    /** Answers the debug hook [action] with a result code and its data: -1 and the answer, or an error's code and its reason. */
-    fun hookWith(action: String, answer: (Map<String, String>) -> Pair<Int, String>) {
-        hooks[action] = answer
+    /** Answers the debug hook [method] with a code and its text: [ANSWERED] and the answer, or [FAILED] and the reason. */
+    fun hookWith(method: String, answer: (Map<String, String>) -> Pair<Int, String>) {
+        hooks[method] = answer
     }
 
-    /** Answers the debug hook [action] with an error code and its reason. */
-    fun hookFails(action: String, reason: String) {
-        hooks[action] = { _ -> 1 to reason }
+    /** Answers the debug hook [method] with an error and its reason. */
+    fun hookFails(method: String, reason: String) {
+        hooks[method] = { _ -> FAILED to reason }
     }
 
     /** Loses the next answer of a command that matches [pattern]: the command reached the device, but adb gave no answer. */
@@ -120,8 +120,8 @@ class FakeAdb(
         slowness = Slowness(clock, latency, only)
     }
 
-    /** The extras of each broadcast of [action], in their order. */
-    fun hookCalls(action: String): List<Map<String, String>> = broadcasts.filter { it.first == action }.map { it.second }
+    /** The extras of each call of the hook [method], in their order. */
+    fun hookCalls(method: String): List<Map<String, String>> = hookCalls.filter { it.first == method }.map { it.second }
 
     // Synchronized, because a test's shutdown hook may run restores while the main thread still sends commands.
     @Synchronized
@@ -245,7 +245,7 @@ class FakeAdb(
         }
         DUMPSYS_PACKAGE.matchEntire(command)?.let { match -> return if (match.groupValues[1] in granted) runtimePermissions(match.groupValues[1]) else "" }
         RUN_AS_CAT.matchEntire(command)?.let { return files[it.groupValues[1]] }
-        BROADCAST.matchEntire(command)?.let { return broadcast(it.groupValues[1], it.groupValues[2]) }
+        HOOK_CALL.matchEntire(command)?.let { return hookCall(it.groupValues[1], it.groupValues[2]) }
         return ""
     }
 
@@ -253,12 +253,13 @@ class FakeAdb(
     fun runtimePermissions(packageName: String): String =
         "    runtime permissions:\n" + granted[packageName].orEmpty().joinToString("\n") { "      $it: granted=true, flags=[ USER_SET ]" }
 
-    private fun broadcast(action: String, extras: String): String {
+    // As `content call` prints TestHookProvider's Bundle; a hook that no rule answers is a Kestrel without hooks.
+    private fun hookCall(method: String, extras: String): String {
         val parsed = parseExtras(extras)
-        broadcasts.add(action to parsed)
-        val reply = hooks[action] ?: return "Broadcasting: Intent { act=dev.kestrel.hook.$action }\nBroadcast completed: result=0"
-        val (code, data) = reply(parsed)
-        return "Broadcasting: Intent { act=dev.kestrel.hook.$action }\nBroadcast completed: result=$code, data=\"$data\""
+        hookCalls.add(method to parsed)
+        val reply = hooks[method] ?: return NO_HOOKS
+        val (code, text) = reply(parsed)
+        return "Result: Bundle[{code=$code, text=$text}]\n"
     }
 
     companion object {
@@ -267,6 +268,16 @@ class FakeAdb(
 
         /** conversation-control do=delete-typed's answer when none of the hooks' own conversations is left (plan 7F). */
         const val NOTHING_DELETED = "deleted=0 open=0 failed=0"
+
+        /** The codes of TestHookProvider's answer: an answer, or an error whose text is the reason. */
+        const val ANSWERED = 0
+        const val FAILED = 1
+
+        /** What `content call` printed on kestrel-api37 for an authority that no app has, as for a Kestrel without hooks. */
+        const val NO_HOOKS = "Error while accessing provider:dev.kestrel.hooks\n" +
+            "java.lang.IllegalStateException: Could not find provider: dev.kestrel.hooks\n" +
+            "\tat com.android.commands.content.Content\$Command.execute(Content.java:519)\n" +
+            "\tat com.android.commands.content.Content.main(Content.java:735)\n"
 
         private val GUARD = Regex("case \\$\\(getprop (\\S+)\\) in (\\S+)\\) (.*) && echo && echo kestrel-end;; \\*\\) echo kestrel-refused;; esac", RegexOption.DOT_MATCHES_ALL)
         private val GETPROP = Regex("getprop (\\S+)")
@@ -282,9 +293,12 @@ class FakeAdb(
         private const val LISTENERS = "secure/enabled_notification_listeners"
         private val DUMPSYS_PACKAGE = Regex("dumpsys package (\\S+)")
         private val RUN_AS_CAT = Regex("run-as dev\\.kestrel cat (\\S+)")
-        private val BROADCAST = Regex("am broadcast -n dev\\.kestrel/dev\\.kestrel\\.app\\.debug\\.TestHookReceiver -a dev\\.kestrel\\.hook\\.(\\S+)(.*)", RegexOption.DOT_MATCHES_ALL)
+        private val HOOK_CALL = Regex("content call --uri content://dev\\.kestrel\\.hooks --method (\\S+)(.*) 2>&1", RegexOption.DOT_MATCHES_ALL)
 
-        /** The extras of `--es name 'text'`, `--ez name true` and `--ei name 5`, with the shell's quoting undone. */
+        /**
+         * The extras of `--extra 'name:s:text'`, `--extra 'name:b:true'` and `--extra 'name:i:5'` by their names, with the
+         * shell's quoting and `content`'s escapes of `\` and `:` undone.
+         */
         fun parseExtras(text: String): Map<String, String> {
             val extras = linkedMapOf<String, String>()
             var at = 0
@@ -313,11 +327,31 @@ class FakeAdb(
             while (true) {
                 skipSpaces()
                 if (at >= text.length) break
-                word()
-                val name = word()
-                extras[name] = word()
+                check(word() == "--extra") { "Not a hook's extra: $text" }
+                val parts = binding(word())
+                extras[parts[0]] = parts[2]
             }
             return extras
+        }
+
+        // `content`'s `<name>:<type>:<value>`, split at the colons that no `\` escapes.
+        private fun binding(text: String): List<String> {
+            val parts = mutableListOf<String>()
+            val part = StringBuilder()
+            var at = 0
+            while (at < text.length) {
+                when (val c = text[at++]) {
+                    '\\' -> part.append(text[at++])
+                    ':' -> {
+                        parts.add(part.toString())
+                        part.clear()
+                    }
+                    else -> part.append(c)
+                }
+            }
+            parts.add(part.toString())
+            check(parts.size == 3) { "Not a binding of content call: $text" }
+            return parts
         }
     }
 }

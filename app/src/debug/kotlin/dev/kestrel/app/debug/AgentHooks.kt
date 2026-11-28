@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
 import android.content.Context
-import android.content.Intent
+import android.os.Bundle
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.debug.TestHooks.HookError
 
@@ -9,33 +9,33 @@ import dev.kestrel.app.debug.TestHooks.HookError
  * The debug hooks of sub-project 5's agent (design D28 of sub-project 5), in debug builds only. Plan 5A leaves the set
  * empty; plans 5B and 5C add their commands and branches below their anchors.
  */
-// The graph, the context and the intent are for the commands of plans 5B and 5C.
+// The graph, the context and the extras are for the commands of plans 5B and 5C.
 @Suppress("unused", "UNUSED_PARAMETER")
 internal class AgentHooks(private val graph: AppGraph, private val context: Context) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
         // sub-project 5B: command branches
-        "AGENT_TASK" -> AgentTaskHooks(graph, context).task(intent)
-        "AGENT_ANSWER" -> AgentTaskHooks(graph, context).answer(intent)
-        "AGENT_SCRIPT" -> AgentTaskHooks(graph, context).script(intent)
-        "AGENT_STATE" -> AgentTaskHooks(graph, context).state(intent)
-        "AGENT_CACHE" -> AgentTaskHooks(graph, context).cache(intent)
-        "AGENT_TOUCH_SOURCE" -> AgentTaskHooks(graph, context).touchSource(intent)
-        "AGENT_SETTINGS" -> AgentTaskHooks(graph, context).settings(intent)
-        "AGENT_MEMORY" -> AgentTaskHooks(graph, context).memory(intent)
-        "AGENT_DATA" -> AgentTaskHooks(graph, context).data(intent)
+        "AGENT_TASK" -> AgentTaskHooks(graph, context).task(extras)
+        "AGENT_ANSWER" -> AgentTaskHooks(graph, context).answer(extras)
+        "AGENT_SCRIPT" -> AgentTaskHooks(graph, context).script(extras)
+        "AGENT_STATE" -> AgentTaskHooks(graph, context).state(extras)
+        "AGENT_CACHE" -> AgentTaskHooks(graph, context).cache(extras)
+        "AGENT_TOUCH_SOURCE" -> AgentTaskHooks(graph, context).touchSource(extras)
+        "AGENT_SETTINGS" -> AgentTaskHooks(graph, context).settings(extras)
+        "AGENT_MEMORY" -> AgentTaskHooks(graph, context).memory(extras)
+        "AGENT_DATA" -> AgentTaskHooks(graph, context).data(extras)
         "SELFCHAT_CHECK" -> AgentTaskHooks(graph, context).selfChat()
         "AGENT_TREE" -> AgentTaskHooks(graph, context).tree()
-        "SCREEN_TAP" -> AgentTaskHooks(graph, context).tap(intent)
+        "SCREEN_TAP" -> AgentTaskHooks(graph, context).tap(extras)
         // sub-project 5C: command branches
         // The live session of sitting 2 (design D28): only scripts\a71-agent.ps1 opens it, and closes it at the sitting's end.
         "AGENT_LIVE" -> {
-            if (intent.hasExtra("on")) {
-                graph.settings.set(dev.kestrel.app.SettingKeys.AGENT_LIVE_SESSION, intent.getBooleanExtra("on", false))
+            if (extras.containsKey("on")) {
+                graph.settings.set(dev.kestrel.app.SettingKeys.AGENT_LIVE_SESSION, extras.getBoolean("on", false))
             }
             val live = "live=${if (graph.settings.get(dev.kestrel.app.SettingKeys.AGENT_LIVE_SESSION)) "on" else "off"}"
             // With --es model: whether the default profile's own model list, which the provider sent, holds that ID, so
             // that a71-agent.ps1 refuses a comparison model that the owner's account does not list (design D32 item 35).
-            val model = intent.getStringExtra("model")
+            val model = extras.getString("model")
             if (model == null) {
                 live
             } else {
@@ -47,7 +47,7 @@ internal class AgentHooks(private val graph: AppGraph, private val context: Cont
         // The screenshot approvals (design D20): with --es revoke, a71-agent.ps1 revokes those of one app, which its
         // sitting 2 stored, and keeps the owner's others; the answer holds only counts.
         "AGENT_APPROVALS" -> {
-            val revoke = intent.getStringExtra("revoke")
+            val revoke = extras.getString("revoke")
             val stored = graph.settings.get(dev.kestrel.app.SettingKeys.SCREENSHOT_APPROVALS).approvals
             val chosen = if (revoke == null) emptyList() else stored.filter { it.packageName == revoke }
             chosen.forEach { graph.screenshotApprovals.revoke(it) }

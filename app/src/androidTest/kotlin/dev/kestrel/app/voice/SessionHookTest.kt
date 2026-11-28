@@ -1,7 +1,6 @@
 package dev.kestrel.app.voice
 
-import android.app.Activity
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.MainActivity
@@ -19,7 +18,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The hooks of the A71 session (plan 2D, design D8), called as TestHookReceiver calls them. */
+/** The hooks of the A71 session (plan 2D, design D8), called as TestHookProvider calls them. */
 class SessionHookTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val listening = VoiceTests.graph.listening
@@ -40,7 +39,7 @@ class SessionHookTest {
         ActivityScenario.launch(MainActivity::class.java).use {
             VoiceTests.startListening(ClipMicrophone())
             val reply = hook("VOICE_TASK", "reply" to "The task is done.", ints = mapOf("seconds" to 3))
-            assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+            assertEquals(reply.text, HookReply.OK, reply.code)
             assertTrue(reply.text, reply.text.startsWith("each goal's round now takes 3 s and then answers with a reply of 17 characters"))
             conversations.endQuietTime()
             val tasks = conversations.view.value.command
@@ -82,7 +81,7 @@ class SessionHookTest {
             reply
         }
 
-        assertEquals(result.text, Activity.RESULT_OK, result.code)
+        assertEquals(result.text, HookReply.OK, result.code)
         // Kestrel is in front, so Android gives it the audio focus, and the reply plays to its end. The emulator's
         // microphone hears silence, so the numbers of hits and the loudest level may be 0.
         val answer = Regex("result=finished hits=\\d+ own=\\d+ loudest=\\d+ silenced=(true|false)")
@@ -121,7 +120,7 @@ class SessionHookTest {
                     answer.matches(reply.text) && !reply.text.contains(" routed=none ")
                 }
 
-                assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+                assertEquals(reply.text, HookReply.OK, reply.code)
                 assertTrue(reply.text, answer.matches(reply.text))
                 assertTrue(reply.text, !reply.text.contains(" routed=none "))
             }
@@ -147,7 +146,7 @@ class SessionHookTest {
     fun theCheckNoticeComesAndGoesAndTheNoticesNameTheirKinds() {
         VoiceTests.grantListeningPermissions()
         fun checkNotice(on: Boolean): HookReply = runBlocking {
-            TestHooks(VoiceTests.graph, context).run(Intent(TestHooks.ACTION_PREFIX + "CHECK_NOTICE").putExtra("on", on))
+            TestHooks(VoiceTests.graph, context).run("CHECK_NOTICE", Bundle().apply { putBoolean("on", on) })
         }
 
         try {
@@ -165,7 +164,7 @@ class SessionHookTest {
 
         val reply = hook("VOICE_TIMES")
 
-        assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+        assertEquals(reply.text, HookReply.OK, reply.code)
         val answer = Regex(
             "now=\\d+ started=tile@\\d+ opened=\\d+ speechEnded=\\d+ reacted=\\S+ stopped=\\S+ settingsAsked=\\d+ " +
                 "settingsResumed=\\d+ settingsInFront=(true|false) segmentClosed=\\d+ transcribed=\\d+ " +
@@ -174,17 +173,17 @@ class SessionHookTest {
         assertTrue(reply.text, answer.matches(reply.text))
     }
 
-    /** Runs a hook command as TestHookReceiver does, with string extras, int extras and boolean extras that are true. */
+    /** Runs a hook command as TestHookProvider does, with string extras, int extras and boolean extras that are true. */
     private fun hook(
         command: String,
         vararg extras: Pair<String, String>,
         ints: Map<String, Int> = emptyMap(),
         flags: Set<String> = emptySet(),
     ): HookReply {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in extras) intent.putExtra(key, value)
-        for ((key, value) in ints) intent.putExtra(key, value)
-        for (flag in flags) intent.putExtra(flag, true)
-        return runBlocking { TestHooks(VoiceTests.graph, context).run(intent) }
+        val arguments = Bundle()
+        for ((key, value) in extras) arguments.putString(key, value)
+        for ((key, value) in ints) arguments.putInt(key, value)
+        for (flag in flags) arguments.putBoolean(flag, true)
+        return runBlocking { TestHooks(VoiceTests.graph, context).run(command, arguments) }
     }
 }

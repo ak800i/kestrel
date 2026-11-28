@@ -1,7 +1,6 @@
 package dev.kestrel.app.debug
 
-import android.app.Activity
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
@@ -76,12 +75,12 @@ class OwnerHooksTest {
         }
     }
 
-    /** Runs a hook command as TestHookReceiver does, with boolean extras, and answers its text after checking its code. */
+    /** Runs a hook command as TestHookProvider does, with boolean extras, and answers its text after checking its code. */
     private fun hook(command: String, vararg flags: Pair<String, Boolean>): String {
-        val intent = Intent(TestHooks.ACTION_PREFIX + command)
-        for ((key, value) in flags) intent.putExtra(key, value)
-        val reply = runBlocking { TestHooks(graph, context).run(intent) }
-        assertEquals(reply.text, Activity.RESULT_OK, reply.code)
+        val arguments = Bundle()
+        for ((key, value) in flags) arguments.putBoolean(key, value)
+        val reply = runBlocking { TestHooks(graph, context).run(command, arguments) }
+        assertEquals(reply.text, HookReply.OK, reply.code)
         return reply.text
     }
 }

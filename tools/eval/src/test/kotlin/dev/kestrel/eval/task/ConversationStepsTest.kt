@@ -1,6 +1,7 @@
 package dev.kestrel.eval.task
 
 import dev.kestrel.eval.device.Alarms
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.hook.HookAnswer
 import dev.kestrel.eval.hook.HookError
 import dev.kestrel.eval.run.SentCommand
@@ -80,7 +81,7 @@ class ConversationStepsTest {
 
         kestrel.refuse = false
         SmallestLimits.apply(scope)
-        run.adb.loseNext("hook.CONVERSATION_CONTROL.*'500/60/1000'")
+        run.adb.loseNext("--method CONVERSATION_CONTROL .*'limits:s:500/60/1000'")
         assertTrue(run.restores.runDownTo(0).isEmpty())
         assertEquals("500/60/1000", kestrel.stored)
         assertEquals(listOf("50/5/10", "500/60/1000", "500/60/1000"), kestrel.sets)
@@ -98,7 +99,7 @@ class ConversationStepsTest {
                 when (extras["do"]) {
                     "limits-check" -> {
                         onCheck()
-                        -1 to "limits=$stored"
+                        FakeAdb.ANSWERED to "limits=$stored"
                     }
                     else -> if (refuse) {
                         1 to "add --es limits <replies>/<minutes>/<credits>, or no limits for the page's smallest"
@@ -106,7 +107,7 @@ class ConversationStepsTest {
                         val was = stored
                         stored = extras["limits"] ?: "50/5/10"
                         sets += stored
-                        -1 to "limits=$stored was=$was"
+                        FakeAdb.ANSWERED to "limits=$stored was=$was"
                     }
                 }
             }

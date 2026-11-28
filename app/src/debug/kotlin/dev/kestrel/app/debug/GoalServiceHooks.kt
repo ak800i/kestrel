@@ -4,7 +4,7 @@ import android.app.AlarmManager
 import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.content.Context
-import android.content.Intent
+import android.os.Bundle
 import android.os.SystemClock
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.conversation.InputIds
@@ -43,26 +43,26 @@ import kotlinx.coroutines.withContext
 internal class GoalServiceHooks(private val graph: AppGraph, private val context: Context) {
     private val buttons = NoticeButtons()
 
-    suspend fun run(command: String, intent: Intent): String = when (command) {
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
         "GOAL_SERVICE_STATE" -> GoalServiceAnswers.state(
             graph.goalForeground.status(),
             GoalService.runningTypes(),
             FocusProbe.requests.now(),
             GoalStartRefusal.of(graph).armed,
         )
-        "GOAL_CONTROL" -> control(intent)
+        "GOAL_CONTROL" -> control(extras)
         else -> throw HookError("unknown command '$command'")
     }
 
-    private suspend fun control(intent: Intent): String = when (val wanted = intent.getStringExtra(EXTRA_DO)) {
-        "tap" -> tap(intent.getStringExtra(EXTRA_ACTION))
+    private suspend fun control(extras: Bundle): String = when (val wanted = extras.getString(EXTRA_DO)) {
+        "tap" -> tap(extras.getString(EXTRA_ACTION))
         "touch" -> {
             graph.conversations.touched()
             "touch=sent"
         }
         "speak", "focus" -> {
             FocusProbe.requests.asked()
-            // After the hook's broadcast has returned, so that its own standing does not count.
+            // After the hook's call has returned, so that the standing that the call gives Kestrel does not count.
             graph.scope.launch {
                 delay(FocusProbe.DELAY_MILLIS)
                 FocusProbe.requests.answered(FocusProbe.request(context, graph.goalForeground, speaking = wanted == "speak"))
@@ -76,7 +76,7 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
             "refuse=armed"
         }
         "refuse-off" -> GoalServiceAnswers.refuseOff(GoalStartRefusal.of(graph).take())
-        "send-later" -> sendLater(intent.getStringExtra(EXTRA_ACTION))
+        "send-later" -> sendLater(extras.getString(EXTRA_ACTION))
         // Only the goal or Kestrel's own request of the hooks' own conversation, or the hooks' own request while no
         // conversation is open (plan 7G): the conversation's loop checks their mark at the moment that it takes the stop, so
         // the work of a conversation that the owner opened or that an act of his reached is never stopped. `stop=none` when

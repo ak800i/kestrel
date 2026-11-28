@@ -64,7 +64,7 @@ class CommandsTest {
     fun aScriptThatKestrelRefusesStopsTheSuiteBeforeAnyRun() {
         fake.adb.hookWith("AGENT_SCRIPT") { extras ->
             if (extras["check"] == "true") 1 to "error: the script is refused (InvalidScript): Reply 1 of the script has keys that the scripted model does not know: require."
-            else -1 to "script=installed replies=2"
+            else FakeAdb.ANSWERED to "script=installed replies=2"
         }
 
         assertEquals(Cli.EXIT_REFUSED, fake.cli("suite", "--device", "emulator-5554", "--runs", "2", "--tasks", "stand-in-hotspot,stand-in-firefox"))

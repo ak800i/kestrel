@@ -20,7 +20,7 @@ internal data class FocusResult(val granted: Boolean, val speaking: Boolean, val
  * for goal-service-state.
  */
 internal object FocusProbe {
-    /** How long after the hook's broadcast the request waits, so that the broadcast's own standing has ended. */
+    /** How long after the hook's answer the request waits, so that the standing that the hook's call gives Kestrel has ended. */
     const val DELAY_MILLIS = 1_000L
 
     val requests = FocusRequests()

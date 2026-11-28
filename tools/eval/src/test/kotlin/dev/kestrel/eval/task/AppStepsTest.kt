@@ -354,7 +354,7 @@ class AppStepsTest {
 
         // Only the restore stops Firefox, after the tray opened; the setup's own stop is a change, which may not start now.
         assertEquals(listOf("am force-stop org.mozilla.firefox"), run.adb.commands.filter { it.startsWith("am force-stop") })
-        assertTrue(run.adb.commands.indexOf("am force-stop org.mozilla.firefox") > run.adb.commands.indexOfFirst { it.contains("hook.SCREEN_TAP") })
+        assertTrue(run.adb.commands.indexOf("am force-stop org.mozilla.firefox") > run.adb.commands.indexOfFirst { it.contains("--method SCREEN_TAP ") })
         assertFalse(firefox.tray)
     }
 

@@ -1,5 +1,6 @@
 package dev.kestrel.eval.run
 
+import dev.kestrel.eval.device.FakeAdb
 import dev.kestrel.eval.device.Refusal
 import dev.kestrel.eval.task.FakeRun
 import kotlinx.serialization.json.Json
@@ -41,7 +42,7 @@ class ScriptCheckTest {
         var checks = 0
         run.adb.hookWith("AGENT_SCRIPT") {
             if (++checks == 2) 1 to "error: the script is refused (InvalidScript): Reply 2 of the script has keys that the scripted model does not know: require."
-            else -1 to "script=valid replies=2"
+            else FakeAdb.ANSWERED to "script=valid replies=2"
         }
 
         assertEquals(

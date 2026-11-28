@@ -1,9 +1,9 @@
 package dev.kestrel.app.debug.spike
 
 import android.content.Context
-import android.content.Intent
 import android.location.Location
 import android.location.LocationManager
+import android.os.Bundle
 import android.os.CancellationSignal
 import dev.kestrel.app.AppGraph
 import kotlinx.coroutines.Dispatchers
@@ -18,16 +18,16 @@ import kotlin.coroutines.resume
 
 /** The test-hook commands of spike S1's location check and of spikes S3 and S7. `scripts/hook.ps1` lists them. */
 internal class SpikeHooks(private val context: Context, private val graph: AppGraph) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
-        "FILES" -> files(intent)
-        "LOCATION" -> location(intent)
-        "WATCH" -> watch(intent)
-        else -> results(intent)
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
+        "FILES" -> files(extras)
+        "LOCATION" -> location(extras)
+        "WATCH" -> watch(extras)
+        else -> results(extras)
     }
 
-    private fun location(intent: Intent): String {
-        val source = intent.getStringExtra(EXTRA_SOURCE) ?: "hook"
-        val delaySeconds = intent.getIntExtra(EXTRA_DELAY, 0)
+    private fun location(extras: Bundle): String {
+        val source = extras.getString(EXTRA_SOURCE) ?: "hook"
+        val delaySeconds = extras.getInt(EXTRA_DELAY, 0)
         graph.scope.launch {
             delay(delaySeconds * 1_000L)
             SpikeListening.record(context, "location source=$source ${locate()}")
@@ -59,8 +59,8 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
      * sizes and SHA-256 hashes, and the folders that Kestrel may not read. With `--es create <folder>`, Kestrel first
      * creates that folder in it.
      */
-    private suspend fun files(intent: Intent): String = withContext(Dispatchers.IO) {
-        intent.getStringExtra(EXTRA_CREATE)?.let { context.getExternalFilesDir(it) }
+    private suspend fun files(extras: Bundle): String = withContext(Dispatchers.IO) {
+        extras.getString(EXTRA_CREATE)?.let { context.getExternalFilesDir(it) }
         val root = context.getExternalFilesDir(null) ?: return@withContext "no external files folder"
         val lines = mutableListOf<String>()
         val files = root.walkTopDown().onFail { folder, _ -> lines += "${folder.relativeTo(root).invariantSeparatorsPath}/ unreadable" }
@@ -87,9 +87,9 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
      * Counts the owner's touches that the touch watcher reports for a few seconds, so that spike S3 can be checked with
      * a real finger. Kestrel's own gestures do not count.
      */
-    private suspend fun watch(intent: Intent): String {
+    private suspend fun watch(extras: Bundle): String {
         val session = graph.screen.value ?: return "Kestrel's accessibility service is off"
-        val seconds = intent.getIntExtra(EXTRA_SECONDS, DEFAULT_WATCH_SECONDS).coerceIn(1, MAX_WATCH_SECONDS)
+        val seconds = extras.getInt(EXTRA_SECONDS, DEFAULT_WATCH_SECONDS).coerceIn(1, MAX_WATCH_SECONDS)
         session.startTouchWatcher()
         try {
             var touches = 0
@@ -100,8 +100,8 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
         }
     }
 
-    private fun results(intent: Intent): String {
-        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
+    private fun results(extras: Bundle): String {
+        if (extras.getBoolean(EXTRA_CLEAR, false)) {
             SpikeListening.clearResults(context)
             return "cleared"
         }
@@ -113,7 +113,7 @@ internal class SpikeHooks(private val context: Context, private val graph: AppGr
         private const val BUFFER_BYTES = 1 shl 16
         private const val DEFAULT_WATCH_SECONDS = 10
 
-        // The hook's answer must come within the receiver's 20 s.
+        // The hook's answer must come within the call's 20 s (TestHookProvider).
         private const val MAX_WATCH_SECONDS = 15
         private const val LOCATION_TIMEOUT_MILLIS = 15_000L
         private const val EXTRA_SOURCE = "source"

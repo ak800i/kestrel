@@ -1,6 +1,6 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
+import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.kestrel.app.KestrelApplication
 import dev.kestrel.app.SettingKeys
@@ -55,15 +55,15 @@ class AgentLiveHookTest {
     }
 
     private suspend fun approvals(revoke: String?): String {
-        val intent = Intent(TestHooks.ACTION_PREFIX + "AGENT_APPROVALS")
-        if (revoke != null) intent.putExtra("revoke", revoke)
-        return TestHooks(graph, context).run(intent).text
+        val arguments = Bundle()
+        if (revoke != null) arguments.putString("revoke", revoke)
+        return TestHooks(graph, context).run("AGENT_APPROVALS", arguments).text
     }
 
     private suspend fun hook(on: Boolean?, model: String? = null): String {
-        val intent = Intent(TestHooks.ACTION_PREFIX + "AGENT_LIVE")
-        if (on != null) intent.putExtra("on", on)
-        if (model != null) intent.putExtra("model", model)
-        return TestHooks(graph, context).run(intent).text
+        val arguments = Bundle()
+        if (on != null) arguments.putBoolean("on", on)
+        if (model != null) arguments.putString("model", model)
+        return TestHooks(graph, context).run("AGENT_LIVE", arguments).text
     }
 }

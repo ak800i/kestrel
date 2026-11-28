@@ -36,11 +36,11 @@ class AgentHooksTest {
         val safety = graph.settings.get(SettingKeys.SAFETY)
         val aliases = graph.goalEnvironment.selfChatAliases
         try {
-            val refused = hook("AGENT_SETTINGS --es pin 4711")
-            assertTrue(refused.contains("result=1, data=\"error: agent-settings has no key pin\""))
-            assertFalse(refused.contains("4711"))
+            val refused = hook("AGENT_SETTINGS", "pin" to "4711")
+            assertEquals("error: agent-settings has no key pin", failure(refused))
+            assertFalse(refused.text.contains("4711"))
 
-            val reply = answer(hook("AGENT_SETTINGS --es ownerEmails owner@example.com --es whatsappOwnName Test --es selfChatAliases $FIXTURES=${SelfChats.TELEGRAM}"))
+            val reply = answer(hook("AGENT_SETTINGS", "ownerEmails" to "owner@example.com", "whatsappOwnName" to "Test", "selfChatAliases" to "$FIXTURES=${SelfChats.TELEGRAM}"))
 
             assertEquals("ownerEmails=1 viberSelfChatName=unset whatsappOwnName=set selfChatAliases=1", reply)
             assertEquals(listOf("owner@example.com"), graph.settings.get(SettingKeys.SAFETY).ownerEmails)
@@ -56,9 +56,9 @@ class AgentHooksTest {
         val safety = graph.settings.get(SettingKeys.SAFETY)
         val aliases = graph.goalEnvironment.selfChatAliases
         try {
-            val refused = hook("AGENT_SETTINGS --es ownerEmails changed@example.com --es selfChatAliases $FIXTURES")
+            val refused = hook("AGENT_SETTINGS", "ownerEmails" to "changed@example.com", "selfChatAliases" to FIXTURES)
 
-            assertTrue(refused, refused.contains("result=1, data=\"error: add --es selfChatAliases as pkg=pkg,pkg=pkg\""))
+            assertEquals("error: add --es selfChatAliases as pkg=pkg,pkg=pkg", failure(refused))
             assertEquals(safety, graph.settings.get(SettingKeys.SAFETY))
             assertEquals(aliases, graph.goalEnvironment.selfChatAliases)
         } finally {
@@ -74,13 +74,13 @@ class AgentHooksTest {
         try {
             // A check reads the script by the scripted model's rules and installs nothing (plan 7G).
             graph.roundModels.modelOverride = null
-            assertEquals("script=valid replies=1", answer(hook("AGENT_SCRIPT --es file hooks-test.json --ez check true")))
+            assertEquals("script=valid replies=1", answer(hook("AGENT_SCRIPT", "file" to "hooks-test.json", "check" to true)))
             assertNull(graph.roundModels.modelOverride)
-            assertEquals("script=installed replies=1", answer(hook("AGENT_SCRIPT --es file hooks-test.json")))
+            assertEquals("script=installed replies=1", answer(hook("AGENT_SCRIPT", "file" to "hooks-test.json")))
             assertNotNull(graph.roundModels.modelOverride)
-            assertTrue(hook("AGENT_SCRIPT --es file ../hooks-test.json").contains("result=1, data=\"error: add --es file"))
+            assertTrue(failure(hook("AGENT_SCRIPT", "file" to "../hooks-test.json")).startsWith("error: add --es file"))
 
-            assertEquals("script=none", answer(hook("AGENT_SCRIPT --ez clear true")))
+            assertEquals("script=none", answer(hook("AGENT_SCRIPT", "clear" to true)))
             assertNull(graph.roundModels.modelOverride)
         } finally {
             graph.roundModels.modelOverride = null
@@ -115,23 +115,23 @@ class AgentHooksTest {
     fun screenTapTapsByTheLabelAndRefusesKestrelsOwnApp() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
-        assertEquals("tapped=true count=1", answer(hook("SCREEN_TAP --es label SEND")))
+        assertEquals("tapped=true count=1", answer(hook("SCREEN_TAP", "label" to "SEND")))
         screen.awaitElement { it.label == "Clicked Send" }
-        assertEquals("tapped=false count=0", answer(hook("SCREEN_TAP --es label no-such-label")))
+        assertEquals("tapped=false count=0", answer(hook("SCREEN_TAP", "label" to "no-such-label")))
 
         screen.shell("am start -W -n $KESTREL/.app.MainActivity")
         screen.awaitElement { it.packageName == KESTREL }
-        assertEquals("tapped=false error=refused", answer(hook("SCREEN_TAP --es label Back")))
+        assertEquals("tapped=false error=refused", answer(hook("SCREEN_TAP", "label" to "Back")))
     }
 
     @Test
     fun screenTapTakesAPartOfALabelALongPressAndAPackageThatMustBeInFront() = runBlocking {
         screen.open("ViewsActivity", "Views fixture")
 
-        assertEquals("tapped=false error=elsewhere", answer(hook("SCREEN_TAP --es label SEND --es package com.google.android.gm")))
-        assertEquals("tapped=true count=1", answer(hook("SCREEN_TAP --es contains SEN --ez long true --es package $FIXTURES")))
+        assertEquals("tapped=false error=elsewhere", answer(hook("SCREEN_TAP", "label" to "SEND", "package" to "com.google.android.gm")))
+        assertEquals("tapped=true count=1", answer(hook("SCREEN_TAP", "contains" to "SEN", "long" to true, "package" to FIXTURES)))
         screen.awaitElement { it.label == "Long-pressed Send" }
-        assertTrue(hook("SCREEN_TAP --es package $FIXTURES").contains("result=1, data=\"error: add --es label <text> or --es contains <text>\""))
+        assertEquals("error: add --es label <text> or --es contains <text>", failure(hook("SCREEN_TAP", "package" to FIXTURES)))
     }
 
     @Test
@@ -148,7 +148,7 @@ class AgentHooksTest {
         try {
             screen.open("MessengerActivity", "Ana Petrović", "--es chat ana")
 
-            val reply = answer(hook("SCREEN_TAP --es label Call"))
+            val reply = answer(hook("SCREEN_TAP", "label" to "Call"))
 
             assertEquals("tapped=false error=refused", reply)
             assertEquals("", screen.shell("run-as $FIXTURES cat files/presses.log").trim())
@@ -162,13 +162,13 @@ class AgentHooksTest {
         val source = graph.settings.get(SettingKeys.TOUCH_RULE)
         val fields = graph.settings.get(SettingKeys.AGENT_CACHE_FIELDS)
         try {
-            val touch = answer(hook("AGENT_TOUCH_SOURCE --es rule CREDITS --es branch B"))
+            val touch = answer(hook("AGENT_TOUCH_SOURCE", "rule" to "CREDITS", "branch" to "B"))
 
             assertTrue(touch, touch.startsWith("rule=CREDITS branch=B sdk="))
             assertEquals(TouchSource(TouchRule.CREDITS, TouchBranch.B), graph.screen.value?.touchSource)
             assertEquals(
                 "anthropicMarks=on responsesExplicit=on chatCopilotMarks=off",
-                answer(hook("AGENT_CACHE --es field chatCopilotMarks --ez on false")),
+                answer(hook("AGENT_CACHE", "field" to "chatCopilotMarks", "on" to false)),
             )
         } finally {
             graph.settings.set(SettingKeys.TOUCH_RULE, source)
@@ -180,10 +180,10 @@ class AgentHooksTest {
     @Test
     fun agentMemoryAddsAndRemovesATestAliasByItsKey() = runBlocking {
         try {
-            assertTrue(answer(hook("AGENT_MEMORY --ez add true --es key hooks-test --es text Saved")).endsWith(" added=hooks-test"))
+            assertTrue(answer(hook("AGENT_MEMORY", "add" to true, "key" to "hooks-test", "text" to "Saved")).endsWith(" added=hooks-test"))
             assertTrue(graph.memory.facts().any { it.key == "hooks-test" })
 
-            answer(hook("AGENT_MEMORY --ez remove true --es key hooks-test"))
+            answer(hook("AGENT_MEMORY", "remove" to true, "key" to "hooks-test"))
 
             assertFalse(graph.memory.facts().any { it.key == "hooks-test" })
         } finally {
@@ -191,13 +191,18 @@ class AgentHooksTest {
         }
     }
 
-    /** Sends a command the way scripts/hook.ps1 does. */
-    private fun hook(command: String): String =
-        screen.shell("am broadcast -n $KESTREL/dev.kestrel.app.debug.TestHookReceiver -a dev.kestrel.hook.$command")
+    /** Sends a command the way scripts/hook.ps1 does, with content call from the shell. */
+    private fun hook(command: String, vararg extras: Pair<String, Any>): HookReply = ShellHooks(screen::shell).call(command, *extras)
 
-    /** The data of a successful answer. */
-    private fun answer(reply: String): String {
-        assertTrue(reply, reply.contains("result=-1, data=\""))
-        return reply.substringAfter("data=\"").substringBeforeLast('"')
+    /** The text of a successful answer. */
+    private fun answer(reply: HookReply): String {
+        assertEquals(reply.text, HookReply.OK, reply.code)
+        return reply.text
+    }
+
+    /** The text of an error's answer. */
+    private fun failure(reply: HookReply): String {
+        assertEquals(reply.text, HookReply.FAILED, reply.code)
+        return reply.text
     }
 }

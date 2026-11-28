@@ -1,7 +1,7 @@
 package dev.kestrel.app.debug
 
-import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import dev.kestrel.app.AppGraph
 import dev.kestrel.app.SettingKeys
 import dev.kestrel.app.conversation.InputIds
@@ -19,13 +19,13 @@ import dev.kestrel.conversation.model.OwnerInput
  * conversation-type types words as the owner does on the conversation screen (plan 7F). The answers never contain words.
  */
 internal class ConversationHooks(private val graph: AppGraph) {
-    suspend fun run(command: String, intent: Intent): String = when (command) {
+    suspend fun run(command: String, extras: Bundle): String = when (command) {
         "CONVERSATION_STATE" -> {
             val view = graph.conversations.view.value
             ConversationHookAnswers.state(view, graph.settings.get(SettingKeys.CONVERSATIONS), System.currentTimeMillis(), HookConversations.ownsWork(view.id))
         }
-        "CONVERSATION_CONTROL" -> control(intent)
-        "CONVERSATION_TYPE" -> type(intent)
+        "CONVERSATION_CONTROL" -> control(extras)
+        "CONVERSATION_TYPE" -> type(extras)
         else -> throw HookError("unknown command '$command'")
     }
 
@@ -35,20 +35,20 @@ internal class ConversationHooks(private val graph: AppGraph) {
     // the conversation's steps (Task 13a's CommandTags.onConversationStep); one that the command joins, which may be the
     // owner's, does not (review N4, review B-I2). The callers send "do new" first. Options without a tag are refused, because
     // only a tag carries them to the input.
-    private suspend fun type(intent: Intent): String {
-        val text = intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text with the words to type")
+    private suspend fun type(extras: Bundle): String {
+        val text = extras.getString(EXTRA_TEXT)?.takeIf { it.isNotBlank() } ?: throw HookError("add --es text with the words to type")
         if (VoiceHooks.refused(text, Build.HARDWARE)) throw HookError(VoiceHooks.YES_CALL_REFUSED)
-        val tag = intent.getStringExtra(EXTRA_TAG)
-        ConversationHookAnswers.untaggedOptions(tag, intent.extras?.keySet().orEmpty())?.let { throw HookError(it) }
+        val tag = extras.getString(EXTRA_TAG)
+        ConversationHookAnswers.untaggedOptions(tag, extras.keySet())?.let { throw HookError(it) }
         val channel = graph.textChannel
         val input = channel.read(text) ?: throw HookError("add --es text with the words to type")
-        val live = if (intent.hasExtra(EXTRA_LIVE)) intent.getBooleanExtra(EXTRA_LIVE, false) else null
-        val options = VoiceHooks.taskOptions(intent.getStringExtra(EXTRA_MODEL), live, intent.getStringExtra(EXTRA_MARKER))
+        val live = if (extras.containsKey(EXTRA_LIVE)) extras.getBoolean(EXTRA_LIVE, false) else null
+        val options = VoiceHooks.taskOptions(extras.getString(EXTRA_MODEL), live, extras.getString(EXTRA_MARKER))
         channel.submit(if (tag != null) VoiceHooks.typed(graph, tag, input, options) else VoiceHooks.untagged(graph, input))
         return "typed read=${VoiceHooks.kindOf(input)}" + (tag?.let { " tag=$it" } ?: "")
     }
 
-    private suspend fun control(intent: Intent): String = when (intent.getStringExtra(EXTRA_DO)) {
+    private suspend fun control(extras: Bundle): String = when (extras.getString(EXTRA_DO)) {
         // As the owner's "Kestrel, new conversation" (design 6.8 of sub-project 7): while a goal is open, Kestrel says that
         // it must stop first.
         "new" -> {
@@ -63,7 +63,7 @@ internal class ConversationHooks(private val graph: AppGraph) {
         // Only the hooks' own conversation (plan 7G): the conversation's loop checks the mark at the moment that it ends the
         // quiet time, so a conversation that the owner opened or that an act of his reached is never ended.
         "expire-typed" -> if (graph.conversations.endQuietTimeIf(HookConversations::owns)) "expire=sent" else "expire=not-typed"
-        "limits" -> limits(intent.getStringExtra(EXTRA_LIMITS))
+        "limits" -> limits(extras.getString(EXTRA_LIMITS))
         // A pure read of the stored limits, so that a test's restore asks Kestrel whether its change reached it (plan 7G).
         "limits-check" -> "limits=${ConversationHookAnswers.limitsText(graph.settings.get(SettingKeys.CONVERSATIONS).roundLimits)}"
         "restore-check" -> "restored=${ConversationHookAnswers.restored(graph.conversations.restored)}"
