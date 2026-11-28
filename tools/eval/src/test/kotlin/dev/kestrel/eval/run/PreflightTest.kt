@@ -138,8 +138,10 @@ class PreflightTest {
 
         run.adb.hook("STATE") { "screen=on testMode=on" }
         run.adb.hook("VOICE_STATE") { "mode=off session=closed" }
+        val start = run.clock.time
         assertThrows(Refusal::class.java) { preflight().prepare(false) }
-        assertTrue(run.clock.time.inWholeSeconds >= 90)
+        // The wait reads until less than one 3 s poll of its 90 s is left, and never past them.
+        assertTrue((run.clock.time - start).inWholeSeconds in 87..90)
     }
 
     // The whole-plan review of plan 7G, I2: the wait for listening keeps the rule of every wait, so a slow adb ends it at its
