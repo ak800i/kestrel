@@ -93,10 +93,14 @@ internal class CommandTags {
 
     // The numbers of the hooks' own acts, which they claimed before each act reached Kestrel: their inputs, tagged or not,
     // the inputs that a session made of their clips (voice-clip), their presses of a card and their presses of the goal
-    // notification's buttons. Every other act is the owner's (plan
-    // 7G). They stay claimed after the step that started their work, because a local request's switch names its input again
-    // later.
-    private val claimed = LinkedHashSet<Long>()
+    // notification's buttons. Every other act is the owner's (plan 7G). A claim lives as long as its act can still come up
+    // in a step, and no count of newer claims ends it (the whole-plan review's M5): it goes after the step in which the
+    // conversation took its act, unless the machine holds the act's work for a later step (ConversationState.pendingInputs)
+    // or the act started Kestrel's own request that runs, whose switch names it again when the request ends; it then goes
+    // after the step in which that work started, ended or was dropped ([release]). Nothing caps them: a claim whose act
+    // never reached the conversation, as a press that a card or the notification refused, holds a number that no later act
+    // carries (InputIds), so it can never make another act the hooks', and it goes with the process.
+    private val claimed = HashSet<Long>()
 
     // The transcripts that a hook sent without a tag, until the Orchestrator's step, and how many inputs Listening still
     // makes for the conversation of each hook's transcript, tagged or not, which are all the hooks' (a "stop" before a
@@ -130,7 +134,6 @@ internal class CommandTags {
 
     private fun claimAct(id: Long) {
         claimed += id
-        while (claimed.size > MAX_TAGS) claimed.remove(claimed.first())
     }
 
     /**
@@ -337,6 +340,17 @@ internal class CommandTags {
             val tag = inputs.remove(settled.id) ?: continue
             tags[tag]?.let { tags[tag] = it.copy(role = Role.NONE) }
         }
+        release(event, state, step, pending)
+    }
+
+    // The claims' lives (the whole-plan review's M5): every act of the step, and every act whose work waited before it or
+    // that started the request that ran before it, is settled once the step is over, unless its work is still to come
+    // ([pending]) or it started Kestrel's own request that still runs. Only then does its claim go, so a hook's input that
+    // waits is never the owner's.
+    private fun release(event: ConversationEvent, before: ConversationState, step: MachineStep, pending: Set<Long>) {
+        val live = pending + listOfNotNull(step.state.local?.input?.id)
+        val settled = numbers(event, step) + before.pendingInputs.map { it.id } + listOfNotNull(before.local?.input?.id)
+        for (number in settled) if (number !in live) claimed.remove(number)
     }
 
     // The command whose work [effect] starts, with the input that it starts for; null for an effect that starts none.
@@ -362,19 +376,30 @@ internal class CommandTags {
     // card over the app, which reaches the conversation with its number and never as an input: the answer of a question
     // (the dialogue's answer, or the answer to "Continue the goal?") or the Continue or Cancel that ended a hand-over. The
     // end of a wait (Silence) and a withdrawn question (Interrupted) answer nothing, so they are no acts.
-    private fun acts(event: ConversationEvent, step: MachineStep): List<Long> {
-        val inputs = listOfNotNull((event as? ConversationEvent.Input)?.input) + step.effects.mapNotNull { work(it)?.second }
-        val tap = when (event) {
-            is ConversationEvent.Dialogue -> when (val dialogue = event.event) {
-                is DialogueEvent.Answered -> dialogue.tap?.takeIf { answers(dialogue.answer) }
-                is DialogueEvent.HandOverDone -> dialogue.act
-                else -> null
-            }
-            is ConversationEvent.ContinueAnswered -> event.tap?.takeIf { answers(event.answer) }
+    private fun acts(event: ConversationEvent, step: MachineStep): List<Long> =
+        inputsOf(event, step).filter(::isAct).map { it.id } + listOfNotNull(tapOf(event)?.takeIf { it.answered }?.number)
+
+    // Every number that [step] takes from its acts, also of an input or a tap that answers nothing.
+    private fun numbers(event: ConversationEvent, step: MachineStep): List<Long> =
+        inputsOf(event, step).map { it.id } + listOfNotNull(tapOf(event)?.number)
+
+    // The input of [event] and the inputs that the step's work starts for.
+    private fun inputsOf(event: ConversationEvent, step: MachineStep): List<OwnerInput> =
+        listOfNotNull((event as? ConversationEvent.Input)?.input) + step.effects.mapNotNull { work(it)?.second }
+
+    // The tap on a card over the app that [event] carries, with whether it answered: a question's answer, the answer to
+    // "Continue the goal?", or the Continue or Cancel that ended a hand-over.
+    private fun tapOf(event: ConversationEvent): Tap? = when (event) {
+        is ConversationEvent.Dialogue -> when (val dialogue = event.event) {
+            is DialogueEvent.Answered -> dialogue.tap?.let { Tap(it, answers(dialogue.answer)) }
+            is DialogueEvent.HandOverDone -> dialogue.act?.let { Tap(it, answered = true) }
             else -> null
         }
-        return inputs.filter(::isAct).map { it.id } + listOfNotNull(tap)
+        is ConversationEvent.ContinueAnswered -> event.tap?.let { Tap(it, answers(event.answer)) }
+        else -> null
     }
+
+    private data class Tap(val number: Long, val answered: Boolean)
 
     private fun isAct(input: OwnerInput): Boolean = (input.intent as? InputIntent.Answer)?.let { answers(it.answer) } ?: true
 

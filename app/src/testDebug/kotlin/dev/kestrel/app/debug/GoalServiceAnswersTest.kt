@@ -58,19 +58,28 @@ class GoalServiceAnswersTest {
     }
 
     @Test
-    fun aPressInTheShadeSaysWhatItExpandedAndWhetherTheShadeClosedAgain() {
-        assertEquals("tapped=continue expanded=none shade=closed", GoalServiceAnswers.tapped(GoalAction.CONTINUE, emptyList(), shadeClosed = true))
-        assertEquals("tapped=stop expanded=row shade=open", GoalServiceAnswers.tapped(GoalAction.STOP, listOf(ShadeExpansion.ROW), shadeClosed = false))
-        assertEquals("tapped=open expanded=group shade=closed", GoalServiceAnswers.tapped(GoalAction.OPEN, listOf(ShadeExpansion.GROUP), shadeClosed = true))
+    fun aPressInTheShadeSaysWhatItExpandedWhetherTheShadeClosedAgainAndWhatItsClaimBecame() {
         assertEquals(
-            "tapped=cancel expanded=group,row shade=closed",
-            GoalServiceAnswers.tapped(GoalAction.CANCEL, listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW), shadeClosed = true),
+            "tapped=continue expanded=none shade=closed claim=used",
+            GoalServiceAnswers.tapped(GoalAction.CONTINUE, emptyList(), shadeClosed = true, ButtonClaims.Settled.USED),
         )
         assertEquals(
-            "the goal notification's cancel is not in the shade; shade=closed",
-            GoalServiceAnswers.notTapped("the goal notification's cancel is not in the shade", shadeClosed = true),
+            "tapped=stop expanded=row shade=open claim=dropped",
+            GoalServiceAnswers.tapped(GoalAction.STOP, listOf(ShadeExpansion.ROW), shadeClosed = false, ButtonClaims.Settled.DROPPED),
         )
-        assertEquals("The element changed; shade=open", GoalServiceAnswers.notTapped("The element changed.", shadeClosed = false))
+        assertEquals(
+            "tapped=open expanded=group shade=closed claim=none",
+            GoalServiceAnswers.tapped(GoalAction.OPEN, listOf(ShadeExpansion.GROUP), shadeClosed = true, ButtonClaims.Settled.NONE),
+        )
+        assertEquals(
+            "tapped=cancel expanded=group,row shade=closed claim=used",
+            GoalServiceAnswers.tapped(GoalAction.CANCEL, listOf(ShadeExpansion.GROUP, ShadeExpansion.ROW), shadeClosed = true, ButtonClaims.Settled.USED),
+        )
+        assertEquals(
+            "the goal notification's cancel is not in the shade; shade=closed claim=none",
+            GoalServiceAnswers.notTapped("the goal notification's cancel is not in the shade", shadeClosed = true, ButtonClaims.Settled.NONE),
+        )
+        assertEquals("The element changed; shade=open claim=dropped", GoalServiceAnswers.notTapped("The element changed.", shadeClosed = false, ButtonClaims.Settled.DROPPED))
     }
 
     @Test

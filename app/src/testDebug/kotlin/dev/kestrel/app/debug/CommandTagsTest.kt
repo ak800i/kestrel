@@ -1,6 +1,7 @@
 package dev.kestrel.app.debug
 
 import dev.kestrel.agent.EndReason
+import dev.kestrel.agent.TaskReport
 import dev.kestrel.agent.goal.ResumeCause
 import dev.kestrel.app.conversation.InputIds
 import dev.kestrel.app.goal.GoalAction
@@ -33,6 +34,7 @@ import dev.kestrel.conversation.model.GoalPhase
 import dev.kestrel.conversation.model.InputChannel
 import dev.kestrel.conversation.model.InputIntent
 import dev.kestrel.conversation.model.OwnerInput
+import dev.kestrel.conversation.model.RoundEnd
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -327,8 +329,10 @@ class CommandTagsTest {
         gone.clear()
         val hooks = OwnerInput(53, InputChannel.TEXT, InputIntent.ContinuePast("the bus"), 0)
         tags.untagged(hooks)
-        tags.onConversationStep(ConversationEvent.Input(hooks), his, MachineStep(his, listOf(ConversationEffect.RunLocal(16, null, LocalRequest.ContinuePast("the bus"), hooks))))
-        tags.onConversationStep(ConversationEvent.LocalEnded(16, LocalOutcome.Switch(marked)), his, MachineStep(his, listOf(ConversationEffect.SwitchTo(16, marked, hooks))))
+        // The request runs until its switch, as the machine keeps it (LocalRun), so its claim lives until then.
+        val asking = his.copy(local = LocalRun(16, null, hooks))
+        tags.onConversationStep(ConversationEvent.Input(hooks), his, MachineStep(asking, listOf(ConversationEffect.RunLocal(16, null, LocalRequest.ContinuePast("the bus"), hooks))))
+        tags.onConversationStep(ConversationEvent.LocalEnded(16, LocalOutcome.Switch(marked)), asking, MachineStep(asking, listOf(ConversationEffect.SwitchTo(16, marked, hooks))))
         assertEquals(emptyList<ConversationId>(), gone)
     }
 
@@ -661,5 +665,32 @@ class CommandTagsTest {
         val his = inputsOf(step(Event.Heard("Stop. Kestrel, open Viber.", named = true)))
         give(his + tags.input(null, OwnerInput(InputIds.next(), InputChannel.VOICE, InputIntent.Stop, 0)))
         assertEquals(List(3) { marked.id }, gone)
+    }
+
+    // The whole-plan review of plan 7G, M5: a claim lives as long as its act can still come up in a step, however many acts
+    // the hooks claim meanwhile. A hook's command that waits for the goal's end stays theirs after a hundred newer acts of
+    // theirs, so its work keeps the mark of their conversation; once its work started, the claim has gone, and the same
+    // number would be the owner's.
+    @Test
+    fun aHooksInputThatWaitsStaysTheirsHoweverManyActsTheyClaimMeanwhile() {
+        val gone = mutableListOf<ConversationId>()
+        tags.ownerConversation = { gone += it }
+        val marked = ConversationState(id = ConversationId("0123456789abcdef0123456789abcdef"), command = 30)
+        val waited = OwnerInput(InputIds.next(), InputChannel.TEXT, InputIntent.Command("and the times"), 0)
+        tags.untagged(waited)
+        val waiting = marked.copy(waiting = listOf(waited))
+        tags.onConversationStep(ConversationEvent.Input(waited), marked, MachineStep(waiting, emptyList()))
+        repeat(100) {
+            val steer = OwnerInput(InputIds.next(), InputChannel.TEXT, InputIntent.Command("slower"), 0)
+            tags.untagged(steer)
+            tags.onConversationStep(ConversationEvent.Input(steer), waiting, MachineStep(waiting, emptyList()))
+        }
+        val started = marked.copy(command = 31)
+        val ended = ConversationEvent.GoalEnded(RoundEnd(30, TaskReport(EndReason.FINISHED), "Done.", "Done."))
+        tags.onConversationStep(ended, waiting, MachineStep(started, listOf(ConversationEffect.StartGoal(31, 2, waited, "and the times"))))
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        tags.onConversationStep(ConversationEvent.Input(waited), started, MachineStep(started, emptyList()))
+        assertEquals(listOf(marked.id), gone)
     }
 }

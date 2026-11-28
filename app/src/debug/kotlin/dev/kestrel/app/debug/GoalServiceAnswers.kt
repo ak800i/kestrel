@@ -35,18 +35,24 @@ internal object GoalServiceAnswers {
 
     /**
      * goal-control's press in SystemUI's shade, which closes the shade again however the press ended:
-     * `tapped=<action> expanded=<rows> shade=closed|open`. [expanded] names the collapsed rows that the hook asked to expand
-     * before the press, in their order, each once: `none` when the row showed its buttons without any expansion, as design
-     * 10.6 of sub-project 7 asks, else `row`, `group` or `group,row` ([ShadeExpansion]). [shadeClosed] only when the screen
-     * showed the shade closed: `shade=open` also when the hook could not tell ([NoticeButtons.shadeOpen]), so that a caller
-     * collapses the shade.
+     * `tapped=<action> expanded=<rows> shade=closed|open claim=used|dropped|none`. [expanded] names the collapsed rows that
+     * the hook asked to expand before the press, in their order, each once: `none` when the row showed its buttons without
+     * any expansion, as design 10.6 of sub-project 7 asks, else `row`, `group` or `group,row` ([ShadeExpansion]).
+     * [shadeClosed] only when the screen showed the shade closed: `shade=open` also when the hook could not tell
+     * ([NoticeButtons.shadeOpen]), so that a caller collapses the shade. [claim] is what the press's claim became before the
+     * answer ([ButtonClaims.Settled]; plan 7G): `used` by the button's broadcast, `dropped` when none came before its end,
+     * or `none` when the press armed none, as Open's.
      */
-    fun tapped(action: GoalAction, expanded: List<ShadeExpansion>, shadeClosed: Boolean): String =
+    fun tapped(action: GoalAction, expanded: List<ShadeExpansion>, shadeClosed: Boolean, claim: ButtonClaims.Settled): String =
         "tapped=${action.name.lowercase()} expanded=${expanded.takeIf { it.isNotEmpty() }?.joinToString(",") { it.name.lowercase() } ?: "none"} " +
-            shade(shadeClosed)
+            "${shade(shadeClosed)} claim=${claim.wire}"
 
-    /** The error of a press that did not happen, for the [reason] (a hook's own sentence, never the screen's words). */
-    fun notTapped(reason: String, shadeClosed: Boolean): String = "${reason.trimEnd('.')}; ${shade(shadeClosed)}"
+    /**
+     * The error of a press that did not happen or may not have worked, for the [reason] (a hook's own sentence, never the
+     * screen's words), with the shade and what the press's claim became, as [tapped] says them.
+     */
+    fun notTapped(reason: String, shadeClosed: Boolean, claim: ButtonClaims.Settled): String =
+        "${reason.trimEnd('.')}; ${shade(shadeClosed)} claim=${claim.wire}"
 
     /** goal-control's disarm: whether it took back an armed refusal of the goal service's next start. */
     fun refuseOff(wasArmed: Boolean): String = if (wasArmed) "refuse=disarmed" else "refuse=none"

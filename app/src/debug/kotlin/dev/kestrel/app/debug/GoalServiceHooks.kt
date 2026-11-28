@@ -31,8 +31,9 @@ import kotlinx.coroutines.withContext
  * The goal service's hooks (plan 7E; design 10.6 of sub-project 7). goal-service-state reads the service, whether a
  * refusal of its next start is armed, and the audio-focus requests. goal-control presses a button of the goal notification
  * in SystemUI's shade by its key, so that SystemUI sends the button's broadcast as it does for the owner's finger and
- * Android's rules for a start from a notification apply, with the press's number claimed as the hooks' ([ButtonClaims];
- * plan 7G), says which collapsed rows it had to expand before the press, and
+ * Android's rules for a start from a notification apply, with the press's number claimed as the hooks' and the claim
+ * settled before the answer, which says whether the button's broadcast used it ([ButtonClaims]; plan 7G), says which
+ * collapsed rows it had to expand before the press, and
  * closes the shade again however the press ends; stops the goal or Kestrel's own request of the hooks' own conversation,
  * and only that one (stop-typed; plan 7G); gives the conversation a touch, as the touch watcher gives it (D13), where a real touch on the screen is not safe, as on the A71;
  * asks Android for the audio focus with and without the speech's types (spike S9); arms or takes back a refusal of the
@@ -94,18 +95,20 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         val goal = notice.goal ?: throw HookError("the goal notification names no goal")
         val session = graph.screen.value ?: throw HookError("Kestrel's accessibility service is off")
         // The press is the hooks', so a button that gives the conversation an input has its number claimed at the moment that
-        // the press goes to SystemUI, and the claim stays whatever the press answers afterwards, unless Android refused the
-        // press's gesture: the receiver uses it up as the button's broadcast arrives, and an unused one expires
+        // the press goes to SystemUI, unless Android refused the press's gesture: the receiver uses the claim up as the
+        // button's broadcast arrives, and the hook settles it before it answers, dropping a claim that no broadcast used
         // (ButtonClaims; plan 7G). Open gives no input.
-        val dispatch = action.intent?.let { ButtonClaims.current().pressing(action, goal) }
+        val press = action.intent?.let { ButtonClaims.current().pressing(action, goal) }
         // SystemUI's shade closes again however the press ends, also after an error or the hook's timeout, so that the phone
-        // is as the hook found it (AGENTS.md's limits on the A71).
+        // is as the hook found it (AGENTS.md's limits on the A71); the press's claim is settled after it, so that no claim of
+        // the press outlives the hook's answer.
         val seen = ShadeSeen()
         var shadeClosed = false
+        var claim = ButtonClaims.Settled.NONE
         var expanded = emptyList<ShadeExpansion>()
         val failure = try {
             session.actions.global(GlobalAction.NOTIFICATIONS)
-            val tapped = tapInShade(session, notice, action, seen, dispatch)
+            val tapped = tapInShade(session, notice, action, seen, press)
             expanded = tapped.expanded
             when (tapped) {
                 is NoticeButtons.Tapped.Pressed -> null
@@ -117,10 +120,16 @@ internal class GoalServiceHooks(private val graph: AppGraph, private val context
         } catch (error: Exception) {
             "the press failed: ${error.describeWithoutMessages()}"
         } finally {
-            shadeClosed = withContext(NonCancellable) { closeShade(session, seen) }
+            withContext(NonCancellable) {
+                try {
+                    shadeClosed = closeShade(session, seen)
+                } finally {
+                    claim = press?.settle() ?: ButtonClaims.Settled.NONE
+                }
+            }
         }
-        if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed))
-        return GoalServiceAnswers.tapped(action, expanded, shadeClosed)
+        if (failure != null) throw HookError(GoalServiceAnswers.notTapped(failure, shadeClosed, claim))
+        return GoalServiceAnswers.tapped(action, expanded, shadeClosed, claim)
     }
 
     /**

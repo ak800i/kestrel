@@ -11,6 +11,11 @@ import dev.kestrel.conversation.machine.MachineStep
 import dev.kestrel.conversation.model.ConversationId
 import dev.kestrel.conversation.model.InputChannel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -22,7 +27,8 @@ import org.junit.rules.TemporaryFolder
  * The hooks' claims of their presses of the goal notification's buttons (plan 7G): goal-control's tap in the shade and its
  * `send-later`, whose broadcast may reach a new process, keep the hooks' mark, and the owner's own tap takes it; a claim is
  * armed when its press may have gone to SystemUI, is valid from its broadcast's due time, is used once, expires, survives
- * the end of a process and belongs to one boot of the phone.
+ * the end of a process and belongs to one boot of the phone; a press's claim lives only for the press's delivery, and the
+ * hook settles it before it answers.
  */
 class ButtonClaimsTest {
     @get:Rule
@@ -44,6 +50,10 @@ class ButtonClaimsTest {
 
     // A process's claims in the boot [boot].
     private fun claims(boot: Int? = BOOT) = ButtonClaims(file, tags::claim, clock = { now }, boot = boot, next = { ++numbers })
+
+    // send-later's claim of [action] for the goal, valid from [fromMillis].
+    private fun ButtonClaims.later(action: GoalAction, fromMillis: Long = now): ButtonClaims.Claim =
+        (armForNewProcess(action, goal, fromMillis) as ButtonClaims.LaterClaim.Armed).claim
 
     // A broadcast of [action]'s button reaches the receiver, which takes its number through [claims], and the conversation
     // gets its input, as GoalActionReceiver gives it.
@@ -117,7 +127,7 @@ class ButtonClaimsTest {
         press(claims, GoalAction.CONTINUE)
         assertEquals(listOf(marked.id), gone)
 
-        claims.arm(GoalAction.CANCEL, goal, fromMillis = now + 5_000)
+        claims.later(GoalAction.CANCEL, fromMillis = now + 5_000)
         now += 4_999
         press(claims, GoalAction.CANCEL)
         assertEquals(listOf(marked.id, marked.id), gone)
@@ -130,7 +140,7 @@ class ButtonClaimsTest {
     // and a later tap there, or in a third process, is the owner's.
     @Test
     fun sendLatersClaimReachesTheNewProcessOnceAndKeepsTheMark() {
-        claims().arm(GoalAction.CANCEL, goal, fromMillis = now + 5_000)
+        claims().later(GoalAction.CANCEL, fromMillis = now + 5_000)
         assertTrue(file.isFile)
 
         now += 6_000
@@ -150,7 +160,7 @@ class ButtonClaimsTest {
     // the file is replaced in one step and leaves no temporary file.
     @Test
     fun theFileKeepsAClaimUntilItIsUsedOrExpiresAndOnlyForItsBoot() {
-        claims().arm(GoalAction.CANCEL, goal, fromMillis = now + 5_000)
+        claims().later(GoalAction.CANCEL, fromMillis = now + 5_000)
         now += 1_000
         // This process reads the file and ends before the broadcast.
         claims()
@@ -162,18 +172,18 @@ class ButtonClaimsTest {
         assertEquals(listOf(marked.id), gone)
 
         // After a restart of the phone, the elapsed realtime starts again, so the same time names another moment.
-        claims().arm(GoalAction.CANCEL, goal, fromMillis = now)
+        claims().later(GoalAction.CANCEL, fromMillis = now)
         val rebooted = claims(boot = BOOT + 1)
         assertFalse(file.exists())
         press(rebooted, GoalAction.CANCEL)
         assertEquals(listOf(marked.id, marked.id), gone)
 
         val claims = claims()
-        val takenBack = claims.arm(GoalAction.CONTINUE, goal)
-        claims.arm(GoalAction.CANCEL, goal)
+        val takenBack = claims.later(GoalAction.CONTINUE)
+        claims.later(GoalAction.CANCEL)
         claims.disarm(takenBack)
         assertEquals(listOf(ButtonClaims.FILE), folder.root.list()?.toList())
-        now += ButtonClaims.LIFE_MILLIS + 1
+        now += ButtonClaims.LATER_MILLIS + 1
         press(claims(), GoalAction.CANCEL)
         assertFalse(file.exists())
         assertEquals(List(3) { marked.id }, gone)
@@ -205,7 +215,7 @@ class ButtonClaimsTest {
     // reach no new process.
     @Test
     fun withoutABootCountClaimsLiveInTheProcessOnly() {
-        claims().arm(GoalAction.CANCEL, goal)
+        claims().later(GoalAction.CANCEL)
         assertTrue(file.isFile)
 
         val unbooted = claims(boot = null)
@@ -217,7 +227,7 @@ class ButtonClaimsTest {
         assertFalse(file.exists())
         press(unbooted, GoalAction.CONTINUE)
         assertEquals(listOf(marked.id), gone)
-        unbooted.arm(GoalAction.CANCEL, goal)
+        unbooted.pressing(GoalAction.CANCEL, goal).dispatching()
         assertFalse(file.exists())
         press(claims(boot = null), GoalAction.CANCEL)
         assertEquals(listOf(marked.id, marked.id), gone)
@@ -235,7 +245,7 @@ class ButtonClaimsTest {
         assertEquals(listOf(marked.id), gone)
 
         val armed = claims().armForNewProcess(GoalAction.CANCEL, goal, fromMillis = now + 5_000)
-        assertEquals(ButtonClaims.LaterClaim.Armed(ButtonClaims.Claim(GoalAction.CANCEL, goal, BOOT, now + 5_000)), armed)
+        assertEquals(ButtonClaims.LaterClaim.Armed(ButtonClaims.Claim(GoalAction.CANCEL, goal, BOOT, now + 5_000, now + 5_000 + ButtonClaims.LATER_MILLIS)), armed)
         assertTrue(file.isFile)
         now += 5_000
         press(claims(), GoalAction.CANCEL)
@@ -247,18 +257,82 @@ class ButtonClaimsTest {
     fun aClaimIsUsedOnceForItsButtonAndGoalAndItExpires() {
         val claimed = mutableListOf<Long>()
         val claims = ButtonClaims(file, { claimed += it }, clock = { now }, boot = BOOT, next = { ++numbers })
-        claims.arm(GoalAction.CONTINUE, goal)
+        claims.later(GoalAction.CONTINUE)
         assertEquals(1L, claims.take(GoalAction.CANCEL, goal))
         assertEquals(2L, claims.take(GoalAction.CONTINUE, NoticeGoal(checkNotNull(marked.id), 2)))
         assertEquals(3L, claims.take(GoalAction.CONTINUE, goal))
         assertEquals(4L, claims.take(GoalAction.CONTINUE, goal))
         assertEquals(listOf(3L), claimed)
 
-        claims.arm(GoalAction.CONTINUE, goal)
-        now += ButtonClaims.LIFE_MILLIS + 1
+        claims.later(GoalAction.CONTINUE)
+        now += ButtonClaims.LATER_MILLIS + 1
         claims.take(GoalAction.CONTINUE, goal)
         assertFalse(file.exists())
         assertEquals(listOf(3L), claimed)
+    }
+
+    // The whole-plan review of plan 7G, I1: a press whose broadcast never came, as an uncertain press that SystemUI did not
+    // act on, keeps no claim past the hook's answer. tap settles it before it answers and drops it, so the owner's own tap
+    // 3 s later, or at once, is his, and the file holds no claim of it.
+    @Test
+    fun aPressThatNoBroadcastUsedIsDroppedBeforeTheHookAnswers() = runTest {
+        val claims = claims()
+        val hooksPress = claims.pressing(GoalAction.CONTINUE, goal)
+        hooksPress.dispatching()
+        assertEquals(ButtonClaims.Settled.DROPPED, hooksPress.settle())
+        assertEquals(ButtonClaims.PRESS_MILLIS, currentTime)
+        assertFalse(file.exists())
+
+        press(claims, GoalAction.CONTINUE)
+        assertEquals(listOf(marked.id), gone)
+        now += 3_000
+        press(claims, GoalAction.CONTINUE)
+        assertEquals(listOf(marked.id, marked.id), gone)
+    }
+
+    // I1 too: the hook waits for the broadcast only until a broadcast uses the claim, and answers used; a press that armed
+    // none, never handed over or whose only gesture Android refused, answers none at once.
+    @Test
+    fun aPressSettlesAsUsedOnceItsBroadcastComesAndAsNoneWhenItArmedNone() = runTest {
+        val claims = claims()
+        val hooksPress = claims.pressing(GoalAction.STOP, goal)
+        hooksPress.dispatching()
+        val settled = async { hooksPress.settle() }
+        advanceTimeBy(800)
+        runCurrent()
+        assertFalse(settled.isCompleted)
+        press(claims, GoalAction.STOP, working)
+        assertEquals(ButtonClaims.Settled.USED, settled.await())
+        assertEquals(800L, currentTime)
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        assertEquals(ButtonClaims.Settled.NONE, claims.pressing(GoalAction.CONTINUE, goal).settle())
+        val refused = claims.pressing(GoalAction.CONTINUE, goal)
+        refused.dispatching()
+        refused.notDispatched()
+        assertEquals(ButtonClaims.Settled.NONE, refused.settle())
+        assertEquals(800L, currentTime)
+    }
+
+    // I1 too: a press's claim lives PRESS_MILLIS after the press's last hand-over, also in the file that a new process
+    // reads after a crash, and no longer: a node's action and then a gesture 2 s later keep it 3 s past the gesture.
+    @Test
+    fun aPressesClaimEndsPressMillisAfterItsLastHandOver() {
+        val claims = claims()
+        val hooksPress = claims.pressing(GoalAction.CANCEL, goal)
+        hooksPress.dispatching()
+        now += 2_000
+        hooksPress.dispatching()
+        now += ButtonClaims.PRESS_MILLIS
+        // The process ended before the broadcast; the next one reads the claim with its end.
+        press(claims(), GoalAction.CANCEL)
+        assertEquals(emptyList<ConversationId>(), gone)
+
+        claims().pressing(GoalAction.CANCEL, goal).dispatching()
+        now += ButtonClaims.PRESS_MILLIS + 1
+        press(claims(), GoalAction.CANCEL)
+        assertEquals(listOf(marked.id), gone)
+        assertFalse(file.exists())
     }
 
     private companion object {

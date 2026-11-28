@@ -94,13 +94,16 @@ internal object TypedTests {
 
     /**
      * Holds every conversation timer of [kinds] that starts from now until the test ends it, or until [finish], which ends
-     * the timers that are still held (plan 7G).
+     * the timers that are still held (plan 7G). A test holds its timers once, so that no held timer is left without its
+     * release.
      */
-    fun holdTimers(vararg kinds: Timer): HeldTimers =
-        HeldTimers(*kinds).also {
+    fun holdTimers(vararg kinds: Timer): HeldTimers {
+        check(heldTimers == null) { "This test holds its conversation timers already; finish() releases them" }
+        return HeldTimers(*kinds).also {
             heldTimers = it
             graph.conversationTimers = it
         }
+    }
 
     /** Whether the conversation screen is Android's resumed activity, in front. */
     fun screenInFront(screen: ScreenServiceRule): Boolean = RESUMED.containsMatchIn(screen.shell("dumpsys activity activities"))
