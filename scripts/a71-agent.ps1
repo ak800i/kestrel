@@ -549,14 +549,10 @@ function Enable-TestMode([string]$Device) {
 }
 
 # Closes the device's live session (hook agent-live -On false, which stores AGENT_LIVE_SESSION as off; design D28),
-# checked through its answer. A device without Kestrel has none. Kestrel's activity starts first, because a stopped app
-# gets no hook broadcast.
+# checked through its answer. A device without Kestrel has none.
 function Close-LiveSession([string]$Device) {
     if (-not (Test-Installed $Device 'dev.kestrel')) { return }
-    Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-    Start-Sleep -Seconds 2
     if ((Invoke-DeviceHook $Device agent-live @{ On = 'false' }) -notmatch '(^|\s)live=off(\s|$)') { throw "The live session is still open on $(Get-DeviceName $Device)." }
-    Invoke-Device $Device 'input keyevent KEYCODE_HOME' | Out-Null
 }
 
 # The reset at the start of every sitting: an earlier run that ended without its finally block, such as when its window
@@ -741,11 +737,9 @@ function Test-WazeHome([string]$Device) {
 }
 
 # The kind of the device's default profile (hook provider-standin: none, copilot or other), or $null when Kestrel does
-# not answer. Kestrel's activity starts first, because a stopped app gets no hook broadcast.
+# not answer.
 function Get-DefaultProfileKind([string]$Device) {
     try {
-        Invoke-Device $Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-        Start-Sleep -Seconds 3
         (ConvertFrom-HookPairs (Invoke-DeviceHook $Device provider-standin))['profile']
     } catch { $null }
 }
@@ -847,12 +841,8 @@ function Register-TouchSourceRestore([string]$Device) {
     $script:touchSourceSaved = $true
     Register-Restore "the touch rule and branch of $(Get-DeviceName $Device)" "Run: scripts\hook.ps1 -Serial $Device agent-touch-source -Rule $($before['rule']) -Branch $($before['branch'])" @{ Device = $Device; Rule = $before['rule']; Branch = $before['branch'] } {
         param($Data)
-        # connected-test.ps1 can have stopped Kestrel, and a stopped app gets no hook broadcast.
-        Invoke-Device $Data.Device 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-        Start-Sleep -Seconds 2
         $now = ConvertFrom-HookPairs (Invoke-DeviceHook $Data.Device agent-touch-source @{ Rule = $Data.Rule; Branch = $Data.Branch })
         if ($now['rule'] -ne $Data.Rule -or $now['branch'] -ne $Data.Branch) { throw 'the touch source did not take the rule and branch' }
-        Invoke-Device $Data.Device 'input keyevent KEYCODE_HOME' | Out-Null
     } | Out-Null
 }
 
@@ -1172,9 +1162,6 @@ function Invoke-DeviceTestsStep {
     $record = Read-AgentRecord $recordFile
     $touchRule = if ($record.touchRule) { $record.touchRule } else { (ConvertFrom-HookPairs (Invoke-DeviceHook $a71 agent-touch-source))['rule'] }
     $branch = if ($record.touchBranch) { $record.touchBranch } else { 'A' }
-    # connected-test.ps1 ends with 'am force-stop', and a stopped app gets no hook broadcast, so Kestrel starts again.
-    Invoke-Device $a71 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
-    Start-Sleep -Seconds 3
     Invoke-DeviceHook $a71 agent-touch-source @{ Rule = $touchRule; Branch = $branch } | Out-Null
     Enable-TestMode $a71
     Set-OwnerNames $a71

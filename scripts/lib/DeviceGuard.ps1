@@ -352,12 +352,11 @@ function ConvertFrom-StandInAnswer([string]$Text) {
 
 # Reads Kestrel's profiles on the device through the debug hook provider-standin, which changes nothing: the kind of the
 # default profile (none, copilot or other), the number of Copilot profiles, the default profile's ID and whether its
-# credential is stored (ConvertFrom-StandInAnswer). Android gives no hook broadcast to a package that it stopped, as
-# 'am force-stop' leaves Kestrel, so the package is unstopped first ('pm unstop', which starts nothing; the broadcast then
-# starts Kestrel's process). scripts\hook.ps1 needs PowerShell 7.3, so it runs in pwsh. Throws when Kestrel does not
-# answer, and System.IO.InvalidDataException when it answers in another form.
+# credential is stored (ConvertFrom-StandInAnswer). The hook's content call starts Kestrel's process, also after 'am
+# force-stop', because Android takes a package out of its stopped state when a caller acquires one of its providers.
+# scripts\hook.ps1 needs PowerShell 7.3, so it runs in pwsh. Throws when Kestrel does not answer, and
+# System.IO.InvalidDataException when it answers in another form.
 function Get-KestrelProfiles([string]$Serial) {
-    try { Invoke-SettingsCommand -Serial $Serial -Command 'pm unstop dev.kestrel' | Out-Null } catch { Write-Verbose "pm unstop failed: $($_.Exception.Message)" }
     $pwsh = Get-Command pwsh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $pwsh) { throw 'PowerShell 7 (pwsh), which scripts\hook.ps1 needs, is not installed' }
     $hook = Join-Path $PSScriptRoot '..\hook.ps1'

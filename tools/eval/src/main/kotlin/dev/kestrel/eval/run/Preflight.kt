@@ -15,9 +15,9 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * What every run needs, checked before the first run (design D5 and D7 of sub-project 6): Kestrel's debug build and, for
  * the fixtures, `:testapp` installed (through [Installer] when missing; `:testapp` leaves the A71 again when the tool
- * installed it there, as install.ps1 says the session that installs it must), Kestrel started so that it gets the hooks'
- * broadcasts, its accessibility service on, test mode on (turned on with a restore when it is off, so that the work goes on
- * without the owner) and Kestrel listening. A problem is a [Refusal], before any run.
+ * installed it there, as install.ps1 says the session that installs it must), its accessibility service on, test mode on
+ * (turned on with a restore when it is off, so that the work goes on without the owner) and Kestrel listening. The hooks'
+ * content call starts Kestrel's process itself, also after a force-stop. A problem is a [Refusal], before any run.
  */
 class Preflight(
     private val device: Device,
@@ -38,7 +38,6 @@ class Preflight(
             }
             installer.install(device.serial, testApp = true)
         }
-        wake()
         if (hooks.state()["screen"] != "on") throw Refusal("Kestrel's accessibility service is off on ${device.serial}. Turn it on first.")
         conversationHooks()
         testModeOn()
@@ -47,14 +46,6 @@ class Preflight(
         } catch (e: IllegalStateException) {
             throw Refusal(e.message.orEmpty())
         }
-    }
-
-    /** A stopped app gets no broadcast, so Kestrel's activity starts first, and the home screen comes back after it. */
-    fun wake() {
-        if (!installed(KESTREL)) return
-        device.idempotent("am start -n $KESTREL/.app.MainActivity")
-        clock.sleep(3.seconds)
-        device.idempotent("input keyevent KEYCODE_HOME")
     }
 
     /**

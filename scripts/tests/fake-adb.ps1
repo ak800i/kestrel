@@ -2,8 +2,8 @@
 # fake-adb.cmd runs it in its own process, as adb runs.
 # It understands 'adb -s <serial> get-state', 'adb -s <serial> shell getprop <property>' for the properties that
 # Assert-TestDevice reads, and 'adb -s <serial> shell "<command>"' for the settings commands, the 'cmd statusbar
-# set-tiles', the package commands ('pm list packages', 'dumpsys package', 'pm uninstall', 'pm unstop' and
-# 'am force-stop') and 'dumpsys account' that the helpers send, also inside the check of Format-TestDeviceCommand. It
+# set-tiles', the package commands ('pm list packages', 'dumpsys package', 'pm uninstall' and 'am
+# force-stop') and 'dumpsys account' that the helpers send, also inside the check of Format-TestDeviceCommand. It
 # keeps the device's state in the JSON file whose path is in the environment variable KESTREL_FAKE_ADB:
 #   avd         the device's ro.boot.qemu.avd_name, empty for a phone
 #   model       the device's ro.product.model
@@ -191,8 +191,8 @@ if ($deviceCommand -match '^getprop (\S+)$') {
     }
     $packages.Remove($Matches[1])
     $lines = @('Success')
-} elseif ($deviceCommand -match '^(pm unstop|am force-stop) \S+$') {
-    # Neither changes what the fake keeps.
+} elseif ($deviceCommand -match '^am force-stop \S+$') {
+    # It changes nothing that the fake keeps.
 } elseif ($deviceCommand -eq 'dumpsys account') {
     $numbers = if ($accounts -gt 0) { 1..$accounts } else { @() }
     $lines = @('Accounts: ' + $accounts) + @($numbers | ForEach-Object { "  Account {name=account$_@example.com, type=com.google}" })

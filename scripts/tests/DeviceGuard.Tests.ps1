@@ -336,7 +336,7 @@ Describe 'The helpers that read and change the device' {
                 Should -Throw -ExceptionType ([System.IO.InvalidDataException]) -ExpectedMessage 'Not an answer of provider-standin*install.ps1*'
         }
 
-        It 'reads Kestrel''s profiles through hook.ps1 provider-standin, after it unstops Kestrel' {
+        It 'reads Kestrel''s profiles through hook.ps1 provider-standin' {
             Mock Invoke-TimedProcess { [pscustomobject]@{ Completed = $true; ExitCode = 0; Output = "standin=off profile=copilot copilot=1 id=profile-1 credential=present`r`n"; Id = 1 } }
 
             $profiles = Get-KestrelProfiles -Serial emulator-5554
@@ -345,7 +345,6 @@ Describe 'The helpers that read and change the device' {
             $profiles.Copilot | Should -Be 1
             $profiles.Id | Should -BeExactly 'profile-1'
             $profiles.Credential | Should -BeExactly 'present'
-            (Get-FakeDevice).calls | Should -Contain 'pm unstop dev.kestrel && echo && echo kestrel-end'
             Should -Invoke Invoke-TimedProcess -Times 1 -Exactly -ParameterFilter {
                 ($ArgumentList -join ' ') -like "-NoProfile -ExecutionPolicy Bypass -File *hook.ps1 -Serial emulator-5554 -Command provider-standin"
             }

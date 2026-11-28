@@ -75,12 +75,11 @@ class PreflightTest {
     private fun preflight(of: FakeRun = run) = Preflight(of.device, of.hooks, of.restores, of.clock, installer, ConversationGuard(of.hooks, of.clock))
 
     @Test
-    fun testModeIsTurnedOnWithARestoreAndKestrelIsStartedFirst() {
+    fun testModeIsTurnedOnWithARestore() {
         preflight().prepare(needsTestApp = true)
 
         assertEquals("on", testMode)
         assertTrue(installs.isEmpty())
-        assertTrue(run.adb.commands.contains("am start -n dev.kestrel/.app.MainActivity"))
         run.restores.runAll()
         assertEquals("off", testMode)
     }

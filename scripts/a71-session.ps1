@@ -598,16 +598,9 @@ function Invoke-VoiceTestStep {
         Add-Result voice-tests "${class}: $(if (Test-ClassPassed -Folder $results -Class $class) { 'passed' } else { 'did not pass' })"
     }
     # connected-test.ps1 ends with 'am force-stop', which leaves a record of the owner's stop, so a restore keeps Kestrel
-    # off; the session starts it itself.
-    Start-KestrelAfterTests
-    Stop-Kestrel
-}
-
-# Starts Kestrel after device tests, which end with 'am force-stop': first its main activity, because Android may give a
-# stopped app no hook broadcast, and Start-Kestrel begins with a hook.
-function Start-KestrelAfterTests {
-    Invoke-Checked 'am start -n dev.kestrel/.app.MainActivity' | Out-Null
+    # off; the session starts it itself. Start-Kestrel begins with a hook, whose content call starts Kestrel's process.
     Start-Kestrel
+    Stop-Kestrel
 }
 
 # Kestrel's logged failures in the device's log since $Since, a time as logcat -T reads it, or in the whole log.

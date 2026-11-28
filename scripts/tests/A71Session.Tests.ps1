@@ -10,7 +10,7 @@ BeforeAll {
     $tokens = $null
     $errors = $null
     $tree = [System.Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot\..\a71-session.ps1", [ref]$tokens, [ref]$errors)
-    $helpers = @('Get-NoticeLetter', 'Invoke-CorpusClip', 'Initialize-Air', 'Start-KestrelAfterTests', 'Start-Kestrel',
+    $helpers = @('Get-NoticeLetter', 'Invoke-CorpusClip', 'Initialize-Air', 'Start-Kestrel',
         'Get-AssistantVolume', 'Set-AssistantVolume', 'Invoke-BargeInStep')
     $functions = $tree.FindAll({
             param($node)
@@ -41,19 +41,6 @@ Describe 'The helpers of the A71 session of sub-project 2' {
     It 'parses the script, and finds every helper' {
         $errors | Should -BeNullOrEmpty
         @($functions).Count | Should -Be $helpers.Count
-    }
-
-    It 'starts Kestrel after the device tests from its main activity before any hook, because a stopped app may get no broadcast' {
-        $calls = [System.Collections.Generic.List[string]]::new()
-        Mock Invoke-Checked { $calls.Add($Command) }
-        Mock Invoke-Hook { $calls.Add("hook $Command") }
-        Mock Get-VoiceState { [ordered]@{ mode = 'off'; session = 'closed' } }
-        Mock Wait-Mode { 1 }
-
-        Start-KestrelAfterTests
-
-        $calls[0] | Should -BeExactly 'am start -n dev.kestrel/.app.MainActivity'
-        @($calls | Where-Object { $_ -like 'hook *' }).Count | Should -BeGreaterThan 0
     }
 
     It 'gives the kinds of Kestrel''s notices the letters of the owner''s old answers' {

@@ -62,7 +62,6 @@ class Session(private val environment: Environment, serial: String) {
      * the console; when the body succeeded, the check's failure is the command's error.
      */
     fun <T> guarded(body: () -> T): T {
-        preflight.wake()
         val accounts = if (device.kind == DeviceKind.EMULATOR) AccountGuard(device, hooks) else null
         val before = accounts?.read()
         var failure: Throwable? = null

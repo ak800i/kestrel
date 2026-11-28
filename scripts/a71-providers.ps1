@@ -570,9 +570,6 @@ function Invoke-A71TestsStep {
     # which would stay over every app during the unattended sessions.
     $anr = Close-AnrDialog -Serial $Serial
     if ($anr) { Add-Result a71-tests $anr }
-    # connected-test.ps1 ends with 'am force-stop', and a stopped app gets no hook broadcast, so Kestrel starts again.
-    Open-Providers $Serial
-    Start-Sleep -Seconds 3
 }
 
 function Invoke-A71RestartStep {
